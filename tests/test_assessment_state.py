@@ -620,3 +620,17 @@ def test_rebuild_keeps_a_directory_with_edited_or_foreign_files(scope, extra):
         with lifecycle(scope, replace=True).hold():
             pytest.fail("--rebuild must not erase a user's file")
     assert kept.read_text() == "mine\n" and (scope.output / ".assessment-state.json").exists()
+
+
+def test_held_lock_heartbeats_on_its_own_clock(scope, monkeypatch):
+    monkeypatch.setattr(AssessmentState, "HEARTBEAT_SECONDS", 0.05)
+    state = lifecycle(scope)
+    with state.hold():
+        assert acquire_lock._read_stale_after(state.lock) == AssessmentState.STALE_AFTER_SECONDS
+        acquire_lock._write_lock(state.lock, os.getpid(), 1, state.state["run_id"])
+        deadline = time.monotonic() + 5
+        while acquire_lock._parse_lock(state.lock)[1] == 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert acquire_lock._parse_lock(state.lock)[1] > 1
+        assert acquire_lock._read_stale_after(state.lock) == AssessmentState.STALE_AFTER_SECONDS
+    assert not state.lock.exists()

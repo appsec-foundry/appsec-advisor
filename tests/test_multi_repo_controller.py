@@ -737,6 +737,33 @@ def test_a_runtime_change_during_the_session_is_disclosed_not_fatal(tmp_path, mo
     assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] != "failed"
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError("replaced by an editor"),
+        controller.ControllerError("runtime must not contain directory links"),
+    ],
+)
+def test_a_runtime_that_cannot_be_fingerprinted_mid_run_is_disclosed_not_fatal(tmp_path, monkeypatch, error):
+    for name in ("caller", "receiver"):
+        checkout(tmp_path / name)
+    scope = admit([str(tmp_path / name) for name in ("caller", "receiver")], str(tmp_path / "out"))
+    calls = []
+
+    def fingerprint():
+        calls.append(1)
+        if len(calls) > 1:
+            raise error
+        return "a" * 64
+
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", fingerprint)
+    with controller._assessment_session(
+        scope, ["--no-requirements"], budget=AssessmentBudget(1, 0.05, 10, 60), host_factory=lambda *args: None
+    ) as (_, state, _):
+        assert "--rebuild" in controller._assessment_runtime_warning(state)
+    assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] != "failed"
+
+
 @pytest.mark.parametrize("change", ["code", "instruction", "schema", "data"])
 def test_runtime_identity_binds_plugin_bytes_without_local_path_dependence(tmp_path, monkeypatch, change):
     plugin = tmp_path / "plugin"

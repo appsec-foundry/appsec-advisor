@@ -20,7 +20,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json
 
-from runtime.analyst_host import HostTimeout, TransportError
+from runtime.analyst_host import HostCancelled, HostTimeout, TransportError
 from runtime.assessment_host import MAX_EXCHANGES, ExchangeError, ExchangeResult, ModelAnswerFailure, run_exchange
 from runtime.multi_repo_discovery import BudgetedHost, DiscoveryBudget
 
@@ -190,7 +190,8 @@ class AssessmentJobs:
         accounting still stop the run.
         """
         if self.should_stop() or (self.halt is not None and self.halt.is_set()):
-            raise ExchangeError("Assessment cancelled")
+            # A stop request is an interruption the run can resume, not a failure.
+            raise HostCancelled("Assessment cancelled")
         self.budget.remaining_seconds()
         request = {
             "role": role,

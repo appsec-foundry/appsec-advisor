@@ -2863,6 +2863,11 @@ def _prepared_action(
     }
 
 
+# Receipt suffix of a tolerated step failure; the controller assessment turns
+# each one into a run warning.
+BEST_EFFORT_FAILURE = "best-effort failure"
+
+
 def _best_effort_script(
     output_dir: Path,
     name: str,
@@ -2885,7 +2890,7 @@ def _best_effort_script(
     except ControllerError as exc:
         if exc.exit_code in fatal_exit_codes:
             raise
-        receipts.append(f"{name}: best-effort failure")
+        receipts.append(f"{name}: {BEST_EFFORT_FAILURE}")
         _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
         return False
 
@@ -2928,7 +2933,7 @@ def _run_auto_emitter_pass(output_dir: Path, cfg: dict[str, Any], receipts: list
             ]
         )
     except ControllerError as exc:
-        receipts.append("auto_emitter_pass.sh: best-effort failure")
+        receipts.append(f"auto_emitter_pass.sh: {BEST_EFFORT_FAILURE}")
         _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
 
 
@@ -8199,9 +8204,15 @@ def _assessment_runtime_warning(state) -> str | None:
 
     Every artifact was validated by the code that consumed it, so the report
     stands; its parts may come from different plugin versions. Resuming stays
-    bound to the starting runtime through the state identity.
+    bound to the starting runtime through the state identity. A plugin tree
+    that cannot be fingerprinted mid-run, such as a file an editor replaces,
+    is disclosed the same way instead of ending a run that may have published.
     """
-    if _assessment_runtime_fingerprint() == state.identity["runtime_sha256"]:
+    try:
+        current = _assessment_runtime_fingerprint()
+    except (ControllerError, OSError):
+        current = None
+    if current == state.identity["runtime_sha256"]:
         return None
     return (
         "The plugin changed while this assessment ran, so parts of the report may come from different "
@@ -9340,7 +9351,8 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
 
 # MR-7: hard budget in USD of an interactive launch without a budget flag.
 INTERACTIVE_DEPTH_BUDGET_USD = {"quick": 10.0, "standard": 20.0, "thorough": 40.0}
-# Exit status of a run that stopped at its --pause-after boundary.
+# Exit status of an incomplete run that --resume continues: one that stopped at
+# its --pause-after boundary or on a stop request (REQ-FLW-006).
 ASSESS_PAUSED_EXIT = 3
 
 
@@ -9750,7 +9762,6 @@ class _AssessmentConsole:
         if not _AssessmentConsole.status_shown:
             return ""
         return "\r\033[K" + "\033[1A\033[K" * (_AssessmentConsole.status_lines - 1)
-
 
     # Shared, so the command-line entry can clear a status line before its last message.
     status_shown = False
@@ -10577,8 +10588,12 @@ def _write_assessment_stage_stats(workspace: Path, timing: dict) -> None:
         (workspace / ".stage-stats.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, captured, progress) -> None:
-    """Run the existing deterministic Stage-1 tail, Stage 2 and QA gates in the workspace."""
+def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, captured, progress) -> list[str]:
+    """Run the existing deterministic Stage-1 tail, Stage 2 and QA gates in the workspace.
+
+    Returns a warning per tolerated step failure, so a report built without a
+    scanner's or emitter's checks says so instead of looking complete.
+    """
     receipts: list[str] = []
     _run_script("validators/validate_intermediate.py", ["threats_merged", str(workspace / ".threats-merged.json")])
     progress("Building the deterministic route inventory and coverage checks")
@@ -10689,7 +10704,7 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
         cfg,
         instructions=_assessment_role_instructions,
         run_script=_run_script,
-        enrich=lambda: _enrich_and_gate_yaml(workspace, {**cfg, "repo_root": str(root)}, receipts),
+        rebuild=lambda: build_model("Rebuilding the threat model with the verified abuse cases"),
         progress=progress,
     )
     if json.loads((workspace / ".threats-merged.json").read_text(encoding="utf-8")).get("threats"):
@@ -10727,6 +10742,11 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     )
     if cfg.get("architect_review"):
         _run_script("analyzers/architect_review_runtime.py", ["--output-dir", str(workspace)])
+    return [
+        f"{receipt.split(':', 1)[0]} failed; the report lacks its deterministic checks"
+        for receipt in receipts
+        if receipt.endswith(BEST_EFFORT_FAILURE)
+    ]
 
 
 def _assessment_publish(
@@ -10751,22 +10771,28 @@ def _assessment_publish(
         raise ControllerError("combined model violates its output contract: " + "; ".join(messages[:5]))
     scope.verify_unchanged()
     output = scope.output
+    # Every deliverable and export is produced in a staging directory beside
+    # the workspace first; a failing export then leaves the earlier report
+    # untouched instead of a new model next to an old or partial report.
+    staging = workspace.parent / "publish"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir()
     delivered: dict[str, str] = {}
     text = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
-    atomic_write_text(output / "threat-model.yaml", text)
+    atomic_write_text(staging / "threat-model.yaml", text)
     delivered["threat-model.yaml"] = hashlib.sha256(text.encode()).hexdigest()
     for name in _ASSESSMENT_PUBLISHED:
         source = workspace / name
         if source.is_file():
             data = source.read_bytes()
-            (output / name).write_bytes(data)
+            (staging / name).write_bytes(data)
             delivered[name] = hashlib.sha256(data).hexdigest()
     for key, script, basename in _YAML_DERIVED_EXPORTS:
         if cfg.get(key):
             _run_script(
-                script, ["--threat-model", str(output / "threat-model.yaml"), "--output", str(output / basename)]
+                script, ["--threat-model", str(staging / "threat-model.yaml"), "--output", str(staging / basename)]
             )
-            delivered[basename] = hashlib.sha256((output / basename).read_bytes()).hexdigest()
+            delivered[basename] = hashlib.sha256((staging / basename).read_bytes()).hexdigest()
     if cfg.get("write_pentest_tasks") and "pentest-tasks.yaml" not in delivered:
         raise ControllerError("pentest tasks were requested but could not be produced")
     # Document exports need pandoc and a browser; like the single-repository
@@ -10779,19 +10805,22 @@ def _assessment_publish(
         if not cfg.get(key):
             continue
         failure = _script_failure(
-            script, [*extra, "--input", str(output / "threat-model.md"), "--output", str(output / basename)]
+            script, [*extra, "--input", str(staging / "threat-model.md"), "--output", str(staging / basename)]
         )
-        if failure or not (output / basename).is_file():
+        if failure or not (staging / basename).is_file():
             warnings.append(f"{basename} was not exported: {_cap_reason(failure or 'no output')}")
         else:
-            delivered[basename] = hashlib.sha256((output / basename).read_bytes()).hexdigest()
+            delivered[basename] = hashlib.sha256((staging / basename).read_bytes()).hexdigest()
     # --slug adds the same postfix-stamped copy set a single-repository run ships.
     slug = str(cfg.get("slug") or "").strip()
     if slug:
-        _run_script("model/stamp_threat_model.py", ["--output-dir", str(output), "--slug", slug])
+        _run_script("model/stamp_threat_model.py", ["--output-dir", str(staging), "--slug", slug])
         for basename, digest in list(delivered.items()):
-            if (output / (stamped := stamp_threat_model._stamped_name(basename, slug))).is_file():
+            if (staging / (stamped := stamp_threat_model._stamped_name(basename, slug))).is_file():
                 delivered[stamped] = digest
+    for name in delivered:
+        os.replace(staging / name, output / name)
+    shutil.rmtree(staging, ignore_errors=True)
     # Appended: warnings collected before publication, such as excluded files, stay named.
     delivered_warnings.extend(warnings)
     return delivered
@@ -11003,7 +11032,11 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                         started_at=state.state["started_at"],
                         invocation=_assessment_invocation(argv),
                     )
-                    _assessment_render(scope, jobs, names, settings, workspace, root, captured=captured, progress=say)
+                    warnings.extend(
+                        _assessment_render(
+                            scope, jobs, names, settings, workspace, root, captured=captured, progress=say
+                        )
+                    )
                     _export_pentest_tasks_if_configured(workspace, settings)
                 say("Publishing the threat model")
                 delivered = _assessment_publish(scope, original, names, workspace, cfg, warnings)
@@ -11119,11 +11152,13 @@ def _unpublished_draft(argv: list[str], before: tuple[Path, int | None] | None) 
 
 @contextmanager
 def _stop_on_terminate(state):
-    """Turn SIGTERM from `assess-stop` into the run's own cancellation.
+    """Turn SIGTERM from `assess-stop`, a closed terminal or Ctrl-C into the run's own cancellation.
 
     Every job observes it through `should_stop`, stops its host process, and
     the run ends interrupted with its lock released (OR-8); accepted jobs stay
-    for --resume.
+    for --resume. Without this a hangup ended the controller while its model
+    processes, in their own sessions, kept running and billing. A second
+    Ctrl-C interrupts at once.
     """
     import signal
     import threading
@@ -11131,11 +11166,19 @@ def _stop_on_terminate(state):
     if threading.current_thread() is not threading.main_thread():
         yield
         return
-    previous = signal.signal(signal.SIGTERM, lambda signum, frame: setattr(state, "cancelled", True))
+
+    def cancel(signum, frame):
+        if signum == signal.SIGINT and state.cancelled:
+            raise KeyboardInterrupt
+        state.cancelled = True
+
+    stops = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    previous = {signum: signal.signal(signum, cancel) for signum in stops}
     try:
         yield
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def _launch_directory(repo: str) -> tuple[Path, Path]:
@@ -11255,7 +11298,7 @@ def _launch_main(command: str, argv: list[str]) -> int:
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
     from jsonschema import SchemaError, ValidationError
-    from runtime.analyst_host import HostCancelled, TransportError
+    from runtime.analyst_host import HostCancelled, HostTimeout, TransportError
     from runtime.assessment_host import ExchangeError
     from runtime.assessment_state import AssessmentPaused
 
@@ -11293,6 +11336,12 @@ def assess_main(argv: list[str]) -> int:
         ValidationError,
         SchemaError,
     ) as exc:
+        if isinstance(exc, HostCancelled) and not isinstance(exc, HostTimeout):
+            print(
+                f"⏸ assessment interrupted: {_cap_reason(str(exc))}; accepted steps are kept, continue with --resume",
+                file=sys.stderr,
+            )
+            return ASSESS_PAUSED_EXIT
         print(f"✗ assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
         draft = _unpublished_draft(argv, before)
         if draft:

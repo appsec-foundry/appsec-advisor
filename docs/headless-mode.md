@@ -270,7 +270,7 @@ old producer or orchestration path.
 
 ## Exit behavior and diagnosis
 
-An exit code of `0` means the requested supported operation completed and the required report artifact exists. Invalid configuration, unsupported modes, missing rerender inputs, a run that declined to discard a completed Stage 1, trust-preflight findings, validation failures, secret gate failures, and incomplete reports exit non-zero. A declined run analyzes nothing, so it never reports success even when an earlier report is still on disk.
+An exit code of `0` means the requested supported operation completed and the required report artifact exists. Invalid configuration, unsupported modes, missing rerender inputs, a run that declined to discard a completed Stage 1, trust-preflight findings, validation failures, secret gate failures, and incomplete reports exit non-zero. A declined run analyzes nothing, so it never reports success even when an earlier report is still on disk. A combined or single-repository controller run that stopped incomplete but can continue, at its `--pause-after` boundary or on a stop request, exits `3`; continue it with `--resume`. A failure exits `1`.
 
 Use these deterministic status tools against the selected output directory:
 

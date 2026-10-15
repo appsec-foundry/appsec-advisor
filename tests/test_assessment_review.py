@@ -214,7 +214,7 @@ def _abuse(ctx, jobs, **kwargs):
         {**ctx.cfg, **kwargs.pop("cfg", {})},
         instructions=instructions,
         run_script=kwargs.pop("run_script", None) or _run_script(ctx),
-        enrich=lambda: ctx.calls.append(("enrich", "")),
+        rebuild=lambda: ctx.calls.append(("rebuild", "")),
         progress=lambda text: None,
     )
 
@@ -234,13 +234,14 @@ def test_a_verified_case_is_promoted_with_its_namespaced_evidence_and_the_gate_p
     assert promoted["evidence_check"] == "verified"
     names = [name for name, _ in abuse.calls]
     order = [
-        "model/build_threat_model_yaml.py",
-        "enrich",
+        "rebuild",
         "model/triage_compute_ranking.py",
         "renderers/render_abuse_cases.py",
         "validators/abuse_case_gate.py",
     ]
     assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
+    # The controller's own build is the rebuild; a second builder here dropped its meta (RB-6).
+    assert "model/build_threat_model_yaml.py" not in names and names.count("rebuild") == 1
     model = yaml.safe_load((abuse.workspace / "threat-model.yaml").read_text())
     assert model["meta"]["source_repositories"][0]["label"] == "edge"
     assert "Canonical abuse-case analysis persisted" in receipts
@@ -257,7 +258,7 @@ def test_each_verified_case_is_reported_with_its_title_and_position(abuse):
         abuse.cfg,
         instructions=instructions,
         run_script=_run_script(abuse),
-        enrich=lambda: None,
+        rebuild=lambda: None,
         progress=shown.append,
     )
     assert f"Verifying abuse case: {CASE} — Expression evaluation leads to code execution (1/1)" in shown
@@ -583,7 +584,20 @@ def test_a_sole_repository_selects_shipped_business_and_per_scan_cases_with_the_
             {**cfg, "abuse_case_files": case_files},
             instructions=instructions,
             run_script=run,
-            enrich=lambda: None,
+            rebuild=lambda: None,
             progress=lambda text: None,
         )
     assert "AC-B-001" in listed and "REPO-AC-901" in listed
+
+
+def test_a_matcher_configuration_error_stops_the_run_instead_of_matching_nothing(abuse):
+    """An org-profile or catalog error writes no matches; it must not read as "none matched"."""
+    real = _run_script(abuse)
+
+    def run(name, args, acceptable=(0,)):
+        if name == "model/match_abuse_cases.py" and args[0] == "match":
+            return subprocess.CompletedProcess(args, 1, "", "org profile: abuse_cases must be a mapping")
+        return real(name, args, acceptable)
+
+    with pytest.raises(review.AssessmentReviewError, match="org profile"):
+        _abuse(abuse, Jobs(_verifier()), run_script=run)

@@ -160,8 +160,8 @@ def test_repeated_reads_and_incomplete_results_are_not_silently_accepted(tmp_pat
     assert "already in source_slices" in model.prompts[2]
     with pytest.raises(host.ExchangeError, match="exchange limit"):
         invoke(Model([read()] * host.MAX_EXCHANGES), tmp_path)
-    with pytest.raises(host.ExchangeError, match="contract"):
-        invoke(Model([{"action": "complete", "reads": [], "artifact": None}]), tmp_path)
+    with pytest.raises(host.ModelAnswerFailure, match="mixed both actions"):
+        invoke(Model([{"action": "complete", "reads": [], "artifact": None}] * 3), tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -173,8 +173,18 @@ def test_repeated_reads_and_incomplete_results_are_not_silently_accepted(tmp_pat
     ],
 )
 def test_host_compatible_envelope_still_enforces_exclusive_actions(tmp_path, proposal):
+    """The host cannot enforce read/complete exclusivity, so a mixed reply is corrected, never accepted."""
+    model = Model([proposal, complete()])
+    assert invoke(model, tmp_path).artifact == complete()["artifact"]
+    assert len(model.prompts) == 2 and "mixed both actions" in model.prompts[1]
+    with pytest.raises(host.ModelAnswerFailure, match="mixed both actions"):
+        invoke(Model([proposal] * 3), tmp_path)
+
+
+def test_a_reply_the_host_projection_rejects_still_ends_the_exchange(tmp_path):
+    """A reply outside the projection means the host ignored its own schema: no correction."""
     with pytest.raises(host.ExchangeError, match="contract"):
-        invoke(Model([proposal]), tmp_path)
+        invoke(Model([{"action": "complete", "reads": [], "artifact": {"summary": 7}}]), tmp_path)
 
 
 def test_cancellation_happens_before_the_model_is_called(tmp_path):

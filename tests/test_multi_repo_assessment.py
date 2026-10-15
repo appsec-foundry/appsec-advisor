@@ -914,6 +914,25 @@ def test_a_host_failure_ends_with_a_message_not_a_traceback(tmp_path, monkeypatc
     assert "stopped: host returned no parseable result" in err and "Unpublished draft" not in err
 
 
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("cancelled", controller.ASSESS_PAUSED_EXIT),
+        ("timeout", 1),
+    ],
+)
+def test_a_stop_request_is_an_incomplete_resumable_run_not_a_failure(tmp_path, monkeypatch, capsys, error, code):
+    """REQ-FLW-006: completion, incomplete execution and failure have distinct exit codes."""
+    from runtime.analyst_host import HostCancelled, HostTimeout
+
+    def stop(*args, **kwargs):
+        raise HostCancelled("Assessment cancelled") if error == "cancelled" else HostTimeout("job time limit")
+
+    monkeypatch.setattr(controller, "assess_repositories", stop)
+    assert controller.assess_main(["--repo", "a", "--repo", "b", "--output", str(tmp_path / "out")]) == code
+    assert ("--resume" in capsys.readouterr().err) is (error == "cancelled")
+
+
 def test_a_contract_check_failure_ends_with_a_message_not_a_traceback(monkeypatch, capsys):
     from jsonschema import ValidationError
 

@@ -9,7 +9,7 @@ into the workspace. Every workspace location is ``<label>/<relative path>``;
 a model sees and cites qualified ``(repository_id, path)`` pairs instead.
 
 This module sequences no other stage and publishes nothing. The controller
-supplies the job runner, role instructions, script runner and enrichment.
+supplies the job runner, role instructions, script runner and model rebuild.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import json
 import re
 from pathlib import Path
 
-import yaml
 from runtime.assessment_host import ExchangeError
 
 from orchestrator.assessment_workspace import WorkspaceError, read_json, write_json
@@ -309,38 +308,14 @@ def _derive(jobs, workspace: Path, *, instructions) -> list[str]:
     return [f"derived business cases admitted: {len(result['admitted'])}, dropped: {len(result['dropped'])}"]
 
 
-def _rebuild_model(workspace: Path, root: Path, run_script, enrich) -> None:
-    """Rebuild the model with verified chains; keep the controller-owned source rows."""
-    from shared._atomic_io import atomic_write_text
-
-    model_path = workspace / "threat-model.yaml"
-    before = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
-    owned = {
-        k: v
-        for k, v in (before.get("meta") or {}).items()
-        if k in ("source_repositories", "project_name", "business_context_source")
-    }
-    trace = before.get("business_context_trace") or {}
-    attribution = {k: trace[k] for k in ("source", "source_kind") if trace.get("status") == "applied" and k in trace}
-    run_script(
-        "model/build_threat_model_yaml.py",
-        [str(workspace), "--repo-root", str(root), "--plugin-root", str(PLUGIN_ROOT)],
-    )
-    if owned or attribution:
-        # Repository ownership is controller-applied; a rebuild must not drop it.
-        model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
-        model["meta"].update(owned)
-        if attribution and (model.get("business_context_trace") or {}).get("status") == "applied":
-            model["business_context_trace"].update(attribution)
-        atomic_write_text(model_path, yaml.safe_dump(model, sort_keys=False, allow_unicode=True))
-    run_script("validators/validate_intermediate.py", ["threat_model_output", str(model_path)])
-    enrich()
-
-
 def run_abuse_cases(
-    scope, jobs, names, workspace, root, cfg, *, instructions, run_script, enrich, progress
+    scope, jobs, names, workspace, root, cfg, *, instructions, run_script, rebuild, progress
 ) -> list[str]:
-    """Stage 1d on the workspace: match, verify per candidate, finalize, render and gate."""
+    """Stage 1d on the workspace: match, verify per candidate, finalize, render and gate.
+
+    ``rebuild()`` is the controller's own model build, so a rebuild with the
+    verified chains keeps every field the controller adds to the model.
+    """
     if cfg.get("skip_abuse_case_verification"):
         return ["Abuse verification disabled"]
     reject_repository_case_files(scope, names, cfg)
@@ -367,10 +342,11 @@ def run_abuse_cases(
         ],
         acceptable=(0, 1, 2),
     )
-    # Cases this run was explicitly given must not degrade to a receipt.
-    if match.returncode != 0 and (cfg.get("abuse_case_files") or cfg.get("only_abuse_case_ids")):
+    # A catalog, org-profile or selection error writes no matches at all; read
+    # as "none matched" it would skip every configured case and release gate.
+    if match.returncode != 0:
         detail = (match.stderr or match.stdout or "").strip()
-        raise AssessmentReviewError(f"the abuse-case matcher rejected the selected cases: {detail[-500:]}")
+        raise AssessmentReviewError(f"the abuse-case matcher rejected its case sources: {detail[-500:]}")
     listed = run_script("model/match_abuse_cases.py", ["list-candidates", "--output-dir", str(workspace)])
     candidates = [item for item in (listed.stdout or "").split() if _ABUSE_ID_RE.fullmatch(item)]
     if len(candidates) > MAX_CANDIDATES:
@@ -382,8 +358,6 @@ def run_abuse_cases(
         # The controller console's phase result step (`_phase_result`); the
         # numbered verification steps below count the checked cases.
         progress("Phase result: Abuse cases: none matched")
-    if match.returncode != 0:
-        receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
     if candidates:
         run_script(
             "contexts/build_abuse_case_contexts.py",
@@ -410,7 +384,7 @@ def run_abuse_cases(
         post_abuse=True,
     )
     if (workspace / ".abuse-case-verdicts.json").is_file():
-        _rebuild_model(workspace, root, run_script, enrich)
+        rebuild()
         run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
     persist_abuse_cases(workspace, root, cfg, run_script)
     receipts.append("Canonical abuse-case analysis persisted")

@@ -178,7 +178,7 @@ def test_any_root_change_prevents_combined_result(tmp_path, when):
     assert len(host.contexts) == (0 if when == "before" else 4)
 
 
-@pytest.mark.parametrize("cost", [None, float("nan"), -1, True, 0.06])
+@pytest.mark.parametrize("cost", [None, float("nan"), -1, True])
 def test_missing_or_invalid_cost_closes_further_dispatch(tmp_path, cost):
     scope = sources(tmp_path)
     host = ScriptedHost(scope, usd=cost)
@@ -187,6 +187,21 @@ def test_missing_or_invalid_cost_closes_further_dispatch(tmp_path, cost):
         discovery.discover(scope, host_factory=host.factory, budget=limits, should_stop=lambda: False)
     assert len(host.contexts) == 1 and limits.failed
     assert limits.spent_usd == 0.05
+
+
+def test_a_reported_cost_one_turn_over_the_reservation_is_charged_as_reported():
+    """The host checks its spending limit between turns, so a reply can cost slightly more."""
+    limits = discovery.DiscoveryBudget(max_usd=1.0, call_usd=0.05, max_calls=12, timeout_s=60)
+
+    class Over:
+        def __init__(self, ceiling):
+            pass
+
+        def invoke(self, *args):
+            return HostReply({"action": "complete"}, 0.06)
+
+    assert limits.invoke(Over, "s", "p", {}, 30, lambda: False).usd == 0.06
+    assert not limits.failed and limits.spent_usd == pytest.approx(0.06)
 
 
 def test_aggregate_budget_is_not_reset_for_next_repository(tmp_path):
@@ -227,8 +242,8 @@ def test_expired_budget_never_creates_a_host(tmp_path):
     assert host.ceilings == []
 
 
-@pytest.mark.parametrize("usd,settled", [(0.0, True), (0.03, True), (None, False), (0.06, False)])
-def test_a_refused_call_with_a_reported_cost_is_settled_so_the_run_can_resume(tmp_path, usd, settled):
+@pytest.mark.parametrize("usd", [0.0, 0.03, None, 0.06])
+def test_a_refused_call_is_settled_so_the_run_can_resume(tmp_path, usd):
     class RefusingHost:
         def invoke(self, *args):
             raise TransportError("host call failed: authentication_failed", reason="authentication_failed", usd=usd)
@@ -239,10 +254,11 @@ def test_a_refused_call_with_a_reported_cost_is_settled_so_the_run_can_resume(tm
             sources(tmp_path), host_factory=lambda ceiling: RefusingHost(), budget=limits, should_stop=lambda: False
         )
     assert caught.value.reason == "authentication_failed"
-    # A known cost replaces the reservation; an unknown or impossible one keeps it (MR-4).
-    assert limits.failed is not settled
-    assert limits.spent_usd == pytest.approx(usd if settled else 0.05)
-    assert ("--resume" in str(caught.value)) is settled
+    # A reported cost replaces the reservation; without a report the
+    # reservation the host enforced is the cost.
+    assert not limits.failed
+    assert limits.spent_usd == pytest.approx(0.05 if usd is None else usd)
+    assert "--resume" in str(caught.value)
 
 
 def test_a_small_repository_keeps_its_complete_file_list():
@@ -334,7 +350,7 @@ def test_an_unsettled_concurrent_call_stops_the_calls_waiting_for_budget():
         def invoke(self, system, prompt, schema, timeout_s, should_stop):
             started.set()
             release.wait(10)
-            raise TransportError("host crashed", reason="api_error")
+            return HostReply({"action": "complete"}, float("nan"))
 
     def call():
         try:
@@ -350,6 +366,22 @@ def test_an_unsettled_concurrent_call_stops_the_calls_waiting_for_budget():
     release.set()
     first.join(10)
     waiting.join(10)
-    # The unknown cost keeps its reservation and no waiting call starts after it.
+    # An implausible cost report keeps its reservation and no waiting call starts after it.
     assert limits.unsettled and limits.calls == 1
     assert any(isinstance(e, ExchangeError) and "accounting unavailable" in str(e) for e in errors)
+
+
+def test_a_call_cancelled_mid_flight_is_charged_its_reservation_and_stays_resumable():
+    """assess-stop or SIGTERM kills the call's process group; the host's spending limit bounds its cost."""
+    limits = discovery.DiscoveryBudget(max_usd=1.0, call_usd=0.05, max_calls=1, timeout_s=60)
+
+    class Stopped:
+        def __init__(self, ceiling):
+            pass
+
+        def invoke(self, *args):
+            raise HostCancelled("Assessment cancelled")
+
+    with pytest.raises(HostCancelled):
+        limits.invoke(Stopped, "s", "p", {}, 30, lambda: False)
+    assert not limits.failed and limits.spent_usd == pytest.approx(0.05)

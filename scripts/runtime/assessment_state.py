@@ -16,6 +16,7 @@ import re
 import secrets
 import shutil
 import stat
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -96,12 +97,20 @@ def _deliverable(output: Path, name: str) -> str:
 
 
 class AssessmentState:
+    # The lock is refreshed on this clock, independent of job progress, and
+    # states the threshold after which a holder that stopped refreshing it (a
+    # process killed with its session) no longer blocks the directory.
+    HEARTBEAT_SECONDS = 20
+    STALE_AFTER_SECONDS = 60
+
     def __init__(self, scope, *, configuration, runtime_sha256, budget, resume=False, replace=False):
         if not isinstance(scope, AssessmentScope) or not isinstance(budget, AssessmentBudget):
             raise ExchangeError("Assessment lifecycle requires an admitted scope and full budget")
         if not isinstance(runtime_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", runtime_sha256):
             raise ExchangeError("Assessment lifecycle requires the trusted runtime fingerprint")
         self.scope, self.budget, self.resume, self.replace = scope, budget, resume, replace
+        # Component workers poll `should_stop` concurrently; one checkpoint at a time.
+        self._checkpoint_lock = threading.RLock()
         self.output = scope.output
         self.path = self.output / STATE_NAME
         self.directory = self.output / WORK_NAME
@@ -134,8 +143,20 @@ class AssessmentState:
             self._open()
             self._held = True
             now = int(time.time())
-            acquire_lock._write_lock(self.lock, os.getpid(), now, self.state["run_id"], acquired_ts=now)
+            acquire_lock._write_lock(
+                self.lock, os.getpid(), now, self.state["run_id"], acquired_ts=now, stale_after=self.STALE_AFTER_SECONDS
+            )
             self.lock.chmod(0o600)
+            beating = threading.Event()
+
+            def heartbeat():
+                while not beating.wait(self.HEARTBEAT_SECONDS):
+                    try:
+                        self.checkpoint()
+                    except Exception:  # noqa: BLE001 - the run's own checkpoints report a lost lock
+                        return
+
+            threading.Thread(target=heartbeat, daemon=True).start()
             try:
                 self.checkpoint()
                 yield self
@@ -152,6 +173,7 @@ class AssessmentState:
                     self.state["status"] = "interrupted"
                     self.checkpoint()
             finally:
+                beating.set()
                 acquire_lock.release_lock(self.lock, self.state["run_id"])
                 self._held = False
 
@@ -395,6 +417,10 @@ class AssessmentState:
                 raise ExchangeError("Assessment liveness lock is not a bounded regular file")
 
     def checkpoint(self):
+        with self._checkpoint_lock:
+            self._checkpoint()
+
+    def _checkpoint(self):
         self._check_lock()
         if not self._held or acquire_lock.read_run_id(self.lock) != self.state["run_id"]:
             raise ExchangeError("Assessment no longer owns its output lock")
@@ -409,15 +435,16 @@ class AssessmentState:
         atomic_write_json(self.path, self.state)
         self.path.chmod(0o600)
         now = int(time.time())
-        acquire_lock._write_lock(self.lock, os.getpid(), now, self.state["run_id"])
+        acquire_lock._write_lock(self.lock, os.getpid(), now, self.state["run_id"], stale_after=self.STALE_AFTER_SECONDS)
         self.lock.chmod(0o600)
         self._last_heartbeat = time.monotonic()
 
     def should_stop(self):
         if not self._held:
             raise ExchangeError("Assessment lifecycle is not active")
-        if time.monotonic() - self._last_heartbeat >= 10:
-            self.checkpoint()
+        with self._checkpoint_lock:
+            if time.monotonic() - self._last_heartbeat >= 10:
+                self.checkpoint()
         return self.cancelled
 
     def complete(self, deliverables):
