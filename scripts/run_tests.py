@@ -214,6 +214,7 @@ GROUPS = {
         multi_repo_controller
         multi_repo_assessment
         single_repo_controller
+        controller_fixture
         controller_e2e
         multi_repo_config
         multi_repo_discovery
@@ -2192,6 +2193,7 @@ SOURCE_TESTS = {
     """),
     "scripts/analyzers/client_api_flows.py": _tests("""
         client_api_flows
+        controller_fixture
         multi_repo_assessment
     """),
     "scripts/analyzers/flow_route_auth.py": _tests("""
@@ -2547,6 +2549,7 @@ SOURCE_TESTS = {
         multi_repo_controller
         multi_repo_assessment
         single_repo_controller
+        controller_fixture
         script_layout
         business_impact_scope
         architect_review_runtime

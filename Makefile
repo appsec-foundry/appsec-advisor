@@ -92,6 +92,10 @@ coverage:  ## Run the suite + write an HTML coverage report to htmlcov/index.htm
 test-incremental:  ## Fast focused subset: incremental-scan reconciliation + 2-run main() E2E (no LLM)
 	@$(PYTHON) scripts/run_tests.py incremental -q
 
+.PHONY: test-controller
+test-controller:  ## One offline controller run over a small web-application fixture: route inventory, client-to-API flows, architecture gate, abuse matching, publication (no LLM, ~80 s)
+	@$(PYTHON) -m pytest tests/test_controller_fixture.py -q --tb=short
+
 .PHONY: e2e-controller
 e2e-controller:  ## Offline end-to-end runs of the assessment controller through run-headless.sh and a fake claude CLI, with injected API failures (no LLM, ~2 min with pytest-xdist)
 	@$(PYTHON) -m pytest tests/test_controller_e2e.py -q --tb=short $$($(PYTHON) -c 'import xdist' 2>/dev/null && echo '-n auto')

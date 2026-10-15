@@ -529,6 +529,37 @@ def test_new_untracked_file_invalidates_the_scope(tmp_path):
         admitted.verify_unchanged()
 
 
+@pytest.mark.parametrize(
+    "placeholders",
+    [(".bashrc", ".claude/settings.json", ".claude/hooks"), (".profile", "tools/.cache-lock")],
+)
+def test_untracked_empty_files_appearing_during_a_run_are_not_source(tmp_path, placeholders):
+    """A sandboxed agent session creates empty placeholders in its working directory per command."""
+    roots = pair(tmp_path)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    for name in placeholders:
+        path = Path(roots[0]) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(mode=0o444)
+    admitted.verify_unchanged()
+    assert scope.admit(roots, str(tmp_path / "out")).inventory() == admitted.inventory()
+
+
+@pytest.mark.parametrize("change", ["untracked-content", "tracked-emptied"])
+def test_empty_file_rule_leaves_other_source_changes_visible(tmp_path, change):
+    roots = pair(tmp_path)
+    tracked = Path(roots[0]) / "lib.py"
+    tracked.write_text("print(1)\n")
+    subprocess.run(["git", "-C", roots[0], "add", "lib.py"], check=True)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    if change == "untracked-content":
+        (Path(roots[0]) / ".bashrc").write_text("export PATH\n")
+    else:
+        tracked.write_text("")
+    with pytest.raises(scope.ScopeError, match="state changed"):
+        admitted.verify_unchanged()
+
+
 def _configure(root: str, *pairs: tuple[str, str]) -> None:
     for key, value in pairs:
         subprocess.run(["git", "-C", root, "config", key, value], check=True)

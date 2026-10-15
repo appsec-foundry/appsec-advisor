@@ -264,11 +264,54 @@ def test_pause_after_stops_at_the_phase_boundary_and_resume_reuses_its_jobs(tmp_
     assert "architecture_analyst" not in host.roles[calls:]
 
 
-def test_terminate_becomes_the_runs_own_cancellation():
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT])
+def test_terminate_becomes_the_runs_own_cancellation(signum):
+    """assess-stop, a closed terminal and Ctrl-C all stop the jobs and their model processes."""
     state = SimpleNamespace(cancelled=False)
-    previous = signal.getsignal(signal.SIGTERM)
+    previous = signal.getsignal(signum)
     with controller._stop_on_terminate(state):
-        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signum)
         time.sleep(0.05)
     assert state.cancelled
-    assert signal.getsignal(signal.SIGTERM) is previous
+    assert signal.getsignal(signum) is previous
+
+
+def test_a_second_ctrl_c_interrupts_at_once():
+    state = SimpleNamespace(cancelled=False)
+    with pytest.raises(KeyboardInterrupt), controller._stop_on_terminate(state):
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.05)
+
+
+def test_a_failed_best_effort_scanner_is_a_run_warning(tmp_path, monkeypatch):
+    """A report built without a scanner's checks must say so, not look complete."""
+    real = controller._run_script
+
+    def run_script(name, args, *rest, **kwargs):
+        if name == "analyzers/source_auth_scanner.py":
+            raise controller.ControllerError("scanner crashed", exit_code=1)
+        return real(name, args, *rest, **kwargs)
+
+    monkeypatch.setattr(controller, "_run_script", run_script)
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    outcome, _, _ = _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf",))
+    assert outcome["status"] == "complete"
+    assert any("analyzers/source_auth_scanner.py failed" in warning for warning in outcome["warnings"])
+
+
+def test_a_failed_export_publishes_nothing_and_leaves_the_earlier_report(tmp_path, monkeypatch):
+    """RB-5: deliverables are staged, so an export failure never leaves a new model beside an old report."""
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    real = controller._run_script
+
+    def run_script(name, args, *rest, **kwargs):
+        if name == "exporters/export_sarif.py":
+            raise controller.ControllerError("sarif exporter crashed", exit_code=1)
+        return real(name, args, *rest, **kwargs)
+
+    monkeypatch.setattr(controller, "_run_script", run_script)
+    with pytest.raises(controller.ControllerError, match="sarif exporter crashed"):
+        _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf", "--sarif"))
+    assert not [path.name for path in (tmp_path / "out").iterdir() if path.name.startswith("threat-model")]

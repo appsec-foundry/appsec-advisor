@@ -403,12 +403,17 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
             if output not in PurePosixPath(listed.rstrip("/")).parents
             or declared_repository_input(PurePosixPath(listed.rstrip("/")))
         }
+    # An untracked empty file carries no source. A sandboxed agent session
+    # creates such placeholders in its working directory for every command,
+    # so admitting them stopped a run as changed source.
+    empty = {listed for listed, mode in modes.items() if mode is None and _empty_file(root, listed)}
+    modes = {listed: mode for listed, mode in modes.items() if listed not in empty}
     paths = sorted(modes)
     if len(paths) > MAX_FILES:
         raise ScopeError("Source inventory exceeds the file limit")
     omissions = {listed: _omission(root, _relative(listed.rstrip("/")), modes[listed]) for listed in paths}
     artifacts = assessment_artifacts_in_inventory(listed for listed in paths if omissions[listed] is None)
-    dirty = any(path not in artifacts for path in _status_paths(status))
+    dirty = any(path not in artifacts and path not in empty for path in _status_paths(status))
     files: dict[str, bytes] = {}
     exclusions: list[dict[str, str]] = []
     for listed in paths:
@@ -458,6 +463,17 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
     return RepositoryView(
         repository_id, root, head, _json_digest(state), files, tuple(exclusions), dirty, tuple(sorted(artifacts))
     )
+
+
+def _empty_file(root: Path, listed: str) -> bool:
+    """Whether an untracked path is an empty regular file, without following a link."""
+    if listed.endswith("/"):
+        return False
+    try:
+        info = os.lstat(root.joinpath(*_relative(listed)))
+    except (OSError, ScopeError):
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size == 0
 
 
 def _status_paths(status: bytes) -> list[str]:

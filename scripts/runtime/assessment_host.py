@@ -427,6 +427,12 @@ def _serve_anchors(scope, anchors, allowed_sources, slices: list, seen: set, fit
     return served
 
 
+ENVELOPE_REASON = (
+    "The reply mixed both actions: a read requests sources with artifact null, "
+    "a complete returns the artifact with reads []."
+)
+
+
 def run_exchange(
     transport: Transport,
     scope: AssessmentScope,
@@ -476,6 +482,7 @@ def run_exchange(
     # structural; enforce read/complete exclusivity with the full validator
     # below, outside the model. Nested artifact constraints are retained.
     projected = host_schema(schema)
+    projected_envelope = Draft202012Validator(projected)
     system = instructions_with_rules(instructions, artifact_schema)
     deadline = time.monotonic() + timeout_s
     slices: list[dict] = []
@@ -539,6 +546,7 @@ def run_exchange(
         if len(encoded.encode()) > MAX_RESPONSE_BYTES:
             raise ExchangeError("Host reply exceeds its size limit")
         contract_error = None
+        envelope_error = False
         if not validator.is_valid(reply.payload):
             payload = reply.payload
             artifact_errors = (
@@ -552,19 +560,36 @@ def run_exchange(
             )
             # A violation of the projection the host itself enforced is not a
             # correctable omission; it means the host ignored its schema.
-            if not artifact_errors or not projected_validator.is_valid(payload["artifact"]):
+            if not artifact_errors and projected_envelope.is_valid(payload):
+                # The projection cannot express that read and complete exclude
+                # each other, so a reply mixing them honoured the host's
+                # schema: the model's error, which a correction turn can fix.
+                envelope_error = True
+            elif not artifact_errors or not projected_validator.is_valid(payload["artifact"]):
                 raise ExchangeError("Host reply violates the assessment exchange contract")
-            # The host enforced only the structural projection of the artifact;
-            # a well-formed result that breaks a condition of its full contract
-            # gets a correction turn.
-            error = min(artifact_errors, key=lambda e: len(e.absolute_path))
-            contract_error = "/".join(str(p) for p in error.absolute_path) + ": " + error.message
+            else:
+                # The host enforced only the structural projection of the artifact;
+                # a well-formed result that breaks a condition of its full contract
+                # gets a correction turn.
+                error = min(artifact_errors, key=lambda e: len(e.absolute_path))
+                contract_error = "/".join(str(p) for p in error.absolute_path) + ": " + error.message
         if reply.usd is None:
             cost = None
         elif type(reply.usd) not in (int, float) or not math.isfinite(reply.usd) or reply.usd < 0:
             raise TransportError("Host returned invalid cost accounting")
         elif cost is not None:
             cost += reply.usd
+        if envelope_error:
+            corrections += 1
+            reasons.append(ENVELOPE_REASON)
+            if corrections > MAX_CORRECTIONS:
+                raise ModelAnswerFailure(f"Result rejected after {corrections} attempt(s): {ENVELOPE_REASON}")
+            feedback = {
+                "reason": ENVELOPE_REASON,
+                "instruction": "Return either action read with the reads you need and artifact null, "
+                "or action complete with reads [] and the artifact.",
+            }
+            continue
         if reply.payload["action"] == "complete":
             artifact = reply.payload["artifact"]
             try:

@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Headless controller models keep their verified abuse cases in `threat-model.yaml` instead of reporting the analysis as not run while the report shows them.
+- A headless controller run started from a sandboxed Claude Code session in the target repository no longer stops as "Selected source state changed" when the sandbox creates empty placeholder files there.
+- A headless controller run no longer stops in architecture modeling when a browser client calls routes whose authentication stays unknown next to proven ones.
+- A stopped headless controller run, by `--stop`, Ctrl-C or a closed terminal, ends its model calls, exits with code 3 and continues with `--resume`, also when it stopped during a model call or a model process died without reporting its cost.
+- A failed export no longer leaves a new `threat-model.yaml` beside an older report; the headless controller replaces the report files only after all of them were produced.
+- A headless controller run whose route inventory or auth scanner failed says so in its warnings, and a broken abuse-case catalog or organization profile stops the run instead of reading as "no abuse case matched".
 - A route whose handler module default-exports an anonymous function or a factory, such as `export default () => listUsers`, is attributed to that module and its handler is analysed, instead of to a wrapper such as an async-error helper.
 - Routes guarded by `express-jwt`, `koa-jwt`, `express-oauth2-jwt-bearer` (`auth`) or `express-basic-auth`, also through a repository helper such as `isAuthorized = () => expressJwt({...})`, are recognised as authenticated with their credential type instead of being left unresolved; a guard configured not to reject, or whose options are passed by name, stays unresolved.
 - Headless controller models add a browser client's requests to its own API as data flows, one per authentication its routes prove (for example bearer, cookie, none), instead of omitting the client-to-API flow when the model did not read the client code.

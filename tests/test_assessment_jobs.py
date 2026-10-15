@@ -201,7 +201,7 @@ def test_cancellation_stops_even_a_cached_job(tmp_path):
     jobs, host, kwargs, _ = setup(tmp_path, should_stop=lambda: cancelled[0])
     jobs.execute(**kwargs)
     cancelled[0] = True
-    with pytest.raises(ExchangeError, match="cancelled"):
+    with pytest.raises(HostCancelled, match="cancelled"):
         jobs.execute(**kwargs)
     assert host.calls == 1
 
@@ -411,14 +411,15 @@ def test_a_failure_a_repeat_cannot_clear_is_not_retried(tmp_path, no_retry_wait,
     assert host.calls == 1
 
 
-def test_an_unsettled_failure_is_never_retried(tmp_path, no_retry_wait):
+def test_a_failure_without_a_cost_report_is_charged_its_reservation_and_stays_resumable(tmp_path, no_retry_wait):
     from runtime.analyst_host import TransportError
 
     host = Refused(1, "no_result", usd=None)
     jobs, kwargs = _hanging(tmp_path, host)
-    with pytest.raises(TransportError, match="no_result"):
+    with pytest.raises(TransportError, match="--resume"):
         jobs.execute(**kwargs)
-    assert host.calls == 1 and jobs.budget.failed
+    assert host.calls == 1 and not jobs.budget.failed
+    assert jobs.budget.spent_usd == pytest.approx(jobs.budget.call_usd)
 
 
 def test_a_paid_failure_is_repeated_once_and_reported(tmp_path, no_retry_wait):
@@ -600,7 +601,7 @@ def test_a_trust_or_accounting_failure_is_never_replaced(tmp_path, breach):
         jobs, host, kwargs, _ = setup(tmp_path)
 
         def unsettled(*args):
-            raise TransportError("host call failed: no_result", reason="no_result", usd=None)
+            return HostReply({"action": "complete", "reads": [], "artifact": {"result": "x"}}, float("nan"))
 
         host.invoke = unsettled
     with pytest.raises((ExchangeError, TransportError)):

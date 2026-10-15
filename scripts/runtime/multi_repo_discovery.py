@@ -161,9 +161,10 @@ MIN_CALL_USD = 0.05
 class DiscoveryBudget:
     """Shared admission accounting; reserve each call before creating its host.
 
-    A trusted factory must enforce the supplied dollar ceiling in its backend.
-    Missing cost information prevents any further call. Failed invocations
-    retain their entire reservation because their actual cost is unknown.
+    A trusted factory must enforce the supplied dollar ceiling in its backend,
+    so a call that ends without a cost report, by timeout, cancellation or a
+    dead host process, is charged its full reservation. Only an implausible
+    cost report leaves accounting unavailable and prevents any further call.
     """
 
     max_usd: float
@@ -255,7 +256,8 @@ class DiscoveryBudget:
                 # running call does not block this retry (MR-16).
                 if self.unsettled or exc.reason not in TRANSIENT_FAILURES or failures >= len(TRANSIENT_RETRY_DELAYS):
                     raise
-                paid = exc.usd is not None and exc.usd > FREE_FAILURE_USD
+                # A failure without a cost report was charged its reservation.
+                paid = exc.usd is None or exc.usd > FREE_FAILURE_USD
                 if paid and (failures or self._paid_retries() >= MAX_PAID_RETRIES):
                     raise
                 delay = TRANSIENT_RETRY_DELAYS[failures]
@@ -310,30 +312,29 @@ class DiscoveryBudget:
         try:
             reply = factory(ceiling).invoke(system, prompt, schema, remaining, should_stop)
         except TransportError as exc:
-            # A refused call whose cost the host still reported is settled, so
-            # the run can be resumed; an unknown cost stays reserved (MR-4).
-            if exc.usd is None or exc.usd > ceiling:
-                self._settle(ceiling, None)
-                raise
-            self._settle(ceiling, exc.usd)
+            # The host enforces the reservation as its spending limit, so a
+            # failed call without a cost report is charged the reservation; a
+            # reported cost, even one turn over it, is charged as reported.
+            # Either way the run can be resumed.
+            self._settle(ceiling, ceiling if exc.usd is None else exc.usd)
             raise TransportError(
                 f"{exc}; the run can continue: rerun the same command with --resume",
                 reason=exc.reason,
                 usd=exc.usd,
             ) from None
-        except HostTimeout:
-            # The host enforces the reservation as its own spending limit, so
-            # the reserved amount bounds the unknown cost: keep it as spent
-            # and leave accounting available for the retry.
+        except HostCancelled:
+            # A timed-out or cancelled call's process group is stopped; its
+            # reservation bounds the unknown cost, so keep it as spent and
+            # leave accounting available for a retry or --resume.
             self._settle(ceiling, ceiling)
             raise
         except BaseException:
             self._settle(ceiling, None)
             raise
         cost = reply.usd
-        if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0 or cost > ceiling:
+        if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0:
             self._settle(ceiling, None)
-            raise TransportError("Model call cost is unavailable or exceeds its reservation")
+            raise TransportError("Model call cost is unavailable")
         self._settle(ceiling, cost)
         return reply
 
