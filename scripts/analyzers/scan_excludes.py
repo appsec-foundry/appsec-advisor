@@ -66,6 +66,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from shared._finding_locator import CODE_EXTENSIONS, NOEXT_CODE_FILES
 from shared._paths import strip_dot_slash
 
 try:
@@ -100,6 +101,12 @@ _ASSESSMENT_RUNTIME_MARKERS = frozenset(
     }
 )
 _ASSESSMENT_FINAL_PAIR = frozenset({"threat-model.md", "threat-model.yaml"})
+# Data, configuration and documentation formats in CODE_EXTENSIONS; a run output
+# holds these, so they never show that program code shares its directory.
+_NON_PROGRAM_SUFFIXES = frozenset(
+    "html htm css scss sass less yml yaml json jsonc toml ini cfg conf config env properties "
+    "xml plist lock mod sum txt md csv".split()
+)
 _PRIVATE_OUTPUT_TREES = frozenset(
     {".assessment-work", ".appsec-cache", ".fragments", ".dispatch-context", ".active-tool-calls"}
 )
@@ -322,6 +329,11 @@ def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
         for parent, children in names.items()
         if _ASSESSMENT_FINAL_PAIR <= children or len(_ASSESSMENT_RUNTIME_MARKERS & children) >= 2
     }
+    # An output copy without program code (a renamed or archived report) is
+    # excluded whole: older plugin versions wrote products no list names. With
+    # code beside it, or in the repository root, only listed products go.
+    code_dirs = {parent for path in inventory if _is_program_code(path) for parent in path.parents}
+    whole = {output for output in outputs if output != PurePosixPath(".") and output not in code_dirs}
     artifacts = set()
     for path in inventory:
         # Private output trees cannot become source by imitating an input name.
@@ -336,9 +348,17 @@ def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
         product = path.name in _ASSESSMENT_RUNTIME_MARKERS or any(
             fnmatch.fnmatchcase(path.name, pattern) for pattern in _ASSESSMENT_PRODUCT_PATTERNS
         )
-        if owned or (path.parent in outputs and product):
+        if owned or (path.parent in outputs and product) or whole.intersection(path.parents):
             artifacts.add(path.as_posix())
     return artifacts
+
+
+def _is_program_code(path: PurePosixPath) -> bool:
+    """Whether a file is program source rather than data, configuration or documentation."""
+    suffix = path.suffix.lower().lstrip(".")
+    if not suffix:
+        return path.name.lower() in NOEXT_CODE_FILES
+    return suffix in CODE_EXTENSIONS and suffix not in _NON_PROGRAM_SUFFIXES
 
 
 def is_assessment_output_dir(path: Path) -> bool:
