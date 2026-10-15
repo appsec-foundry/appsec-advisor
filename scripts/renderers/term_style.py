@@ -131,15 +131,16 @@ def plugin_version() -> str:
 
 
 def logo(st: Style, detail: str) -> list[str]:
-    """The three-line headless logo: a framed mark, the name, the tagline and ``detail``.
+    """The three-line headless logo: a scanner light bar, the name, the tagline and ``detail``.
 
     Shown only on a terminal; callers print their plain title line otherwise.
     """
-    frame = lambda text: st(text, "agent")  # noqa: E731
+    frame = lambda text: st(text, "muted")  # noqa: E731
+    light = st("··", "muted") + st("▒▓█▓▒", "critical") + st("··", "muted")
     return [
-        f"   {frame('╭───╮')}  {st(st.gradient('appsec-advisor'), 'bold')}",
-        f"   {frame('│')} {st('◆', 'accent')} {frame('│')}  {st(TAGLINE, 'muted')}",
-        f"   {frame('╰───╯')}  {st(detail, 'muted')}",
+        f"   {frame('┌─────────┐')}  {st(st.gradient('appsec-advisor'), 'bold')}",
+        f"   {frame('│')}{light}{frame('│')}  {st(TAGLINE, 'muted')}",
+        f"   {frame('└─────────┘')}  {st(detail, 'muted')}",
     ]
 
 

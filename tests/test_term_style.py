@@ -71,9 +71,9 @@ def test_logo_command_is_plain_off_a_terminal(capsys, monkeypatch) -> None:
     main(["logo", "headless"])
     lines = capsys.readouterr().out.splitlines()
     assert "\x1b" not in "".join(lines)
-    assert lines[0] == "   ╭───╮  appsec-advisor"
-    assert lines[1] == "   │ ◆ │  code-derived STRIDE threat modeling"
-    assert lines[2].startswith("   ╰───╯  v") and lines[2].endswith(" · headless")
+    assert lines[0] == "   ┌─────────┐  appsec-advisor"
+    assert lines[1] == "   │··▒▓█▓▒··│  code-derived STRIDE threat modeling"
+    assert lines[2].startswith("   └─────────┘  v") and lines[2].endswith(" · headless")
 
 
 def test_logo_lines_keep_their_width_in_colour() -> None:
