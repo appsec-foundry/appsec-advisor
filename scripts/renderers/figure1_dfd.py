@@ -128,7 +128,11 @@ LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of t
 # The first lane keeps the geometry gate's 14-unit clearance from the gap coordinate.
 BARE_OFF, BARE_LANE0, BARE_LABEL_PAD = 32, 16, 60
 LEGEND_W = 350
+# Narrowest legend block that keeps three columns; below it the legend falls
+# back to fewer standard-width columns.
+LEGEND_MIN_W = 300
 LEGEND_GAP = 20
+LEGEND_SIDE_MIN = 8  # content clearance from a legend block's side edges
 LEGEND_HEAD = 26
 LEGEND_INSET = 14
 LEGEND_CONTENT_GAP = 10
@@ -2720,26 +2724,49 @@ def _legend_columns(sections, ncols):
     return min(eligible, key=lambda c: (c[1], c[0], c[2], c[3]))[3]
 
 
-def _place_legend(canvas, blocks, width, top):
+def _legend_layout(width, count, min_width=LEGEND_MIN_W):
+    """(columns, block width) for `count` legend sections in `width`.
+
+    Three columns are kept while each block stays at least `min_width` wide, so
+    a diagram slightly narrower than three standard blocks does not fall back to
+    two columns with one wide empty gap. Wider diagrams keep LEGEND_W blocks.
+    """
+    for ncols in range(min(3, count), 1, -1):
+        block = (width - (ncols - 1) * LEGEND_GAP) / ncols
+        if block >= min_width:
+            return ncols, min(LEGEND_W, block)
+    return 1, LEGEND_W
+
+
+def _legend_fits(blocks, width):
+    """Whether every section keeps the side clearance at block width `width`."""
+    return all(
+        min(min(b[0], width - b[2]) for b in block.legend_content) >= LEGEND_SIDE_MIN
+        for _key, block in blocks
+        if block.legend_content
+    )
+
+
+def _place_legend(canvas, blocks, width, top, block_width=LEGEND_W):
     """Place measured blocks below the graph without enlarging its width."""
-    ncols = min(3, len(blocks), max(1, int((width + LEGEND_GAP) // (LEGEND_W + LEGEND_GAP))))
+    ncols = _legend_layout(width, len(blocks), min_width=block_width)[0]
     columns = _legend_columns([(key, block.maxy) for key, block in blocks], ncols)
-    gap = (width - ncols * LEGEND_W) / (ncols - 1) if ncols > 1 else 0
+    gap = (width - ncols * block_width) / (ncols - 1) if ncols > 1 else 0
     bottoms = [top] * ncols
     for (key, block), col in zip(blocks, columns):
-        x, y = MARGIN + col * (LEGEND_W + gap), bottoms[col]
+        x, y = MARGIN + col * (block_width + gap), bottoms[col]
         canvas.add(
             f'<g data-legend-section="{key}" data-legend-column="{col + 1}" transform="translate({x:.1f} {y:.1f})">'
         )
         canvas.o.extend(block.o)
         canvas.add("</g>")
-        canvas.legend_boxes.append((x, y, x + LEGEND_W, y + block.maxy, key))
+        canvas.legend_boxes.append((x, y, x + block_width, y + block.maxy, key))
         if block.legend_content:
             canvas.legend_clearances.append(
                 (
                     key,
                     min(b[1] for b in block.legend_content) - LEGEND_HEAD,
-                    min(min(b[0], LEGEND_W - b[2]) for b in block.legend_content),
+                    min(min(b[0], block_width - b[2]) for b in block.legend_content),
                     block.maxy - max(b[3] for b in block.legend_content),
                 )
             )
@@ -3211,10 +3238,18 @@ def _render(
                 c.add("</g>")
     _flow_labels(c, d, nodes, edges, [boundaries[g] for g in sorted(d.get("_boundary_gaps") or {})], zone_boxes)
 
-    blocks = _legend_blocks(
-        d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups
-    )
-    _place_legend(c, blocks, W - 2 * MARGIN, max(height, c.maxy + MARGIN) + 10)
+    legend_args = (d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups)
+    blocks = _legend_blocks(*legend_args)
+    block_width = _legend_layout(W - 2 * MARGIN, len(blocks))[1]
+    if block_width != LEGEND_W:
+        # Section count is known only after rendering; wrap again at the narrower
+        # width, and keep standard blocks when fixed content would not fit.
+        narrow = _legend_blocks(*legend_args, block_width=block_width)
+        if _legend_fits(narrow, block_width):
+            blocks = narrow
+        else:
+            block_width = LEGEND_W
+    _place_legend(c, blocks, W - 2 * MARGIN, max(height, c.maxy + MARGIN) + 10, block_width)
     H = max(height, c.maxy + MARGIN)
     c.o[0] = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="{FONT}">'
@@ -3224,18 +3259,37 @@ def _render(
     return "\n".join(c.o), c
 
 
-def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups):
+def _legend_blocks(
+    d,
+    nodes,
+    edges,
+    tbs,
+    tb_threats,
+    scenarios,
+    actor_colors,
+    dropped,
+    unattached_assets,
+    actor_groups,
+    block_width=LEGEND_W,
+):
     """Render independent sections at the origin before measuring their heights."""
     blocks = []
     lx = LEGEND_INSET - 10
-    lw = LEGEND_W - 2 * lx
+    lw = block_width - 2 * lx
     c = None
+
+    def note(x, y, text, size, **style):
+        """Draw a caption from x, wrapped to keep the side clearance; return the height it adds."""
+        lines = _legend_wrap(text, block_width - LEGEND_SIDE_MIN - x, size)
+        for i, line in enumerate(lines):
+            c.text(x, y + i * 12, line, size=size, anchor="start", **style)
+        return (len(lines) - 1) * 12
 
     def head(key, title):
         nonlocal c
         c = _Canvas()
         blocks.append((key, c))
-        c.rect(0, 0, LEGEND_W, LEGEND_HEAD, fill=NAVY, rx=4)
+        c.rect(0, 0, block_width, LEGEND_HEAD, fill=NAVY, rx=4)
         c.text(lx + lw / 2, 17, title, size=10.5, fill="#ffffff", weight="bold")
         c.legend_content = []
         return LEGEND_HEAD + LEGEND_CONTENT_GAP + 9
@@ -3256,24 +3310,24 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
 
     y = head("notation", "Notation")
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4)
-    c.text(lx + 40, y + 3, "external entity (actor, third party)", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "external entity (actor, third party)", 9)
     y += 20
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4, rx=7)
-    c.text(lx + 40, y + 3, "process (component); double line = complex", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "process (component); double line = complex", 9)
     y += 20
     c.path(
         f"M {lx + 10} {y - 8} H {lx + 32} M {lx + 10} {y + 6} H {lx + 32} M {lx + 10} {y - 8} V {y + 6} M {lx + 13} {y - 8} V {y + 6}",
         INK,
         sw=1.4,
     )
-    c.text(lx + 40, y + 3, "data store (evidenced asset locations)", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "data store (evidenced asset locations)", 9)
     y += 20
     if any(n.get("technology") for n in nodes.values()):
         c.text(lx + 21, y + 3, "[ ]", size=FS, fill=MUTED, italic=True)
-        c.text(lx + 40, y + 3, "framework · language; data store: engine", size=9, anchor="start")
+        y += note(lx + 40, y + 3, "framework · language; data store: engine", 9)
         y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", CLS_COL["Confidential"], sw=1.6, marker="arw-Confidential")
-    c.text(lx + 40, y + 3, "data flow · classification colour · two heads = bidirectional", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "data flow · classification colour · two heads = bidirectional", 9)
     y += 16
     xx = lx + 40
     for k, col in CLS_COL.items():
@@ -3283,58 +3337,38 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     y += 18
     if d.get("_boundary_gaps"):
         c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2, dash="6 4")
-        c.text(lx + 40, y + 3, "trust boundary crossed between these columns", size=9, anchor="start")
+        y += note(lx + 40, y + 3, "trust boundary crossed between these columns", 9)
         y += 20
     if d.get("_local_boundaries"):
         c.rect(lx + 6, y - 8, 30, 12, fill="#ffffff", stroke=RED, sw=1.2, rx=6)
-        c.text(lx + 40, y + 3, "trust change within a column (dashed: inferred)", size=9, anchor="start")
+        y += note(lx + 40, y + 3, "trust change within a column (dashed: inferred)", 9)
         y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", LINE, sw=1.2, dash="6 4")
-    c.text(lx + 40, y + 3, "dashed outline = zone, not itself a boundary", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "dashed outline = zone, not itself a boundary", 9)
     if not d.get("_overview"):
         y += 20
         c.rect(lx + 8, y - 9, 44, 16, fill="#ffffff", stroke=RED, sw=1.4, rx=8)
         c.text(lx + 14, y + 3, "tb ✕", size=8, anchor="start", fill=RED, weight="bold")
         c.rect(lx + 38, y - 7, 11, 12, fill=RED, rx=6)
         c.text(lx + 43.5, y + 3, "9", size=8, fill="#ffffff", weight="bold")
-        c.text(lx + 60, y + 3, "boundary: ✕ refuted · ✓ held · ? unverified", size=8.5, anchor="start")
+        y += note(lx + 60, y + 3, "boundary: ✕ refuted · ✓ held · ? unverified", 8.5)
         y += 13
-        c.text(
-            lx + 60,
-            y + 3,
-            "count = crossing threats · corner tag = guarded entry",
-            size=8.5,
-            anchor="start",
-            fill=MUTED,
-        )
+        y += note(lx + 60, y + 3, "count = crossing threats · corner tag = guarded entry", 8.5, fill=MUTED)
     y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=ATTACK_WIDTH, marker="arw-red")
-    c.text(
-        lx + 40,
-        y + 3,
-        "solid = direct attack · dashed = via user",
-        size=9,
-        anchor="start",
-    )
+    y += note(lx + 40, y + 3, "solid = direct attack · dashed = via user", 9)
     y += 20
     _globe(c, lx + 21, y - 2)
-    c.text(lx + 40, y + 3, "⊕ internet-exposed entry point", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "⊕ internet-exposed entry point", 9)
     y += 20
     _stride_strip(c, lx + 10, y - 9, {"S": 1, "T": 1, "I": 1})
-    c.text(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", size=8.5, anchor="start")
+    y += note(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", 8.5)
     # The category example sits closer to its own caption than to the STRIDE
     # caption above or the severity key below, so neither caption reads as
     # belonging to the neighbouring sample.
     y += 36
     _weak_line(c, lx + 10, y + 1, [("Unsafe Query Construction (SQLi)", 3, 0)], 200)
-    c.text(
-        lx + 10,
-        y + 13,
-        "All Critical · High fills to 5 · +N = omitted High categories",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
+    y += note(lx + 10, y + 13, "All Critical · High fills to 5 · +N = omitted High categories", 8.5, fill=MUTED)
     y += 32
     xx = lx + 10
     for s, col in SEV_COL.items():
@@ -3342,33 +3376,14 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         c.circle(xx + 4.5, y - 2, 4.5, fill=col)
         c.text(xx + 13, y + 1, s, size=9, anchor="start")
         xx += 70
-    c.text(
-        lx + 10,
-        y + 16,
-        "counts on a node = threats per severity · ①–⑨ = attack scenario",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
+    y += note(lx + 10, y + 16, "counts on a node = threats per severity · ①–⑨ = attack scenario", 8.5, fill=MUTED)
     y += 13
     if len(_attackers(nodes)) > 1:
-        c.text(
-            lx + 10,
-            y + 16,
-            "A1 ①② = scenarios of attacker A1 · A1 at an arrowhead = its attack",
-            size=8.5,
-            anchor="start",
-            fill=MUTED,
+        y += note(
+            lx + 10, y + 16, "A1 ①② = scenarios of attacker A1 · A1 at an arrowhead = its attack", 8.5, fill=MUTED
         )
         y += 13
-    c.text(
-        lx + 10,
-        y + 16,
-        "badges also count scenarios that hit an asset stored there",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
+    y += note(lx + 10, y + 16, "badges also count scenarios that hit an asset stored there", 8.5, fill=MUTED)
     y += 32
 
     overflow = [(n, cap["more"]) for n in nodes.values() for cap in n.get("capabilities") or [] if cap.get("more")]
@@ -3677,7 +3692,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
 def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
     problems = []
     for name, top, side, bottom in canvas.legend_clearances:
-        if top < LEGEND_CONTENT_GAP or side < 8 or bottom < LEGEND_CONTENT_GAP:
+        if top < LEGEND_CONTENT_GAP or side < LEGEND_SIDE_MIN or bottom < LEGEND_CONTENT_GAP:
             problems.append(f"legend padding: {name} (top={top:g}, side={side:g}, bottom={bottom:g})")
     rects = {n["id"]: (n["x"] + 1, n["y"] + 1, n["x"] + n["w"] - 1, n["y"] + n["h"] - 1) for n in nodes.values()}
     segs = []
