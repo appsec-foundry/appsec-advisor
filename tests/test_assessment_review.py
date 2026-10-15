@@ -426,6 +426,71 @@ def test_an_architect_correction_is_applied_and_preserved_downstream(architect):
     assert len(jobs.calls) == 1
 
 
+def test_a_promoted_abuse_finding_is_reviewed_before_rebuild_and_ranking(abuse):
+    from tests.test_architect_review_runtime import review as initial_review
+
+    abuse.cfg.update(architect_review=True, run_id="promoted-case-review", architect_model="sonnet")
+    workspace = abuse.workspace
+    (workspace / ".skill-config.json").write_text(json.dumps(abuse.cfg))
+    (workspace / ".stride-analyst-context.json").write_text("{}")
+    (workspace / ".threats-merged.json").write_text(json.dumps(merged(finding(filename="edge/app.py"))))
+    (workspace / ".components.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {"id": "gateway", "name": "Gateway", "paths": ["edge/app.py"]},
+                ]
+            }
+        )
+    )
+    initial = initial_review(workspace, abuse.cfg)
+    model = yaml.safe_load((workspace / "threat-model.yaml").read_text())
+    model["components"] = [{"id": "gateway", "name": "Gateway", "paths": ["edge/app.py"]}]
+    (workspace / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    order = []
+
+    def respond(role, context):
+        order.append(role)
+        if role == "abuse_case_verifier":
+            return _verifier()(role, context)
+        assert role == "architect_reviewer"
+        packets = context["packets"]
+        assert [row["finding"]["t_id"] for packet in packets for row in packet["findings"]] == ["T-002"]
+        proposals = {}
+        for packet in packets:
+            proposal = answer(packet)
+            for row in proposal["decisions"]:
+                row.update(assessment="unchanged")
+                row.pop("rating")
+                row["fix"]["operation"] = "add"
+                row["fix"]["value"].update(
+                    title="Replace expression evaluation with a fixed grammar",
+                    steps=[
+                        "Parse expressions using the fixed grammar.",
+                        "Reject unsupported operations before evaluation.",
+                    ],
+                    verification="Code-bearing expressions are rejected; supported arithmetic still succeeds.",
+                )
+            proposals[packet["packet_id"]] = proposal
+        return {"schema_version": 1, "job_id": context["job_id"], "proposals": proposals}, []
+
+    real = _run_script(abuse)
+
+    def run(name, args, **kw):
+        order.append(name)
+        return real(name, args, **kw)
+
+    _abuse(abuse, Jobs(respond), run_script=run)
+    current = json.loads((workspace / ".threats-merged.json").read_text())
+    assert current["threats"][0] == initial["snapshot"]["threats"][0]
+    assert current["threats"][1]["remediation"]["steps"][0].startswith("Parse expressions")
+    model = runtime.project_model(workspace, model_for(current), current)
+    assert runtime.verify_model(workspace, model)
+    expected = ["model/promote_verified_abuse_cases.py", "architect_reviewer", "model/triage_compute_ranking.py"]
+    assert [order.index(name) for name in expected] == sorted(order.index(name) for name in expected)
+    assert runtime.review_coverage(runtime.load_review(workspace))["reviewed"] == 2
+
+
 def test_a_reviewer_reading_another_components_file_is_rejected(architect):
     jobs = Jobs(_reviewer([served(SERVICE, "lib/records.rs", 1, 1)]))
     with pytest.raises(ExchangeError, match="outside its component"):

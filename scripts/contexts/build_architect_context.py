@@ -125,6 +125,7 @@ def build_context(
     max_packets: int,
     output_dir: Path | None = None,
     register_floor: str | None = None,
+    finding_ids: list[str] | None = None,
 ) -> dict:
     """Group eligible findings without truncating a finding or hiding coverage.
 
@@ -132,6 +133,8 @@ def build_context(
     projection: that projection deliberately omits explicit no-harm context.
     Missing context remains null. Declared business harm never changes ratings.
     Policy caps account for companions in the complete canonical register.
+    A controller-selected subset limits packet membership, not the register
+    used to derive policy caps or to bind the proposals' input fingerprint.
     """
     _canonical_valid(merged, output_dir)
     _, merged_schema, analyst_schema, registry = _contracts()
@@ -166,10 +169,16 @@ def build_context(
     threats = merged["threats"]
     if len({row["t_id"] for row in threats}) != len(threats):
         raise ReviewError("duplicate canonical finding identity")
+    if finding_ids is not None and (
+        len(set(finding_ids)) != len(finding_ids) or not set(finding_ids).issubset(row["t_id"] for row in threats)
+    ):
+        raise ReviewError("invalid controller architect finding selection")
     priorities = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4"}
     groups: dict[str, list[dict]] = {}
     register_floor = register_floor or _register_floor(output_dir)
     for row in threats:
+        if finding_ids is not None and row["t_id"] not in finding_ids:
+            continue
         if is_refuted(row):
             result["excluded"].append({"t_id": row["t_id"], "reason": "refuted"})
         elif below_register_floor(row, register_floor):
@@ -242,6 +251,7 @@ def verify_manifest_sources(
     max_packet_bytes: int,
     max_packets: int,
     output_dir: Path | None = None,
+    finding_ids: list[str] | None = None,
 ) -> None:
     """Reconstruct controller-owned selection; a valid hash alone is not authority."""
     validate_manifest(manifest)
@@ -253,6 +263,7 @@ def verify_manifest_sources(
         max_packet_bytes=max_packet_bytes,
         max_packets=max_packets,
         output_dir=output_dir,
+        finding_ids=finding_ids,
     )
     if manifest != expected:
         raise ReviewError("architect context is stale or altered")

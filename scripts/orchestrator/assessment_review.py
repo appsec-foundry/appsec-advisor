@@ -398,6 +398,17 @@ def run_abuse_cases(
     run_script("validators/verify_abuse_cases.py", ["merge", "--output-dir", str(workspace)])
     run_script("model/match_abuse_cases.py", ["finalize", "--output-dir", str(workspace)])
     run_script("model/promote_verified_abuse_cases.py", ["--output-dir", str(workspace)])
+    receipts += run_architect_review(
+        scope,
+        jobs,
+        names,
+        workspace,
+        cfg,
+        instructions=instructions,
+        run_script=run_script,
+        progress=progress,
+        post_abuse=True,
+    )
     if (workspace / ".abuse-case-verdicts.json").is_file():
         _rebuild_model(workspace, root, run_script, enrich)
         run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
@@ -491,7 +502,9 @@ def _review_job(jobs, workspace: Path, job: dict, allowed: frozenset, *, instruc
     return {"schema_version": 1, "job_id": job["job_id"], "proposals": proposals}
 
 
-def run_architect_review(scope, jobs, names, workspace, cfg, *, instructions, run_script, progress) -> list[str]:
+def run_architect_review(
+    scope, jobs, names, workspace, cfg, *, instructions, run_script, progress, post_abuse=False
+) -> list[str]:
     """Review every evidenced finding per component before triage; apply corrections deterministically."""
     from analyzers.architect_review import ReviewError
     from analyzers.architect_review_runtime import advance_review, load_review, review_coverage
@@ -508,7 +521,7 @@ def run_architect_review(scope, jobs, names, workspace, cfg, *, instructions, ru
     components = {row["id"]: row for row in read_json(workspace / ".components.json")["components"]}
     try:
         for _ in range(_MAX_ARCHITECT_WAVES):
-            wave = advance_review(workspace, review_cfg)
+            wave = advance_review(workspace, review_cfg, post_abuse=post_abuse)
             if wave is None:
                 break
             for job in wave:
@@ -518,7 +531,12 @@ def run_architect_review(scope, jobs, names, workspace, cfg, *, instructions, ru
                 write_json(workspace / job["output_artifact"], proposals)
         else:
             raise AssessmentReviewError("architect review exceeded its wave bound")
-        coverage = review_coverage(load_review(workspace))
+        from model.build_threat_model_yaml import build_threats
+
+        threats, _ = build_threats(
+            read_json(workspace / ".threats-merged.json"), cfg.get("register_severity_floor", "medium")
+        )
+        coverage = review_coverage(load_review(workspace), finding_ids={row["id"] for row in threats})
     except (OSError, ReviewError) as exc:
         raise AssessmentReviewError("architect review transaction failed") from exc
     run_script("validators/validate_intermediate.py", ["threats_merged", str(workspace / ".threats-merged.json")])
