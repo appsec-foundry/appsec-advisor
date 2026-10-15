@@ -9,7 +9,7 @@ const KEEP = 200
 const POLL_MS = 1000
 // A resumed step replays earlier phases within seconds; no toast for those.
 const REPLAY_S = 10
-// The controller's default heartbeat threshold: an older heartbeat is no live run.
+// The controller's default heartbeat threshold, for a lock that states no stale_after=.
 const LIVE_STALE_S = 300
 const REPORT_DIR = 'docs/security'
 
@@ -120,11 +120,14 @@ export const toastOf = (before: Step, after: Step, phaseSeconds: number, totalSe
 }
 
 // `.appsec-lock`: pid, heartbeat (epoch seconds), run id.
-export const lockOf = (text: string): { heartbeat: number; runId: string } | undefined => {
-  const [, heartbeat, runId] = text.split('\n').map(line => line.trim())
+export const lockOf = (text: string): { heartbeat: number; runId: string; staleAfter: number } | undefined => {
+  const lines = text.split('\n').map(line => line.trim())
+  const heartbeat = lines[1]
   if (heartbeat === undefined || !/^\d+$/.test(heartbeat)) return undefined
+  const runId = lines[2] !== undefined && !lines[2].includes('=') ? lines[2] : ''
+  const staleAfter = Number(lines.find(line => line.startsWith('stale_after='))?.slice('stale_after='.length))
 
-  return { heartbeat: Number(heartbeat), runId: runId ?? '' }
+  return { heartbeat: Number(heartbeat), runId, staleAfter: staleAfter > 0 ? staleAfter : LIVE_STALE_S }
 }
 
 export const roleOf = (name: string): string => name.replace(/^\d+-/, '').replace(/\.jsonl$/, '')
@@ -156,7 +159,7 @@ const pollLive = async ($: EngineInterface, t: number): Promise<void> => {
   const text = await $.fs.read(`${dir}/.appsec-lock`).catch(() => undefined)
   const lock = text === undefined ? undefined : lockOf(text)
   const before = await read($, live)
-  if (lock === undefined || t / 1000 - lock.heartbeat > LIVE_STALE_S) {
+  if (lock === undefined || t / 1000 - lock.heartbeat > lock.staleAfter) {
     if (before === null) return
     await update($, live, () => null)
     const state = await $.fs.read(`${dir}/.assessment-state.json`).catch(() => undefined)

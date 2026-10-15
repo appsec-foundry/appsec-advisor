@@ -55,7 +55,9 @@ test('formats durations like the controller', () => {
 })
 
 test('reads the lock heartbeat and run id', () => {
-  expect(lockOf('3\n1792083952\nassessment-0cd1ee50\n')).toEqual({ heartbeat: 1792083952, runId: 'assessment-0cd1ee50' })
+  expect(lockOf('3\n1792083952\nassessment-0cd1ee50\n')).toEqual({ heartbeat: 1792083952, runId: 'assessment-0cd1ee50', staleAfter: 300 })
+  expect(lockOf('3\n1792083952\nassessment-0cd1ee50\nacquired=1792083950\nstale_after=60\n')?.staleAfter).toBe(60)
+  expect(lockOf('3\n1792083952\nstale_after=60\n')?.runId).toBe('')
   expect(lockOf('garbage')).toBe(undefined)
 })
 
