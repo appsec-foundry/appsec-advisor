@@ -1510,14 +1510,57 @@ def _catalog(tmp_path: Path, rows: list[dict], threats: list[dict], components: 
     return compose._render_trust_boundary_catalog(ctx, None, {})
 
 
-def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path) -> None:
-    """The column asks whether the assumption holds, so every row answers.
+@pytest.mark.parametrize("title", ["Unsafe query construction", "Missing ownership check"])
+def test_parenthetical_finding_citations_remain_compact_through_composer_and_qa(tmp_path, title):
+    import yaml
 
-    A condition with no answer leaves the reader to reconcile it against §8 by
-    hand, which nobody does — juice-shop shipped five assumptions and no verdict
-    (user 2026-08-01). All three inputs are already in the model, so the answer
-    costs no analysis turn.
-    """
+    model = {"threats": [{"id": "T-001", "title": title, "risk": "High"}]}
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=model, triage={}, fragments_dir=tmp_path)
+    linked = f"[F-001](#f-001) — {title}"
+    prose = f"Caller data reaches the operation ({linked})."
+    standalone = f"- {linked}"
+    table = f"| Finding | Details |\n|---|---|\n| {linked} | Review |"
+    inline_code = f"Example (`{linked}`)."
+    extended_description = f"Consider this ({linked} in the reporting service)."
+    fenced = f"```text\n{prose}\n```"
+    compact = compose._compact_inline_finding_citations(
+        ctx, "\n\n".join([prose, standalone, table, inline_code, fenced])
+    )
+    assert compact.startswith("Caller data reaches the operation ([F-001](#f-001)).")
+    for preserved in (standalone, table, inline_code, fenced):
+        assert preserved in compact
+    assert compose._compact_inline_finding_citations(ctx, extended_description) == extended_description
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    path = tmp_path / "threat-model.md"
+    path.write_text(compact)
+    _, enriched = qa.linkify_anchors(path)
+    assert enriched.splitlines()[0] == compact.splitlines()[0]
+    assert standalone in enriched and table in enriched
+    path.write_text(enriched)
+    assert qa.linkify_anchors(path)[1] == enriched
+    assert compose._compact_inline_finding_citations(ctx, enriched) == enriched
+
+
+def test_actor_inventory_discloses_findings_missing_from_displayed_counts(tmp_path):
+    model = {
+        "threats": [
+            {"id": "T-001", "risk": "High", "vektor": "internet-anon"},
+            {"id": "T-002", "risk": "Critical"},
+            {"id": "T-003", "risk": "High"},
+        ]
+    }
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=model, triage={}, fragments_dir=tmp_path)
+    people = [{"kind": "attacker", "slug": "internet-anon", "name": "Internet attacker", "scenarios": []}]
+    result = compose._render_actor_inventory(ctx, people)
+    assert "🟠 1" in result
+    assert "2 findings are not represented in the actor counts (1 Critical, 1 High)" in result
+    assert "does not establish inaccessibility" in result
+    model["threats"] = model["threats"][:1]
+    assert "not represented" not in compose._render_actor_inventory(ctx, people)
+
+
+def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path) -> None:
+    """The compact catalogue distinguishes linked gaps, adjacent findings and unverified controls."""
     rows = [
         _canonical_boundary(1),  # refuted — a finding links here
         {**_canonical_boundary(2), "to": "C-02"},  # unconfirmed — findings in C-02, none linked
@@ -1529,12 +1572,11 @@ def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path)
         {"id": "T-003", "component": "C-02"},
     ]
     rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02", "C-03"])
-    assert "**Broken** — see the linked findings." in rendered
-    assert "**In doubt** — 2 finding(s) in the components it covers, none linked here." in rendered
-    assert "_No finding contradicts it._" in rendered
-    # The verdict rides in the assumption cell, not in a column of its own.
-    unconfirmed_row = next(line for line in rendered.splitlines() if "In doubt" in line and line.startswith("|"))
-    assert "In doubt" in unconfirmed_row.split(" | ")[4]
+    assert "Gap evidenced:" in rendered and "[F-001](#f-001)" in rendered
+    assert "2 related findings; relevance to this crossing remains unverified." in rendered
+    assert "control effectiveness is not established" in rendered
+    unconfirmed_row = next(line for line in rendered.splitlines() if "2 related findings" in line)
+    assert "remains unverified" in compose._split_table_row(unconfirmed_row)[3]
 
 
 def test_verdict_matches_the_shared_state_helper(tmp_path: Path) -> None:
@@ -1595,8 +1637,8 @@ def test_verdict_ignores_a_linker_whose_evidence_did_not_survive(tmp_path: Path)
         }
     ]
     rendered = _catalog(tmp_path, rows, threats, ["C-01"])
-    assert "**Broken**" not in rendered
-    assert "**In doubt** — 1 finding(s) in the components it covers, none linked here." in rendered
+    assert "Gap evidenced:" not in rendered
+    assert "1 related finding; relevance to this crossing remains unverified." in rendered
 
 
 def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None:
@@ -1610,7 +1652,7 @@ def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None
     rows = [{**_canonical_boundary(1), "covers_components": ["C-01", "C-02"]}]
     threats = [{"id": "T-001", "component": "C-02"}]
     rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02"])
-    assert "**In doubt** — 1 finding(s) in the components it covers, none linked here." in rendered
+    assert "1 related finding; relevance to this crossing remains unverified." in rendered
 
 
 def test_covered_components_never_include_the_crossings_own_source(tmp_path: Path) -> None:
@@ -1664,19 +1706,13 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     assert "1 additional trust boundary row(s)" in rendered
     # Every row is `detected` → no Source column; the footnote states it once.
     assert "| Source |" not in rendered
-    assert "source: derived from inspected repository evidence" in rendered
-    assert "only at a confirmed internet ingress" in rendered
+    assert "source evidence and provenance are retained in `threat-model.yaml`" in rendered
+    assert "control effectiveness is not established" in rendered
     assert "raw risk" not in rendered
 
 
 def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
-    """The crossing cell carries the crossing, the mechanism and the folded-in
-    components — each exactly once.
-
-    It used to stack the `name` (itself `<from> → <to>: <mechanism>`), then
-    `from → to` again, then `_enforced at: <the same mechanism>_`, so the
-    crossing appeared twice and the enforcement twice (user 2026-07-31).
-    """
+    """The crossing, enforcement point and covered components each appear once."""
     rows = [
         {
             **_canonical_boundary(1, "external → C-01 admin API: expressJwt on /admin routes"),
@@ -1694,7 +1730,7 @@ def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     # The name's head is the crossing — kept because its qualifier is what tells
     # two rows over the same component pair apart. Emitted once, bolded.
-    assert "**external → C-01 admin API**" in rendered
+    assert "external → C-01 admin API" in rendered
     assert rendered.count("external → C-01") == 1
     # The mechanism is the enforcement point, stated once, WITHOUT the italic
     # wrapper (a later pass backticks the identifiers inside it, and markdown
@@ -1745,7 +1781,7 @@ def test_trust_boundary_cell_never_synthesizes_a_missing_enforcement_point(tmp_p
     assert "Express static file serving" not in rendered
     assert "Sequelize ORM query construction" not in rendered
     assert "expressJwt on /admin routes" not in rendered
-    assert rendered.count("Control: none identified") == 2
+    assert rendered.count("Control: not identified") == 2
     # A row that HAS one still shows it, and no row emits a dangling label.
     assert "Control: security.isAuthorized() expressJwt middleware in server.ts" in rendered
     for line in rendered.splitlines():
@@ -1827,38 +1863,15 @@ def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> No
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    # Every exposure gets its rating from the shared contract, and the legend
-    # lists them in tier order. Values come from `_boundary_criticality`, never
-    # from a second copy of the scale here.
-    for exposure in ("internet-facing", "outbound", "internal", "review required", "inferred"):
-        glyph, word = criticality.rating_of(exposure)
-        assert f"{glyph} **{word}**" in rendered
-    legend = " · ".join(
-        f"{criticality.rating_of(e)[0]} {criticality.rating_of(e)[1]} ({compose._BOUNDARY_EXPOSURE_GLOSS[e]})"
-        for e in sorted(
-            ("review required", "internet-facing", "inferred", "internal", "outbound"),
-            key=criticality.tier_of,
-        )
-    )
-    assert f"_Exposure, most exposed first: {legend}._" in rendered
-    # Exposure lives in its own column — never restated in the Kind cell.
-    for line in rendered.splitlines():
-        if '<a id="tb-' not in line:
-            continue
-        for _glyph, word in (criticality.rating_of(e) for e in ("internet-facing", "internal", "outbound")):
-            assert line.count(f"**{word}**") <= 1, line
+    assert "| ID | Crossing | Required condition | Findings / open question |" in rendered
+    assert "Endpoints: unresolved" in rendered and "Crossing: inferred" in rendered
+    assert "C-01 → external" in rendered and "C-01 → C-02" in rendered
+    assert "Exposure" not in rendered and "**Broken**" not in rendered
+    assert rendered.count("control effectiveness is not established") == 5
 
 
 def test_trust_boundary_exposure_ignores_linked_finding_count(tmp_path: Path) -> None:
-    """The exposure rating is a REACHABILITY verdict, never a findings tally.
-
-    Only a fraction of findings carry a `boundary_refs[]` entry, so weighting the
-    rating by them would present a boundary as safer merely because nothing
-    happened to link to it — and would rate an unexamined boundary below an
-    examined one. Two boundaries with the same exposure and wildly different
-    linked-findings counts must rate identically; "Linked findings" stays its own
-    column.
-    """
+    """A finding count changes the evidence cell, not the crossing condition."""
     rows = [_canonical_boundary(1, "Busy entry"), _canonical_boundary(2, "Quiet entry")]
     threats = [
         {
@@ -1906,10 +1919,7 @@ def test_boundary_exposure_vocabulary_never_collides_with_finding_severity() -> 
 
 
 def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(tmp_path: Path) -> None:
-    """A column (or stacked sub-line) whose every row says the same thing carries
-    no information — juice-shop rendered nine identical `detected` / `confirmed` /
-    `resolved` cells, and 8% was too narrow for "detected" (user 2026-07-31).
-    Each collapses into the footnote instead."""
+    """Routine metadata stays in the canonical model instead of repeated table columns."""
     rows = [_canonical_boundary(i) for i in range(1, 4)]
     ctx = compose.RenderContext(
         output_dir=tmp_path,
@@ -1921,20 +1931,18 @@ def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
     # No Source column, and the Kind header does not name a status it no longer shows.
-    assert header == "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |"
+    assert header == "| ID | Crossing | Required condition | Findings / open question |"
     assert "detected" not in header
     body = rendered.split("| ID |", 1)[1].split("\n_Exposure", 1)[0]
     assert "confirmed" not in body and "resolved" not in body
-    assert (
-        "_All boundaries share source: derived from inspected repository evidence; "
-        "confidence: confirmed; status: resolved._" in rendered
-    )
+    assert "source evidence and provenance are retained in `threat-model.yaml`" in rendered
+    assert all(row["confidence"] == "confirmed" and row["sources"] == ["detected"] for row in rows)
     assert "`detected`" not in rendered
     # The dropped column's vocabulary legend goes with it.
     assert "`repo-declared` = supplied by" not in rendered
 
 
-def test_trust_boundary_varying_provenance_keeps_the_source_column(tmp_path: Path) -> None:
+def test_trust_boundary_varying_provenance_is_retained_in_the_model(tmp_path: Path) -> None:
     rows = [
         _canonical_boundary(1),
         {**_canonical_boundary(2), "sources": ["repo-declared"]},
@@ -1948,15 +1956,14 @@ def test_trust_boundary_varying_provenance_keeps_the_source_column(tmp_path: Pat
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
-    assert header.endswith("| Assumption & verdict | Source | Linked findings |")
-    assert "| detected |" in rendered and "| repo-declared |" in rendered
-    assert "`repo-declared` = supplied by" in rendered
-    assert "stated once here instead of in a column: source" not in rendered
+    assert header.endswith("| Required condition | Findings / open question |")
+    assert "| Source |" not in rendered
+    assert "source evidence and provenance are retained in `threat-model.yaml`" in rendered
+    assert [row["sources"] for row in rows] == [["detected"], ["repo-declared"]]
 
 
 def test_trust_boundary_exceptional_status_and_confidence_are_never_collapsed(tmp_path: Path) -> None:
-    """`unresolved` / `conflicted` / `inferred` are exactly the rows a reader must
-    not skim past, so a single deviating row keeps the sub-line on EVERY row."""
+    """Unresolved endpoints and inferred crossings remain visible in their own rows."""
     rows = [
         _canonical_boundary(1),
         {**_canonical_boundary(2), "resolution_status": "unresolved", "confidence": "inferred"},
@@ -1969,8 +1976,9 @@ def test_trust_boundary_exceptional_status_and_confidence_are_never_collapsed(tm
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    assert "**unresolved**" in rendered and "**resolved**" in rendered
-    assert "_inferred_" in rendered and "_confirmed_" in rendered
+    assert "Endpoints: unresolved" in rendered
+    assert "Crossing: inferred" in rendered
+    assert "Endpoints: resolved" not in rendered and "Crossing: confirmed" not in rendered
     # Provenance is still uniform and still collapses; status/confidence do not.
     assert "confidence `" not in rendered and "status `" not in rendered
 
@@ -1987,7 +1995,7 @@ def test_trust_boundary_uniform_but_exceptional_status_stays_visible(tmp_path: P
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    assert rendered.count("**unresolved**") == 2
+    assert rendered.count("Endpoints: unresolved") == 2
     assert "status `unresolved`" not in rendered
 
 
@@ -2009,7 +2017,8 @@ def test_trust_boundary_cells_emit_no_raw_markdown_emphasis_markers(tmp_path: Pa
     converted, count = qa._attack_surface_tables_to_html(f"{header}\n{separator}\n{row_line}\n")
     assert count == 1
     assert "**" not in converted
-    assert "<strong>" in converted and "<em>inferred</em>" in converted
+    assert "Crossing: inferred" in converted
+    assert "table-layout:fixed" in converted
 
 
 def test_trust_boundary_catalogue_is_ordered_by_id(tmp_path: Path) -> None:
@@ -7023,25 +7032,13 @@ def _crossref_ctx(tmp_path: Path) -> compose.RenderContext:
     )
 
 
-def test_control_domain_names_the_crossings_that_depend_on_it(tmp_path: Path) -> None:
-    """§6 grades a control class across the codebase, a leg grades one crossing.
-    Both were derivable and neither referenced the other, so the report stated
-    the same gap twice with no path between it."""
+def test_control_domain_preserves_anchors_without_inferred_dependencies(tmp_path: Path) -> None:
     ctx = _crossref_ctx(tmp_path)
-    frag = (
-        "### 6.4 Authorization Controls\n\nControl prose.\n\n"
-        "### 6.9 Cryptography Secrets and Data Protection\n\nOther prose.\n"
-    )
+    frag = "### 6.4 Authorization Controls\n\nControl prose.\n\n### 6.9 Cryptography Secrets and Data Protection\n\nOther prose.\n"
     out = compose._inject_boundary_leg_crossrefs(ctx, frag)
     assert '<a id="ctrl-authorization-controls"></a>' in out
-    crossing, _mechanism = compose._boundary_crossing_and_mechanism(ctx.yaml_data["trust_boundaries"][0])
-    assert (
-        f"**Dependent crossings:**\n\n- [tb-1](#tb-1) — {crossing} (assumption not confirmed)\n  - [F-008](#f-008)"
-    ) in out
-    # The injected block must not swallow the blank line before the prose, or
-    # markdown folds them into one paragraph.
-    assert "[F-008](#f-008)\n\nControl prose." in out
-    # Crypto is not a condition of a crossing — no leg, and so no claim.
+    assert "\n\nControl prose." in out
+    assert "Dependent crossings" not in out and "[tb-1]" not in out
     assert "ctrl-cryptography" not in out
 
 
@@ -7058,12 +7055,12 @@ def test_leg_line_links_back_to_its_control_domain(tmp_path: Path) -> None:
 
 
 def test_control_domain_without_a_dependent_crossing_says_so(tmp_path: Path) -> None:
-    """Silence would read as "not checked". The anchor is emitted either way so
-    the §1 back-link never dangles."""
+    """An absent dependency is not evidence that no dependency exists."""
     ctx = _crossref_ctx(tmp_path)
     out = compose._inject_boundary_leg_crossrefs(ctx, "### 6.10 File Parser and Outbound Request Controls\n\nProse.\n")
     assert '<a id="ctrl-file-parser-and-outbound-request-controls"></a>' in out
-    assert "No trust boundary in this model depends on this control class." in out
+    assert "No trust boundary" not in out
+    assert "Dependent crossings" not in out and "Prose." in out
 
 
 def test_control_domain_crossref_is_idempotent(tmp_path: Path) -> None:
@@ -7122,30 +7119,20 @@ def _leg_catalog(tmp_path: Path) -> str:
     return _catalog(tmp_path, rows, threats, ["C-01"])
 
 
-def test_verdict_column_names_no_finding_ids(tmp_path: Path) -> None:
-    """Every id the table prints must be a link the reader can follow.
-
-    The verdict column used to enumerate bare, unlinked ids for an in-doubt leg.
-    They were not links and appeared in no other column, so the table looked
-    like it contradicted itself (user 2026-08-02). The count survives; the ids
-    do not.
-    """
+def test_boundary_evidence_cell_links_only_findings_that_reference_the_crossing(tmp_path: Path) -> None:
     rendered = _leg_catalog(tmp_path)
-    verdict_cell = next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')).split(" | ")[4]
-    assert "F-00" not in verdict_cell
-    assert "T-00" not in verdict_cell
-    # What the ids carried — that the condition fails more than once — stays.
-    assert "related" in verdict_cell
+    cell = compose._split_table_row(next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')))[
+        3
+    ]
+    assert "Gap evidenced:" in cell
+    assert "[F-001](#f-001)" in cell and "[F-002](#f-002)" in cell
+    assert "F-003" not in cell and "F-004" not in cell
 
 
 def test_linked_findings_are_grouped_under_the_condition_they_break(tmp_path: Path) -> None:
-    """The evidence column carries the leg label, so it meets the verdict column.
-
-    Without it the two columns describe the same crossing twice and never meet:
-    the reader cannot tell which finding broke which condition.
-    """
+    """Explicit links retain their condition labels in the combined evidence cell."""
     rendered = _leg_catalog(tmp_path)
-    links_cell = next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')).split(" | ")[5]
+    links_cell = next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')).split(" | ")[3]
     assert "_Authentication_<br>🔴 [F-001](#f-001)" in links_cell
     assert "_Authorization_<br>🟠 [F-002](#f-002)" in links_cell
     # Group order follows the canonical leg order, as the verdict lines do.
@@ -7164,23 +7151,19 @@ def test_unattributable_link_is_labelled_not_left_bare(tmp_path: Path) -> None:
     threats = [{"id": "T-009", "component": "C-01", "risk": "High", "boundary_refs": [{"boundary_id": "tb-1"}]}]
     links_cell = next(
         line for line in _catalog(tmp_path, rows, threats, ["C-01"]).splitlines() if line.startswith('| <a id="tb-1"')
-    ).split(" | ")[5]
-    assert links_cell.startswith("_Unattributed_<br>")
+    ).split(" | ")[3]
+    assert "_Unattributed_<br>" in links_cell
     assert "[F-009](#f-009)" in links_cell
 
 
 def test_boundary_vocabulary_is_explained_after_the_table_not_before_it(tmp_path: Path) -> None:
-    """The lead says what the table is; the verdict words are reference material.
-
-    As one block up front the definitions ran to a screen the reader had to hold
-    in memory before seeing a row (user 2026-08-02).
-    """
+    """A short introduction precedes the table and its provenance note follows it."""
     rendered = _leg_catalog(tmp_path)
     lead = rendered.split("\n\n")[1]
     assert len(lead.split()) < 70, lead
     for word in ("broken", "in doubt", "not examined", "related"):
         assert word not in lead
-    legend_at = rendered.index("_Verdict per condition —")
+    legend_at = rendered.index("Crossing types, source evidence and provenance")
     assert legend_at > rendered.rindex('| <a id="tb-1"')
 
 
@@ -7224,7 +7207,7 @@ def test_in_process_crossing_renders_the_data_interpretation_condition(tmp_path:
         }
     ]
     rendered = _catalog(tmp_path, [row], threats, ["C-01", "C-02"])
-    assert "Query construction: **broken**" in rendered
+    assert "Gap evidenced:" in rendered
     assert "_Query construction_<br>🔴 [F-004](#f-004)" in rendered
 
 

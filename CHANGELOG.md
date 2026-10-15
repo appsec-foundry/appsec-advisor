@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
 - In a terminal, the headless controller's status line turns a spinner and draws a progress bar with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged. During threat analysis each running component has its own bar, and progress follows finished rather than started components.
 - Headless controller threat analysis rates a finding as confirmed exploitable when the source shows the insecure code, an input an attacker can reach and no stopping control, instead of leaving most findings unproven for lack of a definition.
-- The report's Scope section names how many source files per component had no route, lead or security signal and were not individually examined, how many program files belong to no component at all, and which targets the analysis read but could not decide, instead of leaving these coverage gaps to console warnings or unreported.
+- The report's Scope section names how many source files per component had no route, lead or security signal and were not individually examined, how many program files belong to no component at all, and lists unresolved analysis questions individually.
 - The Figure 1 legend keeps three columns with narrower sections when the diagram is slightly narrower than three standard sections, instead of two columns with a wide empty gap.
 - A source target the headless controller's threat analysis could not decide is reported with its file and the reason, such as a helper outside the read source, instead of an arbitrary line of the file.
 - The headless controller console counts corrected model answers per role on each phase's done line instead of listing every rejection; `--verbose` still names each reason. Coverage statements, such as files no target covered, are shown as information instead of warnings, collapsed into one line unless `--verbose` lists them per component.
@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
 
 ### Fixed
+
+- Actor tables disclose findings absent from their counts, and headless assessments recover missing attribution from evidenced role access without assuming deployment zones.
+- Headless assessments review independent LLM input, tool, output, disclosure and consumption risks instead of treating one finding as coverage of an entire integration.
 
 - Headless controller models keep their verified abuse cases in `threat-model.yaml` instead of reporting the analysis as not run while the report shows them.
 - A headless controller run started from a sandboxed Claude Code session in the target repository no longer stops as "Selected source state changed" when the sandbox creates empty placeholder files there.

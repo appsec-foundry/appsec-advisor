@@ -186,6 +186,17 @@ MAX_TARGET_GUARDS = 8
 MAX_SUPPORT_BYTES = 8_192
 MAX_SUPPORT_WINDOWS = 8
 
+# Independent mechanisms, not required findings or a quota of OWASP categories.
+# Reuse the surface-decision contract and source windows; no separate model pass.
+LLM_REVIEW_QUESTIONS = {
+    "client-context": "Can a caller supply privileged message roles, fabricated history or tool results? Trace validation before model use.",
+    "stored-context": "Can stored or retrieved user-controlled text become model instructions? Trace each source into system context or tool results.",
+    "tool-authority": "Do model-selected tools enforce verified caller identity, ownership, eligibility and allowed actions outside the model?",
+    "output-sinks": "Are model outputs and tool arguments validated at their actual sinks, including numeric ranges, queries, rendering and destinations?",
+    "disclosure": "Can prompts, tool results, responses or errors expose confidential rules or another identity's data? Distinguish intended disclosure.",
+    "consumption": "What bounds request size, history, output tokens, tool steps, retries and caller/provider consumption? Record existing limits.",
+}
+
 
 # A component's template named by a static path, relative to the component file.
 _TEMPLATE_REF = re.compile(r"""\btemplateUrl\s*:\s*['"]([^'"\n]+\.html)['"]""")
@@ -415,9 +426,38 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             ][:MAX_TARGET_IMPORTS]
         if imported[(rid, path)]:
             target["imports"] = [[rid, other] for other in imported[(rid, path)]]
-    if len(targets) > 20_000:
+    result = [targets[key] for key in sorted(targets)]
+    # Each evidenced model-integration file gets explicit decisions for the
+    # mechanisms a single generic "examined" answer can otherwise conceal.
+    # Imported-but-unused SDKs and another component's code add no targets.
+    by_file: dict[tuple, dict] = {}
+    for target in result:
+        e = target["evidence"]
+        by_file.setdefault((e["repository_id"], e["file"]), target)
+    paths = {(row["repository_id"], row["path"]): row for row in component["paths"]}
+    for rid, path in sorted(own):
+        if _TEST_SOURCE_RE.search(path):
+            continue
+        local = {**component, "paths": [paths[rid, path]]}
+        leads = model_integration_leads(scope, [local])
+        if not leads:
+            continue
+        anchor = add({"repository_id": rid, **leads[0]["evidence"][0]}, "llm-integration")
+        if anchor is None:
+            continue
+        # Retain the source's existing route, guard and import authority.
+        base = {**copy.deepcopy(by_file.get((rid, path), {})), **anchor}
+        for mechanism, question in LLM_REVIEW_QUESTIONS.items():
+            target = copy.deepcopy(base)
+            target["local_id"] = (
+                "surface-" + hashlib.sha256((anchor["local_id"] + ":" + mechanism).encode()).hexdigest()[:16]
+            )
+            target["review_question"] = question
+            target["review_check"] = mechanism
+            result.append(target)
+    if len(result) > 20_000:
         raise ExchangeError("Component investigation exceeds the source-reference limit")
-    return [targets[key] for key in sorted(targets)]
+    return result
 
 
 def related_sources(targets: list[dict]) -> frozenset:
@@ -780,13 +820,19 @@ def surface_evidence_normalizer(targets):
     controller knows the anchor and adds it, and a decision may omit evidence
     entirely (MR-11). A decision citing only another file gains nothing, and
     `validate_surface_coverage` still requires the read. A decision that links a
-    finding keeps no reason: the finding states it.
+    finding normally keeps no reason; a mechanism-specific review still needs
+    its own answer, since a finding on the same file may concern another path.
     """
     anchors = {target["local_id"]: target["evidence"] for target in targets}
+    questions = {target["local_id"] for target in targets if target.get("review_question")}
 
     def normalize(artifact):
         for row in artifact.get("surface_coverage") or []:
-            if row.get("disposition") == "examined" and row.get("finding_ids"):
+            if (
+                row.get("disposition") == "examined"
+                and row.get("finding_ids")
+                and row.get("target_id") not in questions
+            ):
                 row.pop("reason", None)
             anchor = anchors.get(row.get("target_id"))
             if anchor is not None and not row.get("evidence"):
@@ -809,7 +855,7 @@ def surface_evidence_normalizer(targets):
                     evidence[same_file[0]] = dict(anchor)
         return artifact
 
-    normalize.version = "surface-anchor-2"
+    normalize.version = "surface-anchor-3"
     return normalize
 
 
@@ -893,8 +939,11 @@ def unresolved_targets(artifact, targets, *, qualified: bool = True) -> list[str
     repository, which only a combined assessment needs.
     """
     anchors = {target["local_id"]: target["evidence"] for target in targets}
+    checks = {target["local_id"]: target.get("review_check") for target in targets}
     return [
-        f"{anchor['repository_id'] + '/' if qualified else ''}{anchor['file']}: {row.get('reason') or 'no reason given'}"
+        f"{anchor['repository_id'] + '/' if qualified else ''}{anchor['file']}"
+        + (f" ({checks[row['target_id']]})" if checks.get(row["target_id"]) else "")
+        + f": {row.get('reason') or 'no reason given'}"
         for row in artifact.get("surface_coverage") or []
         if row["disposition"] == "unresolved" and (anchor := anchors.get(row["target_id"]))
     ]
@@ -905,7 +954,7 @@ def validate_surface_coverage(artifact, ranges, targets):
 
     A target the job read may stay `unresolved` with its reason; the run names it
     as a warning (MR-11). An unread target is always rejected. Only a decision
-    that links a finding may omit its reason.
+    that links a finding may omit its reason, except for an explicit review question.
     """
     expected = {target["local_id"]: target for target in targets}
     rows = artifact.get("surface_coverage", [])
@@ -929,8 +978,11 @@ def validate_surface_coverage(artifact, ranges, targets):
             errors.append("Surface coverage refers to unknown findings")
         if row["disposition"] == "not-applicable" and row["finding_ids"]:
             errors.append("An inapplicable surface cannot carry findings")
-        if not (row["disposition"] == "examined" and row["finding_ids"]) and not row.get("reason"):
-            errors.append(f"Surface decision for {location} links no finding and needs a reason")
+        if (
+            expected[row["target_id"]].get("review_question")
+            or not (row["disposition"] == "examined" and row["finding_ids"])
+        ) and not row.get("reason"):
+            errors.append(f"Surface decision for {location} needs a reason for this review question or its disposition")
     if errors:
         raise Rejection("STRIDE investigation is incomplete", errors[:3])
 

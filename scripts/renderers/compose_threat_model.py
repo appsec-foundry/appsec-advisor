@@ -68,6 +68,7 @@ import importlib.util
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11032,36 +11033,12 @@ def _leg_control_link(leg: str) -> str:
 
 
 def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
-    """Name, under each §6 control domain, the crossings that depend on it.
+    """Keep stable control anchors without deriving dependencies from CWE adjacency.
 
-    Deliberately NOT a second assessment: the line carries the crossing, the
-    leg's derived state and the finding ids, and nothing that grades the
-    control. §6 keeps that authority — the two answer different questions and
-    neither may overrule the other.
+    A shared authentication condition does not make every related finding a
+    session-control dependency. The boundary catalogue retains actual links.
     """
-    rows = _visible_trust_boundaries(ctx)
-    if not rows:
-        return md
-    threats = ctx.yaml_data.get("threats") or []
-    state_text = {"refuted": "assumption broken", "unconfirmed": "assumption not confirmed"}
-    per_leg: dict[str, list[str]] = {}
-    for row in rows:
-        for leg in boundary_leg_states(row, threats):
-            if leg["state"] == "unexamined":
-                continue
-            ids = [_visible_finding_id(fid) for fid in leg["finding_ids"][:3]]
-            crossing, _mechanism = _boundary_crossing_and_mechanism(row, component_names(ctx.yaml_data))
-            entry = [
-                f"- [{row['id']}](#{row['id']})"
-                + (f" — {crossing}" if crossing else "")
-                + f" ({state_text.get(leg['state'], leg['state'])})"
-            ]
-            entry += [f"  - [{fid}](#{fid.lower()})" for fid in ids]
-            extra = len(leg["finding_ids"]) - len(ids)
-            if extra > 0:
-                entry.append(f"  - +{extra} more")
-            per_leg.setdefault(leg["leg"], []).append("\n".join(entry))
-    for domain, leg in _SECTION7_DOMAIN_LEG.items():
+    for domain in _SECTION7_DOMAIN_LEG:
         # `[ \t]*$`, not `\s*$`: the latter backtracks into the heading's own
         # newline, so the injected block would absorb the blank line and the
         # following prose would join it into one paragraph.
@@ -11074,12 +11051,7 @@ def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
         # back-link pointing at two elements.
         if anchor in md:
             continue
-        entries = per_leg.get(leg) or []
-        line = (
-            f"{anchor}\n\n**Dependent crossings:**\n\n" + "\n".join(entries)
-            if entries
-            else f"{anchor}\n\n_No trust boundary in this model depends on this control class._"
-        )
+        line = anchor
         md = re.sub(pattern, r"\1\n\n" + line.replace("\\", "\\\\"), md, count=1, flags=re.MULTILINE)
     return md
 
@@ -11604,6 +11576,7 @@ def _wrap_segment_words(seg: str, width: int) -> str:
 # Keep in sync with qa_checks `_FIXED_LAYOUT_SPECS`.
 _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
+        ("ID", "Crossing", "Required condition", "Findings / open question"),
         ("Method", "Route", "Risk", "Notes"),
         ("Asset", "Classification", "Description", "Linked Threats"),
         # Trust Boundaries (2026-07-31): a column whose every row says the same
@@ -13117,6 +13090,44 @@ def _apply_outside_changelog(md: str, fn) -> str:
 _ROOT_CAUSE_FIX_LINE_RE = re.compile(
     r"^- \*\*(?:\[W-\d{3,4}\]\(#w-\d{3,4}\)\*\* — .*_\(closes |No root cause linked\*\* — )"
 )
+
+
+def _is_inline_finding_citation(line: str, offset: int) -> bool:
+    """A parenthetical citation attached to prose, rather than a standalone finding list."""
+    if line.lstrip().startswith(("|", "#", "<")):
+        return False
+    if any(m.start() <= offset < m.end() for m in re.finditer(r"`+[^`\n]*`+", line)):
+        return False
+    masked = re.sub(r"\[[^\]\n]*\]\([^\)\n]*\)|`[^`\n]*`", lambda m: " " * len(m[0]), line)
+    opening = masked.rfind("(", 0, offset)
+    return opening > masked.rfind(")", 0, offset) and bool(re.search(r"[A-Za-z]", masked[:opening]))
+
+
+def _compact_inline_finding_citations(ctx: RenderContext, md: str) -> str:
+    """Keep known finding titles in lists, but omit them from citations whose sentence explains the issue."""
+
+    def compact(line: str) -> str:
+        pattern = r"\[([FT]-\d{3,4})\]\(#[ft]-\d+\)"
+        for match in reversed(list(re.finditer(pattern, line))):
+            if not _is_inline_finding_citation(line, match.start()):
+                continue
+            title = _title_without_locator(ctx.lookup_label(match[1]) or "")
+            if not title:
+                continue
+            for suffix in (f" — {title}", f" - {title}", f" ({title})"):
+                tail = line[match.end() :]
+                if tail.startswith(suffix) and re.match(r"\s*(?:[,;.)]|$)", tail[len(suffix) :]):
+                    line = line[: match.end()] + line[match.end() + len(suffix) :]
+                    break
+        return line
+
+    fenced = False
+    lines = []
+    for line in md.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        lines.append(line if fenced else compact(line))
+    return "\n".join(lines)
 
 
 def _is_bare_finding_ref_line(line: str) -> bool:
@@ -15723,6 +15734,22 @@ def _render_actor_inventory(ctx: RenderContext, people: list[dict]) -> str:
         )
         where = f" · [Figure 1b](#{_FIGURE1B_ANCHOR})" if person.get("figure") == "1b" else ""
         lines.append(f"| {safe(name)} | {kind} | {safe(access)}{where} | {scenario_text or '—'} | {findings} |")
+    shown_slugs = {person["slug"] for person in attackers}
+    unassigned = [
+        threat
+        for threat in _severity_rollup.register_threats(model)
+        if not (_attacker_groups_of(threat, model, meta) & shown_slugs)
+    ]
+    if unassigned:
+        tally = Counter(_severity_rollup.register_severity(threat) for threat in unassigned)
+        summary = ", ".join(f"{tally[sev]} {sev}" for sev in _severity_rollup.SEVERITY_ORDER if tally[sev])
+        lines.extend(
+            [
+                "",
+                f"{len(unassigned)} findings are not represented in the actor counts ({summary}). "
+                "These counts cover assigned findings only; absence from them does not establish inaccessibility.",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -16431,142 +16458,61 @@ def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
 
 
 def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """A compact inventory of crossings, conditions and evidenced gaps.
+
+    Existence confidence is separate from control effectiveness. Adjacency
+    names an unresolved relationship, never a proved broken control.
+    Source, mechanism and resolution metadata remain in the canonical model.
+    """
     rows = _ordered_trust_boundaries(ctx)
     if not rows:
         return ""
-    linked = _boundary_link_index(ctx)
-    component_ids = _boundary_component_ids(ctx)
     shown = _visible_trust_boundaries(ctx)
+    linked = _boundary_link_index(ctx)
     names = component_names(ctx.yaml_data)
-    # Provenance / confidence / status are collapsed out of the table when every
-    # row agrees on them and the shared value is the unexceptional one; the
-    # footnote then states each collapsed fact once. See `_uniform_boundary_value`.
-    uniform_source = _uniform_boundary_value(
-        shown,
-        lambda row: ", ".join(str(source) for source in row.get("sources") or []),
-        None,
-    )
-    uniform_confidence = _uniform_boundary_value(shown, _boundary_confidence_text, "confirmed")
-    uniform_status = _uniform_boundary_value(shown, lambda row: str(row.get("resolution_status") or ""), "resolved")
-    # The Kind column names `status` only while a status is actually shown there.
-    headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if uniform_status is None else "Kind"]
-    headers.append(_BOUNDARY_ASSUMPTION_HEADER)
-    if uniform_source is None:
-        headers.append("Source")
-    headers.append("Linked findings")
     lines = [
         "### Trust Boundaries",
         "",
-        # Lead states what the table is and what its hardest column answers;
-        # the vocabulary follows the table as a legend, beside the Exposure one.
-        # As one block up front it ran to a screen of definitions the reader had
-        # to hold in memory before seeing a single row (user 2026-08-02).
-        "Canonical boundary crossings. **Assumption & verdict** names the condition that makes "
-        "each crossing safe and whether this report still supports it, judged one condition at a "
-        "time — which conditions apply follows from the direction of the crossing.",
+        "Each row names a crossing and the condition it relies on. A modelled crossing does not prove that its control works.",
         "",
-        f"| {' | '.join(headers)} |",
-        f"|{'---|' * len(headers)}",
+        "| ID | Crossing | Required condition | Findings / open question |",
+        "|---|---|---|---|",
     ]
     for row in shown:
-        boundary_id = row["id"]
-        # The bold crossing owns its line; everything else rides on ONE further
-        # line. Three stacked <br> lines in a ~26% column each wrapped again and
-        # made the cell read as a ragged block (user 2026-07-31), so the folded-in
-        # components ride behind the mechanism instead of claiming a line, and a
-        # fact with no content emits no line at all — never a dangling label.
-        # No emphasis markers around the mechanism / covers text: a later pass
-        # backticks the identifiers in it, and markdown emphasis wrapped around a
-        # code span does not survive the fixed-layout HTML conversion.
         crossing, mechanism = _boundary_crossing_and_mechanism(row, names)
-        boundary = f"**{_safe_boundary_text(crossing, table=True)}**"
-        # "Control:" — the thing that decides whether the crossing is allowed.
-        # The label used to read "enforced by:", which readers could not
-        # interpret without a legend (user 2026-07-31). An absent
-        # `enforcement_point` is a finding about the model, not a gap to paper
-        # over: say that no single control was identified rather than
-        # reconstructing one from the boundary name.
-        detail = f"Control: {_safe_boundary_text(mechanism, table=True)}" if mechanism else "Control: none identified"
-        covers = [
-            endpoint_label(names, cid) for cid in _boundary_covered_components(row) if cid != str(row.get("to") or "")
-        ]
+        crossing = _safe_boundary_text(crossing, table=True)
+        if row.get("resolution_status") != "resolved":
+            crossing += "<br>Endpoints: " + _safe_boundary_text(
+                row.get("resolution_status") or "unresolved", table=True
+            )
+        if _boundary_confidence_text(row) != "confirmed":
+            crossing += "<br>Crossing: " + _safe_boundary_text(_boundary_confidence_text(row), table=True)
+        covers = [endpoint_label(names, cid) for cid in _boundary_covered_components(row) if cid != row.get("to")]
         if covers:
-            detail += f" · Also covers: {_safe_boundary_text(', '.join(covers), table=True)}"
-        boundary += f"<br>{detail}"
-        # Exposure gets its own column; the kind cell carries the crossing
-        # mechanism and nothing else, so no row states its exposure twice. A
-        # resolution_status that is NOT the collapsed-away `resolved` is an
-        # exceptional state and stays visible — bold, on its own line — however
-        # uniform the rest of the table is.
-        exposure = _boundary_exposure_rating(row, component_ids)
-        kind = _safe_boundary_text(_boundary_kind_label(row), table=True)
-        if uniform_status is None:
-            kind += f"<br>**{_safe_boundary_text(row.get('resolution_status'), table=True)}**"
-        assumption = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
-        if uniform_confidence is None:
-            assumption += f"<br>_{_safe_boundary_text(_boundary_confidence_text(row), table=True)}_"
-        # Legs REPLACE the one-line row verdict rather than stacking beneath it:
-        # they answer the same question per condition, and a six-line cell in a
-        # ~26% column reads as a ragged block. The row verdict comes back only
-        # when it would otherwise be lost — a link the leg view could not
-        # attribute (no `leg`, no CWE match) still refutes the row, and a cell
-        # showing three "not examined" legs under a refuted row would be a lie.
-        threats_for_legs = ctx.yaml_data.get("threats") or []
-        leg_states = boundary_leg_states(row, threats_for_legs)
-        # Legs are shown only once at least one of them carries a state — a row
-        # nothing bears on would otherwise trade its one-line verdict for three
-        # lines of "not examined", which is longer and says less.
-        informative = [leg for leg in leg_states if leg["state"] != "unexamined"]
-        row_state, _row_ids = boundary_assumption_state(row, threats_for_legs)
-        # The row verdict comes back when the leg view would lose it: a link the
-        # legs could not attribute (no `leg` field, no CWE match) still refutes
-        # the row, and legs reading "not examined" beneath it would be a lie.
-        if not informative or (
-            row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}
-        ):
-            assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
-        if informative:
-            for line in _boundary_leg_lines(leg_states, ctx):
-                assumption += f"<br>{line}"
-        sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
-        finding_links = _boundary_finding_links(linked.get(boundary_id, []), leg_states, ctx)
-        cells = [f'<a id="{boundary_id}"></a>{boundary_id}', boundary, exposure, kind, assumption]
-        if uniform_source is None:
-            cells.append(sources)
-        cells.append(finding_links)
-        lines.append(f"| {' | '.join(cells)} |")
+            crossing += "<br>Also covers: " + _safe_boundary_text(", ".join(covers), table=True)
+        condition = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
+        condition += "<br>Control: " + (_safe_boundary_text(mechanism, table=True) if mechanism else "not identified")
+        legs = boundary_leg_states(row, ctx.yaml_data.get("threats") or [])
+        links = _boundary_finding_links(linked.get(row["id"], []), legs, ctx)
+        state, ids = boundary_assumption_state(row, ctx.yaml_data.get("threats") or [])
+        if state == "refuted":
+            answer = "Gap evidenced: " + links
+        elif state == "unconfirmed":
+            noun = "finding" if len(ids) == 1 else "findings"
+            answer = f"{len(ids)} related {noun}; relevance to this crossing remains unverified."
+            if links != "—":
+                answer += "<br>" + links
+        else:
+            answer = "No linked finding establishes a gap; control effectiveness is not established."
+            if links != "—":
+                answer += "<br>" + links
+        lines.append(f'| <a id="{row["id"]}"></a>{row["id"]} | {crossing} | {condition} | {answer} |')
     if len(rows) > len(shown):
         lines.extend(
-            [
-                "",
-                f"_{len(rows) - len(shown)} additional trust boundary row(s) are available in "
-                "`threat-model.yaml` and `model/query_threat_model.py`._",
-            ]
+            ["", f"{len(rows) - len(shown)} additional trust boundary row(s) are recorded in `threat-model.yaml`."]
         )
-    lines.extend(["", _boundary_exposure_legend()])
-    lines.extend(["", _boundary_kind_legend()])
-    lines.extend(["", _boundary_condition_legend()])
-    lines.extend(["", _boundary_verdict_legend()])
-    if uniform_source is None:
-        lines.extend(
-            [
-                "",
-                "_Source: `detected` = derived from inspected repository evidence; "
-                "`repo-declared` = supplied by `.appsec/trust-boundaries.yaml`; "
-                "`legacy` = migrated from an earlier boundary format._",
-            ]
-        )
-    collapsed: list[str] = []
-    if uniform_source is not None:
-        gloss = _BOUNDARY_SOURCE_GLOSS.get(uniform_source)
-        collapsed.append(f"source: {gloss or uniform_source}")
-    if uniform_confidence is not None:
-        collapsed.append(f"confidence: {uniform_confidence}")
-    if uniform_status is not None:
-        collapsed.append(f"status: {uniform_status}")
-    if collapsed:
-        lines.extend(["", f"_All boundaries share {'; '.join(collapsed)}._"])
-    return "\n".join(lines).rstrip() + "\n"
+    lines.extend(["", "Crossing types, source evidence and provenance are retained in `threat-model.yaml`."])
+    return "\n".join(lines) + "\n"
 
 
 _POSTURE_VERDICT_EMOJI = {"VIOLATED": "🔴", "WEAK": "🟠", "ADEQUATE": "🟢"}
@@ -18992,6 +18938,7 @@ def render(
     # normal `[ID](#id) — label` tail.
     rendered = _apply_outside_changelog(rendered, _delink_id_in_link_text)
     rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
+    rendered = _apply_outside_changelog(rendered, lambda text: _compact_inline_finding_citations(ctx, text))
     rendered = restore_figures(rendered)
 
     # Report-integrity manifest: certify which sections rendered and which

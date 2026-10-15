@@ -3005,6 +3005,13 @@ class TestCrossReferenceLabellingInvariant:
         _, new_text = qa.linkify_anchors(md)
         assert "[T-001](#t-001) — SQL Injection in login endpoint" in new_text
 
+    @pytest.mark.parametrize("reference", ["F-001", "[F-001](#f-001)"])
+    def test_parenthetical_citation_keeps_its_id_without_expanding_the_title(self, tmp_path, reference):
+        md = self._write_pair(tmp_path, f"Input reaches the query ({reference}).\n\n- F-001\n")
+        _, result = qa.linkify_anchors(md)
+        assert result.startswith("Input reaches the query ([F-001](#f-001)).")
+        assert "- [F-001](#f-001) — SQL Injection in login endpoint" in result
+
     def test_linkify_bare_mnnn_appends_title(self, tmp_path):
         """Bare M-NNN in prose becomes `[M-NNN](#m-nnn) — <title>`."""
         md = self._write_pair(tmp_path, "addressed by M-001 immediately.\n")

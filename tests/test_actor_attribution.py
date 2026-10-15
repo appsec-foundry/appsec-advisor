@@ -23,6 +23,64 @@ ACTORS = [
 ]
 
 
+@pytest.mark.parametrize("client,api", [("portal", "orders"), ("console", "catalog")])
+@pytest.mark.parametrize(
+    "mode", ["open", "closed", "outbound", "unread", "unclassified", "response", "backend", "privileged"]
+)
+def test_evidenced_role_access_fills_missing_attribution_without_inventing_zones(client, api, mode):
+    comps = [{"id": client, "tier": "client"}, {"id": api, "tier": "application"}, {"id": "store", "tier": "data"}]
+    evidence = [{"file": "interface.ts", "line": 1}]
+    role = {"id": "customer", "kind": "legitimate-role", "access": "internet-user", "evidence": evidence}
+    ingress = {"from": "external", "from_entity": "customer", "to": client, "evidence": evidence}
+    call = {"from": client, "to": api, "protocol": "HTTPS", "evidence": evidence}
+    flows = {
+        "external_entities": [role],
+        "data_flows": [ingress, call, {"from": api, "to": "store", "protocol": "HTTPS", "evidence": evidence}],
+    }
+    if mode == "outbound":
+        ingress.update({"from": client, "to": "external", "to_entity": "customer"})
+    elif mode == "unread":
+        call["evidence"] = []
+    elif mode == "unclassified":
+        role.pop("access")
+    elif mode == "response":
+        call["direction"] = "response"
+    elif mode == "privileged":
+        role["access"] = "internet-priv-user"
+    threats = [finding("T-001", "store" if mode == "backend" else api, "CWE-89", "handler.ts", [])]
+    before = copy.deepcopy(comps)
+    reconcile_attribution(threats, comps, ACTORS, flows=flows, open_registration=mode == "open")
+    expected = ["ACT-D-01"] if mode == "open" else ["ACT-D-02"] if mode == "closed" else []
+    assert threats[0]["actor_ids"] == expected
+    assert comps == before
+    assert reconcile_attribution(threats, comps, ACTORS, flows=flows, open_registration=mode == "open") == []
+
+
+@pytest.mark.parametrize("disputed", [False, True])
+def test_output_attribution_reads_role_flows_and_requires_undisputed_registration(tmp_path, disputed):
+    from analyzers.actor_attribution import reconcile_output_dir
+
+    evidence = [{"file": "api.ts", "line": 1}]
+    documents = {
+        ".components.json": {"components": [{"id": "api", "tier": "application"}]},
+        ".actors-resolved.json": {
+            "resolved_actors": ACTORS,
+            "open_registration_resolution": {"open": True, "disputed": disputed},
+        },
+        ".data-flows.json": {
+            "external_entities": [
+                {"id": "member", "kind": "legitimate-role", "access": "internet-user", "evidence": evidence}
+            ],
+            "data_flows": [{"from": "external", "from_entity": "member", "to": "api", "evidence": evidence}],
+        },
+    }
+    for name, data in documents.items():
+        (tmp_path / name).write_text(json.dumps(data))
+    threats = [finding("T-001", "api", "CWE-89", "api.ts", [])]
+    reconcile_output_dir(tmp_path, threats)
+    assert threats[0]["actor_ids"] == ["ACT-D-02" if disputed else "ACT-D-01"]
+
+
 def components(app="orders-api", store="ledger-db", pipeline="release-ci"):
     return [
         {"id": app, "tier": "application", "deployment_zones": ["internet"]},
