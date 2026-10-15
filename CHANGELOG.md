@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Headless controller models keep their verified abuse cases in `threat-model.yaml` instead of reporting the analysis as not run while the report shows them.
 - A route whose handler module default-exports an anonymous function or a factory, such as `export default () => listUsers`, is attributed to that module and its handler is analysed, instead of to a wrapper such as an async-error helper.
 - Routes guarded by `express-jwt`, `koa-jwt`, `express-oauth2-jwt-bearer` (`auth`) or `express-basic-auth`, also through a repository helper such as `isAuthorized = () => expressJwt({...})`, are recognised as authenticated with their credential type instead of being left unresolved; a guard configured not to reject, or whose options are passed by name, stays unresolved.
 - Headless controller reports take a data flow's authentication from the routes it cites, as single-repository runs do, and show an administrator role when actor discovery confirms one from an access check; the discovery job now receives the role checks that name a privileged role.

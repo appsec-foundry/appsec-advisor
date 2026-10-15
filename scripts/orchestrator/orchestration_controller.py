@@ -10578,6 +10578,11 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
         _assessment_synthesis(jobs, workspace, progress=progress)
         build_model("Rebuilding the threat model with the root causes")
         _run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
+        if not cfg.get("skip_abuse_case_verification"):
+            from orchestrator.assessment_review import persist_abuse_cases
+
+            # The rebuild reset abuse_case_analysis to not_run; §9 is still rendered.
+            persist_abuse_cases(workspace, root, cfg, _run_script)
     progress("Rendering the report")
     _run_script(
         "renderers/pregenerate_fragments.py",
