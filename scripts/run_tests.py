@@ -134,6 +134,7 @@ GROUPS = {
         authnz_report
         authz_confirm
         backfill_scanner_remediation
+        capability_signals
         check_target_specificity
         config_iac_checks
         config_iac_scanner
@@ -2183,6 +2184,10 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
         threat_fixture
+    """),
+    "scripts/analyzers/capability_signals.py": _tests("""
+        capability_signals
+        multi_repo_assessment
     """),
     "scripts/analyzers/flow_route_auth.py": _tests("""
         architect_review_runtime

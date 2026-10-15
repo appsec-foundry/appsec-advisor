@@ -8394,6 +8394,30 @@ def _assessment_embedded_access(scope, components: dict, flows: dict) -> dict:
     return result
 
 
+def _assessment_capabilities(scope, names, qualified: dict, projected: dict) -> None:
+    """Label each projected component with the capabilities its own files' call sites prove.
+
+    The controller's architecture contract carries no capabilities, so Figure 1
+    would show none the single-repository analyst assigns (F4); a component
+    that already lists one keeps it.
+    """
+    from analyzers.capability_signals import capabilities
+
+    repos = {repo.repository_id: repo for repo in scope.repositories}
+    by_id = {row["id"]: row for row in qualified["components"]}
+    for component in projected["components"]:
+        if component.get("capabilities"):
+            continue
+        files = {
+            names.qualify(row["repository_id"], row["path"]): repos[row["repository_id"]].files[row["path"]]
+            for row in by_id[component["id"]]["paths"]
+            if row["path"] in repos[row["repository_id"]].files
+        }
+        found = capabilities(files)
+        if found:
+            component["capabilities"] = found
+
+
 def _assessment_flow_route_auth(scope, flows: dict, route_inventories: dict) -> dict:
     """Apply the single-repository route fill (`flow_route_auth`) per repository.
 
@@ -10326,6 +10350,7 @@ def _assessment_workspace(
 
     names = ws.Namespaces(scope)
     components = ws.project_components(architecture["components"], names)
+    _assessment_capabilities(scope, names, architecture["components"], components)
     finalization = ws.project_finalization(architecture["finalization"], components)
     fingerprint = finalization["component_inventory_fingerprint"]
     ws.write_json(workspace / ".components.json", components)
