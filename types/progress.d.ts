@@ -24,6 +24,6 @@ export type Live = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'threat-model-progress': { progress: Progress; band: Band; now: number; live: Live | null }
+    'appsec-advisor': { progress: Progress; band: Band; now: number; live: Live | null }
   }
 }

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Band, Live, Progress } from '../types'
+import type { Band, Live, Progress } from '../types/progress'
 
 const PANE = 'threat-model-progress'
 const TITLE = 'Threat model progress'
@@ -14,17 +14,17 @@ const LIVE_STALE_S = 300
 const REPORT_DIR = 'docs/security'
 
 const progress = atom(
-  { plugin: 'threat-model-progress', key: 'progress' } as const,
+  { plugin: 'appsec-advisor', key: 'progress' } as const,
   { file: undefined, lines: [] } as Progress,
 )
 
 const NO_BAND: Band = { file: undefined, phase: undefined, seenAt: 0, runBase: 0, dismissed: false }
 
-const band = atom({ plugin: 'threat-model-progress', key: 'band' } as const, NO_BAND)
+const band = atom({ plugin: 'appsec-advisor', key: 'band' } as const, NO_BAND)
 
-const now = atom({ plugin: 'threat-model-progress', key: 'now' } as const, 0)
+const now = atom({ plugin: 'appsec-advisor', key: 'now' } as const, 0)
 
-const live = atom({ plugin: 'threat-model-progress', key: 'live' } as const, null as Live | null)
+const live = atom({ plugin: 'appsec-advisor', key: 'live' } as const, null as Live | null)
 
 export type Row = { k: number; n: number; name: string; event: string; elapsed: number | undefined; detail: string }
 

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { durationOf, eventOf, isStepCommand, lockOf, outputFileOf, roleOf, rowOf, stepOf, tailOf, toastOf } from './register'
+import { durationOf, eventOf, isStepCommand, lockOf, outputFileOf, roleOf, rowOf, stepOf, tailOf, toastOf } from './progress'
 
 const START = '18:55:27  1/8 Reconnaissance    start  planning      <1m'
 const WARN = '17:56:51  1/8 Reconnaissance    ⚠      planning       3m          model call failed (server_error); repeating it in 15 s (attempt 2)'
