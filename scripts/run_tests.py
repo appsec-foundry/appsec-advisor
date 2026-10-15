@@ -136,6 +136,7 @@ GROUPS = {
         backfill_scanner_remediation
         capability_signals
         check_target_specificity
+        client_api_flows
         config_iac_checks
         config_iac_scanner
         config_scanner_wireup
@@ -2187,6 +2188,10 @@ SOURCE_TESTS = {
     """),
     "scripts/analyzers/capability_signals.py": _tests("""
         capability_signals
+        multi_repo_assessment
+    """),
+    "scripts/analyzers/client_api_flows.py": _tests("""
+        client_api_flows
         multi_repo_assessment
     """),
     "scripts/analyzers/flow_route_auth.py": _tests("""

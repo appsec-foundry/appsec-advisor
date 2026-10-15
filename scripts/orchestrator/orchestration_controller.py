@@ -8394,6 +8394,42 @@ def _assessment_embedded_access(scope, components: dict, flows: dict) -> dict:
     return result
 
 
+def _assessment_client_api_flows(scope, components: dict, flows: dict, inventories: dict) -> dict:
+    """Add a client's requests to its own repository's API as route-extraction flows (F2).
+
+    Only a client/receiver pair without any flow gets them, so an authored
+    flow is never duplicated; cross-repository calls stay with the reviewed
+    connections. The route fill later sets each flow's authentication.
+    """
+    import copy
+
+    from analyzers import client_api_flows
+
+    result = copy.deepcopy(flows)
+    pairs = {(flow["from"], flow["to"]) for flow in result["data_flows"]}
+    for repo in scope.repositories:
+        rid = repo.repository_id
+        routes = (inventories.get(rid) or {}).get("routes", {}).get("routes") or []
+        modules = (inventories.get(rid) or {}).get("route_handlers") or {}
+        local = [c for c in components["components"] if c["repository_ids"] == [rid]]
+        owners = {row["path"]: c["id"] for c in local for row in c["paths"]}
+
+        def owner_of(route, owners=owners, modules=modules):
+            return owners.get(modules.get(route.get("route_id"))) or owners.get(route.get("handler_file"))
+
+        for client in (c for c in local if c.get("tier") == "client"):
+            files = {row["path"]: repo.files[row["path"]] for row in client["paths"] if row["path"] in repo.files}
+            calls = client_api_flows.client_calls(files, routes)
+            for flow in client_api_flows.flows(client["id"], calls, routes, owner_of):
+                if (flow["from"], flow["to"]) in pairs:
+                    continue
+                for row in flow["evidence"]:
+                    row.update(repository_id=rid, sha256=hashlib.sha256(repo.files[row["file"]]).hexdigest())
+                result["data_flows"].append(flow)
+        pairs |= {(flow["from"], flow["to"]) for flow in result["data_flows"]}
+    return result
+
+
 def _assessment_capabilities(scope, names, qualified: dict, projected: dict) -> None:
     """Label each projected component with the capabilities its own files' call sites prove.
 
@@ -8578,6 +8614,7 @@ def _assessment_architecture(scope, jobs, *, progress):
             asset["id"] = _id("asset", rid, asset["id"])
             assets.append(_assessment_asset_fields(asset))
     flows = _assessment_identity_integrations(scope, components, flows)
+    flows = _assessment_client_api_flows(scope, components, flows, inventories)
     # The existing canonical flow contract owns global size and reference
     # gates. Local IDs never enter it; numbering is controller-owned.
     for index, flow in enumerate(flows["data_flows"], 1):
