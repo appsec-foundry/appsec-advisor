@@ -1065,6 +1065,34 @@ def test_assessment_embedded_access_uses_qualified_frozen_sources(tmp_path, labe
     assert profile_catalog(display["data_flows"])[("none",)]["number"] == "0"
 
 
+@pytest.mark.parametrize("labels", [("solo",), ("edge", "service")])
+def test_projected_components_carry_the_capabilities_their_files_prove(tmp_path, labels):
+    """F4: the controller's architecture has no capabilities; call sites in a component's files add them."""
+    from orchestrator import assessment_workspace as ws
+
+    scope = _scope(tmp_path, labels, {"lib/tokens.ts": "export const issue = (u) => jwt.sign(u, key)\n"})
+    repo = scope.repositories[0]
+    sha = hashlib.sha256(repo.files["lib/tokens.ts"]).hexdigest()
+    qualified = {
+        "components": [
+            {
+                "id": "component-1",
+                "paths": [{"repository_id": repo.repository_id, "path": "lib/tokens.ts", "sha256": sha}],
+            },
+            {"id": "component-2", "paths": [], "capabilities": [{"capability": "admin-functions", "evidence": []}]},
+        ]
+    }
+    projected = {"components": [{"id": "component-1"}, {"id": "component-2", "capabilities": ["kept"]}]}
+    names = ws.Namespaces(scope)
+    controller._assessment_capabilities(scope, names, qualified, projected)
+    [issuer] = projected["components"][0]["capabilities"]
+    assert issuer == {
+        "capability": "jwt-issuer",
+        "evidence": [{"file": names.qualify(repo.repository_id, "lib/tokens.ts"), "line": 1}],
+    }
+    assert projected["components"][1]["capabilities"] == ["kept"]
+
+
 @pytest.mark.parametrize(("handler", "guard"), [("server.ts", "lib/access.ts"), ("api/app.js", "auth/token.js")])
 def test_assessment_route_auth_fills_only_the_repository_whose_routes_a_flow_cites(tmp_path, handler, guard):
     from validators.validate_assessment_architecture import validate_source
