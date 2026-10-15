@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A route whose handler module default-exports an anonymous function or a factory, such as `export default () => listUsers`, is attributed to that module and its handler is analysed, instead of to a wrapper such as an async-error helper.
 - Headless controller assessments give every model the result rules its output tool cannot enforce and derive STRIDE category coverage, identity fields and title locations themselves, so far fewer answers are sent back for correction; control domains are limited to the report's sections.
 - The headless controller no longer warns that an LLM provider is unmodeled when the architecture already connects the component to it.
 - Headless controller assessments see each source line with its line number, so cited lines no longer drift deep in a file, and a control, flow or boundary that cites a blank line or comment is corrected in its own job instead of failing every later analysis that relies on it.
