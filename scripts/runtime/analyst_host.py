@@ -475,20 +475,25 @@ def _communicate_events(
     with open(events_path, "wb") as sink:
         reader = threading.Thread(target=pump, args=(proc.stdout, sink), daemon=True)
         reader.start()
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise HostTimeout("host call exceeded its time limit")
-            if max_thinking_tokens is not None and thinking[0] > max_thinking_tokens:
-                raise HostTimeout(f"host call exceeded its thinking limit of {max_thinking_tokens:,} tokens")
-            if should_stop():
-                raise HostCancelled("job cancelled")
-            try:
-                proc.wait(timeout=min(POLL_SECONDS, remaining))
-                break
-            except subprocess.TimeoutExpired:
-                pass
-        reader.join(timeout=TERMINATE_GRACE_SECONDS)
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise HostTimeout("host call exceeded its time limit")
+                if max_thinking_tokens is not None and thinking[0] > max_thinking_tokens:
+                    raise HostTimeout(f"host call exceeded its thinking limit of {max_thinking_tokens:,} tokens")
+                if should_stop():
+                    raise HostCancelled("job cancelled")
+                try:
+                    proc.wait(timeout=min(POLL_SECONDS, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            # A stopped call's pump still reads until the host is gone; end the
+            # host and the pump before the event file closes.
+            _stop_group(proc)
+            reader.join(timeout=TERMINATE_GRACE_SECONDS)
     return (result[0] if result else b""), (api_error[0] if api_error else None)
 
 
