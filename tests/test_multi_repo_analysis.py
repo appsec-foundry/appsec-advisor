@@ -1423,6 +1423,41 @@ def test_a_file_without_a_security_signal_is_reported_instead_of_targeted(tmp_pa
     assert stage.unexamined_files(component, targets) == [(scope.repositories[0].repository_id, "lib/format.ts")]
 
 
+def test_program_files_outside_every_component_are_summarised_by_directory(tmp_path):
+    files = {
+        "src/api.ts": b"x\n",
+        "lib/parse.ts": b"x\n",
+        "lib/sub/hash.py": b"x\n",
+        "tools/build.js": b"x\n",
+        "lib/parse.test.ts": b"x\n",
+        "tests/api_test.py": b"x\n",
+        "docs/guide.md": b"x\n",
+        "config.json": b"{}\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, ["src/api.ts"])
+    assert stage.unowned_summary(scope, [component], lambda rid, path: path) == {
+        "files": 3,
+        "by_directory": [{"directory": "lib/", "files": 2}, {"directory": "tools/", "files": 1}],
+    }
+    assert (
+        stage.unowned_summary(
+            scope,
+            [
+                {
+                    **component,
+                    "paths": component["paths"]
+                    + [
+                        {"repository_id": component["repository_ids"][0], "path": p}
+                        for p in ("lib/parse.ts", "lib/sub/hash.py", "tools/build.js")
+                    ],
+                }
+            ],
+            lambda rid, path: path,
+        )
+        is None
+    )
+
+
 def test_evidence_preload_serves_cited_ranges_inside_the_job_bounds(tmp_path):
     files = {"a.ts": b"".join(b"line_%d()\n" % n for n in range(1, 301)), "foreign.ts": b"x()\n"}
     scope, component = _owned_sources(tmp_path, files, ["a.ts"])

@@ -493,6 +493,17 @@ def test_coverage_statements_collapse_to_one_line_unless_verbose():
     ]
     assert controller._coverage_infos(entries[:1], verbose=False) == [entries[0]["text"]]
     assert controller._coverage_infos([], verbose=False) == []
+    unowned = {
+        "unowned": {"files": 3, "by_directory": []},
+        "files": 3,
+        "text": "3 program files belong to no component",
+    }
+    # Files outside every component stay their own line and never join the per-component count.
+    assert controller._coverage_infos([unowned, *entries], verbose=False) == [
+        unowned["text"],
+        "15 source files without a route, lead or security signal in 2 components were not individually "
+        "examined; --verbose lists them",
+    ]
 
 
 @pytest.mark.parametrize("role", ["stride_analyzer", "evidence_verifier"])

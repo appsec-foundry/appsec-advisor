@@ -38,6 +38,8 @@ properties:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/analysis_duration_seconds
       unexamined_source:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/unexamined_source
+      unowned_source:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/unowned_source
       mode:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/mode
       open_user_registration:

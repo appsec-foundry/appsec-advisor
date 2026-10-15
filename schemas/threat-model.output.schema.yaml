@@ -70,6 +70,25 @@ properties:
           properties:
             component: {type: string, minLength: 1}
             files: {type: integer, minimum: 1}
+      unowned_source:
+        type: object
+        description: >-
+          Program files outside every component, which no analysis job reads, counted per top-level
+          directory (at most ten); rendered in §1 Scope as a coverage gap.
+        additionalProperties: false
+        required: [files, by_directory]
+        properties:
+          files: {type: integer, minimum: 1}
+          by_directory:
+            type: array
+            maxItems: 10
+            items:
+              type: object
+              additionalProperties: false
+              required: [directory, files]
+              properties:
+                directory: {type: string, minLength: 1}
+                files: {type: integer, minimum: 1}
       mode:
         type: string
         enum: [full, incremental]

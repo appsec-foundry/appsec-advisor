@@ -164,6 +164,18 @@ class TestSystemOverview:
     def test_scope_without_unexamined_source_states_nothing(self, minimal_yaml_data):
         assert "Not individually examined" not in pf.gen_system_overview(minimal_yaml_data)
 
+    def test_scope_names_program_files_outside_every_component(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["unowned_source"] = {
+            "files": 4,
+            "by_directory": [{"directory": "lib/", "files": 3}, {"directory": "(repository root)", "files": 1}],
+        }
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert (
+            "**Not assigned to any component:** 4 program files belong to no component and were not analysed "
+            "(`lib/` 3, `(repository root)` 1)." in md
+        )
+        assert "Not assigned to any component" not in pf.gen_system_overview({**minimal_yaml_data, "meta": {}})
+
     def test_method_boundary_is_independent_of_meta_scope(self):
         md = pf.gen_system_overview({"meta": {}, "components": []})
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
