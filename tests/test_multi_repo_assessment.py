@@ -695,6 +695,42 @@ def test_resume_reuses_accepted_jobs_after_an_interrupted_render(tmp_path, monke
     assert "stride_analyzer" in first
 
 
+def test_stride_job_receives_the_evidence_tier_definition(tmp_path, monkeypatch):
+    """MR-18: every STRIDE call states when a finding counts as exploitable; no other role decides the tier."""
+    from runtime import multi_repo_scope
+
+    roots = [tmp_path / name for name in ("caller", "receiver")]
+    for root in roots:
+        checkout(root)
+    host = FullHost()
+    prompts = {}
+    real_invoke, real_admit = host.invoke, multi_repo_scope.admit
+
+    def invoke(role, system, prompt, schema, timeout_s, should_stop):
+        prompts.setdefault(role, []).append(system + "\n" + prompt)
+        return real_invoke(role, system, prompt, schema, timeout_s, should_stop)
+
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
+        return host.scope
+
+    host.invoke = invoke
+    monkeypatch.setattr(multi_repo_scope, "admit", admit)
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", lambda: "a" * 64)
+    argv = [
+        *[arg for root in roots for arg in ("--repo", str(root))],
+        *("--output", str(tmp_path / "out"), "--hard-budget", "5", "--trust-mode", "trusted", "--model", "haiku"),
+    ]
+    assert (
+        controller.assess_repositories(argv, host_factory=host.factory, progress=lambda t: None)["status"] == "complete"
+    )
+    assert prompts["stride_analyzer"]
+    for text in prompts["stride_analyzer"]:
+        assert controller._STRIDE_TIER_RULE in text
+        assert "an input or entry point an attacker can reach" in text
+    assert not any(controller._STRIDE_TIER_RULE in text for text in prompts.get("evidence_verifier", []))
+
+
 def test_changed_source_stops_publication(tmp_path, monkeypatch):
     from runtime import multi_repo_scope
 
