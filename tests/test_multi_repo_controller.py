@@ -402,7 +402,8 @@ def test_only_the_first_job_of_a_split_component_carries_its_context_lines(tmp_p
         )
     ]
     calls = len(host.calls)
-    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=lambda _: None)
+    steps = []
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=steps.append)
     stride = [
         (system, slices)
         for (role, ctx), slices, system in zip(host.calls[calls:], host.packets[calls:], host.systems[calls:])
@@ -420,6 +421,17 @@ def test_only_the_first_job_of_a_split_component_carries_its_context_lines(tmp_p
         if role == "stride_analyzer" and ctx["component"]["id"] != component["id"]
     ]
     assert single and not any("job 1 of" in system for system in single)
+    # MR-16 console: each finished job and each finished component is reported, in completion order.
+    # Both repositories name their component "Service": the label tells them apart.
+    name = f"{component['name']} [{component['id'][-6:]}]"
+    assert [s for s in steps if s.startswith(f"Finished STRIDE job: {name} ")] == [
+        f"Finished STRIDE job: {name} ({n}/{len(stride)})" for n in range(1, len(stride) + 1)
+    ]
+    finished = [s for s in steps if s.startswith("Analyzed component: ")]
+    count = len(architecture["components"]["components"])
+    assert len(finished) == count and [s.rsplit("(", 1)[1] for s in finished] == [
+        f"{n}/{count})" for n in range(1, count + 1)
+    ]
 
 
 def test_a_job_with_more_preloaded_windows_than_reads_passes_its_receipt(tmp_path):
