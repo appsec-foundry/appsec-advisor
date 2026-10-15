@@ -8408,16 +8408,16 @@ def _assessment_embedded_access(scope, components: dict, flows: dict) -> dict:
 def _assessment_client_api_flows(scope, components: dict, flows: dict, inventories: dict) -> dict:
     """Add a client's requests to its own repository's API as route-extraction flows (F2).
 
-    Only a client/receiver pair without any flow gets them, so an authored
-    flow is never duplicated; cross-repository calls stay with the reviewed
-    connections. The route fill later sets each flow's authentication.
+    Existing flows cover their evidenced requests, not their whole component
+    pair. Cross-repository calls stay with the reviewed connections. The emitter
+    derives authentication from every grouped route before bounding evidence.
     """
     import copy
 
     from analyzers import client_api_flows
+    from validators.validate_assessment_architecture import _evidence_rows, _repository_projection, validate_source
 
     result = copy.deepcopy(flows)
-    pairs = {(flow["from"], flow["to"]) for flow in result["data_flows"]}
     for repo in scope.repositories:
         rid = repo.repository_id
         routes = (inventories.get(rid) or {}).get("routes", {}).get("routes") or []
@@ -8431,13 +8431,17 @@ def _assessment_client_api_flows(scope, components: dict, flows: dict, inventori
         for client in (c for c in local if c.get("tier") == "client"):
             files = {row["path"]: repo.files[row["path"]] for row in client["paths"] if row["path"] in repo.files}
             calls = client_api_flows.client_calls(files, routes)
+            calls = client_api_flows.uncovered_calls(
+                client["id"], calls, routes, owner_of, _repository_projection(result["data_flows"], rid)
+            )
             for flow in client_api_flows.flows(client["id"], calls, routes, owner_of):
-                if (flow["from"], flow["to"]) in pairs:
-                    continue
-                for row in flow["evidence"]:
-                    row.update(repository_id=rid, sha256=hashlib.sha256(repo.files[row["file"]]).hexdigest())
+                for row in _evidence_rows(flow):
+                    source = repo.files.get(row["file"])
+                    if source is None:
+                        raise ControllerError("Client route evidence cites source outside the admitted repository")
+                    row.update(repository_id=rid, sha256=hashlib.sha256(source).hexdigest())
+                    validate_source(scope, row, path_key="file")
                 result["data_flows"].append(flow)
-        pairs |= {(flow["from"], flow["to"]) for flow in result["data_flows"]}
     return result
 
 

@@ -1,12 +1,14 @@
 """A client's requests to its own API become flows grouped by the authentication its routes prove."""
 
+import copy
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from analyzers.client_api_flows import client_calls, flows  # noqa: E402
+from analyzers.client_api_flows import client_calls, flows, uncovered_calls  # noqa: E402
 
 
 def route(method, path, line, signal="unresolved", scheme=None, authn="unknown"):
@@ -54,6 +56,19 @@ def test_path_literals_match_their_routes(source, expected):
 )
 def test_templates_tests_comments_and_unknown_paths_request_nothing(path, source):
     assert client_calls({path: source.encode()}, ROUTES) == {}
+
+
+def test_explicit_client_method_does_not_borrow_another_methods_guard():
+    routes = [
+        route("GET", "/records", 10, "verified", "bearer", "present"),
+        route("POST", "/records", 11, "none", "none", "absent"),
+        route("OPTIONS", "*", 12, "none", "none", "absent"),
+    ]
+    calls = client_calls({"ui/api.ts": b"client.get(base + '/records')\n"}, routes)
+    assert set(calls) == {0}
+    [flow] = flows("web", calls, routes, lambda _: "api")
+    assert flow["route_refs"] == ["GET /records"]
+    assert flow["authentication"]["scheme"] == "bearer"
 
 
 def test_routes_group_by_owner_and_proven_authentication():
@@ -136,3 +151,109 @@ def test_settling_leaves_groups_of_other_producers_to_the_gate():
     ]
     settle_access_groups(authored)
     assert all("access_group" in flow for flow in authored)
+
+
+@pytest.mark.parametrize(
+    ("client", "receiver", "prefix"), [("portal", "api", "/orders"), ("console", "engine", "/jobs")]
+)
+def test_existing_flow_covers_only_its_evidenced_authentication_variant(client, receiver, prefix):
+    routes = [
+        route("GET", prefix + "/private", 10, "verified", "bearer", "middleware_present"),
+        route("POST", prefix + "/session", 11, "verified", "cookie", "present"),
+        route("GET", prefix + "/public", 12, "none", "none", "absent"),
+        route("GET", prefix + "/dynamic", 13),
+    ]
+    calls = {i: [{"file": "ui/api.ts", "line": i + 1}] for i in range(4)}
+
+    def owner(_):
+        return receiver
+
+    existing = flows(client, {0: calls[0]}, routes, owner)
+    before = copy.deepcopy(existing)
+    remaining = uncovered_calls(client, calls, routes, owner, existing)
+    assert set(remaining) == {1, 2, 3}
+    emitted = flows(client, remaining, routes, owner)
+    assert {(f.get("authentication") or {}).get("scheme", "unknown") for f in emitted} == {"cookie", "none", "unknown"}
+    assert existing == before
+    # A repeat does not duplicate these evidenced interfaces.
+    assert uncovered_calls(client, calls, routes, owner, existing + emitted) == {}
+
+
+@pytest.mark.parametrize("kind", ["pair-only", "reference-only", "wrong-receiver", "interaction", "different-auth"])
+def test_an_unsubstantiated_or_different_flow_cannot_hide_a_proven_variant(kind):
+    calls = {0: [{"file": "ui/api.ts", "line": 1}]}
+    existing = {"from": "web", "to": "api", "route_refs": ["GET /api/orders/:id"]}
+    if kind not in {"pair-only", "reference-only"}:
+        existing["evidence"] = calls[0]
+    if kind == "pair-only":
+        existing.pop("route_refs")
+    elif kind == "wrong-receiver":
+        existing["to"] = "other-api"
+    elif kind == "interaction":
+        existing["interaction"] = True
+    elif kind == "different-auth":
+        existing["authentication"] = {"scheme": "cookie", "scope": "A session", "evidence": calls[0]}
+    assert uncovered_calls("web", calls, ROUTES, lambda _: "api", [existing]) == calls
+
+
+def test_a_route_fillable_authored_flow_is_not_duplicated():
+    calls = {0: [{"file": "ui/api.ts", "line": 1}]}
+    existing = {"from": "web", "to": "api", "evidence": [{"file": "server.ts", "line": 10}]}
+    assert uncovered_calls("web", calls, ROUTES, lambda _: "api", [existing]) == {}
+
+
+def test_authentication_considers_every_route_before_bounding_evidence():
+    from analyzers.flow_route_auth import reconcile
+    from jsonschema import validate
+    from renderers.figure1_security import profile_catalog
+
+    routes = [route("GET", f"/records/{i}", i + 10, "none", "none", "absent") for i in range(5)]
+    # Both outcomes have scheme none, but decoding a credential is a distinct
+    # observation. It used to disappear beyond the four registration samples.
+    routes[-1]["authn_handler_signal"] = "decode_only"
+    calls = {i: [{"file": "ui/api.ts", "line": i + 1}] for i in range(5)}
+    before = copy.deepcopy(routes)
+    emitted = flows("web", calls, routes, lambda _: "api")
+    assert len(emitted) == 2
+    assert len({f["authentication"]["scope"] for f in emitted}) == 2
+    for i, flow in enumerate(emitted, 1):
+        flow["id"] = f"df-{i:03d}"
+    document = {
+        "schema_version": 1,
+        "component_inventory_fingerprint": "sha256:" + "a" * 64,
+        "data_flows": emitted,
+    }
+    schema = json.loads((Path(__file__).resolve().parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    validate(document, schema)
+    enriched, filled, mixed = reconcile(document, routes)
+    assert enriched == document and not filled and not mixed
+    assert {p["scheme"] for p in profile_catalog(emitted).values()} == {"none"}
+    assert routes == before
+
+
+def test_stable_route_references_keep_covered_guards_after_evidence_is_shortened():
+    routes = [route("GET", f"/records/{i}", i + 10, "verified", "bearer", "present") for i in range(8)]
+    calls = {i: [{"file": "ui/api.ts", "line": i + 1}] for i in range(8)}
+    emitted = flows("web", calls, routes, lambda _: "api")
+    assert len(emitted) == 1 and len(emitted[0]["evidence"]) == 8
+    assert uncovered_calls("web", calls, routes, lambda _: "api", emitted) == {}
+    # Returned evidence must not alias scanner input: the controller qualifies it.
+    emitted[0]["authentication"]["evidence"][0]["repository_id"] = "repo-local"
+    assert "repository_id" not in routes[0]["authn_handler_evidence"][0]
+
+
+def test_unresolved_route_does_not_gain_authentication_from_a_finding_on_its_registration_file():
+    from analyzers.flow_route_auth import fill_from_verified_findings
+
+    emitted = _filled("web", "client.get('/rest/reports')", ROUTES, "api")
+    [flow] = emitted
+    assert "authentication" not in flow
+    finding = {
+        "id": "T-001",
+        "component": "api",
+        "cwe": "CWE-306",
+        "evidence_check": "verified",
+        "evidence": [{"file": "server.ts", "line": 200}],
+    }
+    result, filled = fill_from_verified_findings(emitted, [finding])
+    assert result == emitted and filled == []
