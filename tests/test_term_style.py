@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from renderers.term_style import Style, color_enabled, logo, main, scanner  # noqa: E402
+from renderers.term_style import Style, color_enabled, logo, main  # noqa: E402
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -80,11 +80,3 @@ def test_logo_lines_keep_their_width_in_colour() -> None:
     plain = logo(Style(False), "v1 · headless")
     coloured = logo(Style(True, True), "v1 · headless")
     assert [_ANSI.sub("", line) for line in coloured] == plain
-
-
-def test_scanner_light_sweeps_back_and_forth_at_a_fixed_width() -> None:
-    frames = [scanner(Style(False), frame) for frame in range(9)]
-    assert frames[:5] == ["█▓▒··", "▓█▓▒·", "▒▓█▓▒", "·▒▓█▓", "··▒▓█"]
-    assert frames[5:] == ["·▒▓█▓", "▒▓█▓▒", "▓█▓▒·", "█▓▒··"]
-    coloured = scanner(Style(True, True), 2)
-    assert "\x1b" in coloured and _ANSI.sub("", coloured) == "▒▓█▓▒"
