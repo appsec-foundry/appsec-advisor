@@ -569,3 +569,50 @@ def test_direct_imports_resolve_against_the_admitted_file_set(path, text, expect
         "app/security.py",
     }
     assert direct_imports(path, text, files.__contains__) == expected
+
+
+@pytest.mark.parametrize(
+    "lib,guard,mount",
+    [("lib/insecurity.ts", "appendUserId", "/rest/wallet"), ("shared/session.ts", "bindOwner", "/api/cards")],
+)
+def test_middleware_definitions_name_route_and_prefix_guards_but_not_global_ones(tmp_path, lib, guard, mount):
+    """The guard a route runs is found in its own file, whatever that file and guard are called."""
+    module = lib.rsplit(".", 1)[0]
+    write(
+        tmp_path,
+        {
+            "server.ts": "import express from 'express'\n"
+            f"import * as security from './{module}'\n"
+            "import { show } from './routes/show'\n"
+            "const app = express()\n"
+            "app.use(security.trace())\n"
+            f"app.use('{mount}', security.isLoggedIn())\n"
+            f"app.get('{mount}/balance', security.{guard}(), show())\n",
+            lib: "export const trace = () => (req, res, next) => next()\n"
+            "export const isLoggedIn = () => (req, res, next) => {\n"
+            "  if (!req.headers.authorization) return res.sendStatus(401)\n"
+            "  next()\n"
+            "}\n"
+            f"export const {guard} = () => (req, res, next) => {{\n"
+            "  req.body.UserId = req.user.id\n"
+            "  next()\n"
+            "}\n",
+            "routes/show.ts": "export function show () {\n  return (req, res) => res.json(req.body.UserId)\n}\n",
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), f"{mount}/balance")
+    spans = HandlerResolver(tmp_path).middleware_definitions(row)
+    # The route's own guard first, then the guard mounted on its prefix; the
+    # path-less mount runs everywhere and the handler is no middleware.
+    assert spans == [(lib, 6, 9), (lib, 2, 5)]
+
+
+def test_a_route_without_middleware_names_no_definition(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("routes/feedback", "submit", "/feedback"),
+            "routes/feedback.ts": "export function submit () {\n  return (req, res) => res.json(req.body)\n}\n",
+        },
+    )
+    assert HandlerResolver(tmp_path).middleware_definitions(route(ri.build_inventory(tmp_path), "/feedback")) == []

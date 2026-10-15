@@ -1807,6 +1807,43 @@ def test_the_control_job_may_only_choose_a_placeable_domain():
     assert not Draft202012Validator(domain).is_valid("Recovery")
 
 
+@pytest.mark.parametrize("guard_file", ["lib/insecurity.ts", "shared/owner.js"])
+def test_the_middleware_a_route_runs_reaches_its_target_and_preload(tmp_path, guard_file):
+    """A guard defined outside handler and registration is served with the target that relies on it."""
+    registration = "server.ts"
+    files = {
+        registration: b"const app = express()\n" + b"\n" * 600 + b"app.get('/wallet', bindOwner(), balance())\n",
+        "routes/wallet.ts": b"export const balance = () => (req, res) => res.json(lookup(req.body.UserId))\n",
+        guard_file: b"\n" * 40 + b"export const bindOwner = () => (req, res, next) => {\n"
+        b"  req.body.UserId = req.user.id\n  next()\n}\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, [registration, "routes/wallet.ts"])
+    rid = scope.repositories[0].repository_id
+    route = _route("R-1", "GET", "/wallet", registration, 602)
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {rid: {"routes": [route]}},
+        "route_handler_modules": {rid: {"R-1": "routes/wallet.ts"}},
+        "route_middleware": {rid: {"R-1": [[guard_file, 41, 44]]}},
+    }
+    by_file = {t["evidence"]["file"]: t for t in stage.analysis_targets(scope, component, architecture, [])}
+    target = by_file["routes/wallet.ts"]
+    assert target["middleware"] == [[rid, guard_file, 41, 44]]
+    # The guard's file is no component source, yet the target may read it.
+    allowed = stage.source_selection([component]) | stage.related_sources([target])
+    assert (rid, guard_file) in allowed
+    supplied = stage.supporting_preload(scope, [target], [], allowed, context={})
+    assert (rid, guard_file, 41, 44) in supplied
+    # A route without resolved middleware names none.
+    architecture["route_middleware"] = {}
+    by_file = {t["evidence"]["file"]: t for t in stage.analysis_targets(scope, component, architecture, [])}
+    assert "middleware" not in by_file["routes/wallet.ts"]
+    assert all(
+        p[1] != guard_file
+        for p in stage.supporting_preload(scope, [by_file["routes/wallet.ts"]], [], allowed, context={})
+    )
+
+
 @pytest.mark.parametrize("handler,helper", [("routes/read.ts", "lib/parser.ts"), ("api/get.js", "shared/check.js")])
 def test_supporting_sources_close_guard_and_helper_gaps_without_more_jobs(tmp_path, handler, helper):
     import posixpath
