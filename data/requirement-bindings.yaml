@@ -30,8 +30,7 @@ requirements:
       - agents/appsec-recon-scanner.md
       - scripts/contexts/build_architecture_analysis_context.py
       - schemas/architecture-role-units.schema.json
-    decisions:
-      - OR-27
+    decisions: []
     documents:
       - README.md
       - docs/internal/contracts/schema-invariants.md
@@ -54,8 +53,7 @@ requirements:
       - scripts/validators/validate_fragment.py
       - scripts/renderers/summarize_threat_model.py
       - schemas/fragments/verdict.schema.json
-    decisions:
-      - RA-24
+    decisions: []
     documents:
       - README.md
       - docs/threat-modeler.md
@@ -94,11 +92,7 @@ requirements:
       - schemas/related-repos.schema.yaml
       - scripts/contexts/slice_cross_repo_for_component.py
       - scripts/analyzers/discover_identity_providers.py
-    decisions:
-      - WK-6
-      - FE-1
-      - FE-4
-      - FE-15
+    decisions: []
     documents: []
     coverage: partial
     guards:
@@ -122,11 +116,7 @@ requirements:
       - schemas/weakness-signals.schema.json
       - schemas/impl-strategy.schema.json
       - data/weakness-classes.yaml
-    decisions:
-      - WK-1
-      - WK-2
-      - WK-3
-      - WK-4
+    decisions: []
     documents:
       - docs/internal/contracts/weakness-derivation.md
     coverage: partial
@@ -150,12 +140,7 @@ requirements:
       - scripts/shared/_boundary_adjacency.py
       - data/cwe-boundary-legs.yaml
       - schemas/trust-boundaries-repo.schema.yaml
-    decisions:
-      - TB-1
-      - TB-3
-      - TB-4
-      - TB-5
-      - TB-8
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -176,14 +161,7 @@ requirements:
       - agents/appsec-abuse-case-deriver.md
       - data/abuse-cases/**
       - schemas/abuse-cases.schema.yaml
-    decisions:
-      - AC-1
-      - AC-2
-      - AC-3
-      - AC-8
-      - AC-10
-      - AC-11
-      - AC-12
+    decisions: []
     documents:
       - docs/org-profiles.md
     coverage: direct
@@ -216,9 +194,7 @@ requirements:
       - scripts/renderers/render_completion_summary.py
       - schemas/stride.schema.yaml
       - schemas/threats-merged.schema.yaml
-    decisions:
-      - FE-1
-      - WK-4
+    decisions: []
     documents: []
     coverage: partial
     guards:
@@ -236,8 +212,7 @@ requirements:
       - skills/abuse-cases/SKILL.md
       - skills/analyze-threats/SKILL.md
       - skills/ask-threat-model/SKILL.md
-    decisions:
-      - AC-1
+    decisions: []
     documents:
       - docs/org-profiles.md
       - docs/threat-analyst.md
@@ -255,11 +230,7 @@ requirements:
       - data/architectural-controls.yaml
       - scripts/model/normalize_security_architecture.py
       - scripts/analyzers/architecture_coverage_checks.py
-    decisions:
-      - SA-1
-      - SA-2
-      - SA-3
-      - FE-2
+    decisions: []
     documents: []
     coverage: direct
     guards:
@@ -291,9 +262,7 @@ requirements:
       - scripts/orchestrator/build_stride_dispatch_manifest.py
       - scripts/orchestrator/check_stride_dispatch.py
       - scripts/runtime/aggregate_run_issues.py
-    decisions:
-      - DT-1
-      - DT-6
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -328,10 +297,7 @@ requirements:
       - scripts/validators/validate_intermediate.py
       - scripts/renderers/compose_threat_model.py
       - schemas/**
-    decisions:
-      - OR-3
-      - OR-25
-      - RA-1
+    decisions: []
     documents:
       - docs/internal/contracts/orchestration-actions.md
       - docs/internal/contracts/schema-invariants.md
@@ -363,10 +329,7 @@ requirements:
       - scripts/validators/validate_intermediate.py
       - schemas/requirements-catalog.schema.yaml
       - schemas/threat-model.output.schema.yaml
-    decisions:
-      - RQ-1
-      - RQ-3
-      - RQ-4
+    decisions: []
     documents:
       - docs/internal/contracts/schema-invariants.md
     coverage: direct
@@ -385,9 +348,7 @@ requirements:
       - scripts/contexts/build_threat_modeling_context.py
       - scripts/contexts/load_business_context.py
       - schemas/known-threats.schema.yaml
-    decisions:
-      - RC-1
-      - RC-2
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -400,8 +361,7 @@ requirements:
     applies_to:
       - scripts/model/resolve_actors.py
       - data/actors/**
-    decisions:
-      - RC-3
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -430,8 +390,7 @@ requirements:
       - schemas/stride-analyst-context.schema.json
       - schemas/stride-dispatch-manifest.schema.yaml
       - schemas/threat-model.output.schema.yaml
-    decisions:
-      - RC-1
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -462,8 +421,7 @@ requirements:
       - scripts/contexts/build_threat_modeling_context.py
       - scripts/runtime/aggregate_run_issues.py
       - scripts/renderers/compose_threat_model.py
-    decisions:
-      - RC-1
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -483,8 +441,7 @@ requirements:
       - skills/create-threat-model/modes/business-context.md
       - skills/create-threat-model/modes/business-impact.md
       - skills/create-threat-model2/SKILL.md
-    decisions:
-      - RC-4
+    decisions: []
     documents:
       - docs/threat-modeler.md
       - docs/internal/contracts/orchestration-actions.md
@@ -516,9 +473,7 @@ requirements:
       - scripts/validators/validate_intermediate.py
       - scripts/model/emit_severity_rationale.py
       - scripts/renderers/_severity_rollup.py
-    decisions:
-      - FE-1
-      - AC-9
+    decisions: []
     documents:
       - docs/internal/contracts/schema-invariants.md
     coverage: direct
@@ -546,8 +501,7 @@ requirements:
       - scripts/exporters/export_html.py
       - scripts/exporters/export_pdf.py
       - scripts/renderers/render_completion_summary.py
-    decisions:
-      - RA-3
+    decisions: []
     documents:
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
@@ -598,18 +552,7 @@ requirements:
       - scripts/renderers/team_questions.py
       - data/sections-contract.yaml
       - data/weakness-classes.yaml
-    decisions:
-      - RA-4
-      - RN-5
-      - OR-26
-      - RA-10
-      - RA-11
-      - RA-12
-      - RA-13
-      - RA-15
-      - RA-17
-      - RA-18
-      - RA-21
+    decisions: []
     documents:
       - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md
@@ -756,8 +699,7 @@ requirements:
       - scripts/validators/validate_mitigation_quality.py
       - scripts/model/emit_finding_fix_mitigations.py
       - scripts/model/hydrate_mitigation_details.py
-    decisions:
-      - RQ-5
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: direct
@@ -778,10 +720,7 @@ requirements:
       - scripts/exporters/export_threat_dragon.py
       - scripts/validators/validate_intermediate.py
       - docs/threat-dragon-export.md
-    decisions:
-      - EXP-4
-      - EXP-5
-      - RC-6
+    decisions: []
     documents:
       - docs/threat-dragon-export.md
       - docs/threat-modeler.md
@@ -800,8 +739,7 @@ requirements:
     applies_to:
       - scripts/renderers/figure1_dfd.py
       - docs/images/figure1-example.svg
-    decisions:
-      - RA-26
+    decisions: []
     documents:
       - specs/changes/figure1-stays-readable-at-page-width/proposal.md
     coverage: direct
@@ -823,11 +761,7 @@ requirements:
       - scripts/renderers/compose_threat_model.py
       - data/supply-chain-view-checks.yaml
       - schemas/supply-chain-view.schema.json
-    decisions:
-      - RA-28
-      - RA-29
-      - RA-30
-      - RA-31
+    decisions: []
     documents:
       - specs/changes/figure1-splits-runtime-and-supply-chain/proposal.md
       - docs/internal/contracts/schema-invariants.md
@@ -899,8 +833,7 @@ requirements:
     applies_to:
       - scripts/runtime/analyst_state.py
       - scripts/contexts/build_analyst_snapshot.py
-    decisions:
-      - RA-6
+    decisions: []
     documents:
       - docs/threat-analyst.md
     coverage: direct
@@ -1048,11 +981,7 @@ requirements:
       - scripts/runtime/assessment_host.py
       - scripts/shared/_path_guard.py
       - scripts/shared/_url_guard.py
-    decisions:
-      - TR-1
-      - TR-2
-      - TR-10
-      - TR-3
+    decisions: []
     documents:
       - README.md
       - SECURITY.md
@@ -1076,9 +1005,7 @@ requirements:
       - scripts/validators/postscan_secret_check.py
       - scripts/validators/secret_scan.py
       - scripts/validators/redact_known_secrets.py
-    decisions:
-      - TR-8
-      - TR-9
+    decisions: []
     documents:
       - README.md
     coverage: direct
@@ -1094,9 +1021,6 @@ requirements:
     decisions:
       - EX-1
       - EX-2
-      - EX-3
-      - EX-4
-      - EX-5
     documents:
       - docs/org-profiles.md
       - docs/internal/contracts/org-profile-invariants.md
@@ -1115,9 +1039,7 @@ requirements:
       - schemas/known-threats.schema.yaml
       - schemas/requirements-catalog.schema.yaml
       - schemas/trust-boundaries-repo.schema.yaml
-    decisions:
-      - RC-1
-      - RC-3
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: partial
@@ -1145,8 +1067,6 @@ requirements:
       - schemas/org-profile.schema.yaml
       - scripts/check_release_meta.py
     decisions:
-      - RA-3
-      - TB-7
       - EX-1
     documents:
       - docs/internal/contracts/schema-invariants.md
@@ -1239,9 +1159,7 @@ requirements:
       - scripts/contexts/slice_cross_repo_for_component.py
       - schemas/related-repos.schema.yaml
       - agents/appsec-stride-analyzer-v2.md
-    decisions:
-      - FE-4
-      - FE-15
+    decisions: []
     documents: []
     coverage: partial
     guards:
@@ -1279,8 +1197,7 @@ requirements:
       - schemas/stride-analyst-context.schema.json
       - schemas/stride-dispatch-manifest.schema.yaml
       - schemas/threat-model.output.schema.yaml
-    decisions:
-      - RC-1
+    decisions: []
     documents:
       - docs/threat-modeler.md
     coverage: partial
@@ -1303,8 +1220,7 @@ requirements:
       - skills/create-threat-model/SKILL-full-runtime.md
       - skills/create-threat-model/modes/business-context.md
       - skills/create-threat-model/modes/business-impact.md
-    decisions:
-      - RC-4
+    decisions: []
     documents:
       - docs/threat-modeler.md
       - docs/internal/contracts/orchestration-actions.md
@@ -1333,14 +1249,7 @@ requirements:
       - scripts/renderers/render_abuse_cases.py
       - scripts/validators/verify_abuse_cases.py
       - schemas/threat-model.output.schema.yaml
-    decisions:
-      - AC-1
-      - AC-2
-      - AC-3
-      - AC-8
-      - AC-10
-      - AC-11
-      - AC-12
+    decisions: []
     documents:
       - docs/org-profiles.md
     coverage: partial
@@ -1355,18 +1264,7 @@ requirements:
       - scripts/renderers/team_questions.py
       - scripts/renderers/compose_threat_model.py
       - agents/shared/ms-template.md
-    decisions:
-      - RA-4
-      - RN-5
-      - OR-26
-      - RA-10
-      - RA-11
-      - RA-12
-      - RA-13
-      - RA-15
-      - RA-17
-      - RA-18
-      - RA-21
+    decisions: []
     documents:
       - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md
@@ -1384,10 +1282,7 @@ requirements:
       - scripts/exporters/**
       - schemas/threat-model.output.schema.yaml
       - docs/threat-dragon-export.md
-    decisions:
-      - EXP-4
-      - EXP-5
-      - RC-6
+    decisions: []
     documents:
       - docs/threat-dragon-export.md
       - docs/threat-modeler.md
