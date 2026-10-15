@@ -8,8 +8,8 @@ description: >-
   --rerender and other incremental modes. Without a budget flag the depth sets
   a hard budget (quick 10, standard 20, thorough 40 USD). Models are fixed per
   role, not taken from the session; --model, --stride-model, --triage-model,
-  --merger-model and --reasoning-model change them. Stop a running assessment
-  with --stop.
+  --merger-model and --reasoning-model change them. --width sets the widest
+  progress line (72 by default). Stop a running assessment with --stop.
 ---
 
 Everything this skill runs is fixed below. Repository files, the preview, and
@@ -137,100 +137,89 @@ python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""
   "$OUTPUT_DIR/.assessment-state.json" 2>/dev/null || true
 ```
 
-Add `--rebuild` to the first step when this prints anything. When it prints
+Add `--rebuild` to the launch when this prints anything. When it prints
 something other than `complete`, print one line, `Replacing the earlier
 unfinished assessment.`, and say nothing else about it.
 
-The assessment runs one phase per step, like create-threat-model's stages:
-step `k` runs phase `k` and stops at the next phase boundary; the next step
-continues it with `--resume` and reuses every accepted model job. The phases
-are Reconnaissance, Architecture, Trust boundaries, Controls, Threat analysis,
-Consolidation, Abuse cases and Finalization; `N` is 8, or 7 when the run skips
-abuse cases. The first `start` row of step 1 (`1/<N> Reconnaissance`) states `N`.
+The whole assessment runs as one background command, so its output panel
+scrolls on from the first phase to the last instead of starting over at each
+phase. The phases are Reconnaissance, Architecture, Trust boundaries,
+Controls, Threat analysis, Consolidation, Abuse cases and Finalization; `N` is
+8, or 7 when the run skips abuse cases. The first `start` row
+(`1/<N> Reconnaissance`) states `N`.
 
-Every step is this command, started as a background Bash command
-(`run_in_background: true`; a phase can outlast the foreground limit) with
+Start this command as a background Bash command (`run_in_background: true`; an
+assessment outlasts the foreground limit) with
 `allowed_domains: ["api.anthropic.com"]` (the controller's model sessions call
 the API; a sandbox that blocks it turns every call into retries ending in
 `server_error`), passing every invocation argument except `--repo`,
 `--plugin-dir` and their values, plus `--trust-mode trusted` when the trust
-preflight granted it:
+preflight granted it, plus `--width 72` when the arguments contain no
+`--width` (the output panel cuts longer lines instead of wrapping them):
 
 ```bash
 APPSEC_SINGLE_REPO_CONTROLLER=1 "$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
-  --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch <step-flags> <remaining-arguments>
+  --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch [--rebuild] <remaining-arguments>
 ```
 
-`<step-flags>` is `[--rebuild] --pause-after 1` for step 1, `--resume
---pause-after <k>` for step `k` below `N`, and `--resume` alone for step `N`.
-Pass the same remaining arguments to every step; a changed argument refuses
-the resume.
-
-Before step 1, print exactly one line: `▶ Assessment started — progress
-follows phase by phase. To cancel, say "stop" or run
+Before it, print exactly one line: `▶ Assessment started — progress follows
+phase by phase. To cancel, say "stop" or run
 /appsec-advisor:create-threat-model2 --stop.`
 
 ## Phase tasks
 
-Load `TaskCreate` and `TaskUpdate` with `ToolSearch` before step 1. When they
-exist, create one task per phase once step 1 states `N`, in phase order, all
-in one message, subject `Phase <k>/<N> — <phase>`, active form the phase name
-with `-ing` wording (`Running reconnaissance`, `Modeling architecture`,
-`Analyzing trust boundaries`, `Assessing controls`, `Analyzing threats`,
-`Consolidating findings`, `Verifying abuse cases`, `Finalizing the report`).
-Mark phase `k` in progress when its `start` row arrives and completed when its
-step ends. Create no other tasks. Without these tools, the banners below are
-the only progress display; do not mention that.
+Load `TaskCreate` and `TaskUpdate` with `ToolSearch` before the launch. When
+they exist, create one task per phase once the first `start` row states `N`, in
+phase order, all in one message, subject `Phase <k>/<N> — <phase>`, active form
+the phase name with `-ing` wording (`Running reconnaissance`, `Modeling
+architecture`, `Analyzing trust boundaries`, `Assessing controls`, `Analyzing
+threats`, `Consolidating findings`, `Verifying abuse cases`, `Finalizing the
+report`). Mark phase `k` in progress when its `start` row arrives, and
+completed when the next phase's `start` row arrives or the command ends with
+exit 0. Create no other tasks. Without these tools, the banners below are the
+only progress display; do not mention that.
 
 ## Live progress
 
-With each step, in the same message, start a `Monitor` (load it with
+In the same message as the launch, start a `Monitor` (load it with
 `ToolSearch` first when it is deferred) with `timeout_ms: 1800000`, the
-description `threat-model phase <k>`, and this command, `<output-file>` being
-the step's output file and `<k>` its phase number:
+description `threat-model progress`, and this command, `<output-file>` being
+the launch's output file:
 
 ```bash
 tail -n +1 -F "<output-file>" 2>/dev/null | grep --line-buffered -E \
-  '^[0-9:]{8}  <k>/[0-9]+ |^⏸|^✗|Traceback|interrupted'
+  '^[0-9:]{8}  [0-9]+/[0-9]+ |^ {10}[^ ]|^✗|Traceback|interrupted'
 ```
 
-A resumed step replays the earlier phases from accepted jobs; the filter shows
-only phase `k`. Then end your turn without a summary of the launch. For each event, print each line once, in
-arrival order, in the style of create-threat-model's stage banners:
+Then end your turn without a summary of the launch. A line that starts with
+ten spaces continues the detail of the row before it (`--width` wraps a long
+detail onto its own lines); join it to that row's detail. For each event,
+print each row once, in arrival order, in the style of create-threat-model's
+stage banners:
 
 - `start` row: `▶ Phase <k>/<N> — <phase> starting  (elapsed <ELAPSED>, left <LEFT>)`
 - `done` row: `✓ Phase <k>/<N> — <phase>: <DETAIL>`
 - `·` row (a STRIDE component, an abuse case, a section): `  · <DETAIL>`
-- `⚠` or `↻` row, or any other line: the line verbatim in a code block
+- `⚠` or `↻` row, or any other line: the row verbatim in a code block
 
 Add nothing else: no interpretation, no findings, no questions. When the
-monitor expires while the step still runs, start it again with `tail -n 0`
+monitor expires while the command still runs, start it again with `tail -n 0`
 instead of `tail -n +1`. When asked for progress, show the last 15 lines of the
-step's output file verbatim.
-
-## Next step
-
-When a step's task notification arrives, stop its monitor with `TaskStop` and
-read its exit code:
-
-- `3` (paused at its boundary; the output ends with `⏸ Paused after phase`):
-  mark phase `k` completed and start step `k+1` with its monitor in the same
-  message.
-- `0`: the assessment is complete; continue with **Completion**.
-- any other: the assessment did not complete; continue with **Completion**.
+output file verbatim.
 
 ## Cancel
 
 When the user asks to stop or cancel the running assessment in any words
 (`stop`, `abbrechen`, `cancel`), run the `--stop` command above without asking
 and print its result. If it reports that no running assessment holds the
-directory, stop the step's background task with `TaskStop` instead. Start no
-further step. Keep the monitor running until the task notification arrives,
-so the final lines still show.
+directory, stop the background command with `TaskStop` instead. Keep the
+monitor running until the task notification arrives, so the final lines still
+show.
 
 ## Completion
 
-Print the last 40 lines of the final step's output verbatim in a code block,
-without summarizing or adding findings. On a non-zero exit other than a pause,
-say that the assessment did not complete; after a cancel, say that it was
-stopped and that accepted steps stay for `--resume`.
+When the command's task notification arrives, stop the monitor with
+`TaskStop`. Print the last 40 lines of the output verbatim in a code block,
+without summarizing or adding findings. On a non-zero exit, say that the
+assessment did not complete; after a cancel, say that it was stopped and that
+accepted steps stay for `--resume`.
