@@ -2,12 +2,14 @@
 """Report the live assessment that holds an output directory, if any.
 
 Usage:
-  python3 runtime/live_run_holder.py --output <OUTPUT_DIR> [--wait <seconds>]
+  python3 runtime/live_run_holder.py --output <OUTPUT_DIR> [--wait <seconds> | --until-stale]
 
 Prints ``free`` and exits 0 when no live run holds ``<OUTPUT_DIR>/.appsec-lock``.
 Otherwise prints ``live run_id=<id> started=<HH:MM> heartbeat_age=<N>s`` and
 exits 3. With ``--wait``, polls once a second until the directory is free or
-the seconds have passed.
+the seconds have passed. ``--until-stale`` waits as long as the lock's current
+heartbeat can still count as live, so a holder that died without releasing
+the lock is outlasted; a holder that keeps heartbeating still exits 3.
 """
 
 from __future__ import annotations
@@ -39,12 +41,25 @@ def holder(output_dir: Path, now: float | None = None) -> str | None:
     return f"live run_id={acquire_lock.read_run_id(lock) or '?'} started={started_text} heartbeat_age={age}"
 
 
+def stale_in(output_dir: Path, now: float | None = None) -> int:
+    """Seconds until the lock's current heartbeat stops counting as live (0 without one)."""
+    lock = output_dir / ".appsec-lock"
+    _, heartbeat = acquire_lock._parse_lock(lock)
+    if heartbeat is None:
+        return 0
+    now = time.time() if now is None else now
+    return max(0, int(heartbeat + acquire_lock._stale_threshold_for_lock(lock) - now) + 1)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--wait", type=int, default=0)
+    waits = parser.add_mutually_exclusive_group()
+    waits.add_argument("--wait", type=int, default=0)
+    waits.add_argument("--until-stale", action="store_true")
     args = parser.parse_args(argv)
-    deadline = time.monotonic() + max(0, args.wait)
+    wait = stale_in(args.output) if args.until_stale else args.wait
+    deadline = time.monotonic() + max(0, wait)
     while True:
         found = holder(args.output)
         if found is None or time.monotonic() >= deadline:

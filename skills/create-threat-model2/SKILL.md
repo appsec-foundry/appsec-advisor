@@ -59,7 +59,9 @@ Before anything else, check whether a live assessment holds the directory:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/live_run_holder.py" --output "$OUTPUT_DIR"
 ```
 
-Exit 0 (`free`) continues. On exit 3, ask one `AskUserQuestion`: "An
+Run both commands of this section exactly as written, with nothing appended;
+decide by the printed word, never by a wrapper's exit status. `free` continues.
+On `live …`, ask one `AskUserQuestion`: "An
 assessment still holds <OUTPUT_DIR> (<run_id>, started <started>, last
 heartbeat <heartbeat_age> ago). Stop it and start a new assessment?" Offer
 **Keep it running (Recommended)**, "Start nothing; it may belong to another
@@ -70,10 +72,13 @@ start new**, including free text, stops here. On that selection, run the
 background Bash command (`run_in_background: true`):
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/live_run_holder.py" --output "$OUTPUT_DIR" --wait 120
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/live_run_holder.py" --output "$OUTPUT_DIR" --until-stale
 ```
 
-Continue when it exits 0; otherwise print its output and stop.
+It waits at most until the holder's last heartbeat expires (up to the lock's
+threshold, 300 s by default). Before it, print one line: `Waiting until the
+stopped assessment releases <OUTPUT_DIR> (at most <threshold> s).` Continue
+only when it prints `free`; on `live …`, print that line and stop.
 
 ## Trust preflight
 

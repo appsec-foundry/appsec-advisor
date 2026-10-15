@@ -44,6 +44,22 @@ def test_stale_heartbeat_is_free(tmp_path: Path):
     assert live_run_holder.holder(out) is None
 
 
+def test_until_stale_covers_the_heartbeat_threshold(tmp_path: Path):
+    out = _output(tmp_path)
+    assert live_run_holder.stale_in(out) == 0
+    now = int(time.time())
+    _lock(out, now - 120)
+    threshold = live_run_holder.acquire_lock._stale_threshold_for_lock(out / ".appsec-lock")
+    assert live_run_holder.stale_in(out, now=now) == threshold - 120 + 1
+
+
+def test_until_stale_returns_at_once_for_a_stale_lock(tmp_path: Path, capsys):
+    out = _output(tmp_path)
+    _lock(out, int(time.time()) - 3600)
+    assert live_run_holder.main(["--output", str(out), "--until-stale"]) == 0
+    assert capsys.readouterr().out.strip() == "free"
+
+
 def test_cli_exit_codes(tmp_path: Path, capsys):
     out = _output(tmp_path)
     assert live_run_holder.main(["--output", str(out)]) == 0
