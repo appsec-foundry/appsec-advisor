@@ -376,6 +376,7 @@ def _console_run(console, clock):
     console.call("1 min: no model activity for 95 s (waiting for the API)")
     console.step("Independently verifying evidence: API")
     clock.tick(60)
+    console.step("Analyzed component: API (1/2)")
     console.step("Analyzing all STRIDE categories: Store (2/2)")
     clock.tick(console.PROGRESS_SECONDS)
     console.call("2 min: model is thinking (~9,000 tokens)", "stride_analyzer")
@@ -407,6 +408,8 @@ def test_default_console_writes_every_line_in_one_column_grid():
         # the heartbeat interval adds none.
         ("5/8 Threat analysis", "·", "~38%", "2m", "", "component 1/2 · API"),
         ("5/8 Threat analysis", "⚠", "~38%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
+        # A finished component gets its line; the share follows completions, not starts.
+        ("5/8 Threat analysis", "done", "~50%", "4m", "~4m", "component 1/2 · API · 2m00s"),
         ("5/8 Threat analysis", "·", "~50%", "4m", "~4m", "component 2/2 · Store"),
         (
             "5/8 Threat analysis",
@@ -450,10 +453,13 @@ def test_progress_counts_the_planned_components(components, share):
     phase, event, progress, elapsed, left, _ = _rows(lines)[-1]
     assert (phase, event, progress, elapsed, left) == ("5/8 Threat analysis", "start", share, "5m", "")
     # Once a component has finished, LEFT extrapolates the measured speed:
-    # elapsed × (1 − share) / share.
+    # elapsed × (1 − share) / share. A start alone is no progress (MR-16).
     console.step("Analyzing all STRIDE categories: api (1/2)")
-    clock.tick(60)
     console.step("Analyzing all STRIDE categories: store (2/2)")
+    assert console._run(clock()).split()[-1] == "5m"
+    clock.tick(60)
+    console.step("Finished STRIDE job: api (1/1)")
+    console.step("Analyzed component: api (1/2)")
     exact = console.done
     assert console._run(clock()).split()[-1] == "~" + controller._elapsed(360 * (1 - exact) / exact)
 
@@ -1304,18 +1310,28 @@ def test_every_stride_component_and_abuse_case_gets_its_own_line(capsys, live):
     console.step("Analyzing all STRIDE categories: Gateway (1/2)")
     clock.tick(5)
     console.step("Analyzing all STRIDE categories: Ledger \x1b[2J\u202e (2/2)")
+    console.step("Analyzed component: Ledger \x1b[2J\u202e (1/2)")
+    clock.tick(5)
+    console.step("Analyzed component: Gateway (2/2)")
     console.step("Verifying abuse case: AC-901 — Replay a signed callback (1/2)")
     console.step("Verifying abuse case: AC-902 (2/2)")
     console.close()
     controller._AssessmentConsole.clear_status()
     capsys.readouterr()
-    listed = [row[5] for row in _rows(lines) if row[1] == "·"]
+    rows = _rows(lines)
+    listed = [row[5] for row in rows if row[1] == "·"]
     # A control subject stays a status or heartbeat; terminal escapes from a name never print.
+    # Components run concurrently (MR-16): a log lists each start, every console each finish
+    # in completion order; a terminal shows the running ones as bars instead of start lines.
+    started = ["component 1/2 · Gateway", "component 2/2 · Ledger ?[2J?"]
     assert listed == [
-        "component 1/2 · Gateway",
-        "component 2/2 · Ledger ?[2J?",
+        *([] if live else started),
         "abuse case 1/2 · AC-901 — Replay a signed callback",
         "abuse case 2/2 · AC-902",
+    ]
+    assert [row[5] for row in rows if row[1] == "done" and row[5].startswith("component")] == [
+        "component 1/2 · Ledger ?[2J? · 0s",
+        "component 2/2 · Gateway · 10s",
     ]
     assert [(row[0], row[5]) for row in _rows(lines) if row[1] == "done"][-1] == (
         "7/8 Abuse cases",
@@ -1380,18 +1396,18 @@ def test_the_terminal_status_line_names_each_running_call_with_its_age(capsys, m
     ):
         console.running[index] = _Call(name, now - age, state)
     console.tick()
-    status = capsys.readouterr().err.split("\r\033[K")[-1]
+    status = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
     # Oldest first, at most TICK_CALLS named; the rest counted.
     assert status.endswith(
-        "component 1/3 · Gateway · STRIDE 2m10s model is thinking (~9,000 tokens)"
+        "0/3 components done · STRIDE 2m10s model is thinking (~9,000 tokens)"
         " · controls 20s model is writing its result (~1,200 characters) · +1 more"
     )
     # Without a call in flight, the running controller step and its age.
     console.running.clear()
     console.activity_started = clock.monotonic() - 45
     console.tick()
-    status = capsys.readouterr().err.split("\r\033[K")[-1]
-    assert status.endswith("component 1/3 · Gateway · Analyzing all STRIDE categories: Gateway (1/3) · 45s")
+    status = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
+    assert status.endswith("0/3 components done · Analyzing all STRIDE categories: Gateway (1/3) · 45s")
     controller._AssessmentConsole.clear_status()
 
 
@@ -1640,11 +1656,38 @@ def test_the_status_line_turns_a_spinner_and_draws_a_bar(capsys, monkeypatch):
     console.plan_components(4)
     console.step("Analyzing all STRIDE categories: Gateway (2/4)")
     console.tick()
-    first = capsys.readouterr().err.split("\r\033[K")[-1]
+    *above, first = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")
     console.tick()
-    second = capsys.readouterr().err.split("\r\033[K")[-1]
+    second = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
     controller._AssessmentConsole.clear_status()
     frame = lambda status: status[10 + controller._AssessmentConsole._PHASE_WIDTH + 2]  # noqa: E731 - the event column
     assert "━" in first and "─" in first
-    assert first.endswith("component 2/4 · Gateway · Analyzing all STRIDE categories: Gateway (2/4) · 0s")
+    assert first.endswith("0/4 components done · Analyzing all STRIDE categories: Gateway (2/4) · 0s")
+    # The running component has its own line and bar above the run's row.
+    assert len(above) == 1 and "Gateway" in above[0] and above[0].rstrip().endswith("STRIDE")
     assert {frame(first), frame(second)} <= set(controller.SPINNER) and frame(first) != frame(second)
+
+
+@pytest.mark.parametrize("done,total", [(1, 3), (4, 11)])
+def test_each_running_component_gets_its_own_bar_and_the_area_clears_whole(capsys, monkeypatch, done, total):
+    """MR-16: concurrent components each show their STRIDE jobs; a permanent line removes every bar line."""
+    monkeypatch.setenv("COLUMNS", "200")
+    lines = []
+    console = controller._AssessmentConsole(False, lines.append, live=True)
+    console.plan_components(4)
+    console.step("Analyzing all STRIDE categories: Gateway (1/4)")
+    console.step("Analyzing all STRIDE categories: Ledger (2/4)")
+    console.step(f"Finished STRIDE job: Gateway ({done}/{total})")
+    console.step("Independently verifying evidence: Ledger")
+    console.tick()
+    *above, bottom = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")
+    assert len(above) == 2 and "Gateway" in above[0] and "Ledger" in above[1]
+    assert above[0].rstrip().endswith(f"{done}/{total} STRIDE jobs") and above[1].rstrip().endswith("evidence review")
+    assert "0/4 components done" in bottom
+    console.step("Analyzed component: Ledger (1/4)")
+    written = capsys.readouterr().err
+    # Three status lines are cleared from the bottom up before the permanent line.
+    assert written == "\r\033[K" + "\033[1A\033[K" * 2 and lines[-1].endswith("component 1/4 · Ledger · 0s")
+    console.tick()
+    assert len(capsys.readouterr().err.split("\r\033[K")[-1].split("\n")) == 2
+    controller._AssessmentConsole.clear_status()

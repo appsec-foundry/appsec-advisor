@@ -8704,6 +8704,17 @@ def _assessment_stride(
     progress("Running deterministic source scanners")
     scanned = assessment_scanner_findings.scan(scope, components, depth=depth)
 
+    # Completion order, which differs from component order under MR-16.
+    import itertools
+
+    finished = itertools.count(1)
+    # The console tracks concurrent components by the label in their progress
+    # steps; components of different repositories may share a name.
+    names = Counter(row["name"] for row in components["components"])
+
+    def label(component):
+        return component["name"] + (f" [{component['id'][-6:]}]" if names[component["name"]] > 1 else "")
+
     def analyze(position, component, jobs):
         """Analyze and review one component; `jobs` is its own view (MR-16)."""
         neighborhood = analysis.component_neighborhood(components, flows, component["id"])
@@ -8731,7 +8742,7 @@ def _assessment_stride(
         }
         if captured is not None:
             context["declared_context"] = assessment_context.component_context(captured, component)
-        progress(f"Analyzing all STRIDE categories: {component['name']} ({position}/{len(components['components'])})")
+        progress(f"Analyzing all STRIDE categories: {label(component)} ({position}/{len(components['components'])})")
         targets = analysis.analysis_targets(scope, component, architecture, scanned[component["id"]])
         unexamined = analysis.unexamined_files(component, targets)
         if unexamined:
@@ -8850,6 +8861,8 @@ def _assessment_stride(
                     ),
                 )
             )
+            # Per-component progress: components run concurrently (MR-16).
+            progress(f"Finished STRIDE job: {label(component)} ({index}/{len(target_batches)})")
         for part, (target_batch, _) in zip(parts, target_batches, strict=True):
             jobs.notes.extend(
                 f"{component['name']}: STRIDE left source target {location} unresolved after reading it"
@@ -8873,7 +8886,7 @@ def _assessment_stride(
             window_lines=MAX_SLICE_LINES,
         )
         if findings:
-            progress("Independently verifying evidence: " + component["name"])
+            progress("Independently verifying evidence: " + label(component))
         parts = []
         for number, batch in enumerate(batches, 1):
             selector = "evidence:" + component["id"] + (f":{number}/{len(batches)}" if len(batches) > 1 else "")
@@ -8896,6 +8909,7 @@ def _assessment_stride(
             review = {**parts[0], "decisions": [row for part in parts for row in part["decisions"]]}
         else:
             review = {"schema_version": 2, **identity, "decisions": []}
+        progress(f"Analyzed component: {label(component)} ({next(finished)}/{len(components['components'])})")
         return document, review
 
     documents, reviews = _assessment_components_concurrently(jobs, components["components"], analyze)
@@ -9324,7 +9338,9 @@ class _AssessmentConsole:
         ("Assessing controls", "Controls"),
         ("Running deterministic source scanners", "Threat analysis"),
         ("Analyzing all STRIDE categories", "Threat analysis"),
+        ("Finished STRIDE job", "Threat analysis"),
         ("Independently verifying evidence", "Threat analysis"),
+        ("Analyzed component", "Threat analysis"),
         ("Reviewing merge candidates", "Consolidation"),
         ("Building the deterministic route inventory", "Consolidation"),
         ("Evaluating posture producers", "Consolidation"),
@@ -9413,6 +9429,10 @@ class _AssessmentConsole:
         # whether the phase reports positions at all.
         self.current, self.count, self.positioned = "", None, False
         self.parts: dict = {}
+        # Components in analysis, in start order: name -> finished and planned
+        # STRIDE jobs and the current stage; and the components finished.
+        self.units: dict[str, dict] = {}
+        self.units_done = 0
         self.results: dict[str, str] = {}
         self.headed, self.shown = False, None
         # Called once a phase has started, e.g. to report a plugin change at once.
@@ -9461,7 +9481,19 @@ class _AssessmentConsole:
         else:
             working = ""
         self.frame += 1
-        self._status(self._row("·", " · ".join(part for part in (self.current, working) if part), live=True))
+        if self.units:
+            # One line and bar per running component; the grid row below carries the run.
+            with _AssessmentConsole._lock:
+                units = list(self.units.items())
+            spin = self.st(SPINNER[self.frame % len(SPINNER)], "accent")
+            above = [
+                f"{'':10}{spin} {name[: self.UNIT_NAME]:<{self.UNIT_NAME}}  "
+                f"{self.st.bar(self._unit_progress(unit), 100, self.BAR_WIDTH)}  {self._unit_label(unit)}"
+                for name, unit in units
+            ]
+        else:
+            above = []
+        self._status(self._row("·", " · ".join(part for part in (self.current, working) if part), live=True), above)
 
     def plan_phases(self, *, abuse_cases: bool) -> None:
         """Number the phases this run will execute; skipped abuse cases shorten the count."""
@@ -9492,32 +9524,38 @@ class _AssessmentConsole:
 
     @staticmethod
     def clear_status() -> None:
-        """Remove the in-place status line before any permanent line is written."""
+        """Remove the in-place status lines before any permanent line is written."""
         with _AssessmentConsole._lock:
             if _AssessmentConsole.status_shown:
-                sys.stderr.write("\r\033[K")
+                # The cursor stands on the last status line; clear it and each one above.
+                sys.stderr.write("\r\033[K" + "\033[1A\033[K" * (_AssessmentConsole.status_lines - 1))
                 sys.stderr.flush()
                 _AssessmentConsole.status_shown = False
+                _AssessmentConsole.status_lines = 0
 
     # Shared, so the command-line entry can clear a status line before its last message.
     status_shown = False
+    status_lines = 0
     _lock = threading.RLock()
     _stopped = threading.Event()
 
-    def _status(self, text: str) -> None:
+    def _status(self, text: str, above: list[str] = ()) -> None:
+        """Draw the status line, with `above` lines (one per running component) over it."""
         if not self.live:
             return
-        line = f"{self.st(self._stamp(self.clock()), 'muted')}  {text}"
-        # A wrapped status line would survive the next "\r\033[K" as a stray row.
+        lines = [*above, f"{self.st(self._stamp(self.clock()), 'muted')}  {text}"]
+        # A wrapped status line would survive the next clear as a stray row.
         # Measured without colour codes; a line that must be cut loses its colour.
         width = shutil.get_terminal_size().columns - 1
-        if len(ANSI_RE.sub("", line)) > width:
-            line = ANSI_RE.sub("", line)
-            line = line[: max(width - 1, 0)] + "…"
+        for index, line in enumerate(lines):
+            if len(ANSI_RE.sub("", line)) > width:
+                lines[index] = ANSI_RE.sub("", line)[: max(width - 1, 0)] + "…"
         with _AssessmentConsole._lock:
-            sys.stderr.write(f"\r\033[K{line}")
+            _AssessmentConsole.clear_status()
+            sys.stderr.write("\n".join(lines))
             sys.stderr.flush()
             _AssessmentConsole.status_shown = True
+            _AssessmentConsole.status_lines = len(lines)
 
     def _weight(self, phase: str) -> float:
         if self.components and phase in self.PER_COMPONENT:
@@ -9687,6 +9725,7 @@ class _AssessmentConsole:
             self.close(now)
             self.phase, self.started, self.finished_jobs = phase, now, 0
             self.current, self.count, self.positioned, self.parts = "", None, False, {}
+            self.units, self.units_done = {}, 0
             self.fraction = 0.0
             self._advance(0.0)
             scope = _count_noun(int(position[2]), self.NOUNS[prefix]) if position and prefix in self.NOUNS else ""
@@ -9695,6 +9734,9 @@ class _AssessmentConsole:
             self.shown = (self.current, round(100 * self.done))
             if self.on_phase:
                 self.on_phase()
+        if prefix in self.UNIT_STEPS:
+            self._unit_step(prefix, text, position, now)
+            return
         if position:
             # Subjects already finished in this phase, so the share never runs ahead.
             self.positioned = True
@@ -9722,6 +9764,69 @@ class _AssessmentConsole:
             self._status(self._row("·", self.current, now, live=True))
         else:
             self._heartbeat(now)
+
+    # Steps of a component analyzed concurrently with others (MR-16): its
+    # start, each finished STRIDE job, its evidence review and its end.
+    UNIT_STEPS = (
+        "Analyzing all STRIDE categories",
+        "Finished STRIDE job",
+        "Independently verifying evidence",
+        "Analyzed component",
+    )
+    UNIT_NAME = 26
+
+    def _unit_step(self, prefix: str, text: str, position, now: float) -> None:
+        """Track one concurrently analyzed component; the share follows finished work, not starts."""
+        name = self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
+        name = "".join(char if char.isprintable() else "?" for char in name)[: self._NAME_MAX]
+        with _AssessmentConsole._lock:
+            if prefix == "Analyzing all STRIDE categories":
+                self.positioned = True
+                if position:
+                    self.count = (max(int(position[2]), self.count[0] if self.count else 0), "component")
+                self.units[name] = {"done": 0, "total": None, "stage": "STRIDE", "started": now}
+                line = f"component {position[1]}/{position[2]} · {name}" if position else name
+                if not self.live:
+                    self.write(self._row("·", line, now), now)
+            elif prefix == "Finished STRIDE job":
+                unit = self.units.get(name)
+                if unit is not None and position:
+                    unit["done"], unit["total"] = int(position[1]), int(position[2])
+            elif prefix == "Independently verifying evidence":
+                if name in self.units:
+                    self.units[name]["stage"] = "review"
+            finished = None
+            if prefix == "Analyzed component":
+                unit = self.units.pop(name, None)
+                self.units_done += 1
+                finished = name + (f" · {_duration(now - unit['started'])}" if unit else "")
+            total = self.count[0] if self.count else 0
+            if total:
+                running = sum(self._unit_progress(unit) / 100 for unit in self.units.values())
+                self._advance((self.units_done + running) / total)
+                # Under concurrency no single component is current; the bars name the running ones.
+                self.current = f"{self.units_done}/{total} components done"
+            if finished is not None:
+                self.write(self._row("done", f"component {self.units_done}/{total or '?'} · {finished}", now), now)
+            # A permanent line names the component; the heartbeat need not repeat the count.
+            self.shown = (self.current, round(100 * self.done))
+
+    @staticmethod
+    def _unit_progress(unit: dict) -> int:
+        """Percent of one component: its STRIDE jobs, then one share for the evidence review."""
+        if unit["stage"] == "review":
+            return 90
+        if not unit["total"]:
+            return 0
+        return round(90 * unit["done"] / unit["total"])
+
+    @staticmethod
+    def _unit_label(unit: dict) -> str:
+        if unit["stage"] == "review":
+            return "evidence review"
+        if not unit["total"]:
+            return "STRIDE"
+        return f"{unit['done']}/{unit['total']} STRIDE jobs"
 
     def call(self, text: str, role: str | None = None, model: str | None = None) -> None:
         """A model-call line: always for a stall or a rejection, every line with --verbose."""
