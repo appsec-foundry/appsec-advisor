@@ -94,7 +94,7 @@ import runtime.telemetry_consistency as telemetry_consistency  # noqa: E402
 import validators.validate_intermediate as intermediate_contract  # noqa: E402
 import validators.validate_recon_summary as recon_summary_contract  # noqa: E402
 import validators.validate_threat_modeling_context as context_document_contract  # noqa: E402
-from renderers.term_style import ANSI_RE, SPINNER, Style, logo, plugin_version, scanner  # noqa: E402
+from renderers.term_style import ANSI_RE, SPINNER, Style, logo, plugin_version  # noqa: E402
 from runtime.event_log import format_line  # noqa: E402
 from shared._fragment_ownership import FORCE_REGENERATED_FRAGMENTS  # noqa: E402
 
@@ -9785,8 +9785,7 @@ class _AssessmentConsole:
             phase = f"{number} {phase}"
         run = self._run(now)
         if live:
-            # The logo's light sweeps through the event column while the run works.
-            event = scanner(self.st, self.frame, self._EVENT_WIDTH)
+            event = SPINNER[self.frame % len(SPINNER)]
             if self.components:
                 detail = f"{self.st.bar(round(100 * self.done), 100, self.BAR_WIDTH)}  {detail}".rstrip()
         # Free text comes last, so a long detail never shifts a column.
@@ -9799,7 +9798,7 @@ class _AssessmentConsole:
             phase_cell = st(f"{phase:<{self._PHASE_WIDTH}}", role, "bold")
         else:
             phase_cell = st(f"{phase:<{self._PHASE_WIDTH}}", "accent")
-        event_cell = event if live else st(f"{event:<{self._EVENT_WIDTH}}", role or "muted")
+        event_cell = st(f"{event:<{self._EVENT_WIDTH}}", role or "muted")
         run_cell = st(run if detail else run.rstrip(), "muted")
         head = f"{phase_cell}  {event_cell}  {run_cell}  "
         # A long detail wraps under its own column instead of at the screen

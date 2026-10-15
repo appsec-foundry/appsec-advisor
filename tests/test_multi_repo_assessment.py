@@ -1761,7 +1761,7 @@ def test_a_long_event_detail_wraps_under_its_column_on_a_terminal(monkeypatch, c
     assert lines[-1].endswith("short")
 
 
-def test_the_status_line_sweeps_the_scanner_and_draws_a_bar(capsys, monkeypatch):
+def test_the_status_line_turns_a_spinner_and_draws_a_bar(capsys, monkeypatch):
     monkeypatch.setenv("COLUMNS", "400")
     console = controller._AssessmentConsole(False, [].append, live=True)
     console.plan_components(4)
@@ -1771,13 +1771,12 @@ def test_the_status_line_sweeps_the_scanner_and_draws_a_bar(capsys, monkeypatch)
     console.tick()
     second = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
     controller._AssessmentConsole.clear_status()
-    start = 10 + controller._AssessmentConsole._PHASE_WIDTH + 2
-    frame = lambda status: status[start : start + controller._AssessmentConsole._EVENT_WIDTH]  # noqa: E731 - the event column
+    frame = lambda status: status[10 + controller._AssessmentConsole._PHASE_WIDTH + 2]  # noqa: E731 - the event column
     assert "━" in first and "─" in first
     assert first.endswith("0/4 components done · Analyzing all STRIDE categories: Gateway (2/4) · 0s")
     # The running component has its own line and bar above the run's row.
     assert len(above) == 1 and "Gateway" in above[0] and above[0].rstrip().endswith("STRIDE")
-    assert "█" in frame(first) and "█" in frame(second) and frame(first) != frame(second)
+    assert {frame(first), frame(second)} <= set(controller.SPINNER) and frame(first) != frame(second)
 
 
 @pytest.mark.parametrize("done,total", [(1, 3), (4, 11)])
