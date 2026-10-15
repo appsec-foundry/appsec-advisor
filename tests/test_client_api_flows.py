@@ -257,3 +257,87 @@ def test_unresolved_route_does_not_gain_authentication_from_a_finding_on_its_reg
     }
     result, filled = fill_from_verified_findings(emitted, [finding])
     assert result == emitted and filled == []
+
+
+@pytest.mark.parametrize("prefix", ["/orders", "/v2/jobs"])
+@pytest.mark.parametrize("count", [6, 40])
+def test_unknown_interfaces_remain_covered_beyond_evidence_and_reference_caps(prefix, count):
+    routes = [route("GET", f"{prefix}/{i}", i + 10) for i in range(count)]
+    calls = {i: [{"file": "ui/service.ts", "line": i + 1}] for i in range(count)}
+    existing = flows("web", calls, routes, lambda _: "api")
+    assert sum(len(flow["route_refs"]) for flow in existing) == count
+    assert all(len(flow["evidence"]) <= 8 and len(flow["route_refs"]) <= 32 for flow in existing)
+    assert all("authentication" not in flow for flow in existing)
+    assert uncovered_calls("web", calls, routes, lambda _: "api", existing) == {}
+
+
+def test_unknown_references_need_a_local_anchor_and_cannot_hide_newly_proven_authentication():
+    routes = [route("GET", f"/records/{i}", i + 10) for i in range(6)]
+    calls = {i: [{"file": "ui/service.ts", "line": i + 1}] for i in range(6)}
+    existing = flows("web", calls, routes, lambda _: "api")
+    unanchored = copy.deepcopy(existing)
+    unanchored[0]["evidence"] = [{"file": "unrelated.ts", "line": 1}]
+    assert uncovered_calls("web", calls, routes, lambda _: "api", unanchored) == calls
+    routes[-1].update(authn_signal="present", authn_handler_signal="verified", authn_handler_scheme="cookie")
+    assert set(uncovered_calls("web", calls, routes, lambda _: "api", existing)) == {5}
+
+
+def test_long_interface_names_do_not_collapse_to_the_same_truncated_reference():
+    routes = [route("GET", "/" + "segment/" * 20 + str(i), i + 10) for i in range(6)]
+    calls = {i: [{"file": "ui/service.ts", "line": i + 1}] for i in range(6)}
+    existing = flows("web", calls, routes, lambda _: "api")
+    assert len(existing[0]["route_refs"]) == 6
+    assert all(len(ref) <= 120 for ref in existing[0]["route_refs"])
+    assert uncovered_calls("web", calls, routes, lambda _: "api", existing) == {}
+
+
+@pytest.mark.parametrize("path", ["/records", "/v2/jobs"])
+@pytest.mark.parametrize(
+    ("source", "method", "line"),
+    [
+        ("client.get(\n  '{path}'\n)", "GET", 2),
+        ("client.get(base() + '{path}')", "GET", 1),
+        ("this.http.post<Result>(\n base() + '{path}', payload)", "POST", 2),
+        ("fetch(\n '{path}',\n {{ method: 'POST', body: payload }}\n)", "POST", 2),
+        ("fetch('{path}')", "GET", 1),
+    ],
+)
+def test_complete_calls_keep_their_method_and_exact_url_evidence(path, source, method, line):
+    routes = [
+        route("GET", path, 10, "verified", "bearer", "present"),
+        route("POST", path, 11, "none", "none", "absent"),
+    ]
+    calls = client_calls({"ui/api.ts": source.format(path=path).encode()}, routes)
+    index = 0 if method == "GET" else 1
+    assert calls == {index: [{"file": "ui/api.ts", "line": line}]}
+    [flow] = flows("web", calls, routes, lambda _: "api")
+    assert flow["authentication"]["scheme"] == ("bearer" if method == "GET" else "none")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "const unused = '/records'",
+        "/* client.get('/records') */",
+        "const sample = \"client.get('/records')\"",
+        "client.post('/elsewhere', { next: '/records' })",
+        "fetch('/records', { method: selectedMethod })",
+        "fetch('/records', options)",
+        "fetch('/records', { method: 'GET', ...options })",
+        "fetch('/records', { ['method']: 'POST' })",
+        "fetch('/records', { get method() { return selectedMethod } })",
+        "fetch('/records', { get ['method']() { return 'POST' } })",
+        r"fetch('/records', { '\u006dethod': 'POST' })",
+        "fetch('/records', { __proto__: options })",
+        "client[method]('/records')",
+        "client.get('https://remote.invalid' + '/records')",
+        "client.get('/records'",
+        "client.get(" + " " * 4096 + "'/records')",
+    ],
+)
+def test_non_requests_and_unresolved_methods_do_not_borrow_route_authentication(source):
+    routes = [
+        route("GET", "/records", 10, "verified", "bearer", "present"),
+        route("POST", "/records", 11, "none", "none", "absent"),
+    ]
+    assert client_calls({"ui/api.ts": source.encode()}, routes) == {}

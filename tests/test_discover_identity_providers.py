@@ -94,6 +94,63 @@ def test_client_integrations_are_generic_and_evidenced(tmp_path, rel, source, ro
 
 
 @pytest.mark.parametrize(
+    ("source", "scheme", "host"),
+    [
+        (
+            "window.location.href = 'https://login.example.invalid/oauth2/authorize?response_type=code'",
+            "oauth2",
+            "login.example.invalid",
+        ),
+        (
+            "const endpoint = 'https://identity.example.invalid/oauth2/authorize?scope=openid&response_type=code';\nwindow.location.href = endpoint;",
+            "oidc",
+            "identity.example.invalid",
+        ),
+        ("document.location =\n 'https://staff.example.invalid/saml/login';", "saml", "staff.example.invalid"),
+        (
+            "location.href = 'https://accounts.example.invalid/oauth/authorize?response_type=token'",
+            "oauth2",
+            "accounts.example.invalid",
+        ),
+    ],
+)
+def test_browser_location_assignments_reach_the_provider_and_figure(tmp_path, source, scheme, host):
+    _write(tmp_path, "src/signin.ts", source)
+    result = discovery.reconcile(tmp_path, _components(), _flows())
+    [flow] = result["data_flows"]
+    [provider] = result["external_entities"]
+    assert flow["from"] == "client" and flow["to_entity"] == provider["id"]
+    assert provider["kind"] == "identity-provider" and host in provider["name"]
+    assert flow["authentication"]["scheme"] == scheme
+    assert repository_path_errors("data-flows", result, tmp_path) == []
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+    assert discovery.reconcile(tmp_path, _components(), result) == result
+    svg, state = figure1_dfd._build({**result, "components": _components()}, [], [])
+    assert host in svg
+    assert any(edge["src"] == "client" and edge["dst"] == provider["id"] for edge in state["edges"])
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "// window.location.href = 'https://id.example/oauth2/authorize'",
+        "const sample = \"window.location.href = 'https://id.example/oauth2/authorize'\";",
+        "const unused = 'https://id.example/oauth2/authorize'; window.location.href = dynamicUrl;",
+        "const endpoint = 'https://id.example/oauth2/authorize'; endpoint = localUrl; window.location.href = endpoint;",
+        "window.location.href === 'https://id.example/oauth2/authorize'",
+        "settings.location.href = 'https://id.example/oauth2/authorize'",
+        "window.location.href = 'https://id.example/oauth/token'",
+        "window.location.href = 'https://user:password@id.example/oauth2/authorize'",
+        "window.location.href = `https://${host}/oauth2/authorize`",
+    ],
+)
+def test_non_redirects_do_not_create_identity_providers(tmp_path, source):
+    _write(tmp_path, "src/signin.ts", source)
+    assert discovery.reconcile(tmp_path, _components(), _flows()) == _flows()
+
+
+@pytest.mark.parametrize(
     "rel,source",
     [
         ("docs/oauth.md", 'fetch("https://id.example/oauth/token")'),

@@ -1353,13 +1353,14 @@ def test_controller_preserves_missing_client_auth_variants_with_qualified_eviden
 
 
 @pytest.mark.parametrize(("label", "path"), [("portal", "client/login.ts"), ("tests", "ui/signin.js")])
-def test_assessment_reuses_identity_discovery_with_qualified_sources(tmp_path, label, path):
+@pytest.mark.parametrize("navigation", ["window.location.assign({url})", "window.location.href = {url}"])
+def test_assessment_reuses_identity_discovery_with_qualified_sources(tmp_path, label, path, navigation):
     from validators.validate_assessment_architecture import _evidence_rows, validate_source
 
     scope = _scope(
         tmp_path,
         (label, "api"),
-        {path: "window.location.assign('https://login.example.invalid/oauth2/authorize?response_type=code')\n"},
+        {path: navigation.format(url="'https://login.example.invalid/oauth2/authorize?response_type=code'") + "\n"},
     )
     components = []
     for i, repo in enumerate(scope.repositories):
