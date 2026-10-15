@@ -55,6 +55,27 @@ Comparison of `/tmp/126` with the reference: confirmed-exploitable / insecure-pr
 
 Further observations, not yet checked: `tier_root_causes` exceeded `maxItems` 5 in call 0121 (`/tmp/124`) and again in the post-STRIDE synthesizer of `/tmp/126` (7 items, an 83-character entry), corrected in-call; the CLI output cap of 32k for Sonnet 5.5 is unverified (maximum seen 30,883).
 
+## Root-cause check 2026-10-15: second `/tmp/126` against the reference
+
+Checked against plugin code and the run's jobs, receipts and host events; the rows above that this contradicts are marked "see root-cause check". Figure 1a of the run: no Admin actor; capability pills only on the Express component; 8 flows (not 11), none Angular → Express, none for the WebSocket component; a code layer ("Sequelize application data access") modeled as its own component; 1 stored asset on SQLite against 4.
+
+**Corrections to earlier rows.**
+- RS256 key (T-017), open redirect (T-042), `b2bOrder` (T-043), JWT revocation (T-070) and the LLM coupon bound (T-034) are present in the second run; socket ReDoS and JWT decode without verification only in part (T-064; T-037/T-010).
+- RC-K: `lib/insecurity.ts` is readable (the auth job was served lines 1–197). Unreadable are files no component owns: `lib/xml.ts`, `lib/utils.ts`, `lib/logger.ts`, `routes/logfileServer.ts`.
+- F2: the IdP, embedded-access and role-access reconcilers run on the controller path (`_assessment_architecture`, `orchestration_controller.py` around 8516–8526); only `flow_route_auth.reconcile` (around 6465) and `reconcile_privileged_roles` (around 6510) are session-only. The handler resolver does follow `security.isAuthorized()` to `expressJwt`, but `handler_resolver.py` (around 434) returns `None` for every external package outside `_NON_CREDENTIAL_PACKAGES`, so 111 routes stay unresolved.
+- Abuse cases did run (9 cases, 21 calls, USD 0.59, about 2 minutes) and §9 shows them, but both the workspace and the published `threat-model.yaml` keep `abuse_case_analysis: not_run` with no cases. Producer not yet traced; suspect a later model rebuild over what `render_abuse_cases.py` persisted.
+
+**Admin actor (F1).** Two defects, both needed: (1) `reconcile_privileged_roles` is not called on the controller path; (2) the actor discoverer runs in `_assessment_render` after architecture, gets no `source_auth_scanner` evidence (`assessment_posture._discovery_context`), read nothing (`host-events/0083-actor_discoverer.jsonl`: one call, `reads: []`) and confirmed no actor, so `_confirmed_privileged` would add nothing even with the call. The reference confirmed ACT-D-03 from `app.routing.ts:81`, `routes/deluxe.ts:19` and `server.ts:356-436`, then logged `PRIVILEGED_ROLE_ADDED`. Fix: call the reconciler in `_assessment_render` after `discover_actors`; give the discoverer role and guard anchors from `source_auth_scanner` and the management-surface routes as citable reads, or confirm the privileged actor deterministically from them.
+
+**Capability pills (F4).** Every component has `capabilities: None`; components in `multi-repo-discovery.schema.json` allow only `description, id, name, paths, tier`. The two pills shown come from `figure1_dfd._finding_capabilities`, which counts only `source-scan` instances with a catalog CWE (T-030 CWE-95, T-024 CWE-1336). JWT issuer, MFA verifier and OAuth client have no CWE, so no finding can derive them. Fix: a deterministic detector over imports and calls (`jsonwebtoken.sign`, `otplib`/`speakeasy`, `multer`, a `socket.io` server, the ethers provider already in `egress_clients.py`, an OAuth authorize redirect), merged in finalization; "Admin functions" and "URL fetch" still need a schema field with the catalog enum.
+
+**Authentication on flows (F2).** The single architecture job (`job-c442e78e62efb8412e9a9af1`) read 8 ranges, none under `frontend/`, not `login.ts`, `2fa.ts` or `registerWebsocketEvents.ts`; it returned 6 flows, the only client flow Angular → Auth, unauthenticated. The reference's labels came from its analyst reading `request.interceptor.ts` and `lib/insecurity.ts`, not from a reconciler. Fix in order: an authentication-package table in the resolver (`express-jwt` → bearer, `express-session`/`passport` → cookie); call `flow_route_auth.reconcile` on the controller path; then a deterministic client → API flow per scheme.
+
+**Findings.** Header 24 against 67 counts only confirmed findings (`_severity_rollup._tallied_threats`); STRIDE emits 61 of 84 raw findings as `insecure-practice`, and 27 verified reviews stay practice by MR-18 (RC-G). The real gap: 22 reference findings have no counterpart.
+- 16 served but not reported by STRIDE: zip slip and YAML in `fileUpload.ts`, log directory listing, spoofable rate-limit IP, unlimited login attempts (the auth job saw `server.ts` 400–791, not the limiter), coupon forgery and token map in `lib/insecurity.ts`, `saveLoginIp`, `authenticatedUsers` without admin check, `securityAnswer.ts` HMAC, `nftMint` provider leak, deluxe role without payment, `order.ts` payment ownership, CI install scripts, audit logging, approval bypass. Part model (Sonnet standard against Opus thorough, unseparated without a replay), part narrow job windows.
+- 4 reported as Low and removed by `register_severity_floor` (`build_threat_model_yaml.below_register_floor`) without disclosure: BIP39 mnemonic, CSRF on profile update (raw confirmed-exploitable), development stack traces, discount rule in the LLM prompt.
+- 2 in files no component owns (`lib/xml.ts` XXE) or never served (`.npmrc`); `meta.unexamined_source` lists only owned files, so unowned ones go unreported.
+
 ## RC-D implementation (MR-16)
 
 Implemented as planned in `d5c22d3a`: `DiscoveryBudget` reserves per call under a lock and waits while running reservations leave too little budget; retries and job replacement read only `unsettled`; `AssessmentJobs.view()`/`join()` give each component its own notes, gaps and infos joined in component order; `_assessment_components_concurrently` runs four workers and admits no further job after the first failure.
@@ -107,6 +128,16 @@ Pre-existing failure, unrelated to this session: `tests/test_schema_drift.py::te
 - **Decisions:** MR-15, MR-16 and MR-17 were confirmed by the operator on 2026-10-15; any further decision needs its wording confirmed before it is written.
 
 ## Order of work
+
+Superseding order, agreed 2026-10-15 after the root-cause check (deterministic first):
+
+1. Resolver: authentication-package table (F2 a).
+2. Controller path: call `flow_route_auth.reconcile` and `reconcile_privileged_roles` (F2 b, F1).
+3. Report files no component owns as a coverage gap, and decide how they reach a job (RC-K, MR-19).
+4. Capability detector from code signals (F4); admin evidence for the actor discoverer (F1).
+5. Then the handoff list above (RC-G replay, unresolved targets in the report, authentication findings), the register floor's silent drop, and the abuse-case YAML defect.
+
+Earlier order:
 
 1. Measurement run `/tmp/127` with the `/tmp/124` configuration for MR-17, the per-component bars and RC-P/RC-Q; record it in the table, including controller rejections, in-call retries and the Angular job count (RC-I/J).
 2. Remaining correction sources: RC-N (abuse and discovery citations served, integrity failures fatal), RC-B (`sha256`), RC-O (needs an absence marker and a decision).
