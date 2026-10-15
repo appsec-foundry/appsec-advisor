@@ -473,6 +473,20 @@ def test_toolless_architect_receives_the_shared_remediation_policy():
     assert "fix.effect: prevents-mechanism" in instructions
 
 
+@pytest.mark.parametrize("role", ["stride_analyzer", "evidence_verifier"])
+def test_source_reading_roles_learn_that_a_mask_marker_is_a_real_secret(role):
+    """A masked literal must stay reportable: the model sees only the marker."""
+    from validators.secret_scan import mask_text
+
+    instructions = controller._assessment_role_instructions(role, "Analyze the supplied source.")
+    pem = mask_text(
+        "const signingKey = '-----BEGIN RSA PRIVATE KEY-----\\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf\\n-----END RSA PRIVATE KEY-----'"
+    )[0]
+    assignment = mask_text('password = "S3cr3tP4ssw0rd!x"')[0]
+    assert "[PEM PRIVATE KEY — REDACTED]" in pem and "[PEM PRIVATE KEY — REDACTED]" in instructions
+    assert "**** (16 chars)" in assignment and "**** (N chars)" in instructions
+
+
 def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp_path):
     roots = _inventory_checkouts(tmp_path)
     scope = admit([str(r) for r in roots], str(tmp_path / "out"))
