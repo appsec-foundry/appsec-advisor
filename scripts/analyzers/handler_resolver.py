@@ -353,14 +353,19 @@ class HandlerResolver:
         text = self._text(rel)
         if text is None:
             return None
+        anonymous = ""
         if name == "default":
             m = re.search(r"^[ \t]*export\s+default\s+(?:async\s+)?(?:function\s*\*?\s*)?([\w$]+)", text, re.MULTILINE)
-            return self._js_definition(rel, m.group(1)) if m and m.group(1) != "function" else None
+            if m and m.group(1) != "function" and not _is_arrow(text, m.start(1)):
+                return self._js_definition(rel, m.group(1))
+            # `export default () => handler` and `export default function (req, res) {…}`
+            # define the export in place; the bodies below read them like a const initializer.
+            anonymous = r"|^[ \t]*export\s+default(?P<anon>)(?=\s+(?:async\s+)?(?:function\s*\*?\s*\(|\(|[\w$]+\s*=>))"
         n = re.escape(name)
         m = re.search(
             rf"^[ \t]*(?:export\s+)?(?:async\s+)?function\s*\*?\s*{n}\s*(?P<params>\()"
             rf"|^[ \t]*(?:export\s+)?(?:const|let|var)\s+{n}\s*(?::[^=\n]+)?=(?P<init>)"
-            rf"|^[ \t]*(?:module\.)?exports\.{n}\s*=(?P<exp>)",
+            rf"|^[ \t]*(?:module\.)?exports\.{n}\s*=(?P<exp>)" + anonymous,
             text,
             re.MULTILINE,
         )
@@ -392,7 +397,18 @@ class HandlerResolver:
                 brace = text.find("{", _matching(text, text.find("(", body_start)))
                 return line, text[m.start() : _matching(text, brace)], None
             end = text.find("\n", body_start)
-            return line, text[m.start() : len(text) if end < 0 else end], None
+            # A factory that returns a named function (`() => loadMembers`) leads to it.
+            # Only a name defined or imported here is followed; _resolve_js bounds the depth.
+            returned = re.match(r"([\w$]+)\s*;?\s*$", text[body_start : len(text) if end < 0 else end])
+            follow = returned and (
+                returned.group(1) in self._js_imports(rel)
+                or re.search(
+                    rf"^[ \t]*(?:export\s+)?(?:(?:async\s+)?function\s*\*?|const|let|var)\s+{re.escape(returned.group(1))}\b",
+                    text,
+                    re.MULTILINE,
+                )
+            )
+            return line, text[m.start() : len(text) if end < 0 else end], returned.group(1) if follow else None
         if re.match(r"(?:async\s+)?function\b", rest):
             params = text.find("(", start)
             brace = text.find("{", _matching(text, params))

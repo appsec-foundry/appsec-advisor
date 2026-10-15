@@ -107,6 +107,29 @@ def test_imported_handler_with_a_session_check_authenticates_its_route(tmp_path,
             "/ledger",
             "api/ledger_rows.js",
         ),
+        (
+            "import express from 'express'\n"
+            "import listMembers from './routes/memberList'\n"
+            "import * as helpers from './lib/helpers'\n"
+            "const app = express()\n"
+            "app.get('/members', helpers.catchErrors(listMembers()))\n",
+            {
+                "routes/memberList.ts": "async function loadMembers (req, res) {\n  res.json([])\n}\n\n"
+                "export default () => loadMembers\n",
+                "lib/helpers.ts": "export function catchErrors (fn) {\n  return (req, res, next) => fn(req, res, next)\n}\n",
+            },
+            "/members",
+            "routes/memberList.ts",
+        ),
+        (
+            "const express = require('express')\n"
+            "import archiveExport from './api/archive-export'\n"
+            "const app = express()\n"
+            "app.post('/archive', archiveExport)\n",
+            {"api/archive-export.js": "export default async function (req, res) {\n  res.json({})\n}\n"},
+            "/archive",
+            "api/archive-export.js",
+        ),
     ],
 )
 def test_route_records_the_module_of_its_own_handler_but_not_its_guards(tmp_path, server, files, path, module):
@@ -114,6 +137,44 @@ def test_route_records_the_module_of_its_own_handler_but_not_its_guards(tmp_path
     inventory = ri.build_inventory(tmp_path)
     jsonschema.validate(inventory, SCHEMA)
     assert route(inventory, path).get("handler_module") == module
+
+
+def test_default_exported_factory_follows_the_handler_it_returns(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": "import express from 'express'\n"
+            "import viewInvoice from './billing/invoice'\n"
+            "const app = express()\n"
+            "app.get('/invoice', viewInvoice())\n",
+            "billing/invoice.ts": "const showInvoice = async (req, res) => {\n"
+            "  const who = sessions.get(req.cookies.sid)\n"
+            "  if (!who) {\n"
+            "    res.status(401).end()\n"
+            "    return\n"
+            "  }\n"
+            "  res.json({ ok: true })\n"
+            "}\n"
+            "export default () => showInvoice\n",
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/invoice")
+    assert row["handler_module"] == "billing/invoice.ts"
+    assert row["authn_handler_signal"] == "verified" and row["authn_handler_scheme"] == "cookie"
+
+
+def test_factories_returning_each_other_stay_unresolved(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": "import express from 'express'\n"
+            "import pingRoute from './routes/ping'\n"
+            "const app = express()\n"
+            "app.get('/ping', pingRoute())\n",
+            "routes/ping.ts": "const first = () => second\nconst second = () => first\nexport default () => first\n",
+        },
+    )
+    assert route(ri.build_inventory(tmp_path), "/ping")["authn_handler_signal"] == "unresolved"
 
 
 def test_an_unresolved_handler_records_no_module(tmp_path):
