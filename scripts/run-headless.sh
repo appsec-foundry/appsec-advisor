@@ -7,7 +7,7 @@
 #   ./scripts/run-headless.sh [options]
 #
 # Options:
-#   --repo <path>           Repository to analyze (default: current directory)
+#   --repo <path|url>       Local repository or HTTPS/SSH Git URL (default: current directory)
 #                           Repeat to assess several checkouts as one system
 #   --output <path>         Output directory (default: <repo>/docs/security)
 #   --yaml                  (no-op) yaml is always written by default
@@ -108,8 +108,8 @@ Usage: run-headless.sh [options]
 Run the AppSec plugin non-interactively via Claude Code's headless mode.
 
 Options:
-  --repo <path>              Repository to analyze (default: current directory)
-                             Repeat --repo to assess several local checkouts as one
+  --repo <path|url>          Local repository or HTTPS/SSH Git URL (default: current directory)
+                             Repeat --repo to assess several repositories as one
                              system; this requires --output outside every checkout
                              and --soft-budget or --hard-budget
   --output <path>            Output directory (default: <repo>/docs/security)
@@ -181,6 +181,10 @@ Environment:
   APPSEC_CLAUDE_EXECUTABLE   Claude CLI or wrapper executable (default: claude).
                               The value is one executable, not a shell command.
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
+  APPSEC_GIT_TOKEN           HTTPS Git token; never put credentials in --repo URLs.
+  APPSEC_GIT_USERNAME        Token username (default: git).
+  APPSEC_GIT_SSH_KEY_FILE    Existing SSH private key file; SSH_AUTH_SOCK is also supported.
+                             Git URLs require an explicit --output directory.
   CI=true                    Enables CI mode (skips stale-lock wait, bumps caches,
                              adjusts defaults for non-interactive runners)
 HELP
@@ -199,6 +203,23 @@ PLUGIN_DIR="${CLAUDE_PLUGIN_DIR:-"$(dirname "$SCRIPT_DIR")"}"
 if [ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
     die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-advisor repo root"
 fi
+
+# Provision URL selections before either the single- or multi-repository route.
+# The Python owner keeps the checkouts alive until the child exits and cleans
+# them on failure or interruption. Re-entry uses only local paths.
+_repo_value=0
+for _arg in "$@"; do
+    if [ "$_repo_value" = "1" ]; then
+        case "$_arg" in
+            /*|./*|../*) : ;;
+            *:*) exec python3 "$PLUGIN_DIR/scripts/runtime/remote_repositories.py" "$@" ;;
+        esac
+    fi
+    _repo_value=0
+    [ "$_arg" != "--repo" ] || _repo_value=1
+done
+# These variables belong only to checkout provisioning, never to model hosts.
+unset APPSEC_GIT_TOKEN APPSEC_GIT_USERNAME APPSEC_GIT_SSH_KEY_FILE
 
 # ── Read external context config ────────────────────────────────────
 CONFIG_FILE="$PLUGIN_DIR/config.json"

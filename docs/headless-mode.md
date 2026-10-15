@@ -70,6 +70,29 @@ environment's secret store rather than in the launcher or plugin configuration.
 
 ## Common workflows
 
+### Assess Git URLs
+
+Pass an HTTPS URL, an SSH URL (`ssh://git@host/team/repo.git`), or an SSH selection in `git@host:team/repo.git` form to `--repo`. Repeat `--repo` to combine remote repositories or mix URLs with local checkouts. Git URLs require Git 2.34 or newer and an explicit `--output` outside the temporary checkout area.
+
+```bash
+./scripts/run-headless.sh \
+  --repo https://github.com/org/frontend.git \
+  --repo git@github.com:org/backend.git \
+  --output ./reports/system \
+  --soft-budget 40 \
+  --full
+```
+
+HTTPS authentication uses existing Git credential helpers or `APPSEC_GIT_TOKEN`, with `APPSEC_GIT_USERNAME` when the provider requires a particular username (default: `git`). Supply the token through your environment or CI secret store, never inside a URL. An environment token takes precedence over credential helpers and reaches Git through a private helper pipe; the runner does not write it to disk or pass it to the analysis process. Credential configuration comes from the operator's global/system Git configuration, including `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, not from a selected repository.
+
+SSH uses the SSH agent (`SSH_AUTH_SOCK`), existing SSH identity configuration, or the existing private key file named by `APPSEC_GIT_SSH_KEY_FILE`. Unlock encrypted keys in the agent before starting. Host keys must already be trusted in `known_hosts`; missing authentication or an unknown host key fails without prompting. Use a resolvable hostname, rather than an SSH alias. The runner pins the destination address and does not use HTTP proxies, SSH jump hosts, connection multiplexing or custom `GIT_SSH_COMMAND` commands. TLS certificate verification and SSH host verification remain enabled. If `APPSEC_URL_ALLOWLIST` is set, each selected remote hostname must match an entry exactly. Explicitly selected private-network Git hosts are allowed; loopback, link-local and metadata destinations are refused.
+
+The runner shallow-clones each remote's default branch into a private area under the system temporary directory. It neither executes checkout hooks or configured content filters nor fetches submodules or Git LFS objects. Each clone and checkout is bounded to 120 seconds, 512 MiB and 100,000 filesystem entries; exceeding a limit stops provisioning before assessment. Clone diagnostics omit raw Git output to keep credentials out of logs.
+
+Checkout paths stay stable for the same output location, URL and temporary directory, so an unchanged source revision retains its repository identity. A concurrent remote run with the same output location is refused. Checkouts are removed on success, failure and handled interruption; reports and recovery state remain in `--output`. The existing assessment mode and source-revision checks still apply on retry. A forced kill or machine shutdown can leave a checkout behind; the next invocation refuses to reuse it and requires operator cleanup of the stale checkout beneath `appsec-remotes-<uid>` in the temporary directory. Small private directories and lock files remain to preserve safe locking and path identity.
+
+### Assess local checkouts
+
 Scan the current repository and write to `docs/security/`:
 
 ```bash
@@ -110,7 +133,7 @@ structured Stage-1 artifacts are missing or invalid.
 
 This mode is experimental. The report says so in its Management Summary, and the run says so when it starts.
 
-Repeat `--repo` to assess several local Git checkouts as one system. Every selected repository is scanned freshly, and the run publishes one `threat-model.yaml`, one `threat-model.md` and one Figure 1 in the `--output` directory. `--project` sets the system name in the report, and `--slug` adds a stamped copy of the deliverables.
+Repeat `--repo` to assess several repositories as one system, using local Git checkouts, [Git URLs](#assess-git-urls), or both. Every selected repository is scanned freshly, and the run publishes one `threat-model.yaml`, one `threat-model.md` and one Figure 1 in the `--output` directory. `--project` sets the system name in the report, and `--slug` adds a stamped copy of the deliverables.
 
 ```bash
 ./scripts/run-headless.sh \
@@ -123,7 +146,7 @@ Repeat `--repo` to assess several local Git checkouts as one system. Every selec
 
 A combined run has these requirements:
 
-- Select 2–16 top-level Git checkouts. A checkout inside another selected checkout, or two paths that name the same directory, stop the run.
+- Select 2–16 repositories. Local selections must name top-level Git checkouts. A checkout inside another selected checkout, or two paths that name the same directory, stop the run.
 - Choose an `--output` directory outside every selected checkout. The run writes nothing into a selected checkout.
 - Set `--soft-budget` or `--hard-budget`. The run reserves each model call against this budget and stops when it is exhausted. With only `--soft-budget`, the limit is 1.25 times that value.
 - The untrusted-repository preflight checks every selected checkout. `--trust-mode trusted` skips it for all of them.
@@ -238,7 +261,7 @@ It prints the completion summary after the session's closing text.
 
 | Flag | Meaning |
 |---|---|
-| `--repo <path>` | Repository to analyze; defaults to the current directory. Repeat it to [assess several repositories as one system](#assess-several-repositories-as-one-system). |
+| `--repo <path\|url>` | Local repository or HTTPS/SSH Git URL; defaults to the current directory. URLs require `--output`. Repeat it to [assess several repositories as one system](#assess-several-repositories-as-one-system). |
 | `--output <path>` | Output directory; defaults to `<repo>/docs/security`. |
 | `--full` | Force a full assessment and preserve report history. |
 | `--rebuild` | Clear prior model state and start fresh. |
