@@ -51,6 +51,30 @@ When the arguments contain `--incremental`, `--rerender`, `--dry-run`, `--base`,
 `--pr-mode` or `--restore-from`, print `create-threat-model2 runs full assessments
 only; use /appsec-advisor:create-threat-model for <flag>.` and stop.
 
+## Running assessment
+
+Before anything else, check whether a live assessment holds the directory:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/live_run_holder.py" --output "$OUTPUT_DIR"
+```
+
+Exit 0 (`free`) continues. On exit 3, ask one `AskUserQuestion`: "An
+assessment still holds <OUTPUT_DIR> (<run_id>, started <started>, last
+heartbeat <heartbeat_age> ago). Stop it and start a new assessment?" Offer
+**Keep it running (Recommended)**, "Start nothing; it may belong to another
+session", and **Stop it and start new**, "Ends that assessment; its accepted
+steps stay for --resume". Every answer other than an explicit **Stop it and
+start new**, including free text, stops here. On that selection, run the
+`--stop` command above and print its result, then wait for the directory as a
+background Bash command (`run_in_background: true`):
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/live_run_holder.py" --output "$OUTPUT_DIR" --wait 120
+```
+
+Continue when it exits 0; otherwise print its output and stop.
+
 ## Trust preflight
 
 Skip this section when the arguments contain `--trust-mode trusted`. Otherwise run:
@@ -116,9 +140,12 @@ Consolidation, Abuse cases and Finalization; `N` is 8, or 7 when the run skips
 abuse cases. The first `start` row of step 1 (`1/<N> Reconnaissance`) states `N`.
 
 Every step is this command, started as a background Bash command
-(`run_in_background: true`; a phase can outlast the foreground limit),
-passing every invocation argument except `--repo`, `--plugin-dir` and their
-values, plus `--trust-mode trusted` when the trust preflight granted it:
+(`run_in_background: true`; a phase can outlast the foreground limit) with
+`allowed_domains: ["api.anthropic.com"]` (the controller's model sessions call
+the API; a sandbox that blocks it turns every call into retries ending in
+`server_error`), passing every invocation argument except `--repo`,
+`--plugin-dir` and their values, plus `--trust-mode trusted` when the trust
+preflight granted it:
 
 ```bash
 APPSEC_SINGLE_REPO_CONTROLLER=1 "$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { durationOf, isStepCommand, outputFileOf, rowOf, stepOf, tailOf, toastOf } from './register'
+import { durationOf, eventOf, isStepCommand, lockOf, outputFileOf, roleOf, rowOf, stepOf, tailOf, toastOf } from './register'
 
 const START = '18:55:27  1/8 Reconnaissance    start  planning      <1m'
 const WARN = '17:56:51  1/8 Reconnaissance    ⚠      planning       3m          model call failed (server_error); repeating it in 15 s (attempt 2)'
@@ -52,4 +52,21 @@ test('formats durations like the controller', () => {
   expect(durationOf(42)).toBe('42s')
   expect(durationOf(252)).toBe('4m12s')
   expect(durationOf(3840)).toBe('1h04m')
+})
+
+test('reads the lock heartbeat and run id', () => {
+  expect(lockOf('3\n1792083952\nassessment-0cd1ee50\n')).toEqual({ heartbeat: 1792083952, runId: 'assessment-0cd1ee50' })
+  expect(lockOf('garbage')).toBe(undefined)
+})
+
+test('names the role of a host-events file', () => {
+  expect(roleOf('0002-recon_scanner.jsonl')).toBe('recon_scanner')
+})
+
+test('turns host events into activity', () => {
+  const retry = '33.6\t{"type":"system","subtype":"api_retry","attempt":7,"max_retries":10,"error_status":null,"error":"unknown"}'
+  expect(eventOf(retry)).toEqual({ activity: 'API retry 7/10 (unknown)', retrying: true })
+  expect(eventOf('1.0\t{"type":"assistant","message":{}}')).toEqual({ activity: 'answering', retrying: false })
+  expect(eventOf('0.1\t{"type":"system","subtype":"init"}')?.retrying).toBe(false)
+  expect(eventOf('not json')).toBe(undefined)
 })

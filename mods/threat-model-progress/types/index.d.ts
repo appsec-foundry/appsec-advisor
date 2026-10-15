@@ -10,8 +10,20 @@ export type Band = {
   dismissed: boolean
 }
 
+// A run that holds docs/security in the session's project, whoever launched it:
+// its lock heartbeat and the newest model call's last host event.
+export type Live = {
+  runId: string
+  startedAt: number
+  heartbeat: number
+  role: string | undefined
+  activity: string
+  retrying: boolean
+  eventAt: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'threat-model-progress': { progress: Progress; band: Band; now: number }
+    'threat-model-progress': { progress: Progress; band: Band; now: number; live: Live | null }
   }
 }

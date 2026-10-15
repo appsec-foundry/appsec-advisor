@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
-import type { Band, Progress } from '../types'
+import type { Band, Live, Progress } from '../types'
 
 const PANE = 'threat-model-progress'
 const TITLE = 'Threat model progress'
@@ -9,6 +9,9 @@ const KEEP = 200
 const POLL_MS = 1000
 // A resumed step replays earlier phases within seconds; no toast for those.
 const REPLAY_S = 10
+// The controller's default heartbeat threshold: an older heartbeat is no live run.
+const LIVE_STALE_S = 300
+const REPORT_DIR = 'docs/security'
 
 const progress = atom(
   { plugin: 'threat-model-progress', key: 'progress' } as const,
@@ -20,6 +23,8 @@ const NO_BAND: Band = { file: undefined, phase: undefined, seenAt: 0, runBase: 0
 const band = atom({ plugin: 'threat-model-progress', key: 'band' } as const, NO_BAND)
 
 const now = atom({ plugin: 'threat-model-progress', key: 'now' } as const, 0)
+
+const live = atom({ plugin: 'threat-model-progress', key: 'live' } as const, null as Live | null)
 
 export type Row = { k: number; n: number; name: string; event: string; elapsed: number | undefined; detail: string }
 
@@ -114,6 +119,79 @@ export const toastOf = (before: Step, after: Step, phaseSeconds: number, totalSe
   return `✓ Phase ${phase.k}/${phase.n} ${phase.name} done (${durationOf(phaseSeconds)})`
 }
 
+// `.appsec-lock`: pid, heartbeat (epoch seconds), run id.
+export const lockOf = (text: string): { heartbeat: number; runId: string } | undefined => {
+  const [, heartbeat, runId] = text.split('\n').map(line => line.trim())
+  if (heartbeat === undefined || !/^\d+$/.test(heartbeat)) return undefined
+
+  return { heartbeat: Number(heartbeat), runId: runId ?? '' }
+}
+
+export const roleOf = (name: string): string => name.replace(/^\d+-/, '').replace(/\.jsonl$/, '')
+
+// A host-events line is `<seconds>\t<stream-json event>`.
+export const eventOf = (line: string): { activity: string; retrying: boolean } | undefined => {
+  let event: Record<string, unknown>
+  try {
+    event = JSON.parse(line.slice(line.indexOf('\t') + 1))
+  } catch {
+    return undefined
+  }
+  if (event.subtype === 'api_retry') {
+    const error = event.error_status ?? event.error
+    const why = error === null || error === undefined ? '' : ` (${String(error)})`
+
+    return { activity: `API retry ${String(event.attempt)}/${String(event.max_retries)}${why}`, retrying: true }
+  }
+  if (event.type === 'assistant') return { activity: 'answering', retrying: false }
+  if (event.type === 'result') return { activity: 'answered', retrying: false }
+
+  return { activity: 'waiting for the model', retrying: false }
+}
+
+const shortRun = (runId: string): string => runId.replace(/^assessment-/, '').slice(0, 7)
+
+const pollLive = async ($: EngineInterface, t: number): Promise<void> => {
+  const dir = `${await $.session.root()}/${REPORT_DIR}`
+  const text = await $.fs.read(`${dir}/.appsec-lock`).catch(() => undefined)
+  const lock = text === undefined ? undefined : lockOf(text)
+  const before = await read($, live)
+  if (lock === undefined || t / 1000 - lock.heartbeat > LIVE_STALE_S) {
+    if (before === null) return
+    await update($, live, () => null)
+    const state = await $.fs.read(`${dir}/.assessment-state.json`).catch(() => undefined)
+    const status = state === undefined ? '' : String(JSON.parse(state).status ?? '')
+    $.ui.toast(`Threat model run ${shortRun(before.runId)} ended${status === '' ? '' : `: ${status}`}`)
+    return
+  }
+  const state = await $.fs.read(`${dir}/.assessment-state.json`).catch(() => undefined)
+  const startedAt = state === undefined ? lock.heartbeat : Number(JSON.parse(state).started_at ?? lock.heartbeat)
+  const entries = await $.fs.list(`${dir}/.assessment-work/host-events`).catch(() => [])
+  const newest = entries
+    .filter(entry => entry.kind === 'file' && entry.name.endsWith('.jsonl'))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
+  let role: string | undefined
+  let activity = ''
+  let retrying = false
+  // Host events of an earlier run stay in the folder; only this run's count.
+  if (newest !== undefined && newest.mtimeMs / 1000 >= startedAt) {
+    role = roleOf(newest.name)
+    const events = await $.fs.read(`${dir}/.assessment-work/host-events/${newest.name}`).catch(() => '')
+    const last = eventOf(tailOf(events, 1)[0] ?? '')
+    activity = last?.activity ?? ''
+    retrying = last?.retrying ?? false
+  }
+  await update($, live, () => ({
+    runId: lock.runId,
+    startedAt,
+    heartbeat: lock.heartbeat,
+    role,
+    activity,
+    retrying,
+    eventAt: newest?.mtimeMs ?? 0,
+  }))
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -121,11 +199,14 @@ export const register: Register = on => {
       description: 'Show the running create-threat-model2 step in a pane',
     })
     $.clock.every(POLL_MS, async () => {
-      const { file, lines } = await read($, progress)
-      if (file === undefined) return
       const t = await $.clock.now()
+      await pollLive($, t).catch(() => undefined)
+      const { file, lines } = await read($, progress)
       const before = stepOf(lines)
-      if (before.outcome === 'running') await update($, now, () => t)
+      if ((file !== undefined && before.outcome === 'running') || (await read($, live)) !== null) {
+        await update($, now, () => t)
+      }
+      if (file === undefined) return
       const text = await $.fs.read(file).catch(() => undefined)
       if (text === undefined) return
       const tail = tailOf(text, KEEP)
@@ -168,8 +249,25 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const { file, lines } = await read($, progress)
     const b = await read($, band)
-    if (file === undefined || b.file !== file || b.dismissed) return next(e)
+    const run = await read($, live)
     const { Box, Button, Text } = $.ui.resolve(e)
+    const activity =
+      run === null || run.activity === ''
+        ? undefined
+        : `${run.role === undefined ? '' : `${run.role}: `}${run.activity}`
+    if (file === undefined || b.file !== file || b.dismissed) {
+      // A run this session did not launch: lock, state and host events only.
+      if (run === null) return next(e)
+      const t = await read($, now)
+
+      return (
+        <Text wrap="truncate-end">
+          <Text color="blue">▶ Threat model</Text>
+          <Text> · run {shortRun(run.runId)} · {durationOf(t / 1000 - run.startedAt)}</Text>
+          {activity !== undefined && <Text color={run.retrying ? 'yellow' : undefined} dimColor={!run.retrying}> · {activity}</Text>}
+        </Text>
+      )
+    }
     const step = stepOf(lines)
     const phaseS = ((await read($, now)) - b.seenAt) / 1000
     const total = durationOf(b.runBase + phaseS)
@@ -195,13 +293,14 @@ export const register: Register = on => {
     if (step.outcome === 'paused') {
       return <Text dimColor>⏸ Threat model · paused after {phase} · {total} total</Text>
     }
-    const warn = step.event === '⚠' || step.event === '↻'
+    const warn = run?.retrying === true || (activity === undefined && (step.event === '⚠' || step.event === '↻'))
+    const detail = activity ?? step.detail
 
     return (
       <Text wrap="truncate-end">
         <Text color="blue">▶ Threat model</Text>
         <Text> · {phase} · {durationOf(phaseS)} in phase · {total} total</Text>
-        {step.detail !== '' && <Text color={warn ? 'yellow' : undefined} dimColor={!warn}> · {step.detail}</Text>}
+        {detail !== '' && <Text color={warn ? 'yellow' : undefined} dimColor={!warn}> · {detail}</Text>}
       </Text>
     )
   })
