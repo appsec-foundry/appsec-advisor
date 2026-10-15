@@ -118,6 +118,18 @@ class Style:
 TAGLINE = "code-derived STRIDE threat modeling"
 
 
+def scanner(st: Style, frame: int, width: int = 5) -> str:
+    """Frame ``frame`` of the logo's light sweeping back and forth across ``width`` cells."""
+    period = 2 * (width - 1)
+    pos = frame % period
+    pos = pos if pos < width else period - pos
+    cells = []
+    for cell in range(width):
+        distance = abs(cell - pos)
+        cells.append(st("█▓▒"[distance], "critical") if distance < 3 else st("·", "muted"))
+    return "".join(cells)
+
+
 def plugin_version() -> str:
     """The plugin's version from its manifest, or empty when unreadable."""
     import json
