@@ -10074,26 +10074,43 @@ class _AssessmentConsole:
                     for line in logo(st, f"v{version} · {mode}" if version else mode):
                         self._out(line)
                 self.write("")
+            elif self.max_columns:
+                # The title carries the header's one time stamp; under --width it
+                # wraps instead of being cut at the panel edge.
+                first, *rest = textwrap.wrap(
+                    f"▶ {title}", self.columns() - 1 - 10, subsequent_indent="  ", break_on_hyphens=False
+                )
+                self.write(first)
+                for line in rest:
+                    self._unstamped(" " * 10 + line)
             else:
                 self.write(f"▶ {title}")
         width = max([11, *(len(key) for key, _ in rows)])
-        # On a terminal a long value wraps under its own column instead of at
-        # the screen edge; time stamp, key and separators take the rest.
-        fit = self.columns() - 1 - (8 + 2 + 2 + width + 2) if st.enabled or self.max_columns else 0
+        # Facts share the title's moment, so they carry no time stamp of their
+        # own. On a terminal a long value wraps flush under its own column
+        # instead of at the screen edge; key and separators take the rest.
+        fit = self.columns() - 1 - (2 + width + 2) if st.enabled or self.max_columns else 0
         for key, value in rows:
             lines: list[str] = []
             for part in value.split("\n"):
                 if fit > 20 and len(part) > fit:
-                    pieces = textwrap.wrap(part, fit, subsequent_indent="  ", break_on_hyphens=False)
+                    pieces = textwrap.wrap(part, fit, break_on_hyphens=False)
                 else:
                     pieces = [part]
                 lines.append(self._fact(key, pieces[0]))
                 lines.extend(st(piece, "muted") for piece in pieces[1:])
             first, *more = lines
-            self.write(f"  {st(f'{key:<{width}}:', 'muted')} {first}")
+            self._unstamped(f"  {st(f'{key:<{width}}:', 'muted')} {first}")
             for line in more:
-                self.write(f"  {'':<{width}}  {line}")
+                self._unstamped(f"  {'':<{width}}  {line}")
         self.write("")
+
+    def _unstamped(self, text: str) -> None:
+        """A permanent line without the time column, for the run header."""
+        self.last = self.clock()
+        with _AssessmentConsole._lock:
+            self.clear_status()
+            self._out(text)
 
     # Header facts whose leading value is coloured; a trailing "(…)" is context.
     FACT_ROLES = {
@@ -10402,12 +10419,13 @@ class _ReportedTransport:
         return reply
 
 
-def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
+def _assessment_model_lines(cfg: dict[str, Any], *, compact: bool = False) -> tuple[str, str | None]:
     """Return the model of each role and a STRIDE model warning when one applies (MD-9).
 
     The lineup already shows the automatic move off Sonnet 4.6; only an
     explicit Sonnet 4.6 setting, which is expected to return no STRIDE
-    result, is warned about.
+    result, is warned about. `compact` counts each model's roles instead of
+    naming them, for a console narrowed by --width.
     """
     from orchestrator.assessment_stage2 import RENDERER_MODEL_KEYS
 
@@ -10415,7 +10433,13 @@ def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
     for role, key in sorted({**SEMANTIC_ROLE_MODEL_KEYS, **RENDERER_MODEL_KEYS}.items()):
         if cfg.get(key):
             by_model.setdefault(str(cfg[key]), []).append(role)
-    lineup = "Models: " + "; ".join(f"{model} ({', '.join(roles)})" for model, roles in sorted(by_model.items()))
+
+    def roles_of(roles: list[str]) -> str:
+        if compact:
+            return f"{len(roles)} role{'s' if len(roles) != 1 else ''}"
+        return ", ".join(roles)
+
+    lineup = "Models: " + "; ".join(f"{model} ({roles_of(roles)})" for model, roles in sorted(by_model.items()))
     warning = None
     if cfg.get("stride_model") == resolve_config.SONNET46:
         warning = (
@@ -10453,8 +10477,7 @@ def _assessment_intro(
         ("Repository" if len(ns.repo) == 1 else "Repositories", "\n".join(ns.repo)),
         ("Output", output),
         ("Billing", "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription"),
-        ("Budget", cut),
-        ("Completion reserve", "required analysis and report take priority over optional model work"),
+        ("Budget", cut + "\nrequired analysis and report take priority over optional model work"),
         ("Time limit", limit),
         ("Depth", depth),
         ("Models", lineup.removeprefix("Models: ").replace("; ", "\n")),
@@ -11091,7 +11114,10 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
             )
             with session as (cfg, state, jobs):
                 _assessment_unsupported_configuration(cfg, scope)
-                lineup, model_warning = _assessment_model_lines(cfg)
+                # Only the narrowed console header counts roles; every other lineup names them.
+                lineup, model_warning = _assessment_model_lines(
+                    cfg, compact=console is not None and _AssessmentConsole.max_columns is not None
+                )
                 depth = str(cfg.get("assessment_depth") or "standard")
                 kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
                 if console:
