@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Headless controller assessments reserve resources for required completion, replace optional model work when budgets run short, and retain a clearly incomplete snapshot when required work cannot finish.
-- `scripts/run-headless.sh` with a single `--repo` now runs the headless controller assessment without `APPSEC_SINGLE_REPO_CONTROLLER=1`; `--incremental`, `--rerender`, `--pr-mode` and the other modes it does not support stop such a run, and `APPSEC_SINGLE_REPO_CONTROLLER=0` restores the previous single-repository scan.
+- `scripts/run-headless.sh` with a single `--repo` now runs the headless controller assessment without `APPSEC_SINGLE_REPO_CONTROLLER=1`; `--incremental`, `--rerender`, `--pr-mode` and the other modes it does not support stop such a run, `--audit-requirements` still runs the requirements audit, now in the repository `--repo` names, and `APPSEC_SINGLE_REPO_CONTROLLER=0` restores the previous single-repository scan.
 - Headless controller assessments assess controls, analyze threats and verify evidence for up to four components at a time within each phase, within the same cost budget.
 - Headless controller assessments spend less time preparing repeated source and evidence checks.
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
