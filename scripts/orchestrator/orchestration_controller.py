@@ -9558,7 +9558,7 @@ def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
     if len(undecided) > 1 and not verbose:
         undecided = [
             f"{len(undecided)} security-relevant code locations stayed open: the model read them but could not "
-            "judge them; the report's Scope and --verbose list them"
+            "judge them; threat-model.yaml and --verbose list them"
         ]
     entries = [entry for entry in entries if "component" in entry]
     if verbose or len(entries) <= 1:
