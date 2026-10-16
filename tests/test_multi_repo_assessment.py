@@ -428,6 +428,21 @@ def test_default_console_writes_every_line_in_one_column_grid():
     assert not any("reads " in line or "signal-" in line or "answered" in line for line in lines)
 
 
+def test_a_run_opens_its_progress_file_with_what_it_is_about_to_spend(tmp_path, monkeypatch):
+    path = tmp_path / "progress.jsonl"
+    try:
+        _assess(tmp_path, monkeypatch, ("edge", "service"), ("--progress-file", str(path)))
+    finally:
+        controller._AssessmentProgress.path = None
+    # create-threat-model2's monitor greps this exact spelling and shows these lines before phase 1.
+    assert path.read_text().startswith('{"event": "run_start", ')
+    start = json.loads(path.read_text().splitlines()[0])
+    keys = ["Repositories", "Output", "Depth", "Budget", "Time", "Models"]
+    assert [line.split()[0] for line in start["lines"]] == keys
+    assert any(line.startswith("Budget      model calls stop at $5.00") for line in start["lines"])
+    assert all("\n" not in line for line in start["lines"])
+
+
 def test_the_progress_file_names_every_row_field_by_field(tmp_path):
     """A follower reads named fields, one record per line, never the padded grid."""
     path = tmp_path / "progress.jsonl"
@@ -1865,8 +1880,99 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
         f"  Report      {tmp_path / 'threat-model.md'}",
         f"              {tmp_path / 'threat-model.yaml'}",
         f"              {tmp_path / 'threat-model.pdf'} (+ 2 figures)",
-        "  Next        /appsec-advisor:ask-threat-model · /appsec-advisor:review-threat-model",
+        # The single-repository summary's rules: findings to triage, then questions about them.
+        "  Next        Triage the findings — /appsec-advisor:review-threat-model",
+        "              Or just ask me:",
+        '                "What are the most critical findings?"',
+        '                "What should I fix first?"',
+        "                … or anything else about the report",
     ]
+
+
+def _closing_lines(tmp_path, monkeypatch, capsys, yaml_text, deliverables):
+    (tmp_path / "threat-model.yaml").write_text(yaml_text)
+    outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1}
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "deliverables": deliverables})
+    assert controller.assess_main(["--repo", "edge"]) == 0
+    return capsys.readouterr().out.splitlines()
+
+
+def test_a_clean_run_offers_questions_about_its_scope_and_nothing_to_triage(tmp_path, monkeypatch, capsys):
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert not any("review-threat-model" in line for line in out)
+    assert '                "What did the scan cover?"' in out
+
+
+def test_a_delivered_sarif_file_is_named_as_an_additional_step(tmp_path, monkeypatch, capsys):
+    (tmp_path / "threat-model.sarif.json").write_text("{}")
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md", "threat-model.sarif.json"])
+    assert any(line.startswith("  Also        Upload threat-model.sarif.json") for line in out)
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert not any(line.startswith("  Also") for line in out)
+
+
+def test_a_recorded_error_closes_with_the_report_error_pointer(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("APPSEC_PLUGIN_DEV", raising=False)
+    issue = ("agent_error", "error", "STRIDE job Gateway was replaced after a model failure (timeout)")
+    controller._write_run_issues(tmp_path, {}, [issue])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert any("Top issue" in line and "STRIDE job Gateway" in line for line in out)
+    assert any("/appsec-advisor:report-error" in line for line in out)
+    controller._write_run_issues(tmp_path, {}, [])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert not any("Run Issues" in line for line in out)
+
+
+def test_a_report_git_would_commit_closes_with_the_security_notice(tmp_path, monkeypatch, capsys):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert "Security Notice" in out and "    /appsec-advisor:publish-threat-model" in out
+    (tmp_path / ".gitignore").write_text("threat-model.*\n")
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert "Security Notice" not in out
+
+
+def test_the_whole_closing_block_is_kept_as_plain_text_in_the_work_directory(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".assessment-work").mkdir()
+    (tmp_path / "threat-model.yaml").write_text("threats:\n  - {t_id: T-001, risk: High}\n")
+    outcome = {
+        "repositories": ["edge"],
+        "output": str(tmp_path),
+        "calls": 3,
+        "spent_usd": 1.0,
+        "deliverables": ["threat-model.md"],
+        "warnings": ["one optional job was replaced"],
+        "infos": ["3 program files belong to no component"],
+        "gate_violations": ["T-001(high)"],
+        "fail_on": "high",
+    }
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: outcome)
+    assert controller.assess_main(["--repo", "edge"]) == 20
+    console = capsys.readouterr()
+    saved = (tmp_path / ".assessment-work" / controller.ASSESSMENT_SUMMARY_NAME).read_text()
+    # The head, which a tail of the log loses first, and every line after it, without colour codes.
+    assert saved.startswith("✓ Threat model of edge written in ")
+    assert "  Next        " in saved and "⚠ one optional job was replaced" in saved
+    assert saved.rstrip().endswith("✗ PR gate: 1 new threat(s) at or above 'high': T-001(high)")
+    assert "\033[" not in saved
+    err = controller.ANSI_RE.sub("", console.err).splitlines()
+    closing = err[err.index("⚠ one optional job was replaced") :]
+    assert saved.splitlines() == controller.ANSI_RE.sub("", console.out).splitlines() + closing
+
+
+def test_a_summary_defect_after_publication_keeps_the_run_successful(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".assessment-work").mkdir()
+    outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1, "deliverables": []}
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: outcome)
+
+    def broken(output):
+        raise ValueError("unreadable model")
+
+    monkeypatch.setattr("renderers.summarize_threat_model.completion_rows", broken)
+    assert controller.assess_main(["--repo", "edge"]) == 0
+    err = capsys.readouterr().err
+    assert f"completion summary unavailable: unreadable model; the report is in {tmp_path}" in err
+    assert "completion summary not saved: unreadable model" in err
 
 
 def test_coverage_statements_close_the_run_under_one_heading(tmp_path, monkeypatch, capsys):
@@ -2064,6 +2170,13 @@ def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_
     replaced = " ".join(w for w in outcome["warnings"] if "replaced after a model failure" in w)
     for role in failed:
         assert controller._AssessmentConsole.ROLE_LABELS[role] in replaced
+    # Each replacement reached the report, so it is an error report-error offers to diagnose.
+    from renderers.render_completion_summary import extract_run_issues, user_visible_issues
+
+    issues = extract_run_issues(out)
+    errors = [i["title"] for i in issues["issues"] if i["category"] == "agent_error"]
+    assert errors and all("replaced after a model failure" in title for title in errors)
+    assert issues["summary"]["errors"] == len(errors) and user_visible_issues(issues["issues"])
     # Findings no independent review read stay unproven.
     model = yaml.safe_load((out / "threat-model.yaml").read_text())
     assert model["threats"] and all(t.get("evidence_check") != "verified" for t in model["threats"])
@@ -2116,6 +2229,22 @@ def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role)
     with pytest.raises(Exception, match="no_result"):
         _assess(tmp_path, monkeypatch, ("edge", "service"), host=_FailingHost([role]))
     assert not (tmp_path / "out" / "threat-model.md").exists()
+    # The failed run leaves its reason where report-error and diagnose-run read it.
+    issues = json.loads((tmp_path / "out" / ".run-issues.json").read_text())
+    assert [(i["category"], i["severity"]) for i in issues["issues"]] == [("run_incomplete", "error")]
+    assert "no_result" in issues["issues"][0]["title"]
+
+
+def test_a_run_replaces_an_earlier_scans_run_diagnostics(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".run-issues.json").write_text('{"schema_version": 1, "generated": "2020-01-01T00:00:00Z", "issues": []}')
+    (out / ".run-bugs.json").write_text("{}")
+    outcome, _, _ = _assess(tmp_path, monkeypatch, ("edge", "service"))
+    assert outcome["status"] == "complete" and not (out / ".run-bugs.json").exists()
+    issues = json.loads((out / ".run-issues.json").read_text())
+    assert issues["generated"] != "2020-01-01T00:00:00Z"
+    assert [i["title"] for i in issues["issues"]] == outcome["warnings"]
 
 
 @pytest.mark.parametrize("verbose", [False, True])

@@ -167,7 +167,7 @@ preflight granted it, plus `--width 72` when the arguments contain no
 `--width` (the output panel cuts longer lines instead of wrapping them):
 
 ```bash
-APPSEC_SINGLE_REPO_CONTROLLER=1 "$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
+"$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
   --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch [--rebuild] \
   --progress-file "$OUTPUT_DIR/.assessment-progress.jsonl" <remaining-arguments>
 ```
@@ -196,7 +196,7 @@ description `threat-model progress`, and this command:
 
 ```bash
 tail -n +1 -F "$OUTPUT_DIR/.assessment-progress.jsonl" 2>/dev/null | grep --line-buffered -E \
-  '"event": "(phase_start|phase_done|warning|end)"'
+  '"event": "(run_start|phase_start|phase_done|warning|end)"'
 ```
 
 Only milestones reach the conversation, since every monitor event costs a
@@ -206,6 +206,8 @@ JSON event; read its fields by name, never by position. For each event, print
 one line, in arrival order, in the style of create-threat-model's stage
 banners (`[, left <left>]` only when `left` is not empty):
 
+- `run_start` (once, before the first phase): its `lines` verbatim in one code
+  block, the run's repository, output, depth, budget, time limit and models
 - `phase_start`: `▶ Phase <number>/<total> — <phase> starting  (<progress>, elapsed <elapsed>[, left <left>])`
 - `phase_done`: `✓ Phase <number>/<total> — <phase>: <detail>`
 - `warning`: `⚠ <detail>` (a warning never ends the assessment)
@@ -243,8 +245,27 @@ show.
 ## Completion
 
 When the command's task notification arrives, stop the monitor with
-`TaskStop`. Print the last 40 lines of the output verbatim in a code block,
-without summarizing or adding findings. Then state the outcome by the exit
+`TaskStop`. On exit `0` or `20`, print the whole closing block the controller
+kept:
+
+```bash
+cat "$OUTPUT_DIR/.assessment-work/summary.txt"
+```
+
+On any other exit, or when that file is missing, print the last 40 lines of
+the output instead. Either way print it verbatim in a code block, without
+summarizing or adding findings. Then state the outcome by the exit
 code: `0` completed; `20` completed, but the `--fail-on` gate failed; `3` paused
 or stopped, and accepted steps stay for `--resume`; `130` interrupted, and
 accepted steps stay for `--resume`; any other code, the assessment failed.
+
+Except after `3` or `130`, check whether the run recorded a possible plugin
+error:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
+```
+
+Only when it returns `offer=true`, follow
+`$CLAUDE_PLUGIN_ROOT/skills/report-error/SKILL.md` with `--offer --repo "$REPO"
+--output "$OUTPUT_DIR"`; its question is the only one asked after a run.
