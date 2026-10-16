@@ -36,6 +36,10 @@ SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
 # `assess-stop` names the run to stop here; the run reads it at each checkpoint.
 STOP_NAME = ".assessment-stop"
+# The run's issues and the diagnoses derived from them, where report-error and
+# diagnose-run read them. Each run replaces them, so they never block a start.
+RUN_ISSUES_NAME = ".run-issues.json"
+RUN_DIAGNOSTIC_NAMES = (RUN_ISSUES_NAME, ".run-issues-fixes.json", ".run-bugs.json")
 WORK_NAME = ".assessment-work"
 PARTIAL_REPORT = "budget-report.md"
 # What a refused resume names when its recorded identity no longer matches.
@@ -284,7 +288,11 @@ class AssessmentState:
         In a sole checkout's `docs/security` (MR-6) only the controller's own
         files count: inputs and a legacy report beside them are kept as they are.
         """
-        leftovers = {child.name for child in self.output.iterdir()} - {".appsec-lock", ".appsec-lock.guard"}
+        leftovers = {child.name for child in self.output.iterdir()} - {
+            ".appsec-lock",
+            ".appsec-lock.guard",
+            *RUN_DIAGNOSTIC_NAMES,
+        }
         if self.scope.output_in_checkout():
             leftovers &= self._own_names()
         if not leftovers:

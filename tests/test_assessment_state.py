@@ -389,6 +389,18 @@ def test_existing_user_files_are_preserved_and_block_fresh_assessment(scope):
     assert not (scope.output / ".assessment-state.json").exists()
 
 
+def test_an_earlier_scans_run_diagnostics_never_block_a_fresh_assessment(scope):
+    from runtime.assessment_state import RUN_DIAGNOSTIC_NAMES
+
+    scope.output.mkdir()
+    for name in RUN_DIAGNOSTIC_NAMES:
+        (scope.output / name).write_text("{}")
+    with lifecycle(scope).hold():
+        pass
+    # Only a run that holds the directory replaces them; the lifecycle itself keeps them.
+    assert all((scope.output / name).is_file() for name in RUN_DIAGNOSTIC_NAMES)
+
+
 def _fail(state):
     with pytest.raises(RuntimeError):
         with state.hold():

@@ -8170,7 +8170,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
     a cached artifact cannot choose either of them.
     """
     from runtime.assessment_jobs import AssessmentJobs
-    from runtime.assessment_state import CACHE_NAME, AssessmentState
+    from runtime.assessment_state import CACHE_NAME, RUN_DIAGNOSTIC_NAMES, AssessmentPaused, AssessmentState
 
     cfg = resolve_config.resolve_assessment(scope, arguments, PLUGIN_ROOT, model=model)
     # The resolver leaves this role to the dispatch default, as the single-repository run does.
@@ -8199,6 +8199,10 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
         return host_factory(role, cfg[key], ceiling)
 
     with _stop_on_terminate(state), state.hold():
+        # Held now, so this removes no other run's files; an earlier scan's
+        # issues and diagnoses must never read as this run's.
+        for name in RUN_DIAGNOSTIC_NAMES:
+            (scope.output / name).unlink(missing_ok=True)
         budget.plan_completion()
         # Any session may adopt the cached accepted jobs of an unfinished earlier run.
         jobs = AssessmentJobs(
@@ -8210,6 +8214,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             state.checkpoint,
             cache=state.directory / CACHE_NAME,
         )
+        from runtime.analyst_host import HostCancelled, HostTimeout
         from runtime.multi_repo_discovery import BudgetExhausted
 
         try:
@@ -8217,6 +8222,56 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
         except BudgetExhausted as exc:
             exc.report = state.budget_report(jobs)
             raise
+        except Exception as exc:
+            # A pause, a stop request or a refused setting is no failure to diagnose.
+            stopped = isinstance(exc, (AssessmentPaused, CallError, HostCancelled)) and not isinstance(exc, HostTimeout)
+            if not stopped:
+                _write_run_issues(
+                    scope.output, cfg, [("run_incomplete", "error", f"Assessment stopped: {_cap_reason(str(exc))}")]
+                )
+            raise
+
+
+def _write_run_issues(output: Path, cfg: dict[str, Any], issues: list[tuple[str, str, str]]) -> bool:
+    """Record this run's issues as ``.run-issues.json``, the file report-error and diagnose-run read.
+
+    ``issues`` are (category, severity, text). Same schema as
+    ``runtime/aggregate_run_issues.py``, but from the controller's own record:
+    that aggregator reads the single-repository logs, which this run does not
+    write. Best-effort: returns False instead of failing a run over it.
+    """
+    from runtime.assessment_state import RUN_ISSUES_NAME
+    from shared._atomic_io import atomic_write_text
+
+    rows = [
+        {
+            "id": f"ISSUE-{index:03d}",
+            "category": category,
+            "severity": severity,
+            "title": text,
+            "evidence": {"source_agent": "assessment-controller", "raw_event": text},
+        }
+        for index, (category, severity, text) in enumerate(issues, 1)
+    ]
+    data = {
+        "schema_version": 1,
+        "run_status": "issues" if rows else "clean",
+        "assessment_depth": str(cfg.get("assessment_depth") or "standard"),
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "summary": {
+            "errors": sum(1 for row in rows if row["severity"] == "error"),
+            "warnings": sum(1 for row in rows if row["severity"] == "warning"),
+            "perf_anomalies": 0,
+            "recovery_events": sum(1 for row in rows if row["category"] == "auto_retry_fired"),
+            "auto_applicable_fixes": 0,
+        },
+        "issues": rows,
+    }
+    try:
+        atomic_write_text(output / RUN_ISSUES_NAME, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    except OSError:
+        return False
+    return True
 
 
 def _assessment_runtime_warning(state, *, running: bool = False) -> str | None:
@@ -9476,6 +9531,8 @@ INTERACTIVE_DEPTH_BUDGET_USD = {"quick": 10.0, "standard": 20.0, "thorough": 40.
 # Exit status of an incomplete run that --resume continues: one that stopped at
 # its --pause-after boundary or on a stop request (REQ-FLW-006).
 ASSESS_PAUSED_EXIT = 3
+# The completed run's closing block as plain text, under the state's work directory.
+ASSESSMENT_SUMMARY_NAME = "summary.txt"
 
 
 def _requested_depth(rest: list[str]) -> str:
@@ -10582,6 +10639,24 @@ def _assessment_intro(
     ]
 
 
+def _assessment_start_lines(ns, budget, depth: str, cfg: dict[str, Any], state) -> list[str]:
+    """What the run is about to spend and where, as the console header states it, one line per fact.
+
+    For a follower that shows the start in a conversation: the header's
+    rows for repository, output, depth, budget, time limit and models, each
+    on one line, without the trust and pipeline rows the header adds.
+    """
+    lineup, _ = _assessment_model_lines(cfg, compact=True)
+    rows = dict(_assessment_intro(ns, budget, depth, lineup, _assessment_pipeline(cfg), state.runtime_changed))
+    lines = []
+    for key in ("Repository", "Repositories", "Output", "Depth", "Budget", "Time limit", "Models"):
+        if key in rows:
+            parts = rows[key].splitlines()
+            # The budget's second line explains priorities, not the limit.
+            lines.append(f"{key:<11} {parts[0] if key == 'Budget' else '; '.join(parts)}")
+    return lines
+
+
 def _assessment_pipeline(cfg: dict[str, Any]) -> str:
     """Name the phases this run executes and the optional steps it enables in them.
 
@@ -11217,6 +11292,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     cfg, compact=console is not None and _AssessmentConsole.max_columns is not None
                 )
                 depth = str(cfg.get("assessment_depth") or "standard")
+                _AssessmentProgress.emit("run_start", lines=_assessment_start_lines(ns, budget, depth, cfg, state))
                 kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
                 if console:
                     # One header after the output directory, scope and configuration
@@ -11351,12 +11427,13 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 if runtime_warning:
                     warnings.append(runtime_warning)
                 # Optional jobs a model failure replaced (OR-39); a later run retries them.
-                warnings.extend(
+                failed = [
                     f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
                     f"was replaced after a model failure ({gap['reason']}); rerun to retry it"
                     for gap in jobs.gaps
                     if not gap.get("budget")
-                )
+                ]
+                warnings.extend(failed)
                 warnings.extend(
                     f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
                     "was not completed to preserve the budget for required work; its deterministic replacement is used"
@@ -11373,6 +11450,19 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     "LLM inference service for it; review its AI exposure manually"
                     for name in architecture["model_integration_gaps"]
                 )
+                # A failed model call reached the report through its replacement; the rest are warnings.
+                recorded = _write_run_issues(
+                    scope.output,
+                    cfg,
+                    [
+                        ("agent_error", "error", text)
+                        if text in failed
+                        else ("auto_retry_fired" if text == retry_warning else "assessment_warning", "warning", text)
+                        for text in warnings
+                    ],
+                )
+                if not recorded:
+                    warnings.append("the run's issues could not be recorded in .run-issues.json")
                 _assessment_discard_workspace(workspace, len(labels), cfg)
         except ScopeError as exc:
             raise ControllerError(f"selected source state changed or became unreadable: {exc}") from exc
@@ -11616,7 +11706,7 @@ def _launch_main(command: str, argv: list[str]) -> int:
     return 0
 
 
-def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
+def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> None:
     """The closing result block: what was assessed, what it found, where it is and what comes next.
 
     Verdict, finding and mitigation rows come from the `show-threat-model`
@@ -11629,9 +11719,9 @@ def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
     head = f"✓ {kind} of {', '.join(outcome['repositories'])} written in {elapsed}"
     cost = f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
     if _AssessmentConsole.max_columns and len(head) + 1 + len(cost) > _AssessmentConsole.columns() - 1:
-        print(out(head, "ok", "bold") + "\n  " + out(cost, "muted"))
+        print(out(head, "ok", "bold") + "\n  " + out(cost, "muted"), file=stream)
     else:
-        print(out(head, "ok", "bold") + " " + out(cost, "muted"))
+        print(out(head, "ok", "bold") + " " + out(cost, "muted"), file=stream)
     output = Path(outcome["output"])
     figures = [name for name in outcome["deliverables"] if name.endswith(".svg")]
     files = sorted(
@@ -11644,15 +11734,91 @@ def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
     rows += [("Report" if index == 0 else "", path, "accent") for index, path in enumerate(files)]
     if outcome.get("runtime_files"):
         rows.append(("Run files", outcome["runtime_files"], "muted"))
-    rows.append(("Next", "/appsec-advisor:ask-threat-model · /appsec-advisor:review-threat-model", None))
+    rows += _completion_step_rows(output, outcome["deliverables"])
     # Values wrap flush under their column when --width narrows the console.
     width = _AssessmentConsole.columns() - 1 - 14 if _AssessmentConsole.max_columns else 0
     for key, value, role in rows:
         pieces = textwrap.wrap(value, width, break_on_hyphens=False) if 20 < width < len(value) else [value]
         roles = (role,) if role else ()
-        print(f"  {out(f'{key:<11}', 'muted')} {out(pieces[0], *roles)}")
+        print(f"  {out(f'{key:<11}', 'muted')} {out(pieces[0], *roles)}", file=stream)
         for piece in pieces[1:]:
-            print(" " * 14 + out(piece, *roles))
+            print(" " * 14 + out(piece, *roles), file=stream)
+    from renderers.render_completion_summary import extract_run_issues, render_run_issues, render_security_notice
+
+    for line in render_run_issues(extract_run_issues(output), plugin_dev=os.environ.get("APPSEC_PLUGIN_DEV") == "1"):
+        print(line, file=stream)
+    for line in render_security_notice(output):
+        print(out(line, "warn") if line.strip() else line, file=stream)
+
+
+def _completion_step_rows(output: Path, deliverables) -> list[tuple[str, str, str | None]]:
+    """The Next and Also rows, by the single-repository summary's own rules.
+
+    Their inputs come from this run, never from the files that summary reads
+    from the output directory, which may still hold an earlier scan's. The
+    report step is left out: the Report rows above already name the report.
+    """
+    from renderers.render_completion_summary import build_follow_ups, build_next_steps
+    from renderers.summarize_threat_model import completion_severity_counts
+
+    metrics = {"threats_by_sev": completion_severity_counts(output)}
+    cfg = {"write_sarif": "threat-model.sarif.json" in deliverables}
+    rows: list[tuple[str, str, str | None]] = []
+    for key, steps in (
+        ("Next", build_next_steps(output, output, metrics, cfg)[1:]),
+        ("Also", build_follow_ups(output, metrics, cfg)),
+    ):
+        for index, step in enumerate(steps):
+            head, *rest = step.split("\n")
+            rows.append((key if index == 0 else "", head, None))
+            rows += [("", f"  {line}", None) for line in rest]
+    return rows
+
+
+def _print_closing(outcome: dict, elapsed: str, out: Style, err: Style, stdout=None, stderr=None) -> None:
+    """The run's closing block: its result, then its warnings, coverage statements and gate verdict."""
+    stderr = stderr or sys.stderr
+    _print_completion(outcome, elapsed, out, stdout)
+    fit = _AssessmentConsole.fit
+    for warning in outcome.get("warnings") or []:
+        # Wrapped as plain text; only the leading mark is coloured.
+        print(err("⚠", "warn") + fit(f"⚠ {warning}")[1:], file=stderr)
+    if outcome.get("infos"):
+        # Coverage statements, not defects (REQ-FLW-005): one heading, one line each.
+        print(err("ℹ Coverage", "muted"), file=stderr)
+        for info in outcome["infos"]:
+            print(err(fit(f"  · {info}", "    "), "muted"), file=stderr)
+    if outcome.get("gate_violations"):
+        violations = outcome["gate_violations"]
+        print(
+            err(f"✗ PR gate: {len(violations)} new threat(s) at or above '{outcome['fail_on']}': ", "critical")
+            + ", ".join(violations[:10]),
+            file=stderr,
+        )
+
+
+def _save_closing(outcome: dict, elapsed: str) -> None:
+    """Keep the closing block as plain text in the run's work directory.
+
+    A follower such as the skill shows this file whole; a tail of the console
+    log cuts its head off once warnings and coverage lines make it long. It
+    lives in the work directory, which the run owns, so it never blocks a
+    later start the way a foreign file in the output directory does.
+    """
+    import io
+
+    from runtime.assessment_state import WORK_NAME
+    from shared._atomic_io import atomic_write_text
+
+    directory = Path(outcome["output"]) / WORK_NAME
+    if not directory.is_dir():
+        return
+    buffer = io.StringIO()
+    try:
+        _print_closing(outcome, elapsed, Style(False), Style(False), buffer, buffer)
+        atomic_write_text(directory / ASSESSMENT_SUMMARY_NAME, buffer.getvalue())
+    except Exception as exc:
+        print(f"⚠ completion summary not saved: {_cap_reason(str(exc))}", file=sys.stderr)
 
 
 def assess_main(argv: list[str]) -> int:
@@ -11728,26 +11894,17 @@ def _assess_main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
         return 1
-    out, err = Style.for_stream(sys.stdout), Style.for_stream(sys.stderr)
-    _print_completion(outcome, _elapsed(time.monotonic() - started), out)
-    fit = _AssessmentConsole.fit
-    for warning in outcome.get("warnings") or []:
-        # Wrapped as plain text; only the leading mark is coloured.
-        print(err("⚠", "warn") + fit(f"⚠ {warning}")[1:], file=sys.stderr)
-    if outcome.get("infos"):
-        # Coverage statements, not defects (REQ-FLW-005): one heading, one line each.
-        print(err("ℹ Coverage", "muted"), file=sys.stderr)
-        for info in outcome["infos"]:
-            print(err(fit(f"  · {info}", "    "), "muted"), file=sys.stderr)
-    if outcome.get("gate_violations"):
-        violations = outcome["gate_violations"]
+    elapsed = _elapsed(time.monotonic() - started)
+    try:
+        _print_closing(outcome, elapsed, Style.for_stream(sys.stdout), Style.for_stream(sys.stderr))
+    except Exception as exc:
+        # The report is published; a defect in its summary must not turn the run into a failure.
         print(
-            err(f"✗ PR gate: {len(violations)} new threat(s) at or above '{outcome['fail_on']}': ", "critical")
-            + ", ".join(violations[:10]),
+            f"⚠ completion summary unavailable: {_cap_reason(str(exc))}; the report is in {outcome.get('output')}",
             file=sys.stderr,
         )
-        return 20
-    return 0
+    _save_closing(outcome, elapsed)
+    return 20 if outcome.get("gate_violations") else 0
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
