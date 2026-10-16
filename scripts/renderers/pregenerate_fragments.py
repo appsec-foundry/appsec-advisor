@@ -64,6 +64,7 @@ if not __package__:
 
 
 import argparse
+import collections
 import json
 import re
 import subprocess
@@ -585,13 +586,15 @@ def gen_system_overview(yaml_data: dict) -> str:
         if isinstance(row, dict) and row.get("component") and row.get("target")
     ]
     if undecided:
-        lines.append(f"**Open analysis questions ({len(undecided)}):**")
-        lines.append("")
-        lines.append("These checks remain unresolved in their analysis step; findings elsewhere do not settle them.")
-        lines.append("")
-        lines.extend(f"- {row['component']}: {row['target']}" for row in undecided[:10])
-        if len(undecided) > 10:
-            lines.append(f"- {len(undecided) - 10} further questions are recorded in `threat-model.yaml`.")
+        # A coverage gap like the two beside it, not a question for the team: the
+        # analysis read these locations but could not judge them.
+        per_component = collections.Counter(row["component"] for row in undecided)
+        lines.append(
+            f"**Not assessed:** {len(undecided)} security-relevant code "
+            f"{'location was' if len(undecided) == 1 else 'locations were'} read but could not be judged ("
+            + ", ".join(f"{name} {count}" for name, count in per_component.most_common())
+            + "); `threat-model.yaml` records each with its reason under `meta.undecided_targets`."
+        )
         lines.append("")
     unowned = meta.get("unowned_source") if isinstance(meta.get("unowned_source"), dict) else {}
     if isinstance(unowned.get("files"), int) and unowned["files"] > 0:

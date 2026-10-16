@@ -169,21 +169,25 @@ class TestSystemOverview:
             {"component": "Web", "target": "routes/redirect.ts: allow-list helper was not supplied"}
         ]
         md = pf.gen_system_overview(minimal_yaml_data)
-        assert "**Open analysis questions (1):**" in md
-        assert "\n- Web: routes/redirect.ts: allow-list helper was not supplied\n" in md
-        assert "findings elsewhere do not settle them" in md
+        # A coverage gap in one line, not a question list beside the team questions.
+        assert (
+            "**Not assessed:** 1 security-relevant code location was read but could not be judged (Web 1); "
+            "`threat-model.yaml` records each with its reason under `meta.undecided_targets`."
+        ) in md
+        assert "Open analysis questions" not in md and "allow-list helper" not in md
 
     @pytest.mark.parametrize("name", ["Orders API", "Billing worker"])
-    def test_scope_lists_components_and_bounds_open_questions(self, minimal_yaml_data, name):
+    def test_scope_lists_components_and_counts_unassessed_locations(self, minimal_yaml_data, name):
         minimal_yaml_data["components"] = [{"id": "service", "name": name}]
         minimal_yaml_data["meta"]["undecided_targets"] = [
             {"component": name, "target": f"module{i}.py: helper unavailable"} for i in range(12)
         ]
         md = pf.gen_system_overview(minimal_yaml_data)
         assert f"\n- {name}\n" in md and f"**{name}**" not in md
-        assert "Open analysis questions (12)" in md
-        assert "module9.py: helper unavailable" in md and "module10.py" not in md
-        assert "2 further questions are recorded in `threat-model.yaml`" in md
+        assert (
+            f"**Not assessed:** 12 security-relevant code locations were read but could not be judged ({name} 12)" in md
+        )
+        assert "module0.py" not in md
 
     def test_scope_names_program_files_outside_every_component(self, minimal_yaml_data):
         minimal_yaml_data["meta"]["unowned_source"] = {

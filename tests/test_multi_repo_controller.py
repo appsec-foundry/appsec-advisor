@@ -503,7 +503,7 @@ def test_coverage_statements_collapse_to_one_line_unless_verbose():
     # Undecided targets are coverage statements: one line unless verbose, each line with --verbose.
     assert controller._coverage_infos(undecided, verbose=False) == [
         "2 security-relevant code locations stayed open: the model read them but could not judge them; "
-        "the report's Scope and --verbose list them"
+        "threat-model.yaml and --verbose list them"
     ]
     assert controller._coverage_infos(undecided, verbose=True) == [row["text"] for row in undecided]
     assert controller._coverage_infos(undecided[:1], verbose=False) == [undecided[0]["text"]]
