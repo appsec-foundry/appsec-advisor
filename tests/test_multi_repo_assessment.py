@@ -668,6 +668,39 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     )
 
 
+def test_console_header_names_the_files_the_run_will_write_and_its_settings():
+    parse = controller._assessment_argument_parser().parse_args
+    ns = parse(["--repo", "/r", "--output", "/o", "--hard-budget", "5", "--project", "Shop", "--fail-on", "high"])
+    budget = controller._assessment_budget(ns)
+
+    def rows(cfg):
+        return dict(controller._assessment_intro(ns, budget, "standard", "Models: m1 (a)", "P", cfg=cfg))
+
+    plain = rows({})
+    assert plain["Artifacts"].splitlines() == [
+        "threat-model.md",
+        "threat-model.yaml",
+        "threat-model.figure*.svg (diagrams)",
+    ]
+    assert plain["Options"].splitlines() == ["project: Shop", "exit status fails on high or worse"]
+    # Only requested exports are promised; the stamped copies name their slug.
+    exports = rows({"write_sarif": True, "write_pdf": True, "write_pentest_tasks": True, "slug": " v2 "})
+    assert exports["Artifacts"].splitlines()[3:] == [
+        "threat-model.sarif.json",
+        "pentest-tasks.yaml",
+        "threat-model.pdf",
+        "copies stamped with --slug v2",
+    ]
+    assert "threat-model.html" not in exports["Artifacts"]
+    assert (
+        rows({"check_requirements": True, "requirements_label": "enabled (--requirements)"})["Options"].splitlines()[1]
+        == "enabled (--requirements)"
+    )
+    # Without a configuration (the follower's start lines) the rows are left out.
+    bare = dict(controller._assessment_intro(ns, budget, "standard", "Models: m1 (a)", "P"))
+    assert "Artifacts" not in bare and "Options" not in bare
+
+
 def test_a_refused_start_prints_its_reason_without_a_run_header(tmp_path, monkeypatch, capsys):
     for name in ("edge", "service"):
         checkout(tmp_path / name)

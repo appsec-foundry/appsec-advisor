@@ -10692,8 +10692,43 @@ def _assessment_model_lines(cfg: dict[str, Any], *, compact: bool = False) -> tu
     return lineup, warning
 
 
+def _assessment_artifacts(cfg: dict[str, Any]) -> str:
+    """Name the files the run publishes into the output directory, one per line.
+
+    Uses the gates of the delivery step itself (``_assessment_publish``), so the
+    header never promises an export the run skips. A figure or export that cannot
+    be produced is dropped there and reported in the closing block.
+    """
+    names = ["threat-model.md", "threat-model.yaml", "threat-model.figure*.svg (diagrams)"]
+    names += [basename for key, _script, basename in _YAML_DERIVED_EXPORTS if cfg.get(key)]
+    if cfg.get("write_pentest_tasks"):
+        names.append("pentest-tasks.yaml")
+    names += [
+        basename
+        for key, basename in (("write_pdf", "threat-model.pdf"), ("write_html", "threat-model.html"))
+        if cfg.get(key)
+    ]
+    if str(cfg.get("slug") or "").strip():
+        names.append(f"copies stamped with --slug {str(cfg['slug']).strip()}")
+    return "\n".join(names)
+
+
+def _assessment_options(ns, cfg: dict[str, Any]) -> str:
+    """Name the settings beyond depth, budget and models that shape this run, one per line; empty when none is set."""
+    options = []
+    if ns.project:
+        options.append(f"project: {ns.project}")
+    if cfg.get("check_requirements"):
+        options.append(cfg.get("requirements_label") or "requirements check enabled")
+    if cfg.get("skip_abuse_case_verification"):
+        options.append("abuse-case verification skipped")
+    if ns.fail_on:
+        options.append(f"exit status fails on {ns.fail_on} or worse")
+    return "\n".join(options)
+
+
 def _assessment_intro(
-    ns, budget, depth: str, lineup: str, pipeline: str, runtime_changed=False
+    ns, budget, depth: str, lineup: str, pipeline: str, runtime_changed=False, cfg: dict[str, Any] | None = None
 ) -> list[tuple[str, str]]:
     """Return the console header rows, shown once every pre-run check has passed."""
     output = ns.output
@@ -10715,6 +10750,10 @@ def _assessment_intro(
         if ns.trust_mode == "untrusted"
         else "trusted: start check skipped\nescaping symlinks, IDE-loaded files and related-repository URLs are not checked"
     )
+    plan = [
+        ("Artifacts", _assessment_artifacts(cfg)) if cfg is not None else ("", ""),
+        ("Options", _assessment_options(ns, cfg)) if cfg is not None else ("", ""),
+    ]
     return [
         ("Repository" if len(ns.repo) == 1 else "Repositories", "\n".join(ns.repo)),
         ("Output", output),
@@ -10725,6 +10764,7 @@ def _assessment_intro(
         ("Models", lineup.removeprefix("Models: ").replace("; ", "\n")),
         ("Trust mode", trust),
         ("Pipeline", pipeline),
+        *(row for row in plan if row[0] and row[1]),
     ]
 
 
@@ -11388,7 +11428,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     # were accepted, so a refused start prints only its reason.
                     console.facts(
                         "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
-                        _assessment_intro(ns, budget, depth, lineup, _assessment_pipeline(cfg), state.runtime_changed),
+                        _assessment_intro(
+                            ns, budget, depth, lineup, _assessment_pipeline(cfg), state.runtime_changed, cfg
+                        ),
                     )
                     console.plan_phases(abuse_cases=not cfg.get("skip_abuse_case_verification"))
                     noticed = []
