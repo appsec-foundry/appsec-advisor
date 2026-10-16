@@ -518,8 +518,9 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
             ns, controller._assessment_budget(ns), "standard", "Models: m1 (a, b); m2 (c)", "P"
         )
     )
-    assert rows["Budget"] == "model calls stop at $18.75 (1.25 × deprecated --soft-budget $15; use --hard-budget)"
-    assert "report take priority" in rows["Completion reserve"]
+    budget, reserve = rows["Budget"].split("\n")
+    assert budget == "model calls stop at $18.75 (1.25 × deprecated --soft-budget $15; use --hard-budget)"
+    assert "report take priority" in reserve and "Completion reserve" not in rows
     assert rows["Time limit"] == "4h" and rows["Depth"] == "standard"
     assert rows["Models"] == "m1 (a, b)\nm2 (c)"
     assert rows["Trust mode"].startswith("untrusted: start check passed\n")
@@ -529,11 +530,11 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
         ["--repo", "/r", "--output", "/o", "--hard-budget", "5", "--trust-mode", "trusted", "--max-duration", "3900"]
     )
     rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "quick", "Models: m1 (a)", "P"))
-    assert rows["Budget"] == "model calls stop at $5.00" and rows["Time limit"] == "1h05m"
+    assert rows["Budget"].split("\n")[0] == "model calls stop at $5.00" and rows["Time limit"] == "1h05m"
     assert rows["Trust mode"].startswith("trusted: start check skipped\n") and rows["Output"] == "/o"
     ns = parse(["--repo", "/r", "--output", "/o", "--interactive-launch"])
     rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a)", "P"))
-    assert rows["Budget"] == (
+    assert rows["Budget"].split("\n")[0] == (
         "model calls stop at $20.00 (default for the assessment depth; set --soft-budget or --hard-budget to change it)"
     )
 
@@ -2026,6 +2027,14 @@ def test_root_causes_are_synthesized_after_abuse_verification(tmp_path, monkeypa
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
+def test_a_compact_lineup_counts_roles_and_the_default_names_them():
+    cfg = {"stride_model": "big", "merger_model": "small"}
+    full, _ = controller._assessment_model_lines(cfg)
+    compact, _ = controller._assessment_model_lines(cfg, compact=True)
+    assert "stride_analyzer" in full and "stride_analyzer" not in compact
+    assert compact.startswith("Models: big (1 role); small (")
+
+
 def test_pipeline_names_the_phases_and_optional_steps_this_run_executes():
     standard = controller._assessment_pipeline({"assessment_depth": "standard"})
     assert standard == (
@@ -2141,6 +2150,29 @@ def test_width_bounds_every_console_line_on_and_off_a_terminal(monkeypatch, caps
     lines = [_ANSI.sub("", line) for line in capsys.readouterr().err.splitlines() if line.strip()]
     lines += warning.splitlines()
     assert len(lines) > 4 and all(len(line) <= width - 1 for line in lines)
+
+
+def test_a_narrowed_header_wraps_its_title_and_aligns_facts_without_time_stamps(monkeypatch, capsys):
+    """Under --width the header keeps one time stamp and wraps every value flush under its column."""
+    for key in ("NO_COLOR", "FORCE_COLOR"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(controller._AssessmentConsole, "max_columns", 72)
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: False, raising=False)
+    console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
+    title = "AppSec Plugin — Headless Mode (deterministic controller, experimental)"
+    budget = "model calls stop at $20.00 (default for the assessment depth; set --soft-budget or --hard-budget)"
+    console.facts(title, [("Repository", "/srv/app"), ("Budget", budget)])
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert all(len(line) <= 71 for line in lines)
+    stamped = [line for line in lines if re.match(r"^[0-9:]{8}  ", line)]
+    assert len(stamped) == 1 and "▶ AppSec Plugin" in stamped[0]
+    assert "experimental)" in " ".join(lines)
+    budget_lines = lines[lines.index(next(line for line in lines if "Budget" in line)) :]
+    column = budget_lines[0].index("model")
+    assert len(budget_lines) > 1
+    assert all(len(line) - len(line.lstrip()) == column for line in budget_lines[1:])
+    # Neither the title's nor a fact's continuation reads as a grid detail line.
+    assert not any(re.match(r"^ {10}[^ ]", line) for line in lines)
 
 
 def test_without_width_the_console_keeps_the_terminal_width(monkeypatch):
