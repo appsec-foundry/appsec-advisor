@@ -2671,7 +2671,7 @@ def _save_business_context_answer(
     """Validate the dialog's raw answer file and persist the confirmed context.
 
     Shared by the session runtime's preflight and the controller launch of
-    `create-threat-model2`, so both apply the same checks and destinations.
+    `create-security-assessment`, so both apply the same checks and destinations.
     """
     import contexts.business_context_preview as business_context_preview
     import contexts.business_impact_scope as business_impact_scope
@@ -9532,7 +9532,7 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
         help="Started by an interactive skill: without a budget flag, the depth sets the hard budget (MR-7).",
     )
     parser.add_argument("--max-duration", type=int, metavar="SECONDS")
-    # create-threat-model2 runs one phase per invocation and continues with --resume.
+    # create-security-assessment runs one phase per invocation and continues with --resume.
     parser.add_argument(
         "--pause-after",
         type=int,
@@ -11723,7 +11723,7 @@ def _stop_on_terminate(state):
 
 
 def _launch_directory(repo: str) -> tuple[Path, Path]:
-    """The checkout and report directory of a `create-threat-model2` launch."""
+    """The checkout and report directory of a `create-security-assessment` launch."""
     from runtime.multi_repo_scope import ScopeError, checkout_report_directory
 
     try:
@@ -11753,7 +11753,7 @@ def assess_context_preview(repo: str) -> dict[str, Any]:
         "repo_root": str(root),
         "output_dir": str(output),
         "preview": str(output / business_context_preview.PREVIEW_NAME),
-        "instruction_file": str(PLUGIN_ROOT / "skills/create-threat-model2/business-context.md"),
+        "instruction_file": str(PLUGIN_ROOT / "skills/create-security-assessment/business-context.md"),
     }
 
 
@@ -11816,7 +11816,7 @@ _LAUNCH_COMMANDS = ("assess-context-preview", "assess-context-save", "assess-sto
 
 
 def _launch_main(command: str, argv: list[str]) -> int:
-    """Command-line entry for the `create-threat-model2` launch helpers; prints one JSON action."""
+    """Command-line entry for the `create-security-assessment` launch helpers; prints one JSON action."""
     parser = argparse.ArgumentParser(prog=f"orchestration_controller.py {command}")
     if command == "assess-stop":
         parser.add_argument("--output", required=True)

@@ -170,7 +170,7 @@ def test_dialog_answers_reach_the_checkout_context_without_a_session_run(tmp_pat
     assert Path(action["preview"]).is_file() and Path(action["output_dir"]) == reports
     # The dialog belongs to this skill and names only the launch helpers' own save command.
     instructions = Path(action["instruction_file"])
-    assert instructions.parent == controller.PLUGIN_ROOT / "skills" / "create-threat-model2"
+    assert instructions.parent == controller.PLUGIN_ROOT / "skills" / "create-security-assessment"
     commands = set(re.findall(r"orchestration_controller\.py\" ([a-z-]+)", instructions.read_text()))
     assert commands == {"assess-context-save"}
     _answer(reports)
