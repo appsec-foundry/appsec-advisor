@@ -1,0 +1,6837 @@
+{
+  "version": 1,
+  "generated_at": "2026-10-16T15:17:32Z",
+  "repo_root": ".",
+  "routes": [
+    {
+      "route_id": "R-001",
+      "method": "OPTIONS",
+      "path": "*",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 182,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none"
+    },
+    {
+      "route_id": "R-002",
+      "method": "ALL",
+      "path": "/ftp(?!/quarantine)/:file",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 270,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/fileServer.ts",
+          "line": 14
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        }
+      ],
+      "handler_module": "routes/fileServer.ts"
+    },
+    {
+      "route_id": "R-003",
+      "method": "ALL",
+      "path": "/ftp/quarantine/:file",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 271,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/quarantineServer.ts",
+          "line": 9
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 241
+        }
+      ],
+      "handler_module": "routes/quarantineServer.ts"
+    },
+    {
+      "route_id": "R-004",
+      "method": "ALL",
+      "path": "/encryptionkeys/:file",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 278,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/keyServer.ts",
+          "line": 9
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 241
+        }
+      ],
+      "handler_module": "routes/keyServer.ts"
+    },
+    {
+      "route_id": "R-005",
+      "method": "ALL",
+      "path": "/support/logs/:file",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 283,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/logfileServer.ts",
+          "line": 9
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 241
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 63
+        }
+      ],
+      "handler_module": "routes/logfileServer.ts"
+    },
+    {
+      "route_id": "R-006",
+      "method": "POST",
+      "path": "/file-upload",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 309,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "server.ts",
+          "line": 692
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 19
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 73
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 55
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 62
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 39
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 70
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 101
+        }
+      ],
+      "handler_module": "routes/fileUpload.ts"
+    },
+    {
+      "route_id": "R-007",
+      "method": "POST",
+      "path": "/profile/image/file",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 310,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "cookie",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/profileImageFileUpload.ts",
+          "line": 35
+        }
+      ],
+      "handler_module": "routes/profileImageFileUpload.ts"
+    },
+    {
+      "route_id": "R-008",
+      "method": "POST",
+      "path": "/profile/image/url",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 311,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "cookie",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 21
+        }
+      ],
+      "handler_module": "routes/profileImageUrlUpload.ts"
+    },
+    {
+      "route_id": "R-009",
+      "method": "POST",
+      "path": "/rest/memories",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 312,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/memory.ts"
+    },
+    {
+      "route_id": "R-010",
+      "method": "GET",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 363,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "route_id": "R-011",
+      "method": "POST",
+      "path": "/api/Products",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 369,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "route_id": "R-012",
+      "method": "DELETE",
+      "path": "/api/Products/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 371,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-013",
+      "method": "POST",
+      "path": "/api/Challenges",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 373,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-014",
+      "method": "POST",
+      "path": "/api/Hints",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 376,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-015",
+      "method": "GET",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 381,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "route_id": "R-016",
+      "method": "POST",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 382,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "route_id": "R-017",
+      "method": "GET",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 385,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/recycles.ts",
+          "line": 23
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/recycles.ts"
+    },
+    {
+      "route_id": "R-018",
+      "method": "POST",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 386,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "route_id": "R-019",
+      "method": "GET",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 388,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/recycles.ts",
+          "line": 11
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/recycles.ts"
+    },
+    {
+      "route_id": "R-020",
+      "method": "PUT",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 389,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-021",
+      "method": "DELETE",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 390,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-022",
+      "method": "POST",
+      "path": "/api/SecurityQuestions",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 392,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-023",
+      "method": "GET",
+      "path": "/api/SecurityAnswers",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 395,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-024",
+      "method": "POST",
+      "path": "/api/Feedbacks",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 402,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/verify.ts",
+          "line": 29
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/verify.ts"
+    },
+    {
+      "route_id": "R-025",
+      "method": "POST",
+      "path": "/api/Feedbacks",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 404,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/captcha.ts",
+          "line": 35
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/captcha.ts"
+    },
+    {
+      "route_id": "R-026",
+      "method": "POST",
+      "path": "/api/Feedbacks",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 406,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/verify.ts",
+          "line": 38
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/verify.ts"
+    },
+    {
+      "route_id": "R-027",
+      "method": "POST",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 408,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "server.ts",
+          "line": 408
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ]
+    },
+    {
+      "route_id": "R-028",
+      "method": "POST",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 420,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/verify.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/verify.ts"
+    },
+    {
+      "route_id": "R-029",
+      "method": "POST",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 421,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/verify.ts",
+          "line": 58
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/verify.ts"
+    },
+    {
+      "route_id": "R-030",
+      "method": "POST",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 422,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/verify.ts",
+          "line": 22
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/verify.ts"
+    },
+    {
+      "route_id": "R-031",
+      "method": "PUT",
+      "path": "/api/BasketItems/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 426,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/basketItems.ts",
+      "guard_lines": [
+        358,
+        359
+      ]
+    },
+    {
+      "route_id": "R-032",
+      "method": "POST",
+      "path": "/api/BasketItems",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 427,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/basketItems.ts",
+      "guard_lines": [
+        358
+      ]
+    },
+    {
+      "route_id": "R-033",
+      "method": "DELETE",
+      "path": "/api/Quantitys/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 429,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-034",
+      "method": "POST",
+      "path": "/api/Quantitys",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 430,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-035",
+      "method": "PUT",
+      "path": "/api/Feedbacks/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 433,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "guard_lines": [
+        361
+      ]
+    },
+    {
+      "route_id": "R-036",
+      "method": "POST",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 438,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "lib/insecurity.ts"
+    },
+    {
+      "route_id": "R-037",
+      "method": "GET",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 439,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/payment.ts"
+    },
+    {
+      "route_id": "R-038",
+      "method": "PUT",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 440,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "route_id": "R-039",
+      "method": "DELETE",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 441,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/payment.ts"
+    },
+    {
+      "route_id": "R-040",
+      "method": "GET",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 442,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/payment.ts"
+    },
+    {
+      "route_id": "R-041",
+      "method": "POST",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 444,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "guard_lines": [
+        435
+      ]
+    },
+    {
+      "route_id": "R-042",
+      "method": "GET",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 445,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "guard_lines": [
+        435
+      ]
+    },
+    {
+      "route_id": "R-043",
+      "method": "POST",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 448,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "lib/insecurity.ts"
+    },
+    {
+      "route_id": "R-044",
+      "method": "GET",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 449,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/address.ts"
+    },
+    {
+      "route_id": "R-045",
+      "method": "PUT",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 450,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "lib/insecurity.ts"
+    },
+    {
+      "route_id": "R-046",
+      "method": "DELETE",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 451,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/address.ts"
+    },
+    {
+      "route_id": "R-047",
+      "method": "GET",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 452,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/address.ts"
+    },
+    {
+      "route_id": "R-048",
+      "method": "GET",
+      "path": "/api/Deliverys",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 453,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/delivery.ts"
+    },
+    {
+      "route_id": "R-049",
+      "method": "GET",
+      "path": "/api/Deliverys/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 454,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/delivery.ts"
+    },
+    {
+      "route_id": "R-050",
+      "method": "POST",
+      "path": "/rest/2fa/verify",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 458,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "authentication"
+      ],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/2fa.ts"
+    },
+    {
+      "route_id": "R-051",
+      "method": "GET",
+      "path": "/rest/2fa/status",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 463,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "authentication"
+      ],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/2fa.ts"
+    },
+    {
+      "route_id": "R-052",
+      "method": "POST",
+      "path": "/rest/2fa/setup",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 465,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "authentication"
+      ],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/2fa.ts"
+    },
+    {
+      "route_id": "R-053",
+      "method": "POST",
+      "path": "/rest/2fa/disable",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 471,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "authentication"
+      ],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/2fa.ts"
+    },
+    {
+      "route_id": "R-054",
+      "method": "POST",
+      "path": "/rest/user/login",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 596,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "authentication"
+      ],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 18
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/login.ts"
+    },
+    {
+      "route_id": "R-055",
+      "method": "GET",
+      "path": "/rest/user/change-password",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 597,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/changePassword.ts"
+    },
+    {
+      "route_id": "R-056",
+      "method": "POST",
+      "path": "/rest/user/reset-password",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 598,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "authentication"
+      ],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/resetPassword.ts",
+          "line": 16
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/resetPassword.ts"
+    },
+    {
+      "route_id": "R-057",
+      "method": "GET",
+      "path": "/rest/user/security-question",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 599,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/securityQuestion.ts",
+          "line": 11
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/securityQuestion.ts"
+    },
+    {
+      "route_id": "R-058",
+      "method": "GET",
+      "path": "/rest/user/whoami",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 600,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/currentUser.ts"
+    },
+    {
+      "route_id": "R-059",
+      "method": "GET",
+      "path": "/rest/user/authentication-details",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 601,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/authenticatedUsers.ts",
+      "guard_lines": [
+        398
+      ]
+    },
+    {
+      "route_id": "R-060",
+      "method": "GET",
+      "path": "/rest/products/search",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 602,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/search.ts",
+          "line": 19
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/search.ts"
+    },
+    {
+      "route_id": "R-061",
+      "method": "GET",
+      "path": "/rest/basket/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 603,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/basket.ts",
+      "guard_lines": [
+        356,
+        399
+      ]
+    },
+    {
+      "route_id": "R-062",
+      "method": "POST",
+      "path": "/rest/basket/:id/checkout",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 604,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/order.ts",
+      "guard_lines": [
+        356,
+        399
+      ]
+    },
+    {
+      "route_id": "R-063",
+      "method": "PUT",
+      "path": "/rest/basket/:id/coupon/:coupon",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 605,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/coupon.ts",
+      "guard_lines": [
+        356,
+        399
+      ]
+    },
+    {
+      "route_id": "R-064",
+      "method": "GET",
+      "path": "/rest/admin/application-version",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 606,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management",
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/appVersion.ts",
+          "line": 11
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/appVersion.ts"
+    },
+    {
+      "route_id": "R-065",
+      "method": "GET",
+      "path": "/rest/admin/application-configuration",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 607,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management",
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/appConfiguration.ts",
+          "line": 9
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/appConfiguration.ts"
+    },
+    {
+      "route_id": "R-066",
+      "method": "GET",
+      "path": "/rest/repeat-notification",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 608,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/repeatNotification.ts",
+          "line": 9
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/repeatNotification.ts"
+    },
+    {
+      "route_id": "R-067",
+      "method": "GET",
+      "path": "/rest/continue-code",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 609,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/continueCode.ts",
+          "line": 12
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/continueCode.ts"
+    },
+    {
+      "route_id": "R-068",
+      "method": "GET",
+      "path": "/rest/continue-code-findIt",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 610,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/continueCode.ts",
+          "line": 24
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/continueCode.ts"
+    },
+    {
+      "route_id": "R-069",
+      "method": "GET",
+      "path": "/rest/continue-code-fixIt",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 611,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/continueCode.ts",
+          "line": 37
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/continueCode.ts"
+    },
+    {
+      "route_id": "R-070",
+      "method": "PUT",
+      "path": "/rest/continue-code-findIt/apply/:continueCode",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 612,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/restoreProgress.ts",
+          "line": 40
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/restoreProgress.ts"
+    },
+    {
+      "route_id": "R-071",
+      "method": "PUT",
+      "path": "/rest/continue-code-fixIt/apply/:continueCode",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 613,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/restoreProgress.ts",
+          "line": 61
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/restoreProgress.ts"
+    },
+    {
+      "route_id": "R-072",
+      "method": "PUT",
+      "path": "/rest/continue-code/apply/:continueCode",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 614,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/restoreProgress.ts",
+          "line": 16
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/restoreProgress.ts"
+    },
+    {
+      "route_id": "R-073",
+      "method": "GET",
+      "path": "/rest/captcha",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 615,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "public-by-design"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/captcha.ts",
+          "line": 9
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/captcha.ts"
+    },
+    {
+      "route_id": "R-074",
+      "method": "GET",
+      "path": "/rest/image-captcha",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 616,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/imageCaptcha.ts"
+    },
+    {
+      "route_id": "R-075",
+      "method": "GET",
+      "path": "/rest/track-order/:id",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 617,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/trackOrder.ts",
+          "line": 12
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/trackOrder.ts"
+    },
+    {
+      "route_id": "R-076",
+      "method": "GET",
+      "path": "/rest/country-mapping",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 618,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/countryMapping.ts",
+          "line": 10
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/countryMapping.ts"
+    },
+    {
+      "route_id": "R-077",
+      "method": "GET",
+      "path": "/rest/saveLoginIp",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 619,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/saveLoginIp.ts"
+    },
+    {
+      "route_id": "R-078",
+      "method": "POST",
+      "path": "/rest/user/data-export",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 620,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/imageCaptcha.ts"
+    },
+    {
+      "route_id": "R-079",
+      "method": "POST",
+      "path": "/rest/user/data-export",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 621,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/dataExport.ts",
+          "line": 18
+        }
+      ],
+      "handler_module": "routes/dataExport.ts"
+    },
+    {
+      "route_id": "R-080",
+      "method": "GET",
+      "path": "/rest/languages",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 622,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/languages.ts",
+          "line": 12
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/languages.ts"
+    },
+    {
+      "route_id": "R-081",
+      "method": "GET",
+      "path": "/rest/order-history",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 623,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/orderHistory.ts",
+          "line": 13
+        }
+      ],
+      "handler_module": "routes/orderHistory.ts"
+    },
+    {
+      "route_id": "R-082",
+      "method": "GET",
+      "path": "/rest/order-history/orders",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 624,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 156
+        }
+      ],
+      "handler_module": "routes/orderHistory.ts"
+    },
+    {
+      "route_id": "R-083",
+      "method": "PUT",
+      "path": "/rest/order-history/:id/delivery-status",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 625,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 156
+        }
+      ],
+      "handler_module": "routes/orderHistory.ts"
+    },
+    {
+      "route_id": "R-084",
+      "method": "GET",
+      "path": "/rest/wallet/balance",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 626,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/wallet.ts"
+    },
+    {
+      "route_id": "R-085",
+      "method": "PUT",
+      "path": "/rest/wallet/balance",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 627,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/wallet.ts"
+    },
+    {
+      "route_id": "R-086",
+      "method": "GET",
+      "path": "/rest/deluxe-membership",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 628,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/deluxe.ts"
+    },
+    {
+      "route_id": "R-087",
+      "method": "POST",
+      "path": "/rest/deluxe-membership",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 629,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/deluxe.ts"
+    },
+    {
+      "route_id": "R-088",
+      "method": "GET",
+      "path": "/rest/memories",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 630,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/memory.ts",
+          "line": 22
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/memory.ts"
+    },
+    {
+      "route_id": "R-089",
+      "method": "GET",
+      "path": "/rest/products/:id/reviews",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 632,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/showProductReviews.ts"
+    },
+    {
+      "route_id": "R-090",
+      "method": "PUT",
+      "path": "/rest/products/:id/reviews",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 633,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "handler_module": "routes/createProductReviews.ts"
+    },
+    {
+      "route_id": "R-091",
+      "method": "PATCH",
+      "path": "/rest/products/reviews",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 634,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/updateProductReviews.ts"
+    },
+    {
+      "route_id": "R-092",
+      "method": "POST",
+      "path": "/rest/products/reviews",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 635,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/likeProductReviews.ts"
+    },
+    {
+      "route_id": "R-093",
+      "method": "POST",
+      "path": "/rest/chat",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 638,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth",
+        "llm"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "decode_only",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/chat.ts",
+          "line": 223
+        }
+      ],
+      "handler_module": "routes/chat.ts"
+    },
+    {
+      "route_id": "R-094",
+      "method": "POST",
+      "path": "/rest/web3/submitKey",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 641,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/checkKeys.ts",
+          "line": 6
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/checkKeys.ts"
+    },
+    {
+      "route_id": "R-095",
+      "method": "GET",
+      "path": "/rest/web3/nftUnlocked",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 642,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/checkKeys.ts",
+          "line": 34
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/checkKeys.ts"
+    },
+    {
+      "route_id": "R-096",
+      "method": "GET",
+      "path": "/rest/web3/nftMintListen",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 643,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/nftMint.ts",
+          "line": 13
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/nftMint.ts"
+    },
+    {
+      "route_id": "R-097",
+      "method": "POST",
+      "path": "/rest/web3/walletNFTVerify",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 644,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 38
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/nftMint.ts"
+    },
+    {
+      "route_id": "R-098",
+      "method": "POST",
+      "path": "/rest/web3/walletExploitAddress",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 645,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 13
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/web3Wallet.ts"
+    },
+    {
+      "route_id": "R-099",
+      "method": "POST",
+      "path": "/b2b/v2/orders",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 648,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "bearer",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "handler_module": "routes/b2bOrder.ts",
+      "guard_lines": [
+        424
+      ]
+    },
+    {
+      "route_id": "R-100",
+      "method": "GET",
+      "path": "/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 651,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/easterEgg.ts",
+          "line": 11
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/easterEgg.ts"
+    },
+    {
+      "route_id": "R-101",
+      "method": "GET",
+      "path": "/this/page/is/hidden/behind/an/incredibly/high/paywall/that/could/only/be/unlocked/by/sending/1btc/to/us",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 652,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/premiumReward.ts",
+          "line": 11
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/premiumReward.ts"
+    },
+    {
+      "route_id": "R-102",
+      "method": "GET",
+      "path": "/we/may/also/instruct/you/to/refuse/all/reasonably/necessary/responsibility",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 653,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/privacyPolicyProof.ts",
+          "line": 11
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/privacyPolicyProof.ts"
+    },
+    {
+      "route_id": "R-103",
+      "method": "GET",
+      "path": "/redirect",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 659,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/redirect.ts",
+          "line": 13
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/redirect.ts"
+    },
+    {
+      "route_id": "R-104",
+      "method": "GET",
+      "path": "/promotion",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 662,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/videoHandler.ts",
+          "line": 50
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/videoHandler.ts"
+    },
+    {
+      "route_id": "R-105",
+      "method": "GET",
+      "path": "/video",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 663,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/videoHandler.ts",
+          "line": 18
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 186
+        }
+      ],
+      "handler_module": "routes/videoHandler.ts"
+    },
+    {
+      "route_id": "R-106",
+      "method": "GET",
+      "path": "/profile",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 666,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "cookie",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/userProfile.ts",
+          "line": 34
+        }
+      ],
+      "handler_module": "routes/userProfile.ts"
+    },
+    {
+      "route_id": "R-107",
+      "method": "POST",
+      "path": "/profile",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 667,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "cookie",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/updateUserProfile.ts",
+          "line": 17
+        }
+      ],
+      "handler_module": "routes/updateUserProfile.ts"
+    },
+    {
+      "route_id": "R-108",
+      "method": "GET",
+      "path": "/snippets/:challenge",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 670,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/vulnCodeSnippet.ts",
+          "line": 42
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/vulnCodeSnippet.ts"
+    },
+    {
+      "route_id": "R-109",
+      "method": "POST",
+      "path": "/snippets/verdict",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 671,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/vulnCodeSnippet.ts",
+          "line": 70
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/vulnCodeSnippet.ts"
+    },
+    {
+      "route_id": "R-110",
+      "method": "GET",
+      "path": "/snippets/fixes/:key",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 672,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/vulnCodeFixes.ts",
+          "line": 56
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/vulnCodeFixes.ts"
+    },
+    {
+      "route_id": "R-111",
+      "method": "POST",
+      "path": "/snippets/fixes",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 673,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/vulnCodeFixes.ts",
+          "line": 70
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/vulnCodeFixes.ts"
+    },
+    {
+      "route_id": "R-112",
+      "method": "GET",
+      "path": "/metrics",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 676,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management",
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 84
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/metrics.ts"
+    },
+    {
+      "route_id": "R-113",
+      "method": "GET",
+      "path": "/metrics",
+      "framework": "express",
+      "handler_file": "server.ts",
+      "handler_line": 729,
+      "authn_signal": "absent",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management",
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "none",
+      "authn_handler_scheme": "none",
+      "authn_handler_evidence": [
+        {
+          "file": "lib/utils.ts",
+          "line": 229
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 84
+        },
+        {
+          "file": "server.ts",
+          "line": 197
+        },
+        {
+          "file": "server.ts",
+          "line": 203
+        },
+        {
+          "file": "routes/metrics.ts",
+          "line": 63
+        },
+        {
+          "file": "lib/antiCheat.ts",
+          "line": 51
+        },
+        {
+          "file": "server.ts",
+          "line": 315
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 84
+        }
+      ],
+      "handler_module": "routes/metrics.ts"
+    },
+    {
+      "route_id": "R-114",
+      "method": "GET",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 10,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-115",
+      "method": "POST",
+      "path": "/api/Challenges",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 16,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-116",
+      "method": "POST",
+      "path": "/api/Hints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 19,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-117",
+      "method": "GET",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 24,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-118",
+      "method": "POST",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 25,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-119",
+      "method": "GET",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 28,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-120",
+      "method": "POST",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 29,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-121",
+      "method": "GET",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 31,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-122",
+      "method": "PUT",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 32,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-123",
+      "method": "DELETE",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 33,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-124",
+      "method": "POST",
+      "path": "/api/SecurityQuestions",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 35,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-125",
+      "method": "GET",
+      "path": "/api/SecurityAnswers",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 38,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-126",
+      "method": "PUT",
+      "path": "/api/BasketItems/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 47,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5,
+        6
+      ]
+    },
+    {
+      "route_id": "R-127",
+      "method": "POST",
+      "path": "/api/BasketItems",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 48,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5
+      ]
+    },
+    {
+      "route_id": "R-128",
+      "method": "DELETE",
+      "path": "/api/Quantitys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 50,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-129",
+      "method": "POST",
+      "path": "/api/Quantitys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 51,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-130",
+      "method": "PUT",
+      "path": "/api/Feedbacks/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 54,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        8
+      ]
+    },
+    {
+      "route_id": "R-131",
+      "method": "POST",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 59,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-132",
+      "method": "GET",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 60,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-133",
+      "method": "PUT",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 61,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-134",
+      "method": "DELETE",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 62,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-135",
+      "method": "GET",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 63,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-136",
+      "method": "POST",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 65,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        56
+      ]
+    },
+    {
+      "route_id": "R-137",
+      "method": "GET",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 66,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        56
+      ]
+    },
+    {
+      "route_id": "R-138",
+      "method": "POST",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 69,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-139",
+      "method": "GET",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 70,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-140",
+      "method": "PUT",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 71,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-141",
+      "method": "DELETE",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 72,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-142",
+      "method": "GET",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 73,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-143",
+      "method": "GET",
+      "path": "/api/Deliverys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 74,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-144",
+      "method": "GET",
+      "path": "/api/Deliverys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_2.ts",
+      "handler_line": 75,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-145",
+      "method": "GET",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 10,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-146",
+      "method": "POST",
+      "path": "/api/Products",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 16,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-147",
+      "method": "PUT",
+      "path": "/api/Products/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 17,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-148",
+      "method": "DELETE",
+      "path": "/api/Products/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 18,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-149",
+      "method": "POST",
+      "path": "/api/Challenges",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 20,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-150",
+      "method": "POST",
+      "path": "/api/Hints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 23,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-151",
+      "method": "GET",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 28,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-152",
+      "method": "POST",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 29,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-153",
+      "method": "GET",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 32,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-154",
+      "method": "POST",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 33,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-155",
+      "method": "GET",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 35,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-156",
+      "method": "PUT",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 36,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-157",
+      "method": "DELETE",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 37,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-158",
+      "method": "POST",
+      "path": "/api/SecurityQuestions",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 39,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-159",
+      "method": "GET",
+      "path": "/api/SecurityAnswers",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 42,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-160",
+      "method": "PUT",
+      "path": "/api/BasketItems/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 51,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5,
+        6
+      ]
+    },
+    {
+      "route_id": "R-161",
+      "method": "POST",
+      "path": "/api/BasketItems",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 52,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5
+      ]
+    },
+    {
+      "route_id": "R-162",
+      "method": "DELETE",
+      "path": "/api/Quantitys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 54,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-163",
+      "method": "POST",
+      "path": "/api/Quantitys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 55,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-164",
+      "method": "PUT",
+      "path": "/api/Feedbacks/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 58,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        8
+      ]
+    },
+    {
+      "route_id": "R-165",
+      "method": "POST",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 63,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-166",
+      "method": "GET",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 64,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-167",
+      "method": "PUT",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 65,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-168",
+      "method": "DELETE",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 66,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-169",
+      "method": "GET",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 67,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-170",
+      "method": "POST",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 69,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        60
+      ]
+    },
+    {
+      "route_id": "R-171",
+      "method": "GET",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 70,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        60
+      ]
+    },
+    {
+      "route_id": "R-172",
+      "method": "POST",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 73,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-173",
+      "method": "GET",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 74,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-174",
+      "method": "PUT",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 75,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-175",
+      "method": "DELETE",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 76,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-176",
+      "method": "GET",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 77,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-177",
+      "method": "GET",
+      "path": "/api/Deliverys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 78,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-178",
+      "method": "GET",
+      "path": "/api/Deliverys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+      "handler_line": 79,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-179",
+      "method": "GET",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 10,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-180",
+      "method": "POST",
+      "path": "/api/Products",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 16,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-181",
+      "method": "PUT",
+      "path": "/api/Products/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 17,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-182",
+      "method": "DELETE",
+      "path": "/api/Products/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 18,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-183",
+      "method": "POST",
+      "path": "/api/Challenges",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 20,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-184",
+      "method": "POST",
+      "path": "/api/Hints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 23,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-185",
+      "method": "GET",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 28,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-186",
+      "method": "POST",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 29,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-187",
+      "method": "GET",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 32,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-188",
+      "method": "POST",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 33,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-189",
+      "method": "GET",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 35,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-190",
+      "method": "PUT",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 36,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-191",
+      "method": "DELETE",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 37,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-192",
+      "method": "POST",
+      "path": "/api/SecurityQuestions",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 39,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-193",
+      "method": "GET",
+      "path": "/api/SecurityAnswers",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 42,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-194",
+      "method": "PUT",
+      "path": "/api/BasketItems/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 51,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5,
+        6
+      ]
+    },
+    {
+      "route_id": "R-195",
+      "method": "POST",
+      "path": "/api/BasketItems",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 52,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5
+      ]
+    },
+    {
+      "route_id": "R-196",
+      "method": "DELETE",
+      "path": "/api/Quantitys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 54,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-197",
+      "method": "POST",
+      "path": "/api/Quantitys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 55,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-198",
+      "method": "PUT",
+      "path": "/api/Feedbacks/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 58,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        8
+      ]
+    },
+    {
+      "route_id": "R-199",
+      "method": "POST",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 63,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-200",
+      "method": "GET",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 64,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-201",
+      "method": "PUT",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 65,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-202",
+      "method": "DELETE",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 66,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-203",
+      "method": "GET",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 67,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-204",
+      "method": "POST",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 69,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        60
+      ]
+    },
+    {
+      "route_id": "R-205",
+      "method": "GET",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 70,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        60
+      ]
+    },
+    {
+      "route_id": "R-206",
+      "method": "POST",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 73,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-207",
+      "method": "GET",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 74,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-208",
+      "method": "PUT",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 75,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-209",
+      "method": "DELETE",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 76,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-210",
+      "method": "GET",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 77,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-211",
+      "method": "GET",
+      "path": "/api/Deliverys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 78,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-212",
+      "method": "GET",
+      "path": "/api/Deliverys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_4.ts",
+      "handler_line": 79,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-213",
+      "method": "GET",
+      "path": "/metrics",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/exposedMetricsChallenge_2.ts",
+      "handler_line": 3,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management",
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-214",
+      "method": "GET",
+      "path": "/metrics",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/exposedMetricsChallenge_3_correct.ts",
+      "handler_line": 4,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management",
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-215",
+      "method": "GET",
+      "path": "/api/Users",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 10,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-216",
+      "method": "POST",
+      "path": "/api/Products",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 16,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-217",
+      "method": "DELETE",
+      "path": "/api/Products/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 17,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-218",
+      "method": "POST",
+      "path": "/api/Challenges",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 19,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-219",
+      "method": "POST",
+      "path": "/api/Hints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 22,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-220",
+      "method": "GET",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 27,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-221",
+      "method": "POST",
+      "path": "/api/Complaints",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 28,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-222",
+      "method": "GET",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 31,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-223",
+      "method": "POST",
+      "path": "/api/Recycles",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 32,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-224",
+      "method": "GET",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 34,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-225",
+      "method": "PUT",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 35,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-226",
+      "method": "DELETE",
+      "path": "/api/Recycles/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 36,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-227",
+      "method": "POST",
+      "path": "/api/SecurityQuestions",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 38,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-228",
+      "method": "GET",
+      "path": "/api/SecurityAnswers",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 41,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-229",
+      "method": "PUT",
+      "path": "/api/BasketItems/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 50,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5,
+        6
+      ]
+    },
+    {
+      "route_id": "R-230",
+      "method": "POST",
+      "path": "/api/BasketItems",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 51,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        5
+      ]
+    },
+    {
+      "route_id": "R-231",
+      "method": "DELETE",
+      "path": "/api/Quantitys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 53,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-232",
+      "method": "POST",
+      "path": "/api/Quantitys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 54,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-233",
+      "method": "PUT",
+      "path": "/api/Feedbacks/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 57,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        8
+      ]
+    },
+    {
+      "route_id": "R-234",
+      "method": "POST",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 62,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-235",
+      "method": "GET",
+      "path": "/api/Cards",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 63,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-236",
+      "method": "PUT",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 64,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": true,
+      "relevance_tags": [
+        "missing-authz"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-237",
+      "method": "DELETE",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 65,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-238",
+      "method": "GET",
+      "path": "/api/Cards/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 66,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-239",
+      "method": "POST",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 68,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        59
+      ]
+    },
+    {
+      "route_id": "R-240",
+      "method": "GET",
+      "path": "/api/PrivacyRequests",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 69,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved",
+      "guard_lines": [
+        59
+      ]
+    },
+    {
+      "route_id": "R-241",
+      "method": "POST",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 72,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-242",
+      "method": "GET",
+      "path": "/api/Addresss",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 73,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-243",
+      "method": "PUT",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 74,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-244",
+      "method": "DELETE",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 75,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": true,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "missing-auth"
+      ],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-245",
+      "method": "GET",
+      "path": "/api/Addresss/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 76,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-246",
+      "method": "GET",
+      "path": "/api/Deliverys",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 77,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-247",
+      "method": "GET",
+      "path": "/api/Deliverys/:id",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/changeProductChallenge_1.ts",
+      "handler_line": 78,
+      "authn_signal": "unknown",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-248",
+      "method": "GET",
+      "path": "/metrics",
+      "framework": "express",
+      "handler_file": "data/static/codefixes/exposedMetricsChallenge_1.ts",
+      "handler_line": 4,
+      "authn_signal": "middleware_present",
+      "authz_signal": "unknown",
+      "management_surface": true,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [
+        "management"
+      ],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "unresolved"
+    },
+    {
+      "route_id": "R-249",
+      "method": "GET",
+      "path": "/",
+      "framework": "express",
+      "handler_file": "routes/dataErasure.ts",
+      "handler_line": 24,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "cookie",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/dataErasure.ts",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "route_id": "R-250",
+      "method": "POST",
+      "path": "/",
+      "framework": "express",
+      "handler_file": "routes/dataErasure.ts",
+      "handler_line": 74,
+      "authn_signal": "present",
+      "authz_signal": "unknown",
+      "management_surface": false,
+      "missing_auth_suspect": false,
+      "missing_authz_suspect": false,
+      "relevance_tags": [],
+      "notes": [
+        "authorization-review-required"
+      ],
+      "confidence": "medium",
+      "authn_handler_signal": "verified",
+      "authn_handler_scheme": "cookie",
+      "authn_handler_evidence": [
+        {
+          "file": "routes/dataErasure.ts",
+          "line": 76
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "frameworks_detected": [
+      "express"
+    ],
+    "unsupported_route_files": [],
+    "route_count": 250,
+    "management_surface_count": 7,
+    "missing_auth_suspect_count": 53,
+    "missing_authz_suspect_count": 40,
+    "authenticated_count": 121,
+    "authn_absent_count": 51,
+    "authn_unknown_count": 78
+  }
+}

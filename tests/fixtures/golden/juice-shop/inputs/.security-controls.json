@@ -1,0 +1,952 @@
+{
+  "schema_version": 1,
+  "security_controls": [
+    {
+      "assessment": "isAuthorized/denyAll/isAccounting are applied to baskets, complaints, privacy requests, B2B, 2FA and several generated API resources. Coverage is inconsistent: PUT /api/Products/:id authorization is commented out, /api/Deliverys, /rest/order-history, /rest/deluxe-membership, /rest/memories, /rest/chat and /rest/products/:id/reviews PUT show no authorization middleware in the inspected slices. The /api/Quantitys/:id IpFilter uses a placeholder address.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Route-level authorization middleware",
+      "domain": "Authorization Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 356
+        },
+        {
+          "file": "server.ts",
+          "line": 369
+        },
+        {
+          "file": "server.ts",
+          "line": 453
+        },
+        {
+          "file": "server.ts",
+          "line": 623
+        }
+      ]
+    },
+    {
+      "assessment": "The coupon limit (max 10%) and eligibility conditions exist only in the system prompt. The generateCoupon tool accepts any number with no server-side cap, order validation or authentication, so model-directed action authorization depends on prompt compliance. getOrderById does check authentication and ownership (compared by vowel-masked email). The model-chosen searchProducts and getProductReviews tools have no per-user scoping. The /rest/chat route has no auth middleware, and the flow evidence says the token is decoded without signature verification. The system prompt also embeds a confidential discount instruction.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Chatbot tool-level authorization and coupon policy",
+      "domain": "Authorization Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "routes/chat.ts",
+          "line": 98
+        },
+        {
+          "file": "routes/chat.ts",
+          "line": 179
+        },
+        {
+          "file": "routes/chat.ts",
+          "line": 184
+        },
+        {
+          "file": "routes/chat.ts",
+          "line": 169
+        }
+      ]
+    },
+    {
+      "assessment": "Zod schemas give type checks. getProductReviews coerces the id with Number() before building a $where string, which limits injection to numeric values (NaN is still concatenated). searchProducts uses Sequelize Op.like with a parameterized value, but wildcard characters in the query are not escaped.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Chatbot tool input validation and query construction",
+      "domain": "Input Boundary Validation Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "routes/chat.ts",
+          "line": 149
+        },
+        {
+          "file": "routes/chat.ts",
+          "line": 126
+        },
+        {
+          "file": "routes/chat.ts",
+          "line": 119
+        }
+      ]
+    },
+    {
+      "assessment": "The server fetches a requester-supplied URL with no scheme, host or private-range allowlist and no size limit. The response is written to disk under a user-id-based name with an extension that is allowlisted or defaults to jpg. Only a logged-in cookie session is required. On fetch failure the raw URL is stored as the profile image. No SSRF mitigation was found.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Profile image URL fetch (SSRF protection)",
+      "domain": "File Parser and Outbound Request Controls",
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 24
+        },
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 28
+        },
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 21
+        }
+      ]
+    },
+    {
+      "assessment": "The memory upload applies a mime allowlist (client-declared type), sanitizeFilename and a timestamp suffix. The memory-upload multer is configured without a fileSize limit, while the memory-storage multer is limited to 200 KB. /file-upload adds size and type checks. Mime types are taken from the client header, not content.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Upload handling (size, mime type, filename sanitization)",
+      "domain": "File Parser and Outbound Request Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 692
+        },
+        {
+          "file": "server.ts",
+          "line": 701
+        },
+        {
+          "file": "server.ts",
+          "line": 709
+        },
+        {
+          "file": "server.ts",
+          "line": 309
+        }
+      ]
+    },
+    {
+      "assessment": "Rate limits apply only to reset-password and the 2FA endpoints. The reset-password key generator trusts the X-Forwarded-For header (spoofable, so the limit can be bypassed). The limit is 100 per 5 minutes, and validate:false is set on the 2FA limiters. The login, chat (LLM cost) and upload endpoints show no limiter.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Rate limiting",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 343
+        },
+        {
+          "file": "server.ts",
+          "line": 346
+        },
+        {
+          "file": "server.ts",
+          "line": 459
+        }
+      ]
+    },
+    {
+      "assessment": "Rotating access logs (2 days retention) are written via morgan. However, /support/logs directory browsing with file serving and the unauthenticated /metrics endpoint expose operational data without authentication in the inspected code. Retention is short.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Access logging and metrics exposure",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 330
+        },
+        {
+          "file": "server.ts",
+          "line": 338
+        },
+        {
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "file": "server.ts",
+          "line": 676
+        }
+      ]
+    },
+    {
+      "assessment": "cookie-parser uses a hardcoded static secret 'kekse' in source. Profile routes authenticate via an in-memory token map lookup using the cookie token. Request bodies of any content type are parsed as text and JSON.parse is applied without a try/catch, which can raise errors.",
+      "component_ids": [
+        "component-1f61b207923dbaf5"
+      ],
+      "control": "Cookie signing and request body parsing",
+      "domain": "Session and Token Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 21
+        },
+        {
+          "file": "server.ts",
+          "line": 314
+        }
+      ]
+    },
+    {
+      "assessment": "Sequelize opens a file-based SQLite database at data/juiceshop.sqlite with placeholder credentials ('username'/'password') that SQLite ignores. No database-level authentication or encryption at rest is configured in this code. Protection depends on process and filesystem access controls, which were not inspected.",
+      "component_ids": [
+        "component-290ae722e9565831"
+      ],
+      "control": "Embedded SQLite datastore protection",
+      "domain": "Cryptography Secrets and Data Protection",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "models/index.ts",
+          "line": 41
+        }
+      ],
+      "implementation": "models/index.ts:33-43"
+    },
+    {
+      "assessment": "Transactions use IMMEDIATE mode, and SQLITE_BUSY errors are retried up to 5 times, which supports write integrity under contention. Sequelize query logging is disabled (logging: false), so this layer gives no data-access audit trail. Only models/index.ts was inspected, so model-level validation and setters were not assessed.",
+      "component_ids": [
+        "component-290ae722e9565831"
+      ],
+      "control": "Database query logging and transaction/retry handling",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "models/index.ts",
+          "line": 40
+        }
+      ],
+      "implementation": "models/index.ts:35-42"
+    },
+    {
+      "assessment": "Third-party actions in the inspected workflows (ci, release, zap_scan) are pinned to full commit SHAs with version comments, limiting tag-hijack supply-chain risk. One action (dawidd6/action-get-tag) is flagged as archived in a TODO but is still pinned and used in the release path. Other workflows were not inspected.",
+      "component_ids": [
+        "component-31ebe1b93ddf60d5"
+      ],
+      "control": "GitHub Actions pinned to commit SHAs",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Adequate",
+      "evidence": [
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 14
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 29
+        },
+        {
+          "file": ".github/workflows/zap_scan.yml",
+          "line": 17
+        }
+      ],
+      "implementation": ".github/workflows/ci.yml, release.yml, zap_scan.yml uses: lines"
+    },
+    {
+      "assessment": "Release jobs install global CLI tools (grunt-cli unpinned, typescript and cyclonedx with semver ranges) and use npm install rather than npm ci, so release artifacts are not built from locked dependency versions. The lint job uses --ignore-scripts, which is a good practice, but test and release installs run lifecycle scripts. A CycloneDX SBOM tool is part of the build.",
+      "component_ids": [
+        "component-31ebe1b93ddf60d5"
+      ],
+      "control": "Release pipeline dependency installation and build integrity",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 38
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 55
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 36
+        }
+      ],
+      "implementation": "release.yml package job; ci.yml lint job"
+    },
+    {
+      "assessment": "Registry and Slack credentials come from GitHub secrets, and the release is triggered only by version tags. No explicit top-level `permissions:` block was seen in the inspected files, so GITHUB_TOKEN scope depends on repository defaults. Releases are created as drafts, which adds a manual publication gate. Docker publishing has no visible provenance or signing step.",
+      "component_ids": [
+        "component-31ebe1b93ddf60d5"
+      ],
+      "control": "CI secret handling and workflow token usage",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 76
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 20
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 14
+        }
+      ],
+      "implementation": "release.yml docker, create-release and notify-slack jobs"
+    },
+    {
+      "assessment": "Weekly ZAP baseline scan against the preview instance with a rules file, giving ongoing DAST coverage. It targets a preview deployment only.",
+      "component_ids": [
+        "component-31ebe1b93ddf60d5"
+      ],
+      "control": "Scheduled dynamic security scanning (ZAP baseline)",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Adequate",
+      "evidence": [
+        {
+          "file": ".github/workflows/zap_scan.yml",
+          "line": 17
+        }
+      ],
+      "implementation": ".github/workflows/zap_scan.yml"
+    },
+    {
+      "assessment": "walletNFTVerify trusts a client-supplied walletAddress from the request body and checks it against an in-memory set of minters populated from on-chain events. No signature or proof of key control is required, so any caller who knows a minter address can claim it. Entries are consumed on use, which limits replay of the same address.",
+      "component_ids": [
+        "component-6ffadbc3868c2a3b"
+      ],
+      "control": "Wallet ownership verification for NFT mint challenge",
+      "domain": "Identity and Authentication Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 41
+        },
+        {
+          "file": "routes/nftMint.ts",
+          "line": 42
+        }
+      ]
+    },
+    {
+      "assessment": "The handlers in the cited slices perform no authentication or authorization checks. Any caller can trigger creation of the shared WebSocket listeners. Handler-chain middleware outside these slices was not inspected beyond the flow metadata, which records no credential check.",
+      "component_ids": [
+        "component-6ffadbc3868c2a3b"
+      ],
+      "control": "Authentication on web3 listener endpoints",
+      "domain": "Authorization Controls",
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 14
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "assessment": "req.body.walletAddress is added to an unbounded in-memory Set without any type, format or size validation. Unauthenticated callers can grow the set without limit, which is a memory-exhaustion risk, and can pre-register arbitrary addresses.",
+      "component_ids": [
+        "component-6ffadbc3868c2a3b"
+      ],
+      "control": "Validation of wallet address input",
+      "domain": "Input Boundary Validation Controls",
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 15
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "assessment": "The Alchemy API key is read from the environment rather than hardcoded, and the connection uses wss. However, the key is embedded in the URL path and falls back to an empty string when unset. Provider errors are logged with error.message, which could expose the URL.",
+      "component_ids": [
+        "component-6ffadbc3868c2a3b"
+      ],
+      "control": "Blockchain RPC API key handling",
+      "domain": "Cryptography Secrets and Data Protection",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 18
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "assessment": "The JWT is stored in localStorage and in a script-set cookie. The cookie is set from JavaScript, so it cannot be HttpOnly. Any XSS can read the token. The cookie expiry is 8 hours. Failed login clears the stored token.",
+      "component_ids": [
+        "component-6ffaf23414c56207"
+      ],
+      "control": "Client-side token storage",
+      "domain": "Session and Token Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 101
+        },
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 104
+        }
+      ]
+    },
+    {
+      "assessment": "Google login uses response_type=token (implicit flow) with no state or nonce parameter and no PKCE. The access token is passed in a URL query string to the userinfo endpoint. A redirect URI allow-list from server configuration (lines 80-87) is a partial mitigation.",
+      "component_ids": [
+        "component-6ffaf23414c56207"
+      ],
+      "control": "OAuth implicit flow login",
+      "domain": "Identity and Authentication Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 148
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 68
+        }
+      ]
+    },
+    {
+      "assessment": "The client source contains hardcoded testing credentials. Password change sends the current and new passwords as GET query parameters, so they can appear in logs and history. Login validation only requires a non-empty password.",
+      "component_ids": [
+        "component-6ffaf23414c56207"
+      ],
+      "control": "Credential handling in client",
+      "domain": "Identity and Authentication Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 62
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "assessment": "Services call object-ID endpoints such as basket, address and card with client-supplied IDs. Authorization is left to the server. The interceptor and guards (request.interceptor.ts, app.guard.ts) were not inspected, so this rating covers only the services read. Client-side checks are not an enforcement boundary.",
+      "component_ids": [
+        "component-6ffaf23414c56207"
+      ],
+      "control": "Request authentication attachment and client route gating",
+      "domain": "Authorization Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/basket.service.ts",
+          "line": 36
+        },
+        {
+          "file": "frontend/src/app/Services/address.service.ts",
+          "line": 21
+        }
+      ]
+    },
+    {
+      "assessment": "Guest basket data from sessionStorage is parsed in try/catch and each item is validated (integer ProductId, positive quantity). Invalid items are dropped. This is local state only and the server must still validate.",
+      "component_ids": [
+        "component-6ffaf23414c56207"
+      ],
+      "control": "Guest basket input validation",
+      "domain": "Input Boundary Validation Controls",
+      "effectiveness": "Adequate",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/basket.service.ts",
+          "line": 95
+        }
+      ]
+    },
+    {
+      "assessment": "API calls use environment.hostServer, and the architecture flows list the protocol as HTTP. Sensitive data crosses this path: credentials, TOTP tokens, passwords, and a private key via submitKey. Enforcement of TLS is deployment-dependent and was not inspected.",
+      "component_ids": [
+        "component-6ffaf23414c56207"
+      ],
+      "control": "Transport protection of API calls",
+      "domain": "Cryptography Secrets and Data Protection",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 37
+        },
+        {
+          "file": "frontend/src/app/Services/keys.service.ts",
+          "line": 42
+        }
+      ]
+    },
+    {
+      "assessment": "The reviews ('posts') and orders collections are created in-process with no authentication, schema validation, or access restriction at the data layer. The embedded engine has no login of its own, so the store depends entirely on callers for authorization and input sanitisation. Only this file was inspected; caller-side controls were not assessed here.",
+      "component_ids": [
+        "component-790db1fed70651aa"
+      ],
+      "control": "Embedded MarsDB data store access control",
+      "domain": "Query Construction and Data Access Controls",
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": "data/mongodb.ts",
+          "line": 9
+        },
+        {
+          "file": "data/mongodb.ts",
+          "line": 10
+        }
+      ],
+      "implementation": "data/mongodb.ts:9-10",
+      "kind": "mechanism"
+    },
+    {
+      "assessment": "Socket.io server restricts CORS to a single hard-coded origin (http://localhost:4200). This limits browser cross-origin access but is hard-coded, not environment-configurable, and CORS does not authenticate clients or block non-browser clients.",
+      "component_ids": [
+        "component-8c3a32ee53769307"
+      ],
+      "control": "Socket.io CORS origin restriction",
+      "domain": "Browser and Cross-Origin Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "assessment": "The connection handler accepts any client without a token, session or handshake check, and immediately emits stored challenge notifications to it. No io.use middleware is visible in the inspected file.",
+      "component_ids": [
+        "component-8c3a32ee53769307"
+      ],
+      "control": "WebSocket connection authentication",
+      "domain": "Identity and Authentication Controls",
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "assessment": "Handlers take untyped data (any) with no schema validation. Any client can remove notifications by sending a matching flag, and can trigger challenge-solving logic. Some handlers use optional chaining or Array.isArray checks, but these are ad hoc. The event effects are limited to application challenge state.",
+      "component_ids": [
+        "component-8c3a32ee53769307"
+      ],
+      "control": "WebSocket message payload validation",
+      "domain": "Input Boundary Validation Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 33
+        },
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "assessment": "The SQLite database is a plain file at data/juiceshop.sqlite. The Sequelize constructor uses placeholder credentials ('database', 'username', 'password'), which SQLite ignores, so there is no database-level authentication. The configuration shows no at-rest encryption. Protection depends on file system permissions and application-layer controls, which were not inspected here.",
+      "component_ids": [
+        "component-b213d5ab01236933"
+      ],
+      "control": "Database storage encryption and access authentication",
+      "domain": "Cryptography Secrets and Data Protection",
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": "models/index.ts",
+          "line": 33
+        },
+        {
+          "file": "models/index.ts",
+          "line": 41
+        }
+      ],
+      "kind": "mechanism"
+    },
+    {
+      "assessment": "The login query is built by string interpolation of req.body.email into raw SQL. This allows SQL injection and authentication bypass. The password is hashed before interpolation, but the email is not escaped or parameterized.",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "Login query construction",
+      "domain": "Query Construction and Data Access Controls",
+      "effectiveness": "Unsafe",
+      "evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 34
+        }
+      ],
+      "implementation": "routes/login.ts:34"
+    },
+    {
+      "assessment": "Passwords are hashed with unsalted MD5, which is fast and vulnerable to rainbow-table and brute-force attacks. The security-answer HMAC uses a hardcoded key at line 42.",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "Password hashing",
+      "domain": "Cryptography Secrets and Data Protection",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 41
+        }
+      ],
+      "implementation": "lib/insecurity.ts:41-42"
+    },
+    {
+      "assessment": "Tokens are RS256-signed with a 6h expiry, and the express-jwt middleware verifies them against the public key. However, the private key is embedded in source, so anyone with the source can forge tokens. Tokens are also kept in an in-memory map with no revocation or logout invalidation. The unverified jws.decode in the role checks is gated by verify().",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "JWT issuance and verification",
+      "domain": "Session and Token Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 54
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        }
+      ],
+      "implementation": "lib/insecurity.ts:20-21,52-56,70-91,186-197"
+    },
+    {
+      "assessment": "Role checks for accounting, deluxe and customer verify the token signature and then check the role claim. The deluxe token is an HMAC keyed with the private key. The forgeable-key issue limits their strength.",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "Role checks",
+      "domain": "Authorization Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 154
+        }
+      ],
+      "implementation": "lib/insecurity.ts:154-173"
+    },
+    {
+      "assessment": "Reset relies only on a knowledge-based security answer, compared as a keyed HMAC. The endpoint is unauthenticated. No rate limiting or lockout was observed in the inspected files, so answers can be guessed repeatedly.",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "Password reset",
+      "domain": "Identity and Authentication Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "routes/resetPassword.ts",
+          "line": 41
+        }
+      ],
+      "implementation": "routes/resetPassword.ts:16-55"
+    },
+    {
+      "assessment": "Login issues a temporary token requiring a TOTP second factor when a totpSecret is set. routes/2fa.ts was not inspected, so TOTP verification was not assessed. The SQL injection in the first step can bypass the credential check.",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "Multi-factor authentication step",
+      "domain": "Identity and Authentication Controls",
+      "effectiveness": "Partial",
+      "evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 37
+        }
+      ],
+      "implementation": "routes/login.ts:37-46"
+    },
+    {
+      "assessment": "The allowlist check uses substring matching with url.includes, so an attacker URL containing an allowed URL passes.",
+      "component_ids": [
+        "component-dff0840e0f4855be"
+      ],
+      "control": "Redirect allowlist",
+      "domain": "Output Encoding and Rendering Controls",
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 136
+        }
+      ],
+      "implementation": "lib/insecurity.ts:122-139"
+    },
+    {
+      "assessment": "Gaps: Lockfile hygiene (Missing), CI install integrity (Missing), Action pinning (Partial), Base image pinning (Missing), Install scripts (Weak). Not evidenced in the repository: Automated dependency updates.",
+      "control": "Build pipeline and dependency controls",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "effectiveness": "Missing",
+      "group_subcontrols": true,
+      "implementation": "In place: Automated SCA scanning, Action pinning, Static analysis (SAST)",
+      "kind": "lifecycle",
+      "linked_checks": [
+        "IAC-001",
+        "IAC-005",
+        "IAC-011",
+        "IAC-030",
+        "IAC-031",
+        "IAC-032",
+        "IAC-033",
+        "IAC-034",
+        "IAC-035",
+        "IAC-050",
+        "IAC-051"
+      ],
+      "linked_threats": [],
+      "status_note": "gaps in Lockfile hygiene, CI install integrity, Action pinning, Base image pinning, Install scripts",
+      "subcontrols": [
+        {
+          "assessment": "Automated SCA scanning present: .gitlab-ci.yml:2",
+          "effectiveness": "Adequate",
+          "evidence": [
+            {
+              "file": ".gitlab-ci.yml",
+              "line": 2
+            }
+          ],
+          "linked_checks": [],
+          "status_note": "Automated SCA scanning present: .gitlab-ci.yml:2.",
+          "title": "Automated SCA scanning"
+        },
+        {
+          "linked_checks": [
+            "IAC-030",
+            "IAC-031",
+            "IAC-032",
+            "IAC-033",
+            "IAC-034",
+            "IAC-035"
+          ],
+          "status": "not_evidenced",
+          "status_note": "Not evidenced in the repository; it may run outside it (GitHub App, default setup, organization policy, agent).",
+          "title": "Automated dependency updates"
+        },
+        {
+          "assessment": "Lockfile hygiene not detected in the repository. Excluded by .gitignore:10, .npmrc:1. Patch-management posture depends on this control being in place \u2014 the team is reactive rather than proactive without it.",
+          "effectiveness": "Missing",
+          "evidence": [
+            {
+              "file": ".gitignore",
+              "line": 10
+            },
+            {
+              "file": ".npmrc",
+              "line": 1
+            }
+          ],
+          "linked_checks": [
+            "IAC-050"
+          ],
+          "status_note": "Lockfile hygiene not detected in the repository (.gitignore:10, .npmrc:1).",
+          "title": "Lockfile hygiene"
+        },
+        {
+          "assessment": "CI installs dependencies by resolving versions at install time: .github/workflows/ci.yml:36, .github/workflows/ci.yml:38, .github/workflows/ci.yml:51.",
+          "effectiveness": "Missing",
+          "evidence": [
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 36
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 38
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 51
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 71
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 110
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 147
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 203
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 238
+            },
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 292
+            },
+            {
+              "file": ".github/workflows/frontend-bundle-analysis.yml",
+              "line": 26
+            },
+            {
+              "file": ".github/workflows/frontend-bundle-analysis.yml",
+              "line": 31
+            },
+            {
+              "file": ".github/workflows/frontend-bundle-analysis.yml",
+              "line": 40
+            },
+            {
+              "file": ".github/workflows/lint-fixer.yml",
+              "line": 17
+            },
+            {
+              "file": ".github/workflows/lint-fixer.yml",
+              "line": 19
+            },
+            {
+              "file": ".github/workflows/release.yml",
+              "line": 55
+            }
+          ],
+          "linked_checks": [],
+          "status_note": "CI installs dependencies by resolving versions at install time: .github/workflows/ci.yml:36, .github/workflows/ci.yml:38, .github/workflows/ci.yml:51.",
+          "title": "CI install integrity"
+        },
+        {
+          "assessment": "Some CI action or image references use a mutable tag or branch: .github/workflows/ci.yml:188, .github/workflows/codeql-analysis.yml:23, .github/workflows/codeql-analysis.yml:34.",
+          "effectiveness": "Partial",
+          "evidence": [
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 188
+            },
+            {
+              "file": ".github/workflows/codeql-analysis.yml",
+              "line": 23
+            },
+            {
+              "file": ".github/workflows/codeql-analysis.yml",
+              "line": 34
+            },
+            {
+              "file": ".github/workflows/codeql-analysis.yml",
+              "line": 36
+            },
+            {
+              "file": ".github/workflows/image_actions.yml",
+              "line": 30
+            },
+            {
+              "file": ".github/workflows/image_actions.yml",
+              "line": 33
+            },
+            {
+              "file": ".github/workflows/image_actions.yml",
+              "line": 42
+            }
+          ],
+          "linked_checks": [
+            "IAC-011"
+          ],
+          "status_note": "Some CI action or image references use a mutable tag or branch: .github/workflows/ci.yml:188, .github/workflows/codeql-analysis.yml:23, .github/workflows/codeql-analysis.yml:34.",
+          "title": "Action pinning"
+        },
+        {
+          "assessment": "Base images use no tag or a mutable tag: Dockerfile:1, Dockerfile:22, test/smoke/Dockerfile:1.",
+          "effectiveness": "Missing",
+          "evidence": [
+            {
+              "file": "Dockerfile",
+              "line": 1
+            },
+            {
+              "file": "Dockerfile",
+              "line": 22
+            },
+            {
+              "file": "test/smoke/Dockerfile",
+              "line": 1
+            }
+          ],
+          "linked_checks": [
+            "IAC-001"
+          ],
+          "status_note": "Base images use no tag or a mutable tag: Dockerfile:1, Dockerfile:22, test/smoke/Dockerfile:1.",
+          "title": "Base image pinning"
+        },
+        {
+          "assessment": "A build step executes code fetched from an external URL: .github/workflows/ci.yml:358.",
+          "effectiveness": "Weak",
+          "evidence": [
+            {
+              "file": ".github/workflows/ci.yml",
+              "line": 358
+            }
+          ],
+          "linked_checks": [
+            "IAC-005",
+            "IAC-051"
+          ],
+          "status_note": "A build step executes code fetched from an external URL: .github/workflows/ci.yml:358.",
+          "title": "Install scripts"
+        },
+        {
+          "assessment": "Static analysis runs in CI: .github/workflows/codeql-analysis.yml:36, .gitlab-ci.yml:2.",
+          "effectiveness": "Adequate",
+          "evidence": [
+            {
+              "file": ".github/workflows/codeql-analysis.yml",
+              "line": 36
+            },
+            {
+              "file": ".gitlab-ci.yml",
+              "line": 2
+            }
+          ],
+          "linked_checks": [],
+          "status_note": "Static analysis runs in CI: .github/workflows/codeql-analysis.yml:36, .gitlab-ci.yml:2.",
+          "title": "Static analysis (SAST)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1529 @@
+{
+  "anti_pattern_candidates": [],
+  "control_assessments": [
+    {
+      "architectural_theme": "SessionDesign",
+      "confidence": "low",
+      "control": "Session Cookie Hardening",
+      "domain": "SessionMgmt",
+      "evidence": [],
+      "generic_threat_title": "Session token theft through weak cookie hardening",
+      "hypothesis_ids": [],
+      "rule_id": "ARCH-COOKIE-001",
+      "status": "partial"
+    },
+    {
+      "architectural_theme": "DataProtection",
+      "confidence": "low",
+      "control": "Transport Encryption",
+      "domain": "DataProt",
+      "evidence": [],
+      "generic_threat_title": "Data disclosure through cleartext transport",
+      "hypothesis_ids": [],
+      "rule_id": "ARCH-TLS-001",
+      "status": "partial"
+    },
+    {
+      "architectural_theme": "Authorization",
+      "confidence": "low",
+      "control": "Management Endpoint Protection",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "data/static/codefixes/exposedMetricsChallenge_2.ts",
+          "line": 3,
+          "signal": "management surface GET /metrics authn=unknown \u2014 unknown does not escalate"
+        },
+        {
+          "file": "data/static/codefixes/exposedMetricsChallenge_3_correct.ts",
+          "line": 4,
+          "signal": "management surface GET /metrics authn=unknown \u2014 unknown does not escalate"
+        }
+      ],
+      "generic_threat_title": "Privilege abuse through inconsistent authorization",
+      "hypothesis_ids": [],
+      "rule_id": "ARCH-MGMT-001",
+      "status": "partial"
+    },
+    {
+      "architectural_theme": "InputValidation",
+      "confidence": "low",
+      "control": "Schema / Allowlist Input Validation",
+      "domain": "InputVal",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 204,
+          "signal": "req.url = req.url.replace(/[/]+/g, '/')"
+        },
+        {
+          "file": "server.ts",
+          "line": 246,
+          "signal": "const reqPath = req.originalUrl.replace(/\\?.*$/, '')"
+        },
+        {
+          "file": "server.ts",
+          "line": 411,
+          "signal": "req.body.email = req.body.email.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 412,
+          "signal": "req.body.password = req.body.password.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 413,
+          "signal": "req.body.passwordRepeat = req.body.passwordRepeat.trim()"
+        },
+        {
+          "file": "frontend/src/app/Services/chat.service.ts",
+          "line": 50,
+          "signal": "const trimmed = line.trim()"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 229,
+          "signal": "func.inputValues.trim() !== ''"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 232,
+          "signal": "return this.parseInputValue(value.trim(), inputType)"
+        }
+      ],
+      "generic_threat_title": "Injection through missing centralized input validation",
+      "hypothesis_ids": [
+        "ARCH-HYP-INPUT-001"
+      ],
+      "rule_id": "ARCH-INPUT-001",
+      "status": "partial"
+    }
+  ],
+  "generated_at": "2026-10-16T15:17:49Z",
+  "rules_evaluated": [
+    {
+      "applies": false,
+      "architectural_theme": "InputValidation",
+      "confidence": "low",
+      "control": "Output Encoding / HTML Sanitization",
+      "decision": "no_action",
+      "domain": "FrontendSec",
+      "evidence": [],
+      "generic_threat_title": "Stored cross-site scripting through persisted untrusted HTML",
+      "rule_id": "ARCH-XSS-002",
+      "skip_reason": "no direct request-field persistence to matching unsafe HTML sink",
+      "status": "not_applicable",
+      "title": "Stored XSS through persisted untrusted HTML",
+      "weakness_mechanism": "persisted-untrusted-html-rendering"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "SessionDesign",
+      "confidence": "low",
+      "control": "Session Cookie Hardening",
+      "decision": "emit_control_only",
+      "domain": "SessionMgmt",
+      "evidence": [],
+      "generic_threat_title": "Session token theft through weak cookie hardening",
+      "rule_id": "ARCH-COOKIE-001",
+      "skip_reason": "preconditions present but no positive/exculpatory signal",
+      "status": "partial",
+      "title": "Insecure cookie / session hardening"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "SecureDefaults",
+      "confidence": "medium",
+      "control": "CORS Policy",
+      "decision": "emit_control_only",
+      "domain": "FrontendSec",
+      "evidence": [
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 20,
+          "signal": "const io = new Server(server, { cors: { origin: 'http://localhost:4200' } })"
+        }
+      ],
+      "generic_threat_title": "Cross-origin request abuse through permissive CORS",
+      "rule_id": "ARCH-CORS-001",
+      "skip_reason": null,
+      "status": "present",
+      "title": "CORS wildcard origin combined with credentials"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "Authentication",
+      "confidence": "medium",
+      "control": "JWT Algorithm Whitelist",
+      "decision": "emit_control_only",
+      "domain": "IAM",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 54,
+          "signal": "export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })"
+        }
+      ],
+      "generic_threat_title": "Account impersonation through weak JWT verification",
+      "rule_id": "ARCH-JWT-001",
+      "skip_reason": null,
+      "status": "present",
+      "title": "Weak JWT algorithm / missing algorithm whitelist"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "DataProtection",
+      "confidence": "low",
+      "control": "Transport Encryption",
+      "decision": "emit_control_only",
+      "domain": "DataProt",
+      "evidence": [],
+      "generic_threat_title": "Data disclosure through cleartext transport",
+      "rule_id": "ARCH-TLS-001",
+      "skip_reason": "preconditions present but no positive/exculpatory signal",
+      "status": "partial",
+      "title": "Cleartext transport or disabled DB-TLS"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "Authorization",
+      "confidence": "low",
+      "control": "Management Endpoint Protection",
+      "decision": "emit_control_only",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "data/static/codefixes/exposedMetricsChallenge_2.ts",
+          "line": 3,
+          "signal": "management surface GET /metrics authn=unknown \u2014 unknown does not escalate"
+        },
+        {
+          "file": "data/static/codefixes/exposedMetricsChallenge_3_correct.ts",
+          "line": 4,
+          "signal": "management surface GET /metrics authn=unknown \u2014 unknown does not escalate"
+        }
+      ],
+      "generic_threat_title": "Privilege abuse through inconsistent authorization",
+      "rule_id": "ARCH-MGMT-001",
+      "skip_reason": null,
+      "status": "partial",
+      "title": "Management / debug / metrics endpoint exposed without authn/authz signal"
+    },
+    {
+      "applies": false,
+      "architectural_theme": "LeastPrivilege",
+      "confidence": "low",
+      "control": "Database Principal Separation",
+      "decision": "no_action",
+      "domain": "AuthZ",
+      "evidence": [],
+      "generic_threat_title": "Privilege escalation through shared database principals",
+      "rule_id": "ARCH-DBSEP-001",
+      "skip_reason": "database principal separation is assessed only at thorough depth",
+      "status": "not_applicable",
+      "title": "Privileged and unprivileged database clients lack verified principal separation",
+      "weakness_mechanism": "shared-database-principal"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "InputValidation",
+      "confidence": "low",
+      "control": "Output Encoding / Templating Autoescape",
+      "decision": "emit_hypothesis_only",
+      "domain": "FrontendSec",
+      "evidence": [
+        {
+          "file": "frontend/src/app/about/about.component.ts",
+          "line": 119,
+          "signal": "feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml("
+        },
+        {
+          "file": "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+          "line": 39,
+          "signal": "this.lastLoginIp = this.sanitizer.bypassSecurityTrustHtml(`<small>${payload.data.lastLoginIp}</small>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 73,
+          "signal": "user.email = this.sanitizer.bypassSecurityTrustHtml(`<span class=\"${this.doesUserHaveAnActiveSession(user) ? 'confirmation' : 'error'}\">${user.email}</span>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 91,
+          "signal": "feedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedback.comment)"
+        },
+        {
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 57,
+          "signal": "this.captcha = this.sanitizer.bypassSecurityTrustHtml(data.image)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 110,
+          "signal": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description) // vuln-code-snippet vuln-line restfulXssChallenge"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 143,
+          "signal": "this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) // vuln-code-snippet vuln-line localXssChallenge xssBonusChallenge"
+        },
+        {
+          "file": "frontend/src/app/track-result/track-result.component.ts",
+          "line": 48,
+          "signal": "this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${results.data[0].orderId}</code>`)"
+        }
+      ],
+      "generic_threat_title": "Cross-site scripting through missing centralized output encoding",
+      "rule_id": "ARCH-XSS-001",
+      "skip_reason": null,
+      "status": "partial",
+      "title": "XSS exposure from weak output encoding",
+      "weakness_mechanism": "frontend-output-encoding"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "InputValidation",
+      "confidence": "low",
+      "control": "Parameterized Database Access",
+      "decision": "emit_hypothesis_only",
+      "domain": "InputVal",
+      "evidence": [
+        {
+          "file": "routes/vulnCodeSnippet.ts",
+          "line": 46,
+          "signal": "res.status(404).json({ status: 'error', error: `No code challenge for challenge key: ${req.params.challenge}` })"
+        }
+      ],
+      "generic_threat_title": "Injection through missing centralized input validation",
+      "rule_id": "ARCH-SQLI-001",
+      "skip_reason": null,
+      "status": "partial",
+      "title": "SQL injection exposure from ad-hoc SQL construction",
+      "weakness_mechanism": "database-query-concatenation"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "Authorization",
+      "confidence": "medium",
+      "control": "Centralised Authorization Policy",
+      "decision": "emit_hypothesis_only",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 371,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 390,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 426,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 429,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 433,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 440,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 441,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 450,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 451,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 605,
+          "signal": "sensitive method PUT /rest/basket/:id/coupon/:coupon authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 612,
+          "signal": "sensitive method PUT /rest/continue-code-findIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 613,
+          "signal": "sensitive method PUT /rest/continue-code-fixIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 614,
+          "signal": "sensitive method PUT /rest/continue-code/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 625,
+          "signal": "sensitive method PUT /rest/order-history/:id/delivery-status authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 627,
+          "signal": "sensitive method PUT /rest/wallet/balance authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 633,
+          "signal": "sensitive method PUT /rest/products/:id/reviews authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 634,
+          "signal": "sensitive method PATCH /rest/products/reviews authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 32,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 33,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 47,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 50,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 54,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 61,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 62,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 71,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 72,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 17,
+          "signal": "sensitive method PUT /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 18,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 36,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 37,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 51,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 54,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 58,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 65,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 66,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 75,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 76,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 17,
+          "signal": "sensitive method PUT /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 18,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 36,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 37,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 51,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 54,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 58,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 65,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 66,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 75,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 76,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 17,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 35,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 36,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 50,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 53,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 57,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 64,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 65,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 74,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 75,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        }
+      ],
+      "generic_threat_title": "Privilege abuse through inconsistent authorization",
+      "rule_id": "ARCH-AUTHZ-001",
+      "skip_reason": null,
+      "status": "weak",
+      "title": "Broken Access Control exposure from inconsistent AuthZ",
+      "weakness_mechanism": "route-by-route-authorization"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "Authentication",
+      "confidence": "medium",
+      "control": "Route Authentication",
+      "decision": "emit_hypothesis_only",
+      "domain": "IAM",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 309,
+          "signal": "POST /file-upload authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 312,
+          "signal": "POST /rest/memories authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 402,
+          "signal": "POST /api/Feedbacks authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 404,
+          "signal": "POST /api/Feedbacks authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 406,
+          "signal": "POST /api/Feedbacks authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 408,
+          "signal": "POST /api/Users authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 420,
+          "signal": "POST /api/Users authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 421,
+          "signal": "POST /api/Users authn=absent authz=unknown"
+        }
+      ],
+      "generic_threat_title": "Unauthenticated access to a privileged operation",
+      "rule_id": "ARCH-AUTHN-001",
+      "skip_reason": null,
+      "status": "weak",
+      "title": "State-changing route or GraphQL operation without an authentication gate",
+      "weakness_mechanism": "missing-endpoint-authentication"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "Authorization",
+      "confidence": "medium",
+      "control": "Object-Level Ownership Check",
+      "decision": "emit_hypothesis_only",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 371,
+          "signal": "DELETE /api/Products/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "PUT /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 390,
+          "signal": "DELETE /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 426,
+          "signal": "PUT /api/BasketItems/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 429,
+          "signal": "DELETE /api/Quantitys/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 433,
+          "signal": "PUT /api/Feedbacks/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 440,
+          "signal": "PUT /api/Cards/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 603,
+          "signal": "GET /rest/basket/:id authn=middleware_present authz=unknown"
+        }
+      ],
+      "generic_threat_title": "Broken object-level authorization (BOLA/IDOR)",
+      "rule_id": "ARCH-BOLA-001",
+      "skip_reason": null,
+      "status": "weak",
+      "title": "Authenticated object-addressing route or GraphQL operation without an authorization gate (BOLA/IDOR surface)"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "InputValidation",
+      "confidence": "low",
+      "control": "Schema / Allowlist Input Validation",
+      "decision": "emit_control_and_hypothesis",
+      "domain": "InputVal",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 204,
+          "signal": "req.url = req.url.replace(/[/]+/g, '/')"
+        },
+        {
+          "file": "server.ts",
+          "line": 246,
+          "signal": "const reqPath = req.originalUrl.replace(/\\?.*$/, '')"
+        },
+        {
+          "file": "server.ts",
+          "line": 411,
+          "signal": "req.body.email = req.body.email.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 412,
+          "signal": "req.body.password = req.body.password.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 413,
+          "signal": "req.body.passwordRepeat = req.body.passwordRepeat.trim()"
+        },
+        {
+          "file": "frontend/src/app/Services/chat.service.ts",
+          "line": 50,
+          "signal": "const trimmed = line.trim()"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 229,
+          "signal": "func.inputValues.trim() !== ''"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 232,
+          "signal": "return this.parseInputValue(value.trim(), inputType)"
+        }
+      ],
+      "generic_threat_title": "Injection through missing centralized input validation",
+      "rule_id": "ARCH-INPUT-001",
+      "skip_reason": null,
+      "status": "partial",
+      "title": "Broken input validation exposure"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "SupplyChain",
+      "confidence": "low",
+      "control": "Third-Party Action Pinning",
+      "decision": "emit_hypothesis_only",
+      "domain": "SupplyChain",
+      "evidence": [
+        {
+          "file": ".github/workflows/image_actions.yml",
+          "line": 33,
+          "signal": "uses: calibreapp/image-actions@main"
+        },
+        {
+          "file": ".github/workflows/image_actions.yml",
+          "line": 42,
+          "signal": "uses: peter-evans/create-pull-request@v8"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 188,
+          "signal": "uses: coverallsapp/github-action@v2"
+        }
+      ],
+      "generic_threat_title": "Supply-chain compromise via a mutable build dependency",
+      "rule_id": "ARCH-SUPPLY-001",
+      "skip_reason": null,
+      "status": "partial",
+      "title": "CI/CD workflow trusts third-party actions pinned to mutable references",
+      "weakness_mechanism": "build-pipeline-mutable-refs"
+    },
+    {
+      "applies": true,
+      "architectural_theme": "SecretManagement",
+      "confidence": "low",
+      "control": "Managed Secret Storage",
+      "decision": "emit_hypothesis_only",
+      "domain": "DataProt",
+      "evidence": [
+        {
+          "file": "routes/checkKeys.ts",
+          "line": 10,
+          "signal": "const mnemonic = 'purpose betray marriage blame crunch monitor spin slide donate sport lift clutch'"
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 21,
+          "signal": "const privateKey = '[PEM PRIVATE KEY \u2014 REDACTED]'"
+        }
+      ],
+      "generic_threat_title": "Reusable secret exposed directly in source code",
+      "rule_id": "ARCH-SECRET-001",
+      "skip_reason": null,
+      "status": "partial",
+      "title": "High-entropy secrets committed to source instead of a managed store",
+      "weakness_mechanism": "secrets-committed-to-source"
+    }
+  ],
+  "threat_hypotheses": [
+    {
+      "architectural_theme": "InputValidation",
+      "component_id": null,
+      "confidence": "low",
+      "cwe": "CWE-79",
+      "decision": "emit_hypothesis_only",
+      "domain": "FrontendSec",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Cross-site scripting through missing centralized output encoding",
+      "hypothesis_id": "ARCH-HYP-XSS-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "frontend/src/app/about/about.component.ts",
+          "line": 119,
+          "signal": "feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml("
+        },
+        {
+          "file": "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+          "line": 39,
+          "signal": "this.lastLoginIp = this.sanitizer.bypassSecurityTrustHtml(`<small>${payload.data.lastLoginIp}</small>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 73,
+          "signal": "user.email = this.sanitizer.bypassSecurityTrustHtml(`<span class=\"${this.doesUserHaveAnActiveSession(user) ? 'confirmation' : 'error'}\">${user.email}</span>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 91,
+          "signal": "feedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedback.comment)"
+        },
+        {
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 57,
+          "signal": "this.captcha = this.sanitizer.bypassSecurityTrustHtml(data.image)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 110,
+          "signal": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description) // vuln-code-snippet vuln-line restfulXssChallenge"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 143,
+          "signal": "this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) // vuln-code-snippet vuln-line localXssChallenge xssBonusChallenge"
+        },
+        {
+          "file": "frontend/src/app/track-result/track-result.component.ts",
+          "line": 48,
+          "signal": "this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${results.data[0].orderId}</code>`)"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-XSS-001",
+      "stride": "Tampering",
+      "surface": null,
+      "threat_category_id": "TH-11",
+      "title": "XSS exposure from weak output encoding",
+      "weak_or_missing_controls": [
+        "Template Autoescape",
+        "Output Encoding",
+        "Content Security Policy"
+      ],
+      "weakness_mechanism": "frontend-output-encoding"
+    },
+    {
+      "architectural_theme": "InputValidation",
+      "component_id": null,
+      "confidence": "low",
+      "cwe": "CWE-89",
+      "decision": "emit_hypothesis_only",
+      "domain": "InputVal",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Injection through missing centralized input validation",
+      "hypothesis_id": "ARCH-HYP-SQLI-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "routes/vulnCodeSnippet.ts",
+          "line": 46,
+          "signal": "res.status(404).json({ status: 'error', error: `No code challenge for challenge key: ${req.params.challenge}` })"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-SQLI-001",
+      "stride": "Tampering",
+      "surface": null,
+      "threat_category_id": "TH-01",
+      "title": "SQL injection exposure from ad-hoc SQL construction",
+      "weak_or_missing_controls": [
+        "Parameterized Queries",
+        "ORM / Repository Layer"
+      ],
+      "weakness_mechanism": "database-query-concatenation"
+    },
+    {
+      "architectural_theme": "Authorization",
+      "component_id": null,
+      "confidence": "medium",
+      "cwe": "CWE-862",
+      "decision": "emit_hypothesis_only",
+      "domain": "AuthZ",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Privilege abuse through inconsistent authorization",
+      "hypothesis_id": "ARCH-HYP-AUTHZ-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 371,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 390,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 426,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 429,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 433,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 440,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 441,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 450,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 451,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 605,
+          "signal": "sensitive method PUT /rest/basket/:id/coupon/:coupon authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 612,
+          "signal": "sensitive method PUT /rest/continue-code-findIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 613,
+          "signal": "sensitive method PUT /rest/continue-code-fixIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 614,
+          "signal": "sensitive method PUT /rest/continue-code/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 625,
+          "signal": "sensitive method PUT /rest/order-history/:id/delivery-status authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 627,
+          "signal": "sensitive method PUT /rest/wallet/balance authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 633,
+          "signal": "sensitive method PUT /rest/products/:id/reviews authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 634,
+          "signal": "sensitive method PATCH /rest/products/reviews authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 32,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 33,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 47,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 50,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 54,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 61,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 62,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 71,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_2.ts",
+          "line": 72,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 17,
+          "signal": "sensitive method PUT /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 18,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 36,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 37,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 51,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 54,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 58,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 65,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 66,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 75,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_3_correct.ts",
+          "line": 76,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 17,
+          "signal": "sensitive method PUT /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 18,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 36,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 37,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 51,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 54,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 58,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 65,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 66,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 75,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_4.ts",
+          "line": 76,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 17,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 35,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 36,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 50,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 53,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 57,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 64,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 65,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 74,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "data/static/codefixes/changeProductChallenge_1.ts",
+          "line": 75,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-AUTHZ-001",
+      "stride": "ElevationOfPrivilege",
+      "surface": null,
+      "threat_category_id": "TH-06",
+      "title": "Broken Access Control exposure from inconsistent AuthZ",
+      "weak_or_missing_controls": [
+        "Centralised AuthZ Policy",
+        "Role / Scope Enforcement",
+        "Ownership Check"
+      ],
+      "weakness_mechanism": "route-by-route-authorization"
+    },
+    {
+      "architectural_theme": "Authentication",
+      "component_id": null,
+      "confidence": "medium",
+      "cwe": "CWE-306",
+      "decision": "emit_hypothesis_only",
+      "domain": "IAM",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Unauthenticated access to a privileged operation",
+      "hypothesis_id": "ARCH-HYP-AUTHN-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 309,
+          "signal": "POST /file-upload authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 312,
+          "signal": "POST /rest/memories authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 402,
+          "signal": "POST /api/Feedbacks authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 404,
+          "signal": "POST /api/Feedbacks authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 406,
+          "signal": "POST /api/Feedbacks authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 408,
+          "signal": "POST /api/Users authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 420,
+          "signal": "POST /api/Users authn=absent authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 421,
+          "signal": "POST /api/Users authn=absent authz=unknown"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-AUTHN-001",
+      "stride": "ElevationOfPrivilege",
+      "surface": null,
+      "threat_category_id": "TH-06",
+      "title": "State-changing route or GraphQL operation without an authentication gate",
+      "weak_or_missing_controls": [
+        "Route Authentication Middleware",
+        "Server-Side Session Enforcement"
+      ],
+      "weakness_mechanism": "missing-endpoint-authentication"
+    },
+    {
+      "architectural_theme": "Authorization",
+      "component_id": null,
+      "confidence": "medium",
+      "cwe": "CWE-639",
+      "decision": "emit_hypothesis_only",
+      "domain": "AuthZ",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Broken object-level authorization (BOLA/IDOR)",
+      "hypothesis_id": "ARCH-HYP-BOLA-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 371,
+          "signal": "DELETE /api/Products/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "PUT /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 390,
+          "signal": "DELETE /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 426,
+          "signal": "PUT /api/BasketItems/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 429,
+          "signal": "DELETE /api/Quantitys/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 433,
+          "signal": "PUT /api/Feedbacks/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 440,
+          "signal": "PUT /api/Cards/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 603,
+          "signal": "GET /rest/basket/:id authn=middleware_present authz=unknown"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-BOLA-001",
+      "stride": "ElevationOfPrivilege",
+      "surface": null,
+      "threat_category_id": "TH-06",
+      "title": "Authenticated object-addressing route or GraphQL operation without an authorization gate (BOLA/IDOR surface)",
+      "weak_or_missing_controls": [
+        "Object-Level Ownership Check",
+        "Tenant Scoping"
+      ]
+    },
+    {
+      "architectural_theme": "InputValidation",
+      "component_id": null,
+      "confidence": "low",
+      "cwe": "CWE-20",
+      "decision": "emit_hypothesis_only",
+      "domain": "InputVal",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Injection through missing centralized input validation",
+      "hypothesis_id": "ARCH-HYP-INPUT-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 204,
+          "signal": "req.url = req.url.replace(/[/]+/g, '/')"
+        },
+        {
+          "file": "server.ts",
+          "line": 246,
+          "signal": "const reqPath = req.originalUrl.replace(/\\?.*$/, '')"
+        },
+        {
+          "file": "server.ts",
+          "line": 411,
+          "signal": "req.body.email = req.body.email.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 412,
+          "signal": "req.body.password = req.body.password.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 413,
+          "signal": "req.body.passwordRepeat = req.body.passwordRepeat.trim()"
+        },
+        {
+          "file": "frontend/src/app/Services/chat.service.ts",
+          "line": 50,
+          "signal": "const trimmed = line.trim()"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 229,
+          "signal": "func.inputValues.trim() !== ''"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 232,
+          "signal": "return this.parseInputValue(value.trim(), inputType)"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-INPUT-001",
+      "stride": "Tampering",
+      "surface": null,
+      "threat_category_id": "TH-01",
+      "title": "Broken input validation exposure",
+      "weak_or_missing_controls": [
+        "Schema Validation",
+        "Allowlist Validation"
+      ]
+    },
+    {
+      "architectural_theme": "SupplyChain",
+      "component_id": null,
+      "confidence": "low",
+      "cwe": "CWE-829",
+      "decision": "emit_hypothesis_only",
+      "domain": "SupplyChain",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Supply-chain compromise via a mutable build dependency",
+      "hypothesis_id": "ARCH-HYP-SUPPLY-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": ".github/workflows/image_actions.yml",
+          "line": 33,
+          "signal": "uses: calibreapp/image-actions@main"
+        },
+        {
+          "file": ".github/workflows/image_actions.yml",
+          "line": 42,
+          "signal": "uses: peter-evans/create-pull-request@v8"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 188,
+          "signal": "uses: coverallsapp/github-action@v2"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-SUPPLY-001",
+      "stride": "Tampering",
+      "surface": null,
+      "threat_category_id": "TH-14",
+      "title": "CI/CD workflow trusts third-party actions pinned to mutable references",
+      "weak_or_missing_controls": [
+        "Commit-SHA Action Pinning",
+        "Dependency Provenance Verification"
+      ],
+      "weakness_mechanism": "build-pipeline-mutable-refs"
+    },
+    {
+      "architectural_theme": "SecretManagement",
+      "component_id": null,
+      "confidence": "low",
+      "cwe": "CWE-798",
+      "decision": "emit_hypothesis_only",
+      "domain": "DataProt",
+      "exculpatory_signals": [],
+      "generic_threat_title": "Reusable secret exposed directly in source code",
+      "hypothesis_id": "ARCH-HYP-SECRET-001",
+      "negative_signals": [],
+      "positive_signals": [
+        {
+          "file": "routes/checkKeys.ts",
+          "line": 10,
+          "signal": "const mnemonic = 'purpose betray marriage blame crunch monitor spin slide donate sport lift clutch'"
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 21,
+          "signal": "const privateKey = '[PEM PRIVATE KEY \u2014 REDACTED]'"
+        }
+      ],
+      "proof_state": "control-derived",
+      "rule_id": "ARCH-SECRET-001",
+      "stride": "InformationDisclosure",
+      "surface": null,
+      "threat_category_id": "TH-02",
+      "title": "High-entropy secrets committed to source instead of a managed store",
+      "weak_or_missing_controls": [
+        "Managed Secret Store",
+        "Runtime Secret Injection"
+      ],
+      "weakness_mechanism": "secrets-committed-to-source"
+    }
+  ],
+  "version": 1,
+  "warnings": []
+}

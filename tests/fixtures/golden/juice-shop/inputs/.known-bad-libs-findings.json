@@ -1,0 +1,77 @@
+{
+  "findings": [
+    {
+      "asset_tier": "T2",
+      "category": "Insufficient Patch Management",
+      "control": "Library track-record review",
+      "derived_from": [],
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 101
+        }
+      ],
+      "severity": "Medium",
+      "source": "known-bad-libs",
+      "summary": "2022 protestware incident \u2014 maintainer intentionally introduced infinite-loop sabotage; rehabilitated but warrants supply-chain review The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "title": "Library colors (npm) has known track record: protestware_incident",
+      "track_record_category": "protestware_incident"
+    },
+    {
+      "asset_tier": "T2",
+      "category": "Insufficient Patch Management",
+      "control": "Library track-record review",
+      "derived_from": [],
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 131
+        }
+      ],
+      "severity": "Medium",
+      "source": "known-bad-libs",
+      "summary": "legacy versions (<3.13.0) allow code execution via unsafe-load default; pin or migrate to safe-load explicit usage The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "title": "Library js-yaml (npm) has known track record: abandoned_with_known_cves",
+      "track_record_category": "abandoned_with_known_cves"
+    },
+    {
+      "asset_tier": "T2",
+      "category": "Insufficient Patch Management",
+      "control": "Library track-record review",
+      "derived_from": [],
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 132
+        }
+      ],
+      "severity": "High",
+      "source": "known-bad-libs",
+      "summary": "legacy versions (<9.0.0) allow algorithm-confusion attacks (CVE-2022-23529); pin >= 9 or migrate to jose The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "title": "Library jsonwebtoken (npm) has known track record: abandoned_with_known_cves",
+      "track_record_category": "abandoned_with_known_cves"
+    },
+    {
+      "asset_tier": "T2",
+      "category": "Insufficient Patch Management",
+      "control": "Library track-record review",
+      "derived_from": [],
+      "effectiveness": "Weak",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 139
+        }
+      ],
+      "severity": "High",
+      "source": "known-bad-libs",
+      "summary": "known-broken JavaScript sandbox \u2014 should never be used as a security boundary; multiple escape CVEs The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "title": "Library notevil (npm) has known track record: sandboxed_deprecated",
+      "track_record_category": "sandboxed_deprecated"
+    }
+  ],
+  "schema_version": 1
+}

@@ -1,0 +1,14 @@
+{
+  "abuse_case_id": "AC-T-004",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": null,
+      "matched_finding_id": "T-043",
+      "reason": "The matched code in routes/verify.ts is only a challenge-detection middleware that reads req.body.role and calls next(). It does not persist the body. The actual registration/user-creation handler that would bind the role field is not in the readable sources, so mass-assignment and any allowlist control cannot be decided.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "inconclusive"
+    }
+  ]
+}

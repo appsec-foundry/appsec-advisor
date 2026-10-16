@@ -1,0 +1,71 @@
+{
+  "design_signals": [
+    {
+      "affected_components": [
+        "component-1f61b207923dbaf5",
+        "component-dff0840e0f4855be"
+      ],
+      "cwe": "CWE-89",
+      "implementation_strategy": "standard-misused",
+      "instance_ids": [
+        "T-006",
+        "T-012"
+      ],
+      "mechanism_id": "database-query-concatenation",
+      "practice_evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 34
+        },
+        {
+          "file": "routes/search.ts",
+          "line": 23
+        }
+      ],
+      "rule_id": "IMPL-STRATEGY",
+      "severity": "Medium",
+      "statement": "Database queries are assembled from application values instead of passing those values through an enforced parameterised data-access path.",
+      "title": "Database access relies on concatenated queries",
+      "weakness_class": "injection"
+    },
+    {
+      "affected_components": [
+        "component-6ffaf23414c56207"
+      ],
+      "cwe": "CWE-79",
+      "implementation_strategy": "standard-misused",
+      "instance_ids": [
+        "T-001"
+      ],
+      "mechanism_id": "frontend-output-encoding",
+      "practice_evidence": [
+        {
+          "file": "frontend/src/app/about/about.component.ts",
+          "line": 119
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 73
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 91
+        },
+        {
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 57
+        },
+        {
+          "file": "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+          "line": 39
+        }
+      ],
+      "rule_id": "IMPL-STRATEGY",
+      "severity": "Medium",
+      "statement": "Browser rendering paths write HTML or DOM content directly without one enforced contextual-encoding or sanitisation boundary.",
+      "title": "Frontend rendering lacks enforced output encoding",
+      "weakness_class": "output_xss_csp"
+    }
+  ],
+  "version": 1
+}

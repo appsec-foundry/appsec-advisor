@@ -1,0 +1,1863 @@
+{
+  "schema_version": 1,
+  "matches": [
+    {
+      "abuse_case_id": "AC-T-006",
+      "title": "Remote Code Execution via Server-Side Injection",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "User input reaches a code/template/deserialization sink",
+          "required": true,
+          "grants": "code_execution",
+          "requires": null,
+          "matched": true,
+          "matched_finding_id": null,
+          "evidence": {
+            "file": "lib/xml.ts",
+            "line": 12,
+            "excerpt": "const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>"
+          },
+          "match_basis": "source_probe",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-006",
+        "title": "Remote Code Execution via Server-Side Injection",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "external-attacker",
+          "initial_access": "unauthenticated",
+          "prerequisite": "An input reaches a server-side interpreter / template / eval."
+        },
+        "goal": "Execute arbitrary code in the application process.",
+        "goal_impact": "Critical",
+        "scope_qualifier": {
+          "required_signals": []
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "User input reaches a code/template/deserialization sink",
+            "grants": "code_execution",
+            "finding": {
+              "title": "User-controlled input reaches a server-side execution sink",
+              "cwe": "CWE-94",
+              "stride": "Elevation of Privilege",
+              "severity": "Critical",
+              "mitigation_title": "Remove dynamic server-side code execution",
+              "remediation": "Eliminate eval-like execution and unsafe deserialization; use fixed allowlisted operations and data-only template handling."
+            },
+            "description": "Attacker-controlled input is passed to `eval`, a server-side template engine, an unsafe sandbox, or an unsafe deserializer.",
+            "required": true,
+            "probe": {
+              "sink_patterns": [
+                "CWE-(94|95|917|1336|502|74)",
+                "(?i)(remote code execution|\\bRCE\\b)",
+                "(?i)(template injection|\\bSSTI\\b)",
+                "(?i)sandbox (bypass|escape)",
+                "\\beval\\(|vm\\.run|notevil|new Function\\("
+              ],
+              "control_patterns": [
+                "(?i)sandbox|allowlist|no-eval|csp"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "A single injection into a server-side interpreter yields code execution in the application process \u2014 the highest-impact outcome, granting full filesystem and network access from one unauthenticated request."
+      }
+    },
+    {
+      "abuse_case_id": "AC-T-005",
+      "title": "Authentication Bypass via Exposed Secret Material",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-020",
+        "T-018"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Secret material is extractable",
+          "required": true,
+          "grants": "stolen_signing_material",
+          "requires": null,
+          "matched": true,
+          "matched_finding_id": "T-020",
+          "evidence": {
+            "file": "lib/insecurity.ts",
+            "line": 21
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        },
+        {
+          "step": 2,
+          "label": "Stolen material is accepted by the verification path",
+          "required": false,
+          "grants": "identity_forgery",
+          "requires": "stolen_signing_material",
+          "matched": true,
+          "matched_finding_id": "T-018",
+          "evidence": {
+            "file": "lib/insecurity.ts",
+            "line": 53
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-005",
+        "title": "Authentication Bypass via Exposed Secret Material",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "external-attacker",
+          "initial_access": "unauthenticated",
+          "prerequisite": "Signing material or other secrets are reachable (committed to a public repo, served by an unauthenticated route, or in an exposed directory)."
+        },
+        "goal": "Forge trusted tokens / credentials and impersonate any user.",
+        "goal_impact": "Critical",
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface"
+          ]
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "Secret material is extractable",
+            "grants": "stolen_signing_material",
+            "finding": {
+              "title": "Signing material is exposed in application-controlled storage",
+              "cwe": "CWE-798",
+              "stride": "Information Disclosure",
+              "severity": "High",
+              "mitigation_title": "Move signing material to managed secret storage",
+              "remediation": "Remove committed or served credentials, rotate them, and load replacements from a managed secret service or protected runtime configuration."
+            },
+            "description": "A private key, signing secret, or credential file is committed to the source repository or served without authentication.",
+            "required": true,
+            "probe": {
+              "sink_patterns": [
+                "CWE-(798|540|321|312|256|200|306|548)",
+                "(?i)(hardcoded|committed|exposed).*(key|secret|credential)",
+                "(?i)(private key|signing key|encryption key)",
+                "(?i)directory listing|unauthenticated.*(file|directory|endpoint)"
+              ],
+              "control_patterns": [
+                "(?i)vault|kms|secret manager|process\\.env"
+              ],
+              "control_sufficiency": "any"
+            }
+          },
+          {
+            "step": 2,
+            "label": "Stolen material is accepted by the verification path",
+            "grants": "identity_forgery",
+            "requires": "stolen_signing_material",
+            "finding": {
+              "title": "Token verification accepts credentials from exposed material",
+              "cwe": "CWE-347",
+              "stride": "Spoofing",
+              "severity": "High",
+              "mitigation_title": "Rotate signing material and bind token verification",
+              "remediation": "Rotate exposed signing material, revoke affected tokens, and restrict token verification to managed active keys."
+            },
+            "description": "The exposed key/secret is the same one the server trusts, so a token signed with it (or the leaked credential) is accepted as authentic.",
+            "required": false,
+            "probe": {
+              "sink_patterns": [
+                "CWE-(347|287|384)",
+                "(?i)jwt forgery|token forgery|forge.*token",
+                "jwt\\.(sign|verify)"
+              ],
+              "control_patterns": [
+                "(?i)key rotation|token binding"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "Exposed signing material collapses the entire authentication boundary: any attacker who reads the key can mint a valid token for any identity or role, with no credential ever required."
+      }
+    },
+    {
+      "abuse_case_id": "AC-T-001",
+      "title": "Account Takeover via XSS + Token Hijacking",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-001",
+        "T-110"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "XSS sink renders attacker markup",
+          "required": true,
+          "grants": "script_execution_in_victim_session",
+          "requires": null,
+          "matched": true,
+          "matched_finding_id": "T-001",
+          "evidence": {
+            "file": "frontend/src/app/about/about.component.ts",
+            "line": 119
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        },
+        {
+          "step": 2,
+          "label": "Session token readable from web-accessible storage",
+          "required": true,
+          "grants": "stolen_session_token",
+          "requires": "script_execution_in_victim_session",
+          "matched": true,
+          "matched_finding_id": "T-110",
+          "evidence": {
+            "file": "frontend/src/app/Services/basket.service.ts",
+            "line": 64,
+            "excerpt": "if (localStorage.getItem('token')) {"
+          },
+          "match_basis": "promoted_source_probe",
+          "controls_found": []
+        },
+        {
+          "step": 3,
+          "label": "Stolen token accepted for a new session",
+          "required": false,
+          "grants": "persistent_account_access",
+          "requires": "stolen_session_token",
+          "matched": true,
+          "matched_finding_id": null,
+          "evidence": {
+            "file": "frontend/src/app/login/login.component.ts",
+            "line": 148,
+            "excerpt": "this.windowRefService.nativeWindow.location.replace(`${oauthProviderUrl}?client_id=${this.clientId}&response_type=token&scope=email&redirect_uri=${this.redirectUri}`)"
+          },
+          "match_basis": "source_probe",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-001",
+        "title": "Account Takeover via XSS + Token Hijacking",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "external-attacker",
+          "initial_access": "unauthenticated",
+          "prerequisite": "Attacker can get markup rendered in a victim's session, through stored content (e.g. feedback, comments, profile fields) or a crafted link."
+        },
+        "goal": "Obtain persistent authenticated access as an arbitrary user without valid credentials.",
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface",
+            "has_client_storage"
+          ]
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "XSS sink renders attacker markup",
+            "grants": "script_execution_in_victim_session",
+            "finding": {
+              "title": "XSS renders attacker-controlled markup",
+              "cwe": "CWE-79",
+              "stride": "Information Disclosure",
+              "severity": "High",
+              "mitigation_title": "Sanitize untrusted HTML before rendering",
+              "remediation": "Use a context-aware HTML sanitizer and avoid trusted-HTML bypass APIs for user-controlled content."
+            },
+            "description": "Attacker JavaScript executes in the victim's browser session.",
+            "required": true,
+            "probe": {
+              "entry_points": {
+                "endpoint_patterns": [
+                  "/api/Feedback",
+                  "/api/.*[Cc]omment"
+                ],
+                "file_hints": [
+                  "*.component.ts",
+                  "*.component.html"
+                ]
+              },
+              "sink_patterns": [
+                "bypassSecurityTrustHtml",
+                "innerHTML",
+                "dangerouslySetInnerHTML",
+                "v-html"
+              ],
+              "control_patterns": [
+                "DomSanitizer",
+                "sanitize\\(",
+                "DOMPurify"
+              ],
+              "control_sufficiency": "any"
+            }
+          },
+          {
+            "step": 2,
+            "label": "Session token readable from web-accessible storage",
+            "grants": "stolen_session_token",
+            "requires": "script_execution_in_victim_session",
+            "finding": {
+              "title": "Session token stored in web-accessible client storage",
+              "cwe": "CWE-922",
+              "stride": "Information Disclosure",
+              "severity": "High",
+              "mitigation_title": "Store session tokens in HttpOnly cookies",
+              "remediation": "Keep session credentials in Secure, HttpOnly, SameSite cookies rather than JavaScript-readable storage."
+            },
+            "description": "Token exfiltrated from local/session storage via the Step 1 payload.",
+            "required": true,
+            "probe": {
+              "sink_patterns": [
+                "localStorage\\.(setItem|getItem)",
+                "sessionStorage\\.",
+                "document\\.cookie"
+              ],
+              "control_patterns": [
+                "HttpOnly",
+                "httpOnly: true"
+              ],
+              "control_sufficiency": "any"
+            }
+          },
+          {
+            "step": 3,
+            "label": "Stolen token accepted for a new session",
+            "grants": "persistent_account_access",
+            "requires": "stolen_session_token",
+            "finding": {
+              "title": "Token flow accepts a stolen bearer token without binding",
+              "cwe": "CWE-287",
+              "stride": "Spoofing",
+              "severity": "High",
+              "mitigation_title": "Use authorization-code flow with PKCE",
+              "remediation": "Replace implicit or bearer-only token flows with authorization code plus PKCE and server-side token revocation."
+            },
+            "description": "Exfiltrated token accepted for a new session; absence of token binding / PKCE removes the last server-side revocation opportunity.",
+            "required": false,
+            "probe": {
+              "sink_patterns": [
+                "response_type=token",
+                "implicit",
+                "grant_type"
+              ],
+              "control_patterns": [
+                "code_challenge",
+                "PKCE",
+                "token_binding"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "Individually the XSS sink and the web-readable token storage rate below Critical, but chained they form a repeatable credential-theft path: a single stored payload causes indefinite session compromise for every user who views the affected page."
+      }
+    },
+    {
+      "abuse_case_id": "AC-T-002",
+      "title": "Bulk Data Exfiltration via Broken Object Authorization",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-003",
+        "T-043"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Missing ownership check on object read (IDOR)",
+          "required": true,
+          "grants": "arbitrary_object_read",
+          "requires": "low_priv_account",
+          "matched": true,
+          "matched_finding_id": "T-003",
+          "evidence": {
+            "file": "routes/basket.ts",
+            "line": 19
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        },
+        {
+          "step": 2,
+          "label": "Mass assignment allows privileged field write",
+          "required": true,
+          "grants": "elevated_role",
+          "requires": "arbitrary_object_read",
+          "matched": true,
+          "matched_finding_id": "T-043",
+          "evidence": {
+            "file": "routes/verify.ts",
+            "line": 53
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-002",
+        "title": "Bulk Data Exfiltration via Broken Object Authorization",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "authenticated-user",
+          "initial_access": "authenticated_low_priv",
+          "prerequisite": "Attacker holds a valid, non-privileged user account."
+        },
+        "goal": "Enumerate and exfiltrate other users' records, then escalate own permissions via unguarded mass assignment.",
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface",
+            "has_role_concept"
+          ]
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "Missing ownership check on object read (IDOR)",
+            "grants": "arbitrary_object_read",
+            "requires": "low_priv_account",
+            "finding": {
+              "title": "Object read lacks an ownership authorization check",
+              "cwe": "CWE-639",
+              "stride": "Information Disclosure",
+              "severity": "High",
+              "mitigation_title": "Enforce object-level authorization on reads",
+              "remediation": "Compare the requested object's owner or tenant to the authenticated principal before returning data."
+            },
+            "description": "Attacker enumerates and retrieves records for arbitrary object IDs; no ownership comparison is performed.",
+            "required": true,
+            "probe": {
+              "entry_points": {
+                "endpoint_patterns": [
+                  "/api/.*/:?id",
+                  "/api/Users"
+                ],
+                "file_hints": [
+                  "routes/*.ts",
+                  "controllers/*"
+                ]
+              },
+              "sink_patterns": [
+                "findById",
+                "findOne\\(\\s*\\{?\\s*id",
+                "params\\.id",
+                "CWE-(639|284|862|863|566)",
+                "(?i)\\bIDOR\\b",
+                "(?i)broken (object|object-level|access)",
+                "(?i)ownership check"
+              ],
+              "control_patterns": [
+                "req\\.user\\.id\\s*===\\s*",
+                "ownership",
+                "isOwner"
+              ],
+              "control_sufficiency": "any"
+            }
+          },
+          {
+            "step": 2,
+            "label": "Mass assignment allows privileged field write",
+            "grants": "elevated_role",
+            "requires": "arbitrary_object_read",
+            "finding": {
+              "title": "Request body can mass-assign a privileged account field",
+              "cwe": "CWE-915",
+              "stride": "Elevation of Privilege",
+              "severity": "High",
+              "mitigation_title": "Allowlist writable account fields",
+              "remediation": "Map requests to a DTO or allowlist and discard role, privilege, and ownership fields from client input."
+            },
+            "description": "Update endpoint persists an unfiltered `role` (or equivalent) field supplied in the request body.",
+            "required": true,
+            "probe": {
+              "entry_points": {
+                "endpoint_patterns": [
+                  "/api/Users/:id",
+                  "PUT /api/.*"
+                ]
+              },
+              "sink_patterns": [
+                "update\\(\\s*req\\.body",
+                "Object\\.assign\\(.*req\\.body",
+                "\\.\\.\\.req\\.body",
+                "CWE-(915|266|269)",
+                "(?i)mass assignment",
+                "(?i)(role|privilege) escalation"
+              ],
+              "control_patterns": [
+                "allowlist",
+                "pick\\(",
+                "strip.*role",
+                "dto"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "The ownership gap exposes every record, and the mass-assignment gap lets the same low-privilege actor self-elevate \u2014 together they turn a single compromised account into full tenant data access and role escalation."
+      }
+    },
+    {
+      "abuse_case_id": "AC-T-004",
+      "title": "Privilege Escalation via Mass-Assignment on Registration",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-043"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Registration endpoint binds an attacker-supplied privilege field",
+          "required": true,
+          "grants": "admin_access",
+          "requires": null,
+          "matched": true,
+          "matched_finding_id": "T-043",
+          "evidence": {
+            "file": "routes/verify.ts",
+            "line": 53
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-004",
+        "title": "Privilege Escalation via Mass-Assignment on Registration",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "external-attacker",
+          "initial_access": "unauthenticated",
+          "prerequisite": "Self-registration is open (one unauthenticated POST)."
+        },
+        "goal": "Obtain an administrator account without any existing privilege.",
+        "goal_impact": "Critical",
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface",
+            "has_open_self_registration"
+          ]
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "Registration endpoint binds an attacker-supplied privilege field",
+            "grants": "admin_access",
+            "finding": {
+              "title": "Registration can mass-assign a privileged account field",
+              "cwe": "CWE-915",
+              "stride": "Elevation of Privilege",
+              "severity": "High",
+              "mitigation_title": "Allowlist registration fields",
+              "remediation": "Use a registration DTO that excludes role, privilege, ownership, and other server-controlled fields."
+            },
+            "description": "The account-creation handler persists the request body wholesale, so a client-supplied `role` (or `isAdmin`) field is written verbatim.",
+            "required": true,
+            "probe": {
+              "entry_points": {
+                "endpoint_patterns": [
+                  "/api/Users",
+                  "/register",
+                  "/signup",
+                  "/api/.*[Uu]ser"
+                ]
+              },
+              "sink_patterns": [
+                "(?i)mass assignment",
+                "(?i)(role|privilege|admin) escalation",
+                "(?i)registration",
+                "CWE-(915|266|269)",
+                "\\.\\.\\.req\\.body",
+                "Object\\.assign\\(.*req\\.body"
+              ],
+              "control_patterns": [
+                "(?i)allowlist|pick\\(|dto|strip.*role|omit.*role"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "A single unauthenticated request mints an admin account when the registration handler trusts a client-supplied role field \u2014 the most direct full-compromise path in role-based apps with open sign-up."
+      }
+    },
+    {
+      "abuse_case_id": "AC-T-007",
+      "title": "Privileged Action via Prompt Injection into a Tool-Calling Model",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-055",
+        "T-042"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Untrusted text reaches the model prompt unseparated",
+          "required": true,
+          "grants": "model_instruction_control",
+          "requires": null,
+          "matched": true,
+          "matched_finding_id": "T-055",
+          "evidence": {
+            "file": "routes/chat.ts",
+            "line": 191
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        },
+        {
+          "step": 2,
+          "label": "The model may call tools without a second authorization check",
+          "required": false,
+          "grants": "privileged_action",
+          "requires": null,
+          "matched": true,
+          "matched_finding_id": "T-042",
+          "evidence": {
+            "file": "routes/chat.ts",
+            "line": 184
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-007",
+        "title": "Privileged Action via Prompt Injection into a Tool-Calling Model",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "external-attacker",
+          "initial_access": "unauthenticated",
+          "prerequisite": "Attacker can place text into a conversation, document, or record that the application later sends to a language model."
+        },
+        "goal": "Make the model invoke a privileged tool or return data the attacker is not entitled to, using the application's own authority.",
+        "scope_qualifier": {
+          "required_signals": [
+            "has_llm_surface"
+          ]
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "Untrusted text reaches the model prompt unseparated",
+            "grants": "model_instruction_control",
+            "finding": {
+              "title": "Untrusted input is concatenated into the model prompt",
+              "cwe": "CWE-1427",
+              "stride": "Tampering",
+              "severity": "High",
+              "mitigation_title": "Separate instructions from untrusted content",
+              "remediation": "Carry user and retrieved text in dedicated content fields, never in the instruction segment, and treat every model output as untrusted data."
+            },
+            "description": "The handler builds the prompt by interpolating request or stored text into the same string as the system instructions, so attacker text is read as instruction.",
+            "required": true,
+            "probe": {
+              "entry_points": {
+                "endpoint_patterns": [
+                  "/chat",
+                  "/completion",
+                  "/ask",
+                  "/assistant",
+                  "/agent"
+                ]
+              },
+              "sink_patterns": [
+                "(?i)prompt.*(inject|concat|template)",
+                "(?i)system.?prompt",
+                "(?i)messages\\.push|messages\\s*=\\s*\\[",
+                "CWE-(1427|94)"
+              ],
+              "control_patterns": [
+                "(?i)(sanitiz|delimit|content.?filter|instruction.?hierarch)"
+              ],
+              "control_sufficiency": "any"
+            }
+          },
+          {
+            "step": 2,
+            "label": "The model may call tools without a second authorization check",
+            "grants": "privileged_action",
+            "finding": {
+              "title": "Model tool calls execute without server-side authorization",
+              "cwe": "CWE-862",
+              "stride": "Elevation of Privilege",
+              "severity": "High",
+              "mitigation_title": "Authorize every tool call server-side",
+              "remediation": "Authorize each tool invocation against the calling user's own permissions, and require human approval for irreversible actions."
+            },
+            "description": "Tools exposed to the model run with the application's authority; a manipulated model turn therefore performs actions the caller could not.",
+            "required": false,
+            "probe": {
+              "entry_points": {
+                "endpoint_patterns": [
+                  "/chat",
+                  "/agent"
+                ]
+              },
+              "sink_patterns": [
+                "(?i)tool(s)?\\s*[:=]|function.?call|tool_choice",
+                "CWE-(862|863|269)"
+              ],
+              "control_patterns": [
+                "(?i)(authorize|permission|can\\(|isAuthorized|requireRole).*tool"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "Text an attacker can place anywhere the application later feeds to the model becomes instruction, and the tools behind that model run with the application's authority rather than the caller's \u2014 so a comment or a stored record reaches actions the attacker was never entitled to."
+      }
+    },
+    {
+      "abuse_case_id": "AC-T-003",
+      "title": "Privilege Escalation to Admin via JWT Algorithm Confusion",
+      "source": "mandatory",
+      "applicable": true,
+      "structural_verdict": "not_applicable",
+      "reason": "no finding matched the required chain step(s) for this scenario",
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-042"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "JWT algorithm not pinned on verification",
+          "required": true,
+          "grants": "forgeable_token",
+          "requires": "any_valid_jwt",
+          "matched": false,
+          "matched_finding_id": null,
+          "evidence": null,
+          "match_basis": null,
+          "controls_found": []
+        },
+        {
+          "step": 2,
+          "label": "Role claim trusted from token without re-fetch",
+          "required": false,
+          "grants": "admin_access",
+          "requires": "forgeable_token",
+          "matched": true,
+          "matched_finding_id": "T-042",
+          "evidence": {
+            "file": "routes/chat.ts",
+            "line": 184
+          },
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-T-003",
+        "title": "Privilege Escalation to Admin via JWT Algorithm Confusion",
+        "source": "mandatory",
+        "detail_level": "standard",
+        "attacker": {
+          "actor_id": "external-attacker",
+          "initial_access": "unauthenticated",
+          "prerequisite": "Attacker can obtain any valid JWT issued by the system (e.g. by registering a free account)."
+        },
+        "goal": "Forge an admin-role JWT without knowledge of the signing secret.",
+        "goal_impact": "Critical",
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface"
+          ]
+        },
+        "chain": [
+          {
+            "step": 1,
+            "label": "JWT algorithm not pinned on verification",
+            "grants": "forgeable_token",
+            "requires": "any_valid_jwt",
+            "finding": {
+              "title": "JWT verification does not pin the accepted algorithm",
+              "cwe": "CWE-347",
+              "stride": "Spoofing",
+              "severity": "High",
+              "mitigation_title": "Pin accepted JWT verification algorithms",
+              "remediation": "Configure an explicit algorithm allowlist and reject unsigned or algorithm-confused tokens before claims are trusted."
+            },
+            "description": "Verifier accepts attacker-chosen `alg` (e.g. `none` or HMAC-with-public-key), allowing token re-signing without the secret.",
+            "required": true,
+            "probe": {
+              "entry_points": {
+                "file_hints": [
+                  "*auth*",
+                  "middleware/*"
+                ]
+              },
+              "sink_patterns": [
+                "jwt\\.verify",
+                "decode\\(.*verify\\s*:\\s*false",
+                "algorithms?\\s*:\\s*\\[",
+                "CWE-347",
+                "(?i)algorithm confusion",
+                "(?i)alg\\s*[:=]?\\s*none",
+                "(?i)jwt forgery",
+                "(?i)jwt.*signature (not |un)?verif"
+              ],
+              "control_patterns": [
+                "algorithms:\\s*\\[\\s*['\"]RS256",
+                "algorithms:\\s*\\[\\s*['\"]HS256"
+              ],
+              "control_sufficiency": "any"
+            }
+          },
+          {
+            "step": 2,
+            "label": "Role claim trusted from token without re-fetch",
+            "grants": "admin_access",
+            "requires": "forgeable_token",
+            "finding": {
+              "title": "Authorization trusts an unrefreshed token role claim",
+              "cwe": "CWE-863",
+              "stride": "Elevation of Privilege",
+              "severity": "High",
+              "mitigation_title": "Authorize roles from server-side state",
+              "remediation": "Re-check privilege-sensitive roles against authoritative server-side state before granting administrative actions."
+            },
+            "description": "Forged `role: admin` claim is accepted as authoritative because the role is not re-fetched from the database per request.",
+            "required": false,
+            "probe": {
+              "sink_patterns": [
+                "token\\.role",
+                "decoded\\.role",
+                "req\\.user\\.role",
+                "CWE-(863|862|266|269)",
+                "(?i)(role|privilege) escalation",
+                "(?i)admin (role|takeover)"
+              ],
+              "control_patterns": [
+                "findUser.*role",
+                "db.*role",
+                "re-?fetch"
+              ],
+              "control_sufficiency": "any"
+            }
+          }
+        ],
+        "combined_risk_rationale": "Algorithm confusion alone yields a forgeable token; trusting the in-token role claim turns that forgery into instant admin access \u2014 neither gap is Critical in isolation, but the chain is a full authentication bypass."
+      }
+    },
+    {
+      "abuse_case_id": "AC-B-001",
+      "title": "User reads or changes data of another user or tenant",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-003"
+      ],
+      "related_finding_ids": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-046",
+        "T-063",
+        "T-073",
+        "T-084"
+      ],
+      "related_findings": [
+        {
+          "id": "T-003",
+          "title": "Systemic IDOR Missing Ownership Checks",
+          "cwe": "CWE-639",
+          "file": "routes/basket.ts",
+          "line": 19
+        },
+        {
+          "id": "T-004",
+          "title": "Missing Authorization on Product Update",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 370
+        },
+        {
+          "id": "T-008",
+          "title": "Broken authorization \u2014 attacker-controlled owner ID in resource query \u2014 routes/dataExport.ts:26",
+          "cwe": "CWE-639",
+          "file": "routes/dataExport.ts",
+          "line": 26
+        },
+        {
+          "id": "T-024",
+          "title": "IDOR \u2014 resource lookup by URL parameter without ownership filter \u2014 routes/basketItems.ts:68",
+          "cwe": "CWE-639",
+          "file": "routes/basketItems.ts",
+          "line": 68
+        },
+        {
+          "id": "T-038",
+          "title": "IDOR / broken object-level authorization \u2014 PUT /api/BasketItems/:id",
+          "cwe": "CWE-639",
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "id": "T-039",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "id": "T-041",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 598
+        },
+        {
+          "id": "T-046",
+          "title": "Hardcoded cookie-parser signing secret (server.ts:289)",
+          "cwe": "CWE-798",
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "id": "T-063",
+          "title": "Unsanitized document.write of data export response (data-export.component.ts:71)",
+          "cwe": "CWE-79",
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 71
+        },
+        {
+          "id": "T-073",
+          "title": "Unauthenticated log directory browsing (server.ts:281)",
+          "cwe": "CWE-548",
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "id": "T-084",
+          "title": "Unbounded disk upload ahead of authentication (server.ts:698)",
+          "cwe": "CWE-770",
+          "file": "server.ts",
+          "line": 698
+        }
+      ],
+      "preselected_sources": [
+        "routes/basket.ts",
+        "routes/dataExport.ts",
+        "routes/basketItems.ts",
+        "server.ts",
+        "frontend/src/app/data-export/data-export.component.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": "T-003",
+          "evidence": null,
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-001",
+        "kind": "descriptive",
+        "title": "User reads or changes data of another user or tenant",
+        "check": "Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.",
+        "exclusions": [
+          "Data intended to be public or shared by design.",
+          "Platform operators whose role spans all users or tenants by design."
+        ],
+        "finding": {
+          "cwe": "CWE-639",
+          "stride": "Information Disclosure",
+          "severity": "High",
+          "mitigation_title": "Check resource ownership on every operation that returns or changes the data"
+        },
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface"
+          ],
+          "path_patterns": [
+            "*tenant*",
+            "*export*",
+            "*download*",
+            "share",
+            "*share[!d]*",
+            "*report*"
+          ],
+          "detector_rules": [
+            "AUTHZ-001",
+            "AUTHZ-002",
+            "AUTHZ-301"
+          ],
+          "route_patterns": [
+            "*tenant*",
+            "*organization*",
+            "*export*",
+            "*download*",
+            "*share*"
+          ]
+        }
+      },
+      "requested": false
+    },
+    {
+      "abuse_case_id": "AC-B-002",
+      "title": "User gains more rights than intended",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "not_performed",
+      "reason": "exceeds the limit of 3 business abuse cases at standard depth",
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [],
+      "related_finding_ids": [
+        "T-004",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-046",
+        "T-073",
+        "T-084"
+      ],
+      "related_findings": [
+        {
+          "id": "T-004",
+          "title": "Missing Authorization on Product Update",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 370
+        },
+        {
+          "id": "T-038",
+          "title": "IDOR / broken object-level authorization \u2014 PUT /api/BasketItems/:id",
+          "cwe": "CWE-639",
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "id": "T-039",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "id": "T-041",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 598
+        },
+        {
+          "id": "T-046",
+          "title": "Hardcoded cookie-parser signing secret (server.ts:289)",
+          "cwe": "CWE-798",
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "id": "T-073",
+          "title": "Unauthenticated log directory browsing (server.ts:281)",
+          "cwe": "CWE-548",
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "id": "T-084",
+          "title": "Unbounded disk upload ahead of authentication (server.ts:698)",
+          "cwe": "CWE-770",
+          "file": "server.ts",
+          "line": 698
+        }
+      ],
+      "preselected_sources": [
+        "server.ts",
+        "frontend/src/app/Services/administration.service.ts",
+        "frontend/src/app/administration/administration.component.ts",
+        "frontend/src/app/roles.ts",
+        "frontend/src/hacking-instructor/challenges/adminSection.ts",
+        "frontend/src/hacking-instructor/challenges/loginAdmin.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether a user can give themselves or others a role or permission beyond what their own role or delegation allows.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": null,
+          "evidence": null,
+          "match_basis": "descriptive",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-002",
+        "kind": "descriptive",
+        "title": "User gains more rights than intended",
+        "check": "Check whether a user can give themselves or others a role or permission beyond what their own role or delegation allows.",
+        "exclusions": [
+          "Administrators with unrestricted authority over every role."
+        ],
+        "open_questions": [
+          "Which roles may each administrator tier assign?"
+        ],
+        "finding": {
+          "cwe": "CWE-269",
+          "severity": "High",
+          "mitigation_title": "Limit role and permission changes to the scope the acting user may grant"
+        },
+        "scope_qualifier": {
+          "required_signals": [
+            "has_role_concept"
+          ],
+          "path_patterns": [
+            "*role*",
+            "*permission*",
+            "*admin*"
+          ],
+          "detector_rules": [
+            "AUTHZ-003",
+            "AUTHZ-004",
+            "AUTHZ-101",
+            "AUTHZ-102",
+            "AUTHZ-008"
+          ],
+          "route_patterns": [
+            "*role*",
+            "*permission*",
+            "*grant*"
+          ]
+        }
+      },
+      "requested": false
+    },
+    {
+      "abuse_case_id": "AC-B-003",
+      "title": "User takes over another account",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [
+        "T-050"
+      ],
+      "related_finding_ids": [
+        "T-004",
+        "T-019",
+        "T-030",
+        "T-034",
+        "T-037",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-046",
+        "T-050",
+        "T-073",
+        "T-081"
+      ],
+      "related_findings": [
+        {
+          "id": "T-004",
+          "title": "Missing Authorization on Product Update",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 370
+        },
+        {
+          "id": "T-019",
+          "title": "Password reset accepts a security-question answer \u2014 routes/resetPassword.ts:10",
+          "cwe": "CWE-640",
+          "file": "routes/resetPassword.ts",
+          "line": 10
+        },
+        {
+          "id": "T-030",
+          "title": "Input compiled as template source \u2014 routes/userProfile.ts:87",
+          "cwe": "CWE-1336",
+          "file": "routes/userProfile.ts",
+          "line": 87
+        },
+        {
+          "id": "T-034",
+          "title": "Server-side request forgery in profile image URL fetch",
+          "cwe": "CWE-918",
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 24
+        },
+        {
+          "id": "T-037",
+          "title": "Code injection through eval of profile username (userProfile.ts:61)",
+          "cwe": "CWE-95",
+          "file": "routes/userProfile.ts",
+          "line": 61
+        },
+        {
+          "id": "T-038",
+          "title": "IDOR / broken object-level authorization \u2014 PUT /api/BasketItems/:id",
+          "cwe": "CWE-639",
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "id": "T-039",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "id": "T-041",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 598
+        },
+        {
+          "id": "T-046",
+          "title": "Hardcoded cookie-parser signing secret (server.ts:289)",
+          "cwe": "CWE-798",
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "id": "T-050",
+          "title": "Unthrottled security-answer password reset (resetPassword.ts:41)",
+          "cwe": "CWE-307",
+          "file": "routes/resetPassword.ts",
+          "line": 41
+        },
+        {
+          "id": "T-073",
+          "title": "Unauthenticated log directory browsing (server.ts:281)",
+          "cwe": "CWE-548",
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "id": "T-081",
+          "title": "Reset response returns full user object (resetPassword.ts:46)",
+          "cwe": "CWE-200",
+          "file": "routes/resetPassword.ts",
+          "line": 46
+        }
+      ],
+      "preselected_sources": [
+        "frontend/src/app/accounting/accounting.component.ts",
+        "routes/profileImageFileUpload.ts",
+        "routes/profileImageUrlUpload.ts",
+        "routes/resetPassword.ts",
+        "routes/updateUserProfile.ts",
+        "routes/userProfile.ts",
+        "server.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether anyone other than the verified owner can change an account's credentials or recovery data, such as email, phone number, or reset tokens.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": "T-050",
+          "evidence": null,
+          "match_basis": "finding",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-003",
+        "kind": "descriptive",
+        "title": "User takes over another account",
+        "check": "Check whether anyone other than the verified owner can change an account's credentials or recovery data, such as email, phone number, or reset tokens.",
+        "exclusions": [
+          "Verified account owners changing their own recovery data after re-authentication."
+        ],
+        "finding": {
+          "cwe": "CWE-640",
+          "stride": "Spoofing",
+          "mitigation_title": "Require the verified owner to re-authenticate before credential or recovery changes"
+        },
+        "scope_qualifier": {
+          "required_signals": [
+            "has_auth_surface"
+          ],
+          "path_patterns": [
+            "*recover*",
+            "*reset*",
+            "*profile*",
+            "*account*"
+          ],
+          "route_patterns": [
+            "*recover*",
+            "*reset*",
+            "*profile*"
+          ]
+        }
+      },
+      "requested": false
+    },
+    {
+      "abuse_case_id": "AC-B-004",
+      "title": "User bypasses a required approval",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "candidate",
+      "reason": null,
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [],
+      "related_finding_ids": [
+        "T-004",
+        "T-027",
+        "T-028",
+        "T-036",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-044",
+        "T-046",
+        "T-054",
+        "T-073",
+        "T-084"
+      ],
+      "related_findings": [
+        {
+          "id": "T-004",
+          "title": "Missing Authorization on Product Update",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 370
+        },
+        {
+          "id": "T-027",
+          "title": "Input in executable NoSQL predicate \u2014 routes/showProductReviews.ts:36",
+          "cwe": "CWE-943",
+          "file": "routes/showProductReviews.ts",
+          "line": 36
+        },
+        {
+          "id": "T-028",
+          "title": "NoSQL where injection in product reviews lookup (showProductReviews.ts:36)",
+          "cwe": "CWE-943",
+          "file": "routes/showProductReviews.ts",
+          "line": 36
+        },
+        {
+          "id": "T-036",
+          "title": "Blocking busy-wait sleep reachable from queries (showProductReviews.ts:23)",
+          "cwe": "CWE-400",
+          "file": "routes/showProductReviews.ts",
+          "line": 23
+        },
+        {
+          "id": "T-038",
+          "title": "IDOR / broken object-level authorization \u2014 PUT /api/BasketItems/:id",
+          "cwe": "CWE-639",
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "id": "T-039",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "id": "T-041",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 598
+        },
+        {
+          "id": "T-044",
+          "title": "Unauthenticated review creation with spoofable author",
+          "cwe": "CWE-290",
+          "file": "routes/createProductReviews.ts",
+          "line": 26
+        },
+        {
+          "id": "T-046",
+          "title": "Hardcoded cookie-parser signing secret (server.ts:289)",
+          "cwe": "CWE-798",
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "id": "T-054",
+          "title": "NoSQL selector injection in review likes (likeProductReviews.ts:35)",
+          "cwe": "CWE-943",
+          "file": "routes/likeProductReviews.ts",
+          "line": 35
+        },
+        {
+          "id": "T-073",
+          "title": "Unauthenticated log directory browsing (server.ts:281)",
+          "cwe": "CWE-548",
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "id": "T-084",
+          "title": "Unbounded disk upload ahead of authentication (server.ts:698)",
+          "cwe": "CWE-770",
+          "file": "server.ts",
+          "line": 698
+        }
+      ],
+      "preselected_sources": [
+        "frontend/src/app/Models/review.model.ts",
+        "frontend/src/app/Services/product-review.service.ts",
+        "frontend/src/app/product-review-edit/product-review-edit.component.ts",
+        "routes/createProductReviews.ts",
+        "routes/likeProductReviews.ts",
+        "routes/showProductReviews.ts",
+        "routes/updateProductReviews.ts",
+        "server.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether a user can approve their own request where an independent approval is required, or change content after approval and keep the earlier approval.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": null,
+          "evidence": null,
+          "match_basis": "descriptive",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-004",
+        "kind": "descriptive",
+        "title": "User bypasses a required approval",
+        "check": "Check whether a user can approve their own request where an independent approval is required, or change content after approval and keep the earlier approval.",
+        "exclusions": [
+          "Processes where self-approval is permitted by a sourced policy.",
+          "Changes the process explicitly allows without re-approval."
+        ],
+        "open_questions": [
+          "Does the process require separation between requester and approver?"
+        ],
+        "finding": {
+          "stride": "Tampering",
+          "mitigation_title": "Enforce independent approval and invalidate approvals when the approved content changes"
+        },
+        "scope_qualifier": {
+          "path_patterns": [
+            "*approv*",
+            "*review*",
+            "*publish*",
+            "*workflow*"
+          ],
+          "route_patterns": [
+            "*approv*",
+            "*publish*",
+            "*review*"
+          ]
+        }
+      },
+      "requested": false
+    },
+    {
+      "abuse_case_id": "AC-B-005",
+      "title": "User exceeds a limit or a one-time entitlement",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "not_performed",
+      "reason": "exceeds the limit of 3 business abuse cases at standard depth",
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [],
+      "related_finding_ids": [
+        "T-004",
+        "T-021",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-046",
+        "T-073",
+        "T-084",
+        "T-085"
+      ],
+      "related_findings": [
+        {
+          "id": "T-004",
+          "title": "Missing Authorization on Product Update",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 370
+        },
+        {
+          "id": "T-021",
+          "title": "Wallet top-up accepts unvalidated balance amount (wallet.ts:27)",
+          "cwe": "CWE-20",
+          "file": "routes/wallet.ts",
+          "line": 27
+        },
+        {
+          "id": "T-038",
+          "title": "IDOR / broken object-level authorization \u2014 PUT /api/BasketItems/:id",
+          "cwe": "CWE-639",
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "id": "T-039",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "id": "T-041",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 598
+        },
+        {
+          "id": "T-046",
+          "title": "Hardcoded cookie-parser signing secret (server.ts:289)",
+          "cwe": "CWE-798",
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "id": "T-073",
+          "title": "Unauthenticated log directory browsing (server.ts:281)",
+          "cwe": "CWE-548",
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "id": "T-084",
+          "title": "Unbounded disk upload ahead of authentication (server.ts:698)",
+          "cwe": "CWE-770",
+          "file": "server.ts",
+          "line": 698
+        },
+        {
+          "id": "T-085",
+          "title": "Unbounded unvalidated wallet set on open endpoint (web3Wallet.ts:16)",
+          "cwe": "CWE-770",
+          "file": "routes/web3Wallet.ts",
+          "line": 16
+        }
+      ],
+      "preselected_sources": [
+        "frontend/src/app/Services/wallet.service.ts",
+        "frontend/src/app/wallet/wallet.component.ts",
+        "frontend/src/app/wallet-web3/wallet-web3.component.ts",
+        "frontend/src/app/wallet-web3/wallet-web3.module.ts",
+        "models/wallet.ts",
+        "routes/coupon.ts",
+        "routes/wallet.ts",
+        "routes/web3Wallet.ts",
+        "server.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether a one-time or limited entitlement, such as a coupon, voucher, quota, or balance, can be used more often or for more value than allowed, including by repeating or racing the operation.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": null,
+          "evidence": null,
+          "match_basis": "descriptive",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-005",
+        "kind": "descriptive",
+        "title": "User exceeds a limit or a one-time entitlement",
+        "check": "Check whether a one-time or limited entitlement, such as a coupon, voucher, quota, or balance, can be used more often or for more value than allowed, including by repeating or racing the operation.",
+        "exclusions": [
+          "Operations without a quantity or one-time limit."
+        ],
+        "finding": {
+          "stride": "Tampering",
+          "mitigation_title": "Enforce the limit atomically on the server for every use of the entitlement"
+        },
+        "scope_qualifier": {
+          "path_patterns": [
+            "*coupon*",
+            "*voucher*",
+            "*redeem*",
+            "*quota*",
+            "*balance*",
+            "*wallet*"
+          ],
+          "route_patterns": [
+            "*coupon*",
+            "*voucher*",
+            "*redeem*"
+          ]
+        }
+      },
+      "requested": false
+    },
+    {
+      "abuse_case_id": "AC-B-006",
+      "title": "User keeps using a withdrawn right",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "not_performed",
+      "reason": "exceeds the limit of 3 business abuse cases at standard depth",
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [],
+      "related_finding_ids": [],
+      "related_findings": [],
+      "preselected_sources": [
+        "frontend/src/app/token-sale/token-sale.component.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether a withdrawn role, permission, or account keeps working through an existing session, token, or cached authorization.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": null,
+          "evidence": null,
+          "match_basis": "descriptive",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-006",
+        "kind": "descriptive",
+        "title": "User keeps using a withdrawn right",
+        "check": "Check whether a withdrawn role, permission, or account keeps working through an existing session, token, or cached authorization.",
+        "exclusions": [
+          "Short-lived tokens whose lifetime the policy explicitly accepts as revocation delay."
+        ],
+        "open_questions": [
+          "How quickly must a revocation take effect?"
+        ],
+        "finding": {
+          "cwe": "CWE-613",
+          "mitigation_title": "Re-check current roles and account status when a session or token is used"
+        },
+        "scope_qualifier": {
+          "required_signals": [
+            "has_role_concept",
+            "has_auth_surface"
+          ],
+          "path_patterns": [
+            "*session*",
+            "*token*",
+            "*revoke*"
+          ],
+          "detector_rules": [
+            "AUTHZ-009",
+            "AUTHZ-104"
+          ],
+          "route_patterns": [
+            "*logout*",
+            "*revoke*",
+            "*session*",
+            "*token*"
+          ]
+        }
+      },
+      "requested": false
+    },
+    {
+      "abuse_case_id": "AC-B-007",
+      "title": "User misuses a privileged function for another purpose",
+      "source": "descriptive",
+      "kind": "descriptive",
+      "applicable": true,
+      "structural_verdict": "not_performed",
+      "reason": "exceeds the limit of 3 business abuse cases at standard depth",
+      "unmet_signals": null,
+      "unmet_path_patterns": null,
+      "matched_finding_ids": [],
+      "related_finding_ids": [
+        "T-004",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-046",
+        "T-073",
+        "T-084"
+      ],
+      "related_findings": [
+        {
+          "id": "T-004",
+          "title": "Missing Authorization on Product Update",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 370
+        },
+        {
+          "id": "T-038",
+          "title": "IDOR / broken object-level authorization \u2014 PUT /api/BasketItems/:id",
+          "cwe": "CWE-639",
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "id": "T-039",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "id": "T-041",
+          "title": "Sensitive Routes Registered Without Authentication Middleware",
+          "cwe": "CWE-862",
+          "file": "server.ts",
+          "line": 598
+        },
+        {
+          "id": "T-046",
+          "title": "Hardcoded cookie-parser signing secret (server.ts:289)",
+          "cwe": "CWE-798",
+          "file": "server.ts",
+          "line": 289
+        },
+        {
+          "id": "T-073",
+          "title": "Unauthenticated log directory browsing (server.ts:281)",
+          "cwe": "CWE-548",
+          "file": "server.ts",
+          "line": 281
+        },
+        {
+          "id": "T-084",
+          "title": "Unbounded disk upload ahead of authentication (server.ts:698)",
+          "cwe": "CWE-770",
+          "file": "server.ts",
+          "line": 698
+        }
+      ],
+      "preselected_sources": [
+        "frontend/src/app/Services/administration.service.ts",
+        "frontend/src/app/administration/administration.component.ts",
+        "frontend/src/hacking-instructor/challenges/adminSection.ts",
+        "frontend/src/hacking-instructor/challenges/loginAdmin.ts",
+        "server.ts"
+      ],
+      "step_matches": [
+        {
+          "step": 1,
+          "label": "Check whether a user can make a privileged function, such as support impersonation, an administrative action, or a background job, act on resources or perform operations outside that user's own authority.",
+          "required": true,
+          "grants": null,
+          "requires": null,
+          "matched": false,
+          "matched_finding_id": null,
+          "evidence": null,
+          "match_basis": "descriptive",
+          "controls_found": []
+        }
+      ],
+      "case": {
+        "id": "AC-B-007",
+        "kind": "descriptive",
+        "title": "User misuses a privileged function for another purpose",
+        "check": "Check whether a user can make a privileged function, such as support impersonation, an administrative action, or a background job, act on resources or perform operations outside that user's own authority.",
+        "exclusions": [
+          "Operations explicitly permitted to the privileged role on the user's behalf."
+        ],
+        "open_questions": [
+          "Which operations may support staff perform while acting as a customer?"
+        ],
+        "finding": {
+          "cwe": "CWE-285",
+          "severity": "High",
+          "mitigation_title": "Authorize privileged functions against the initiating user's own authority"
+        },
+        "scope_qualifier": {
+          "path_patterns": [
+            "*impersonat*",
+            "*sudo*",
+            "*job*",
+            "*worker*",
+            "*queue*",
+            "*admin*"
+          ],
+          "route_patterns": [
+            "*impersonat*",
+            "*sudo*",
+            "*job*",
+            "*admin*"
+          ]
+        }
+      },
+      "requested": false
+    }
+  ]
+}

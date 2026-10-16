@@ -1,0 +1,14 @@
+{
+  "abuse_case_id": "AC-B-004",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": null,
+      "matched_finding_id": null,
+      "reason": "The preselected review code (create, update, like, show) has no approval workflow, approver role or approved state, so the case does not apply as described. Likes are not approvals. Review edits have no prior approval to keep. The missing-authorization flaws in review update and creation are separate defects already reported.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "refuted"
+    }
+  ]
+}

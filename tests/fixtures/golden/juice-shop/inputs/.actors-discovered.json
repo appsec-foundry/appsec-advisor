@@ -1,0 +1,28 @@
+{
+  "confirmed_relevant": [
+    {
+      "confidence": "high",
+      "id": "ACT-D-01",
+      "label": "anonymous-internet-attacker",
+      "relevance_evidence": "server.ts:596 registers POST /rest/user/login with no authentication, reachable by any internet client. Evidence: server.ts:596."
+    },
+    {
+      "confidence": "high",
+      "id": "ACT-D-02",
+      "label": "authenticated-low-priv-user",
+      "relevance_evidence": "server.ts:311 registers POST /profile/image/url, an authenticated user-scoped upload route that acts on user-owned resources. Evidence: server.ts:311."
+    },
+    {
+      "confidence": "high",
+      "id": "ACT-D-03",
+      "label": "authenticated-high-priv-user",
+      "relevance_evidence": "frontend/src/app/app.guard.ts:54 grants admin route access only when the token role equals the admin role, so an elevated admin position exists. Evidence: frontend/src/app/app.guard.ts:54."
+    }
+  ],
+  "coverage_rationale": "Internet, authenticated and admin positions are covered by static actors. The external LLM, RPC and IdP services fall under compromised-third-party-service. The evidence shows no new trust position, so no additional actor is proposed.",
+  "discovery_cache_key": "assessment-0811af979fde96348583645d10a8c692",
+  "generated_at": "2026-10-16T15:18:22Z",
+  "inputs_questioned": [],
+  "proposed_additional": [],
+  "schema_version": 1
+}

@@ -1,0 +1,2057 @@
+{
+  "version": 2,
+  "generated_at": "2026-10-16T15:18:23Z",
+  "flags": [
+    {
+      "type": "consistency",
+      "severity": "warning",
+      "threat_ids": [
+        "T-028",
+        "T-096"
+      ],
+      "message": "CWE-943 has a 2-level severity difference across components: component-1f61b207923dbaf5 (High) vs component-1f61b207923dbaf5 (Low) without architectural_violation.",
+      "suggested_action": "Review whether the context difference justifies the severity gap, or set architectural_violation:true on the higher-severity instance.",
+      "flag_id": "TF-001",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "consistency",
+      "severity": "warning",
+      "threat_ids": [
+        "T-029",
+        "T-096"
+      ],
+      "message": "CWE-943 has a 2-level severity difference across components: component-1f61b207923dbaf5 (High) vs component-1f61b207923dbaf5 (Low) without architectural_violation.",
+      "suggested_action": "Review whether the context difference justifies the severity gap, or set architectural_violation:true on the higher-severity instance.",
+      "flag_id": "TF-002",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "plausibility",
+      "severity": "warning",
+      "threat_ids": [
+        "T-046"
+      ],
+      "message": "CWE-798 with evidence on file 'server.ts' should be at least High, but risk is Medium.",
+      "suggested_action": "Elevate T-046 to High or provide justification for Medium rating.",
+      "flag_id": "TF-003",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "plausibility",
+      "severity": "warning",
+      "threat_ids": [
+        "T-048"
+      ],
+      "message": "CWE-798 with evidence on file 'frontend/src/app/login/login.component.ts' should be at least High, but risk is Medium.",
+      "suggested_action": "Elevate T-048 to High or provide justification for Medium rating.",
+      "flag_id": "TF-004",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "plausibility",
+      "severity": "warning",
+      "threat_ids": [
+        "T-076"
+      ],
+      "message": "CWE-798 with evidence on file 'routes/checkKeys.ts' should be at least High, but risk is Medium.",
+      "suggested_action": "Elevate T-076 to High or provide justification for Medium rating.",
+      "flag_id": "TF-005",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-013"
+      ],
+      "message": "T-013: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-006",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-014"
+      ],
+      "message": "T-014: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-007",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-016"
+      ],
+      "message": "T-016: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-008",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-017"
+      ],
+      "message": "T-017: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-009",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-018"
+      ],
+      "message": "T-018: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-010",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-019"
+      ],
+      "message": "T-019: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-011",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-020"
+      ],
+      "message": "T-020: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-012",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-021"
+      ],
+      "message": "T-021: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-013",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-022"
+      ],
+      "message": "T-022: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-014",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-023"
+      ],
+      "message": "T-023: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-015",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-024"
+      ],
+      "message": "T-024: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-016",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-025"
+      ],
+      "message": "T-025: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-017",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-026"
+      ],
+      "message": "T-026: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-018",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-027"
+      ],
+      "message": "T-027: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-019",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-030"
+      ],
+      "message": "T-030: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-020",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-031"
+      ],
+      "message": "T-031: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-021",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-032"
+      ],
+      "message": "T-032: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-022",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-033"
+      ],
+      "message": "T-033: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-023",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-038"
+      ],
+      "message": "T-038: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-024",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-039"
+      ],
+      "message": "T-039: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-025",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-040"
+      ],
+      "message": "T-040: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-026",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-041"
+      ],
+      "message": "T-041: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-027",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-044"
+      ],
+      "message": "T-044: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-028",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-045"
+      ],
+      "message": "T-045: risk=Medium does not match Likelihood×Impact matrix (Medium×High → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-029",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-049"
+      ],
+      "message": "T-049: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-030",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-050"
+      ],
+      "message": "T-050: risk=Medium does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-031",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-053"
+      ],
+      "message": "T-053: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-032",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-055"
+      ],
+      "message": "T-055: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-033",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-064"
+      ],
+      "message": "T-064: risk=Medium does not match Likelihood×Impact matrix (Medium×High → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-034",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-068"
+      ],
+      "message": "T-068: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-035",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-072"
+      ],
+      "message": "T-072: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-036",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-073"
+      ],
+      "message": "T-073: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-037",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-074"
+      ],
+      "message": "T-074: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-038",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-080"
+      ],
+      "message": "T-080: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-039",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-083"
+      ],
+      "message": "T-083: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-040",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-088"
+      ],
+      "message": "T-088: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-041",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-091"
+      ],
+      "message": "T-091: risk=Medium does not match Likelihood×Impact matrix (High×Medium → expected High). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-042",
+      "source": "triage-pre-flight"
+    },
+    {
+      "flag_id": "TF-043",
+      "type": "severity_reconciliation",
+      "severity": "info",
+      "threat_ids": [
+        "T-020"
+      ],
+      "message": "Assessed risk High; policy risk High; effective severity Critical (elevated:keystone(Critical)).",
+      "suggested_action": null,
+      "source": "triage_compute_ranking.py"
+    },
+    {
+      "flag_id": "TF-044",
+      "type": "severity_reconciliation",
+      "severity": "info",
+      "threat_ids": [
+        "T-043"
+      ],
+      "message": "Assessed risk High; policy risk High; effective severity Critical (always_crit_promoted:CWE-915).",
+      "suggested_action": null,
+      "source": "triage_compute_ranking.py"
+    },
+    {
+      "flag_id": "TF-045",
+      "type": "severity_reconciliation",
+      "severity": "info",
+      "threat_ids": [
+        "T-049"
+      ],
+      "message": "Assessed risk Medium; policy risk Medium; effective severity High (elevated:external_boundary(tb-1)).",
+      "suggested_action": null,
+      "source": "triage_compute_ranking.py:external_boundary:tb-1"
+    },
+    {
+      "flag_id": "TF-046",
+      "type": "severity_reconciliation",
+      "severity": "info",
+      "threat_ids": [
+        "T-050"
+      ],
+      "message": "Assessed risk High; policy risk Medium; effective severity Medium (capped:individual:CWE-307<=Medium).",
+      "suggested_action": null,
+      "source": "triage_compute_ranking.py"
+    },
+    {
+      "flag_id": "TF-047",
+      "type": "severity_reconciliation",
+      "severity": "info",
+      "threat_ids": [
+        "T-055"
+      ],
+      "message": "Assessed risk Medium; policy risk Medium; effective severity High (elevated:keystone(High)).",
+      "suggested_action": null,
+      "source": "triage_compute_ranking.py"
+    }
+  ],
+  "summary": {
+    "total_flags": 47,
+    "warnings": 42,
+    "info": 5,
+    "threats_reviewed": 82,
+    "pre_flight_flags": 42
+  },
+  "ranking": {
+    "method": "impact-weighted-v2",
+    "ranked_at": "2026-10-16T15:22:18Z",
+    "computed_by": "triage_compute_ranking.py (deterministic)",
+    "views": {
+      "top_threats": {
+        "sort_key": "category_score_impact_weighted",
+        "threshold": "effective_severity >= High",
+        "categories_ranked": []
+      },
+      "top_findings": {
+        "sort_key": "finding_score_impact_weighted",
+        "threshold": "effective_severity == Critical",
+        "max_rows": 5,
+        "findings_ranked": [
+          {
+            "rank": 1,
+            "id": "T-012",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 615,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 2,
+            "id": "T-006",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 612,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 3,
+            "id": "T-008",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 597,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 4,
+            "id": "T-043",
+            "effective_severity": "Critical",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 572,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 5,
+            "id": "T-020",
+            "effective_severity": "Critical",
+            "raw_severity": "High",
+            "chain_role": "keystone",
+            "breach_distance": 3,
+            "score": 545,
+            "compound_chain_ids": [],
+            "verified_chain_ids": [
+              "AC-T-005"
+            ]
+          },
+          {
+            "rank": 6,
+            "id": "T-014",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 7,
+            "id": "T-019",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 8,
+            "id": "T-032",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 9,
+            "id": "T-038",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 10,
+            "id": "T-039",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 11,
+            "id": "T-041",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 12,
+            "id": "W-008",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "severity_basis": "design-risk",
+            "kind": "design",
+            "weakness_class": "secret_management",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 13,
+            "id": "T-001",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 14,
+            "id": "T-016",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 15,
+            "id": "T-021",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 16,
+            "id": "T-022",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 17,
+            "id": "T-023",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 18,
+            "id": "T-024",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 19,
+            "id": "T-027",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 20,
+            "id": "T-030",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 21,
+            "id": "T-031",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 22,
+            "id": "T-033",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 23,
+            "id": "T-110",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 410,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 24,
+            "id": "T-002",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 407,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 25,
+            "id": "T-037",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 407,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 26,
+            "id": "W-007",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "severity_basis": "design-risk",
+            "kind": "design",
+            "weakness_class": "output_xss_csp",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 405,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 27,
+            "id": "T-035",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 392,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 28,
+            "id": "T-004",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 385,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 29,
+            "id": "T-049",
+            "effective_severity": "High",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 385,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 30,
+            "id": "T-018",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "contributor",
+            "breach_distance": 1,
+            "score": 375,
+            "compound_chain_ids": [],
+            "verified_chain_ids": [
+              "AC-T-005"
+            ]
+          },
+          {
+            "rank": 31,
+            "id": "T-003",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "keystone",
+            "breach_distance": 2,
+            "score": 370,
+            "compound_chain_ids": [],
+            "verified_chain_ids": [
+              "AC-B-001"
+            ]
+          },
+          {
+            "rank": 32,
+            "id": "T-028",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 370,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 33,
+            "id": "T-029",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 370,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 34,
+            "id": "T-034",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 370,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 35,
+            "id": "T-036",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 370,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 36,
+            "id": "T-055",
+            "effective_severity": "High",
+            "raw_severity": "Medium",
+            "chain_role": "keystone",
+            "breach_distance": 2,
+            "score": 370,
+            "compound_chain_ids": [],
+            "verified_chain_ids": [
+              "AC-T-007"
+            ]
+          },
+          {
+            "rank": 37,
+            "id": "T-042",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "contributor",
+            "breach_distance": 2,
+            "score": 320,
+            "compound_chain_ids": [],
+            "verified_chain_ids": [
+              "AC-T-007"
+            ]
+          },
+          {
+            "rank": 38,
+            "id": "T-050",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "keystone",
+            "breach_distance": 1,
+            "score": 275,
+            "compound_chain_ids": [],
+            "verified_chain_ids": [
+              "AC-B-003"
+            ]
+          },
+          {
+            "rank": 39,
+            "id": "T-045",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 257,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 40,
+            "id": "T-064",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 257,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 41,
+            "id": "T-058",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 254,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 42,
+            "id": "T-077",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 254,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 43,
+            "id": "T-060",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 239,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 44,
+            "id": "T-061",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 239,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 45,
+            "id": "T-044",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 235,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 46,
+            "id": "T-074",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 235,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 47,
+            "id": "T-080",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 235,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 48,
+            "id": "T-091",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 235,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 49,
+            "id": "T-046",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 232,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 50,
+            "id": "T-051",
+            "effective_severity": "Medium",
+            "raw_severity": "Medium",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 232,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          }
+        ]
+      },
+      "prioritized_mitigations": {
+        "sort_key": "addressed_severity_desc_then_effort_asc",
+        "mitigations_ranked": [
+          {
+            "id": "M-035",
+            "addresses_findings": [
+              "T-012"
+            ],
+            "effort": "Low",
+            "score": 3000,
+            "rank": 1
+          },
+          {
+            "id": "M-058",
+            "addresses_findings": [
+              "T-043"
+            ],
+            "effort": "Low",
+            "score": 3000,
+            "rank": 2
+          },
+          {
+            "id": "M-002",
+            "addresses_findings": [
+              "T-008"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 3
+          },
+          {
+            "id": "M-010",
+            "addresses_findings": [
+              "T-043"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 4
+          },
+          {
+            "id": "M-033",
+            "addresses_findings": [
+              "T-006"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 5
+          },
+          {
+            "id": "M-034",
+            "addresses_findings": [
+              "T-008"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 6
+          },
+          {
+            "id": "M-040",
+            "addresses_findings": [
+              "T-020"
+            ],
+            "effort": "Medium",
+            "score": 2990,
+            "rank": 7
+          },
+          {
+            "id": "M-028",
+            "addresses_findings": [
+              "T-001"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 8
+          },
+          {
+            "id": "M-030",
+            "addresses_findings": [
+              "T-003"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 9
+          },
+          {
+            "id": "M-031",
+            "addresses_findings": [
+              "T-004"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 10
+          },
+          {
+            "id": "M-036",
+            "addresses_findings": [
+              "T-014"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 11
+          },
+          {
+            "id": "M-041",
+            "addresses_findings": [
+              "T-021"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 12
+          },
+          {
+            "id": "M-043",
+            "addresses_findings": [
+              "T-023"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 13
+          },
+          {
+            "id": "M-046",
+            "addresses_findings": [
+              "T-028"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 14
+          },
+          {
+            "id": "M-047",
+            "addresses_findings": [
+              "T-029"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 15
+          },
+          {
+            "id": "M-050",
+            "addresses_findings": [
+              "T-032"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 16
+          },
+          {
+            "id": "M-054",
+            "addresses_findings": [
+              "T-036"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 17
+          },
+          {
+            "id": "M-055",
+            "addresses_findings": [
+              "T-037"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 18
+          },
+          {
+            "id": "M-057",
+            "addresses_findings": [
+              "T-042"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 19
+          },
+          {
+            "id": "M-070",
+            "addresses_findings": [
+              "T-055"
+            ],
+            "effort": "Low",
+            "score": 2000,
+            "rank": 20
+          },
+          {
+            "id": "M-003",
+            "addresses_findings": [
+              "T-014"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 21
+          },
+          {
+            "id": "M-004",
+            "addresses_findings": [
+              "T-022"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 22
+          },
+          {
+            "id": "M-005",
+            "addresses_findings": [
+              "T-028"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 23
+          },
+          {
+            "id": "M-006",
+            "addresses_findings": [
+              "T-031"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 24
+          },
+          {
+            "id": "M-007",
+            "addresses_findings": [
+              "T-036"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 25
+          },
+          {
+            "id": "M-008",
+            "addresses_findings": [
+              "T-038"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 26
+          },
+          {
+            "id": "M-009",
+            "addresses_findings": [
+              "T-041"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 27
+          },
+          {
+            "id": "M-029",
+            "addresses_findings": [
+              "T-002"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 28
+          },
+          {
+            "id": "M-037",
+            "addresses_findings": [
+              "T-016"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 29
+          },
+          {
+            "id": "M-038",
+            "addresses_findings": [
+              "T-018"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 30
+          },
+          {
+            "id": "M-039",
+            "addresses_findings": [
+              "T-019"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 31
+          },
+          {
+            "id": "M-042",
+            "addresses_findings": [
+              "T-022"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 32
+          },
+          {
+            "id": "M-044",
+            "addresses_findings": [
+              "T-024"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 33
+          },
+          {
+            "id": "M-045",
+            "addresses_findings": [
+              "T-027"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 34
+          },
+          {
+            "id": "M-048",
+            "addresses_findings": [
+              "T-030"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 35
+          },
+          {
+            "id": "M-049",
+            "addresses_findings": [
+              "T-031"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 36
+          },
+          {
+            "id": "M-051",
+            "addresses_findings": [
+              "T-033"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 37
+          },
+          {
+            "id": "M-052",
+            "addresses_findings": [
+              "T-034"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 38
+          },
+          {
+            "id": "M-053",
+            "addresses_findings": [
+              "T-035"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 39
+          },
+          {
+            "id": "M-056",
+            "addresses_findings": [
+              "T-041"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 40
+          },
+          {
+            "id": "M-064",
+            "addresses_findings": [
+              "T-049"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 41
+          },
+          {
+            "id": "M-102",
+            "addresses_findings": [
+              "T-110"
+            ],
+            "effort": "Medium",
+            "score": 1990,
+            "rank": 42
+          },
+          {
+            "id": "M-023",
+            "addresses_findings": [
+              "T-057"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 43
+          },
+          {
+            "id": "M-024",
+            "addresses_findings": [
+              "T-059"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 44
+          },
+          {
+            "id": "M-025",
+            "addresses_findings": [
+              "T-062"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 45
+          },
+          {
+            "id": "M-026",
+            "addresses_findings": [
+              "T-089"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 46
+          },
+          {
+            "id": "M-027",
+            "addresses_findings": [
+              "T-090"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 47
+          },
+          {
+            "id": "M-032",
+            "addresses_findings": [
+              "T-005"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 48
+          },
+          {
+            "id": "M-059",
+            "addresses_findings": [
+              "T-044"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 49
+          },
+          {
+            "id": "M-060",
+            "addresses_findings": [
+              "T-045"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 50
+          },
+          {
+            "id": "M-061",
+            "addresses_findings": [
+              "T-046"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 51
+          },
+          {
+            "id": "M-063",
+            "addresses_findings": [
+              "T-048"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 52
+          },
+          {
+            "id": "M-066",
+            "addresses_findings": [
+              "T-051"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 53
+          },
+          {
+            "id": "M-067",
+            "addresses_findings": [
+              "T-052"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 54
+          },
+          {
+            "id": "M-069",
+            "addresses_findings": [
+              "T-054"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 55
+          },
+          {
+            "id": "M-071",
+            "addresses_findings": [
+              "T-056"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 56
+          },
+          {
+            "id": "M-072",
+            "addresses_findings": [
+              "T-058"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 57
+          },
+          {
+            "id": "M-073",
+            "addresses_findings": [
+              "T-060"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 58
+          },
+          {
+            "id": "M-075",
+            "addresses_findings": [
+              "T-063"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 59
+          },
+          {
+            "id": "M-076",
+            "addresses_findings": [
+              "T-064"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 60
+          },
+          {
+            "id": "M-077",
+            "addresses_findings": [
+              "T-065"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 61
+          },
+          {
+            "id": "M-078",
+            "addresses_findings": [
+              "T-066"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 62
+          },
+          {
+            "id": "M-079",
+            "addresses_findings": [
+              "T-067"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 63
+          },
+          {
+            "id": "M-080",
+            "addresses_findings": [
+              "T-068"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 64
+          },
+          {
+            "id": "M-081",
+            "addresses_findings": [
+              "T-069"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 65
+          },
+          {
+            "id": "M-082",
+            "addresses_findings": [
+              "T-070"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 66
+          },
+          {
+            "id": "M-083",
+            "addresses_findings": [
+              "T-071"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 67
+          },
+          {
+            "id": "M-085",
+            "addresses_findings": [
+              "T-073"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 68
+          },
+          {
+            "id": "M-086",
+            "addresses_findings": [
+              "T-074"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 69
+          },
+          {
+            "id": "M-088",
+            "addresses_findings": [
+              "T-076"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 70
+          },
+          {
+            "id": "M-090",
+            "addresses_findings": [
+              "T-078"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 71
+          },
+          {
+            "id": "M-093",
+            "addresses_findings": [
+              "T-081"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 72
+          },
+          {
+            "id": "M-094",
+            "addresses_findings": [
+              "T-082"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 73
+          },
+          {
+            "id": "M-095",
+            "addresses_findings": [
+              "T-083"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 74
+          },
+          {
+            "id": "M-096",
+            "addresses_findings": [
+              "T-084"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 75
+          },
+          {
+            "id": "M-097",
+            "addresses_findings": [
+              "T-085"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 76
+          },
+          {
+            "id": "M-098",
+            "addresses_findings": [
+              "T-086"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 77
+          },
+          {
+            "id": "M-099",
+            "addresses_findings": [
+              "T-087"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 78
+          },
+          {
+            "id": "M-100",
+            "addresses_findings": [
+              "T-088"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 79
+          },
+          {
+            "id": "M-101",
+            "addresses_findings": [
+              "T-091"
+            ],
+            "effort": "Low",
+            "score": 1000,
+            "rank": 80
+          },
+          {
+            "id": "M-001",
+            "addresses_findings": [
+              "T-005"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 81
+          },
+          {
+            "id": "M-011",
+            "addresses_findings": [
+              "T-056"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 82
+          },
+          {
+            "id": "M-012",
+            "addresses_findings": [
+              "T-061"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 83
+          },
+          {
+            "id": "M-013",
+            "addresses_findings": [
+              "T-063"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 84
+          },
+          {
+            "id": "M-014",
+            "addresses_findings": [
+              "T-064"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 85
+          },
+          {
+            "id": "M-015",
+            "addresses_findings": [
+              "T-065"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 86
+          },
+          {
+            "id": "M-016",
+            "addresses_findings": [
+              "T-066"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 87
+          },
+          {
+            "id": "M-017",
+            "addresses_findings": [
+              "T-068"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 88
+          },
+          {
+            "id": "M-018",
+            "addresses_findings": [
+              "T-072"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 89
+          },
+          {
+            "id": "M-019",
+            "addresses_findings": [
+              "T-077"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 90
+          },
+          {
+            "id": "M-020",
+            "addresses_findings": [
+              "T-081"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 91
+          },
+          {
+            "id": "M-021",
+            "addresses_findings": [
+              "T-083"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 92
+          },
+          {
+            "id": "M-022",
+            "addresses_findings": [
+              "T-086"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 93
+          },
+          {
+            "id": "M-062",
+            "addresses_findings": [
+              "T-047"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 94
+          },
+          {
+            "id": "M-065",
+            "addresses_findings": [
+              "T-050"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 95
+          },
+          {
+            "id": "M-068",
+            "addresses_findings": [
+              "T-053"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 96
+          },
+          {
+            "id": "M-074",
+            "addresses_findings": [
+              "T-061"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 97
+          },
+          {
+            "id": "M-084",
+            "addresses_findings": [
+              "T-072"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 98
+          },
+          {
+            "id": "M-087",
+            "addresses_findings": [
+              "T-075"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 99
+          },
+          {
+            "id": "M-089",
+            "addresses_findings": [
+              "T-077"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 100
+          },
+          {
+            "id": "M-091",
+            "addresses_findings": [
+              "T-079"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 101
+          },
+          {
+            "id": "M-092",
+            "addresses_findings": [
+              "T-080"
+            ],
+            "effort": "Medium",
+            "score": 990,
+            "rank": 102
+          }
+        ]
+      },
+      "chains": {
+        "sort_key": "severity_desc_then_member_count_desc",
+        "chains_ranked": []
+      }
+    },
+    "reconciliation_summary": {
+      "findings_elevated_via_chain": 2,
+      "findings_elevated_via_external_boundary": 1,
+      "findings_redistanced_via_boundary_graph": 2,
+      "boundaries_with_refuted_assumption": 6,
+      "findings_capped_by_cwe": 1,
+      "contributors_capped_at_high": 2,
+      "boundary_refs_rejected_before_ranking": 0,
+      "chains_active": 0,
+      "verified_chains_active": 4
+    }
+  }
+}

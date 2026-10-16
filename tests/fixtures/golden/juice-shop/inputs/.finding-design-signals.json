@@ -1,0 +1,137 @@
+{
+  "design_signals": [
+    {
+      "affected_components": [
+        "component-6ffaf23414c56207"
+      ],
+      "cwe": "CWE-922",
+      "instance_ids": [
+        "T-002"
+      ],
+      "mechanism_id": "browser-readable-session-credentials",
+      "practice_evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "id": "T-002",
+          "line": 101
+        }
+      ],
+      "rule_id": "FINDING-MECHANISM",
+      "severity": "High",
+      "statement": "Browser code retains reusable authentication credentials in script-readable storage. Script execution in the same origin can obtain the credentials and reuse the authenticated session.",
+      "title": "Browser scripts retain reusable session credentials",
+      "weakness_class": "sensitive_disclosure"
+    },
+    {
+      "affected_components": [
+        "component-1f61b207923dbaf5"
+      ],
+      "cwe": "CWE-943",
+      "instance_ids": [
+        "T-027"
+      ],
+      "mechanism_id": "document-query-construction",
+      "practice_evidence": [
+        {
+          "file": "routes/showProductReviews.ts",
+          "id": "T-027",
+          "line": 36
+        }
+      ],
+      "rule_id": "FINDING-MECHANISM",
+      "severity": "High",
+      "statement": "Document-store queries take operators or JavaScript predicates from application values instead of fixed query structures with typed values. Callers can change what a query selects, for example through injected operators or evaluated expressions.",
+      "title": "Document-database queries take their structure from application values",
+      "weakness_class": "injection"
+    },
+    {
+      "affected_components": [
+        "component-1f61b207923dbaf5"
+      ],
+      "cwe": "CWE-943",
+      "instance_ids": [
+        "T-029"
+      ],
+      "mechanism_id": "document-query-construction",
+      "practice_evidence": [
+        {
+          "file": "routes/trackOrder.ts",
+          "id": "T-029",
+          "line": 18
+        }
+      ],
+      "rule_id": "FINDING-MECHANISM",
+      "severity": "High",
+      "statement": "Document-store queries take operators or JavaScript predicates from application values instead of fixed query structures with typed values. Callers can change what a query selects, for example through injected operators or evaluated expressions.",
+      "title": "Document-database queries take their structure from application values",
+      "weakness_class": "injection"
+    },
+    {
+      "affected_components": [
+        "component-1f61b207923dbaf5"
+      ],
+      "cwe": "CWE-95",
+      "instance_ids": [
+        "T-037"
+      ],
+      "mechanism_id": "application-data-as-code",
+      "practice_evidence": [
+        {
+          "file": "routes/userProfile.ts",
+          "id": "T-037",
+          "line": 61
+        }
+      ],
+      "rule_id": "FINDING-MECHANISM",
+      "severity": "High",
+      "statement": "An interpreter evaluates application values as code. The affected path mixes data processing with executable program construction instead of constraining callers to predefined operations.",
+      "title": "Application data crosses into executable code",
+      "weakness_class": "injection"
+    },
+    {
+      "affected_components": [
+        "component-6ffaf23414c56207"
+      ],
+      "cwe": "CWE-352",
+      "instance_ids": [
+        "T-047"
+      ],
+      "mechanism_id": "unbound-authorization-requests",
+      "practice_evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "id": "T-047",
+          "line": 148
+        }
+      ],
+      "rule_id": "FINDING-MECHANISM",
+      "severity": "Medium",
+      "statement": "The client starts OAuth or OpenID Connect sign-in without a per-request state value that its callback verifies. A forged authorization response can then complete sign-in in the victim's browser with the attacker's grant.",
+      "title": "OAuth sign-in requests are not bound to the user's browser session",
+      "weakness_class": "missing_authz"
+    },
+    {
+      "affected_components": [
+        "component-1f61b207923dbaf5"
+      ],
+      "cwe": "CWE-352",
+      "instance_ids": [
+        "T-094"
+      ],
+      "mechanism_id": "unprotected-cookie-mutations",
+      "practice_evidence": [
+        {
+          "file": "routes/updateUserProfile.ts",
+          "id": "T-094",
+          "line": 38
+        }
+      ],
+      "rule_id": "FINDING-MECHANISM",
+      "severity": "Low",
+      "statement": "A state-changing operation accepts ambient browser credentials without an enforced check that the authenticated user initiated the request. The affected mutation path lacks a request-authenticity boundary.",
+      "title": "Cookie-authenticated changes lack request authenticity checks",
+      "weakness_class": "missing_authz"
+    }
+  ],
+  "version": 1
+}
