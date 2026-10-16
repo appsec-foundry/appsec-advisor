@@ -256,3 +256,14 @@ summarizing or adding findings. Then state the outcome by the exit
 code: `0` completed; `20` completed, but the `--fail-on` gate failed; `3` paused
 or stopped, and accepted steps stay for `--resume`; `130` interrupted, and
 accepted steps stay for `--resume`; any other code, the assessment failed.
+
+Except after `3` or `130`, check whether the run recorded a possible plugin
+error:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
+```
+
+Only when it returns `offer=true`, follow
+`$CLAUDE_PLUGIN_ROOT/skills/report-error/SKILL.md` with `--offer --repo "$REPO"
+--output "$OUTPUT_DIR"`; its question is the only one asked after a run.
