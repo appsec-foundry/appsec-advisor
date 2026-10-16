@@ -11344,7 +11344,15 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     _AssessmentProgress.open(ns.progress_file)
     unsupported = sorted({arg.split("=", 1)[0] for arg in rest} & set(_ASSESSMENT_UNSUPPORTED))
     if unsupported:
-        raise CallError(f"{', '.join(unsupported)} is not supported for a multi-repository assessment")
+        raise CallError(f"{', '.join(unsupported)} is not supported; the controller runs full assessments only")
+    # Free-text focus would otherwise be dropped silently and a full analysis
+    # reported as if it were the narrowed one the user asked for.
+    focus = resolve_config.build_parser().parse_known_args(rest)[0].scope
+    if focus:
+        raise CallError(
+            f"{' '.join(focus)!r} was read as a free-text focus, which the controller does not support; "
+            "it analyses every selected repository in full. A flag value belongs directly after its flag."
+        )
     if ns.rebuild and ns.resume:
         raise CallError("--rebuild starts the assessment again and cannot be combined with --resume")
     # One repository runs through the same stages unless APPSEC_SINGLE_REPO_CONTROLLER=0.

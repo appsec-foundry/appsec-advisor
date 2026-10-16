@@ -395,3 +395,13 @@ def test_a_report_outside_any_checkout_writes_no_ignore_rule(tmp_path, monkeypat
     outcome, _, _ = _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf",))
     assert outcome["status"] == "complete"
     assert not (tmp_path / ".gitignore").exists() and not (tmp_path / "solo" / ".gitignore").exists()
+
+
+def test_a_one_repository_refusal_does_not_call_itself_multi_repository(tmp_path):
+    root = tmp_path / "solo"
+    checkout(root)
+    argv = ["--repo", str(root), "--output", str(tmp_path / "out"), "--hard-budget", "5", "--incremental"]
+    with pytest.raises(controller.CallError) as refused:
+        controller.assess_repositories(argv, host_factory=lambda *args: pytest.fail("no model may be called"))
+    assert "--incremental is not supported" in str(refused.value)
+    assert "multi-repository" not in str(refused.value)
