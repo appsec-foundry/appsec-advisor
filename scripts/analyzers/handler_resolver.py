@@ -10,13 +10,22 @@ its definition and classifies the resolved code:
 - ``verified``    a credential is read, checked against a verifier or session
                   store, and a rejecting branch follows within a few lines;
 - ``decode_only`` a token is decoded without signature verification;
-- ``none``        every element resolved, none reads a credential, and the
-                  application object is created in the registration file, so no
-                  unseen global middleware can authenticate the route;
+- ``none``        every element resolved, none reads a credential (or only as a
+                  pass-through loader, below), and the application object is
+                  created in the registration file, so no unseen global
+                  middleware can authenticate the route;
 - ``unresolved``  anything else: an element that cannot be followed (unknown
                   package, dynamic dispatch, a conditional guard, a missing
                   definition), a credential read without a check, or a router
                   whose mounting context lies in another file.
+
+A JavaScript middleware that reads or decodes a credential but can never stop
+the request is a pass-through loader (an identity cache, a challenge or audit
+hook) and authenticates nothing: it calls only an argument-less ``next()``,
+writes no response, throws nothing, and verifies only through a callback, so a
+failed verification cannot reject. Any response call, ``throw``, ``next(arg)``
+or synchronous verify keeps the element unresolved, because the request may
+end there.
 
 Resolution covers JavaScript/TypeScript call registrations (same-file
 definitions, ES imports and ``require`` of repository modules, factory calls,
@@ -138,6 +147,10 @@ _JS_CREDENTIAL_RE = re.compile(
     r"|\b[\w$]*(?:jwt|Jwt|JWT|[tT]oken)[\w$]*\s*\(\s*req(?:uest)?\b"
     r"|\breq(?:uest)?\s*\??\.\s*(?:user|session|auth)\b"
     r"|\bisAuthenticated\s*\("
+    # A token field read from the body or query (`req.body.tmpToken`,
+    # `const { tmpToken } = req.body`). CSRF and captcha tokens are not credentials.
+    r"|\breq(?:uest)?\s*\??\.\s*(?:body|query)\s*\??\.\s*(?![\w$]*(?i:csrf|xsrf|captcha))[\w$]*[tT]oken\b"
+    r"|\{[^{}]*\b(?![\w$]*(?i:csrf|xsrf|captcha))[\w$]*[tT]oken\b[^{}]*\}\s*=\s*req(?:uest)?\s*\??\.\s*(?:body|query)\b"
 )
 _JS_VERIFY_RE = re.compile(
     r"(?:\.|\b)verify(?:Token|Jwt|JWT|IdToken|Signature|Session|Credentials)?\s*\("
@@ -154,6 +167,13 @@ _JS_REJECT_RE = re.compile(
     r"|\bthrow\s+new\s+\w*(?:Unauthori[sz]ed|Forbidden|Auth\w*)\w*|\bUnauthori[sz]ed\w*\s*\("
     r"|\.redirect\(\s*['\"`][^'\"`]*login"
 )
+# What lets a middleware end or reject the request; its absence makes a credential read pass-through.
+_JS_REQUEST_END_RE = re.compile(
+    r"\b(?:res|response|reply|ctx)\s*\.\s*(?:status|sendStatus|send|json|end|redirect|render|sendFile|code|body)\b"
+    r"|\bthrow\b|\bnext\s*\(\s*[^)\s]"
+)
+_JS_BARE_NEXT_RE = re.compile(r"\bnext\s*\(\s*\)")
+_JS_CALLBACK_RE = re.compile(r"=>|\bfunction\b")
 _JS_IMPORT_RE = re.compile(
     r"\bimport\s+(?:type\s+)?(?:(?P<default>[\w$]+)\s*,?\s*)?"
     r"(?:\{(?P<named>[^}]*)\}|\*\s+as\s+(?P<ns>[\w$]+))?\s*from\s*['\"](?P<src>[^'\"]+)['\"]"
@@ -746,6 +766,8 @@ class HandlerResolver:
         within ``_REJECT_WINDOW`` lines, or after a later test of the verify
         result; ``decode_only`` when a token is decoded without verification;
         ``unresolved`` when a credential is read but neither is shown; else ``none``.
+        A JS pass-through loader (module docstring) is ``none`` instead of
+        ``decode_only`` or ``unresolved``.
         """
         credential, verify, decode, reject = (
             (_PY_CREDENTIAL_RE, _PY_VERIFY_RE, _PY_DECODE_RE, _PY_REJECT_RE)
@@ -773,11 +795,28 @@ class HandlerResolver:
                         return HandlerSignal("verified", _scheme(row), [{"file": rel, "line": line + index}])
                 if decode.search(row) and not verify.search(row):
                     decoded = decoded or {"file": rel, "line": line + index}
+        if (reads or decoded) and not python and self._passes_through(expanded):
+            return HandlerSignal("none", "none")
         if decoded:
             return HandlerSignal("decode_only", "none", [decoded])
         if reads:
             return HandlerSignal("unresolved", evidence=[reads])
         return HandlerSignal("none", "none")
+
+    @staticmethod
+    def _passes_through(bodies: list[Body]) -> bool:
+        """Whether a chain link always hands the request on and cannot reject it."""
+        if not any(_JS_BARE_NEXT_RE.search(body) for _rel, _line, body in bodies):
+            return False
+        for _rel, _line, body in bodies:
+            if _JS_REQUEST_END_RE.search(body):
+                return False
+            # A synchronous verify can throw and so reject; only a callback form cannot.
+            for match in _JS_VERIFY_RE.finditer(body):
+                opening = match.end() - 1
+                if body[opening] != "(" or not _JS_CALLBACK_RE.search(body[opening : _matching(body, opening)]):
+                    return False
+        return True
 
     def _chain(self, route: dict):
         framework = route.get("framework")

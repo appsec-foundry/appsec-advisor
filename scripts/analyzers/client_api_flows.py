@@ -6,7 +6,11 @@ excludes as same-origin, so the architecture model can miss the most
 important flow of a web application. This module matches URL arguments of
 complete, bounded HTTP calls against the route inventory: a literal whose path,
 with `${...}` and a trailing concatenation read as a parameter, equals a
-route's path pattern is a request to that route. The matched routes are
+route's path pattern is a request to that route. A same-file base-URL field or
+constant (`private host = this.hostServer + '/api/Orders'`) is substituted
+where the URL argument names it; a name defined more than once with different
+paths, or whose value carries no relative path, stays a parameter or origin as
+before. The matched routes are
 grouped by their owning component and by the authentication their resolved
 handlers prove (`flow_route_auth.route_outcome`); each group becomes one flow
 whose authentication considers every matched route before evidence is bounded.
@@ -48,6 +52,74 @@ _MAX_CALL_CHARS = 4096
 _TEST_PATH_RE = re.compile(
     r"(?:^|/)(?:tests?|__tests__|spec|e2e|cypress|__mocks__)(?:/|$)|\.(?:spec|test|cy)\.\w+$|(?:^|/)test_[^/]*$"
 )
+
+
+_BASE_DEFINITION_RE = re.compile(
+    r"^[ \t]*(?:(?:private|public|protected|readonly|static|export|const|let|var)\s+)*(?:this\s*\.\s*)?"
+    r"(?P<name>[A-Za-z_$][\w$]*)\s*(?::\s*string\s*)?=\s*"
+    r"(?:(?P<prefix>[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\+\s*)?"
+    r"(?P<literal>" + _LITERAL_RE.pattern + r")[ \t]*;?[ \t]*$",
+    re.MULTILINE,
+)
+_ADJACENT_LITERALS_RE = re.compile(r"(" + _LITERAL_RE.pattern + r")[ \t]*\+[ \t]*(" + _LITERAL_RE.pattern + r")")
+_BASE_NESTING = 3
+
+
+def _base_paths(clean: str) -> dict[str, str]:
+    """``{name: relative path}`` of same-file string fields and constants that hold a base URL.
+
+    A prefix that names another such base (`search = this.host + '/search'`)
+    contributes its path; any other prefix is the origin.
+    """
+    values: dict[str, set[tuple[str, str]]] = {}
+    for match in _BASE_DEFINITION_RE.finditer(clean):
+        literal = match["literal"][1:-1]
+        text = _TEMPLATE_RE.sub("p", literal)
+        start = text.find("/")
+        path = text[start:] if start >= 0 else ""
+        valid = path and not path.startswith("//") and not re.search(r"[\s'\"`\\]", path) and "://" not in text
+        prefix = re.sub(r"^this\.", "", re.sub(r"\s+", "", match["prefix"] or ""))
+        values.setdefault(match["name"], set()).add((prefix, path if valid else ""))
+    defined = {name: next(iter(rows)) for name, rows in values.items() if len(rows) == 1 and next(iter(rows))[1]}
+    bases: dict[str, str] = {}
+    for _ in range(_BASE_NESTING + 1):
+        for name, (prefix, path) in defined.items():
+            if prefix not in values:
+                bases[name] = path
+            elif prefix in bases and prefix != name:
+                bases[name] = bases[prefix].rstrip("/") + path
+    return bases
+
+
+def _substitute_bases(expression: str, bases: dict[str, str]) -> str:
+    """The URL argument with named base paths inlined; newlines are kept so line numbers stay exact."""
+    if not bases:
+        return expression
+    names = "|".join(re.escape(name) for name in sorted(bases, key=len, reverse=True))
+    reference = rf"(?:this\s*\.\s*)?(?P<name>{names})(?![\w$])"
+    out, last = [], 0
+    for token in _LITERAL_RE.finditer(expression):
+        out.append(
+            re.sub(
+                rf"(?<![\w$.]){reference}(?!\s*[.(\[])",
+                lambda m: "'" + bases[m["name"]] + "'",
+                expression[last : token.start()],
+            )
+        )
+        literal = token[0]
+        if literal[0] == "`":
+            literal = re.sub(rf"\$\{{\s*{reference}\s*\}}", lambda m: bases[m["name"]], literal)
+        out.append(literal)
+        last = token.end()
+    out.append(
+        re.sub(rf"(?<![\w$.]){reference}(?!\s*[.(\[])", lambda m: "'" + bases[m["name"]] + "'", expression[last:])
+    )
+    merged = "".join(out)
+    while True:
+        joined = _ADJACENT_LITERALS_RE.sub(lambda m: "`" + m[1][1:-1] + m[2][1:-1] + "`", merged, count=1)
+        if joined == merged:
+            return merged
+        merged = joined
 
 
 def _segments(path: str) -> list[str]:
@@ -141,6 +213,7 @@ def _requests(text: str):
         if token[0][0] not in "'\"`":
             clean[token.start() : token.end()] = blank
     code, clean = "".join(code), "".join(clean)
+    bases = _base_paths(clean)
     for call in _METHOD_CALL_RE.finditer(code):
         arguments = _arguments(code, call.end() - 1)
         if not arguments:
@@ -149,8 +222,9 @@ def _requests(text: str):
         if method is None:
             continue
         start, end = arguments[0]
-        for requested, offset in _request_paths(clean[start:end]):
-            yield requested, method, text.count("\n", 0, start + offset) + 1
+        expression = _substitute_bases(clean[start:end], bases)
+        for requested, offset in _request_paths(expression):
+            yield requested, method, text.count("\n", 0, start) + expression.count("\n", 0, offset) + 1
 
 
 def client_calls(files: dict[str, bytes], routes: list[dict]) -> dict[int, list[dict]]:

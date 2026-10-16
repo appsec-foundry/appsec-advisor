@@ -341,3 +341,54 @@ def test_non_requests_and_unresolved_methods_do_not_borrow_route_authentication(
         route("POST", "/records", 11, "none", "none", "absent"),
     ]
     assert client_calls({"ui/api.ts": source.encode()}, routes) == {}
+
+
+@pytest.mark.parametrize(
+    ("source", "method", "line"),
+    [
+        (
+            "export class OrderService {\n"
+            "  private readonly host = this.hostServer + '/api/orders'\n"
+            "  find (id) {\n"
+            "    return this.http.get(`${this.host}/${id}`)\n"
+            "  }\n"
+            "}\n",
+            "GET",
+            4,
+        ),
+        (
+            'const LEDGER = environment.api + "/v2/ledger"\n'
+            "const ENTRIES = LEDGER + '/entries'\n"
+            "export function add (entry) {\n"
+            "  return client.post(\n"
+            "    ENTRIES + '/',\n"
+            "    entry)\n"
+            "}\n",
+            "POST",
+            5,
+        ),
+    ],
+    ids=["class-field-template", "nested-constant-concatenation"],
+)
+def test_a_same_file_base_url_resolves_the_requested_route(source, method, line):
+    routes = [
+        route("GET", "/api/orders/:id", 10, "verified", "bearer", "present"),
+        route("POST", "/v2/ledger/entries", 11, "none", "none", "absent"),
+    ]
+    calls = client_calls({"ui/orders.service.ts": source.encode()}, routes)
+    assert calls == {0 if method == "GET" else 1: [{"file": "ui/orders.service.ts", "line": line}]}
+
+
+@pytest.mark.parametrize(
+    "definitions",
+    [
+        "  private host = this.hostServer + '/api/orders'\n  private host = this.hostServer + '/api/archive'\n",
+        "  private host = 'https://remote.invalid/api/orders'\n",
+        "  private host = environment.hostServer\n",
+    ],
+    ids=["ambiguous", "absolute", "origin-only"],
+)
+def test_an_ambiguous_absolute_or_origin_base_resolves_no_route(definitions):
+    source = f"export class OrderService {{\n{definitions}  find (id) {{ return this.http.get(`${{this.host}}/${{id}}`) }}\n}}\n"
+    routes = [route("GET", "/api/orders/:id", 10, "verified", "bearer", "present")]
+    assert client_calls({"ui/orders.service.ts": source.encode()}, routes) == {}
