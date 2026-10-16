@@ -154,6 +154,11 @@ export const eventOf = (line: string): { activity: string; retrying: boolean } |
 
 const shortRun = (runId: string): string => runId.replace(/^assessment-/, '').slice(0, 7)
 
+// A killed controller never writes its final status; with its lock gone stale a
+// state that still says `running` describes a run that died.
+export const endedOf = (runId: string, status: string): string =>
+  `Threat model run ${shortRun(runId)} ended${status === '' ? '' : `: ${status === 'running' ? 'interrupted (process gone)' : status}`}`
+
 const pollLive = async ($: EngineInterface, t: number): Promise<void> => {
   const dir = `${await $.session.root()}/${REPORT_DIR}`
   const text = await $.fs.read(`${dir}/.appsec-lock`).catch(() => undefined)
@@ -164,7 +169,7 @@ const pollLive = async ($: EngineInterface, t: number): Promise<void> => {
     await update($, live, () => null)
     const state = await $.fs.read(`${dir}/.assessment-state.json`).catch(() => undefined)
     const status = state === undefined ? '' : String(JSON.parse(state).status ?? '')
-    $.ui.toast(`Threat model run ${shortRun(before.runId)} ended${status === '' ? '' : `: ${status}`}`)
+    $.ui.toast(endedOf(before.runId, status))
     return
   }
   const state = await $.fs.read(`${dir}/.assessment-state.json`).catch(() => undefined)

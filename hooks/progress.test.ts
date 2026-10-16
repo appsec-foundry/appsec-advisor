@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { durationOf, eventOf, isStepCommand, lockOf, outputFileOf, roleOf, rowOf, stepOf, tailOf, toastOf } from './progress'
+import { durationOf, endedOf, eventOf, isStepCommand, lockOf, outputFileOf, roleOf, rowOf, stepOf, tailOf, toastOf } from './progress'
 
 const START = '18:55:27  1/8 Reconnaissance    start  planning      <1m'
 const WARN = '17:56:51  1/8 Reconnaissance    ⚠      planning       3m          model call failed (server_error); repeating it in 15 s (attempt 2)'
@@ -59,6 +59,12 @@ test('reads the lock heartbeat and run id', () => {
   expect(lockOf('3\n1792083952\nassessment-0cd1ee50\nacquired=1792083950\nstale_after=60\n')?.staleAfter).toBe(60)
   expect(lockOf('3\n1792083952\nstale_after=60\n')?.runId).toBe('')
   expect(lockOf('garbage')).toBe(undefined)
+})
+
+test('reports a run whose state still says running as interrupted', () => {
+  expect(endedOf('assessment-9cdfe5d0625c', 'running')).toBe('Threat model run 9cdfe5d ended: interrupted (process gone)')
+  expect(endedOf('assessment-9cdfe5d0625c', 'complete')).toBe('Threat model run 9cdfe5d ended: complete')
+  expect(endedOf('assessment-9cdfe5d0625c', '')).toBe('Threat model run 9cdfe5d ended')
 })
 
 test('names the role of a host-events file', () => {
