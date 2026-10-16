@@ -735,6 +735,9 @@ def test_a_runtime_change_during_the_session_is_disclosed_not_fatal(tmp_path, mo
         assert controller._assessment_runtime_warning(state) is None
         current[0] = "b" * 64
         assert "--rebuild" in controller._assessment_runtime_warning(state)
+        # Mid-run it says the run goes on, so it never reads as the run's end.
+        assert "continues" not in controller._assessment_runtime_warning(state)
+        assert "The assessment continues" in controller._assessment_runtime_warning(state, running=True)
     assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] != "failed"
 
 

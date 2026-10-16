@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 import stat
 import threading
@@ -187,15 +188,14 @@ def _ranges(slices) -> list[dict]:
 
 
 class AssessmentJobs:
-    def __init__(
-        self, scope, directory, budget, host_factory, should_stop, checkpoint, *, inherited=False, reuse_inherited=True
-    ):
-        """`inherited` marks receipts already present as an earlier, unfinished run's cache.
+    def __init__(self, scope, directory, budget, host_factory, should_stop, checkpoint, *, cache=None):
+        """`cache` holds an earlier, unfinished run's accepted jobs (see assessment_state.CACHE_NAME).
 
-        Such a job is reused only when it still matches its request and passes
-        today's acceptance checks, and is redone otherwise; with
-        `reuse_inherited` false it is always redone. A receipt this session
-        wrote, or a resumed session's, stays strict.
+        A cached job is adopted only when it still matches its request and
+        passes today's acceptance checks: its calls and cost are charged to
+        this run before it moves into `directory`, so every receipt there is
+        covered by the run's accounting. A cached job that no longer fits is
+        discarded and redone. A receipt in `directory` stays strict.
         """
         self.scope = scope
         self.directory = Path(directory)
@@ -210,17 +210,16 @@ class AssessmentJobs:
                 checkpoint()
 
         self.checkpoint = locked_checkpoint
-        self.reuse_inherited = reuse_inherited
         self.scope_sha256 = scope.inventory()["scope_sha256"]
         if self.directory.exists() and not stat.S_ISDIR(self.directory.lstat().st_mode):
             raise ExchangeError("Assessment job directory must be a real directory")
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.directory.chmod(0o700)
-        self._inherited = (
-            {path.name.removesuffix(".receipt.json") for path in self.directory.glob("*.receipt.json")}
-            if inherited
-            else set()
-        )
+        self.cache = None
+        if cache is not None and Path(cache).exists():
+            if not stat.S_ISDIR(Path(cache).lstat().st_mode):
+                raise ExchangeError("Assessment job cache must be a real directory")
+            self.cache = Path(cache)
         # Wall time and calls per role of the jobs this session ran; a reused
         # job counts as reused, since its time was spent in an earlier run.
         self.timing: dict[str, dict] = {}
@@ -357,10 +356,15 @@ class AssessmentJobs:
                     raise ExchangeError("Assessment receipt refers to changed source")
             validate(artifact, ranges)
 
-        if receipt_path.exists() or receipt_path.is_symlink():
-            inherited = job_id in self._inherited
-            self._inherited.discard(job_id)
-            receipt = _read_json(receipt_path)
+        found_path, found_artifact, inherited = receipt_path, artifact_path, False
+        if not (receipt_path.exists() or receipt_path.is_symlink()) and self.cache is not None:
+            found_path, found_artifact, inherited = (
+                self.cache / receipt_path.name,
+                self.cache / artifact_path.name,
+                True,
+            )
+        if found_path.exists() or found_path.is_symlink():
+            receipt = _read_json(found_path)
             current = (
                 validator.is_valid(receipt)
                 and receipt["job_id"] == job_id
@@ -368,12 +372,12 @@ class AssessmentJobs:
                 and receipt["request_sha256"] == request_sha256
                 and receipt["scope_sha256"] == self.scope_sha256
             )
-            if inherited and not self.reuse_inherited:
-                current = False  # A rebuild redoes every earlier run's job.
             if not current and not inherited:
                 raise ExchangeError("Assessment job receipt is stale or belongs to another request")
+            if current and inherited and not found_artifact.is_file():
+                current = False
             if current:
-                artifact = _read_json(artifact_path)
+                artifact = _read_json(found_artifact)
                 # A changed artifact is tampering, not a changed request: never redo it silently.
                 if digest(artifact) != receipt["artifact_sha256"]:
                     raise ExchangeError("Assessment job artifact changed after acceptance")
@@ -385,11 +389,14 @@ class AssessmentJobs:
                     current = False
             if current:
                 if inherited:
-                    # The reused calls count against this run, so its accounting covers every receipt.
+                    # Charge before the receipt joins this run's jobs, so its accounting
+                    # covers every receipt there; the receipt moves last.
                     with self.budget._lock:
                         self.budget.calls += receipt["calls"]
                         self.budget.spent_usd += receipt["usd"]
                     self.checkpoint()
+                    os.replace(found_artifact, artifact_path)
+                    os.replace(found_path, receipt_path)
                 slices = tuple(
                     self.scope.read(r["repository_id"], r["path"], r["start_line"], r["end_line"])
                     for r in receipt["source_ranges"]
@@ -398,8 +405,8 @@ class AssessmentJobs:
                 self.budget.accepted(group, role, receipt["usd"])
                 self._remember(role, selector, artifact)
                 return ExchangeResult(copy.deepcopy(artifact), slices, receipt["calls"], receipt["usd"])
-            receipt_path.unlink()
-            artifact_path.unlink(missing_ok=True)
+            found_path.unlink()
+            found_artifact.unlink(missing_ok=True)
 
         # Persist the call reservation before the host starts. The caller's
         # checkpoint retains failed/unknown accounting and owns resume policy.

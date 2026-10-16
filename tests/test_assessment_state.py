@@ -15,7 +15,7 @@ from runtime import acquire_lock
 from runtime.analyst_host import HostCancelled, HostReply, TransportError
 from runtime.assessment_host import ExchangeError
 from runtime.assessment_jobs import AssessmentBudget, AssessmentJobs
-from runtime.assessment_state import AssessmentState
+from runtime.assessment_state import CACHE_NAME, STOP_NAME, AssessmentState
 from runtime.multi_repo_scope import AssessmentScope, ScopeError, admit
 
 
@@ -180,7 +180,7 @@ def test_changed_settings_reject_resume_and_name_the_change(scope, field, value,
 
 
 def _plugin_change_jobs(state, host_factory):
-    # As the controller does: a session that is not a strict resume inherits earlier receipts.
+    # As the controller does: every session may adopt cached jobs of an earlier unfinished run.
     return AssessmentJobs(
         state.scope,
         state.directory / "jobs",
@@ -188,7 +188,7 @@ def _plugin_change_jobs(state, host_factory):
         host_factory,
         state.should_stop,
         state.checkpoint,
-        inherited=not state.resume,
+        cache=state.directory / CACHE_NAME,
     )
 
 
@@ -408,12 +408,51 @@ def test_fresh_start_clears_an_unfinished_run_but_keeps_its_job_cache(scope, fin
         with first.hold():
             pass
     assert stored(scope)["status"] == finish
+    if finish == "failed":
+        (first.directory / "jobs" / "job-000000000000000000000000.receipt.json").write_text("{}")
+        (first.directory / "jobs" / "job-111111111111111111111111.json").write_text("{}")
     with lifecycle(scope).hold() as fresh:
         assert fresh.state["run_id"] != first.state["run_id"]
         assert fresh.state["accounting"]["calls"] == 0
         assert not (fresh.directory / "context").exists()
         if finish == "failed":
-            assert (fresh.directory / "jobs" / "job-000000000000000000000000.json").exists()
+            cached = {path.name for path in (fresh.directory / CACHE_NAME).iterdir()}
+            # The accepted pair is cached; an artifact without a receipt was never accepted.
+            assert cached == {"job-000000000000000000000000.json", "job-000000000000000000000000.receipt.json"}
+            assert not (fresh.directory / "jobs").exists()
+
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_resume_after_a_fresh_start_that_never_reached_a_cached_job(scope, rebuild):
+    """A cached job a paused fresh start never reached stays out of the resume check.
+
+    Without --rebuild a later session adopts it and charges its cost; with
+    --rebuild it is gone and the job is redone.
+    """
+    _accept_job(scope, usd=0.02)
+    with lifecycle(scope, replace=rebuild).hold():
+        pass  # paused before the job was reached
+    dispatched = []
+
+    class Host:
+        def invoke(self, *args):
+            dispatched.append(args)
+            return HostReply({"action": "complete", "reads": [], "artifact": {"ok": True}}, 0.03)
+
+    with lifecycle(scope, resume=True).hold() as resumed:
+        _plugin_change_jobs(resumed, lambda role, ceiling: Host()).execute(
+            role="recon_scanner",
+            selector="one",
+            instructions="trusted",
+            context={},
+            schema={"type": "object"},
+            allowed_sources=frozenset(),
+            validate=lambda a, r: None,
+        )
+        assert len(dispatched) == (1 if rebuild else 0)
+        assert resumed.budget.spent_usd == pytest.approx(0.03 if rebuild else 0.02)
+    with lifecycle(scope, resume=True).hold():
+        pass  # the adopted or redone receipt is covered by the accounting
 
 
 @pytest.mark.parametrize("extra", ["completed", "user-file", "malformed-state"])
@@ -701,3 +740,25 @@ def test_held_lock_heartbeats_on_its_own_clock(scope, monkeypatch):
         assert acquire_lock._parse_lock(state.lock)[1] > 1
         assert acquire_lock._read_stale_after(state.lock) == AssessmentState.STALE_AFTER_SECONDS
     assert not state.lock.exists()
+
+
+@pytest.mark.parametrize("request_kind", ["this-run", "other-run", "link"])
+def test_a_stop_request_reaches_the_run_at_its_next_checkpoint(scope, tmp_path, request_kind):
+    """`assess-stop` cannot signal a run in another PID namespace; the run reads its request instead."""
+    state = lifecycle(scope)
+    stop = scope.output / STOP_NAME
+    with pytest.raises(HostCancelled), state.hold():
+        run_id = state.state["run_id"]
+        if request_kind == "this-run":
+            stop.write_text(run_id + "\n")
+        elif request_kind == "other-run":
+            stop.write_text("assessment-other\n")
+        else:
+            (tmp_path / "elsewhere").write_text(run_id + "\n")
+            stop.symlink_to(tmp_path / "elsewhere")
+        state.checkpoint()
+        # Only a request naming this run, in a regular file, stops it.
+        assert state.cancelled is (request_kind == "this-run")
+        raise HostCancelled("stopped")
+    # A consumed request never stops the next run; another run's request is not this run's to remove.
+    assert {"this-run": not stop.exists(), "other-run": stop.is_file(), "link": stop.is_symlink()}[request_kind]

@@ -272,11 +272,13 @@ def test_each_host_call_gets_at_most_the_per_call_time_limit(tmp_path):
 
 
 def _inherit(tmp_path, jobs, kwargs, **change):
-    """A fresh session over the job directory an unfinished earlier run left."""
+    """A fresh session whose cache holds the jobs an unfinished earlier run accepted."""
+    cache = jobs.directory.with_name("cache")
+    jobs.directory.rename(cache)
     budget = AssessmentBudget(1.0, 0.05, 10, 60)
     host = Host([{"action": "complete", "reads": [], "artifact": {"result": "redone"}}])
     fresh = AssessmentJobs(
-        jobs.scope, jobs.directory, budget, lambda role, ceiling: host, lambda: False, lambda: None, inherited=True
+        jobs.scope, jobs.directory, budget, lambda role, ceiling: host, lambda: False, lambda: None, cache=cache
     )
     return fresh, host, {**kwargs, **change}
 
@@ -288,6 +290,9 @@ def test_a_fresh_run_reuses_an_earlier_run_s_accepted_job_and_counts_its_cost(tm
     assert fresh.execute(**request) == {"result": "accepted"}
     assert fresh_host.calls == 0
     assert (fresh.budget.calls, fresh.budget.spent_usd) == (1, pytest.approx(0.01))
+    # The adopted, charged job joins this run's receipts and leaves the cache.
+    assert len(list(fresh.directory.glob("*.receipt.json"))) == 1
+    assert not list(fresh.cache.iterdir())
 
 
 @pytest.mark.parametrize("change", [{"instructions": "changed task"}, {"validate": "reject"}])

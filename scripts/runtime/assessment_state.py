@@ -34,6 +34,8 @@ from runtime.multi_repo_scope import AssessmentScope
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
+# `assess-stop` names the run to stop here; the run reads it at each checkpoint.
+STOP_NAME = ".assessment-stop"
 WORK_NAME = ".assessment-work"
 PARTIAL_REPORT = "budget-report.md"
 # What a refused resume names when its recorded identity no longer matches.
@@ -43,8 +45,12 @@ _IDENTITY_LABELS = (
     ("runtime_sha256", "the plugin version"),
     ("limits", "the budget or time limits"),
 )
-# The controller keeps accepted job receipts under the work directory.
+# The controller keeps accepted job receipts under the work directory. Only
+# receipts this run accounted for live in jobs/; an unfinished earlier run's
+# accepted jobs wait in cache/ until a job adopts or discards them, so the
+# resume check never counts a receipt the run's accounting has not charged.
 JOBS_NAME = "jobs"
+CACHE_NAME = "cache"
 MAX_STATE_BYTES = 2_097_152
 MAX_DELIVERABLE_BYTES = 67_108_864
 
@@ -176,6 +182,8 @@ class AssessmentState:
                     self.checkpoint()
             finally:
                 beating.set()
+                if self._stop_requested():
+                    (self.output / STOP_NAME).unlink(missing_ok=True)
                 acquire_lock.release_lock(self.lock, self.state["run_id"])
                 self._held = False
 
@@ -266,8 +274,9 @@ class AssessmentState:
         """Clear what an unfinished earlier assessment left, or refuse a fresh start.
 
         Only its own state file and work directory qualify, and only while the
-        state is not complete. Its accepted jobs stay as a cache that the job
-        layer rechecks against each new request. A completed run, a deliverable
+        state is not complete. Its accepted jobs move to the cache that the job
+        layer rechecks against each new request; --rebuild drops them with the
+        cache, so no session reuses them. A completed run, a deliverable
         or any other file still blocks, so a fresh start never erases a report
         or a user's file; only --rebuild removes an earlier run's own files.
         The refusal names why the earlier run cannot continue.
@@ -287,16 +296,19 @@ class AssessmentState:
                 status = None
             if status not in (None, "complete"):
                 if WORK_NAME in leftovers:
-                    # Accepted jobs stay as a cache the job layer rechecks
+                    # Accepted jobs become a cache the job layer rechecks
                     # against each new request; everything else is cleared.
                     _real_directory(self.directory)
+                    keep = set() if self.replace else {JOBS_NAME, CACHE_NAME}
                     for child in self.directory.iterdir():
-                        if child.name == JOBS_NAME:
+                        if child.name in keep:
                             _real_directory(child)
                         elif child.is_dir() and not child.is_symlink():
                             shutil.rmtree(child)
                         else:
                             child.unlink()
+                    if not self.replace:
+                        self._move_jobs_to_cache()
                 self.path.unlink()
                 return
         if STATE_NAME in leftovers:
@@ -334,6 +346,30 @@ class AssessmentState:
             f"A fresh combined assessment needs an empty output directory, and this one contains other files "
             f"({shown}); choose another --output or empty this one"
         )
+
+    def _move_jobs_to_cache(self):
+        """Move each accepted job (artifact and receipt) of the earlier run into the cache.
+
+        A newer job replaces a cached one of the same id as a pair; an artifact
+        without a receipt, or a receipt without an artifact, was never accepted
+        and is dropped.
+        """
+        jobs, cache = self.directory / JOBS_NAME, self.directory / CACHE_NAME
+        if not jobs.is_dir():
+            return
+        cache.mkdir(mode=0o700, exist_ok=True)
+        _real_directory(cache)
+        for artifact in sorted(jobs.glob("job-*.json")):
+            if artifact.name.endswith(".receipt.json"):
+                continue
+            receipt = artifact.with_name(artifact.name.removesuffix(".json") + ".receipt.json")
+            if not receipt.is_file():
+                continue
+            (cache / artifact.name).unlink(missing_ok=True)
+            (cache / receipt.name).unlink(missing_ok=True)
+            os.replace(artifact, cache / artifact.name)
+            os.replace(receipt, cache / receipt.name)
+        shutil.rmtree(jobs)
 
     def _own_names(self) -> set[str]:
         """The state, work directory and recorded deliverables of an earlier run."""
@@ -442,6 +478,19 @@ class AssessmentState:
         )
         self.lock.chmod(0o600)
         self._last_heartbeat = time.monotonic()
+        # A signal cannot reach a run in another PID namespace, such as one
+        # started from a different sandboxed command; the request file can.
+        if self._stop_requested():
+            self.cancelled = True
+
+    def _stop_requested(self) -> bool:
+        """Whether `assess-stop` asked this run to stop: a small file naming its run ID, never a link."""
+        try:
+            descriptor = os.open(self.output / STOP_NAME, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return False
+        with os.fdopen(descriptor, "rb") as stream:
+            return stream.read(256).decode("utf-8", "replace").strip() == self.state["run_id"]
 
     def should_stop(self):
         if not self._held:
