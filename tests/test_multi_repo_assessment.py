@@ -1865,8 +1865,44 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
         f"  Report      {tmp_path / 'threat-model.md'}",
         f"              {tmp_path / 'threat-model.yaml'}",
         f"              {tmp_path / 'threat-model.pdf'} (+ 2 figures)",
-        "  Next        /appsec-advisor:ask-threat-model · /appsec-advisor:review-threat-model",
+        # The single-repository summary's rules: findings to triage, then questions about them.
+        "  Next        Triage the findings — /appsec-advisor:review-threat-model",
+        "              Or just ask me:",
+        '                "What are the most critical findings?"',
+        '                "What should I fix first?"',
+        "                … or anything else about the report",
     ]
+
+
+def _closing_lines(tmp_path, monkeypatch, capsys, yaml_text, deliverables):
+    (tmp_path / "threat-model.yaml").write_text(yaml_text)
+    outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1}
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "deliverables": deliverables})
+    assert controller.assess_main(["--repo", "edge"]) == 0
+    return capsys.readouterr().out.splitlines()
+
+
+def test_a_clean_run_offers_questions_about_its_scope_and_nothing_to_triage(tmp_path, monkeypatch, capsys):
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert not any("review-threat-model" in line for line in out)
+    assert '                "What did the scan cover?"' in out
+
+
+def test_a_delivered_sarif_file_is_named_as_an_additional_step(tmp_path, monkeypatch, capsys):
+    (tmp_path / "threat-model.sarif.json").write_text("{}")
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md", "threat-model.sarif.json"])
+    assert any(line.startswith("  Also        Upload threat-model.sarif.json") for line in out)
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert not any(line.startswith("  Also") for line in out)
+
+
+def test_a_report_git_would_commit_closes_with_the_security_notice(tmp_path, monkeypatch, capsys):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert "Security Notice" in out and "    /appsec-advisor:publish-threat-model" in out
+    (tmp_path / ".gitignore").write_text("threat-model.*\n")
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert "Security Notice" not in out
 
 
 def test_the_whole_closing_block_is_kept_as_plain_text_in_the_work_directory(tmp_path, monkeypatch, capsys):

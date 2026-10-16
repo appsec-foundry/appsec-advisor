@@ -723,18 +723,9 @@ def completion_rows(output_dir: Path) -> list[tuple[str, str]]:
     ``show-threat-model`` cannot disagree. Empty when the model is missing or
     unreadable: the closing lines then name only the delivered files.
     """
-    import yaml as _yaml
-    from shared.assessment_sources import is_portable_model, labelled_model
-
-    try:
-        data = _yaml.safe_load((Path(output_dir) / "threat-model.yaml").read_text(encoding="utf-8"))
-        if is_portable_model(data):
-            data = labelled_model(data)
-    except (OSError, ValueError, _yaml.YAMLError):
+    summary = _completion_summary(output_dir)
+    if summary is None:
         return []
-    if not isinstance(data, dict):
-        return []
-    summary = build_summary(data, Path(output_dir))
     counts = summary["severity_counts"]
     rows = [("Verdict", verdict_headline(summary["verdict"]))] if summary.get("verdict") else []
     rows.append(
@@ -743,6 +734,28 @@ def completion_rows(output_dir: Path) -> list[tuple[str, str]]:
     if summary["totals"]["mitigations"]:
         rows.append(("Mitigations", mitigation_line(summary["totals"]["mitigations"], summary["backlog"])))
     return rows
+
+
+def completion_severity_counts(output_dir: Path) -> dict[str, int]:
+    """Findings per severity, counted as the closing Findings row counts them; empty without a model."""
+    summary = _completion_summary(output_dir)
+    return dict(summary["severity_counts"]) if summary else {}
+
+
+def _completion_summary(output_dir: Path) -> dict | None:
+    """This overview's summary of the model in ``output_dir``, or None when it is missing or unreadable."""
+    import yaml as _yaml
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    try:
+        data = _yaml.safe_load((Path(output_dir) / "threat-model.yaml").read_text(encoding="utf-8"))
+        if is_portable_model(data):
+            data = labelled_model(data)
+    except (OSError, ValueError, _yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return build_summary(data, Path(output_dir))
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

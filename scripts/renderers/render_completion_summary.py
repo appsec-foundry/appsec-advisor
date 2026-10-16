@@ -2021,8 +2021,8 @@ def render_security_notice(output_dir: Path) -> list[str]:
             capture_output=True,
             cwd=str(output_dir),
         )
-        if result.returncode == 0:
-            # File is ignored — no notice needed.
+        # 1 means not ignored; 0 is ignored, and 128 is no repository or a git error.
+        if result.returncode != 1:
             return []
     except Exception:
         return []
