@@ -801,8 +801,9 @@ def test_forced_colour_styles_the_banner_without_changing_its_fields(
     assert result.returncode == 42, result.stdout + result.stderr
     assert "\x1b[" in result.stdout
     plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
-    assert "╭───╮  appsec-advisor" in plain
-    assert "│ ◆ │  code-derived STRIDE threat modeling" in plain
+    # The logo glyphs belong to tests/test_term_style.py; only the fields beside them are checked here.
+    assert "  appsec-advisor\n" in plain
+    assert "  code-derived STRIDE threat modeling\n" in plain
     assert "\n  Skill      : create-threat-model\n" in plain
 
 
