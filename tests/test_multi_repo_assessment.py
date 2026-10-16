@@ -428,6 +428,21 @@ def test_default_console_writes_every_line_in_one_column_grid():
     assert not any("reads " in line or "signal-" in line or "answered" in line for line in lines)
 
 
+def test_a_run_opens_its_progress_file_with_what_it_is_about_to_spend(tmp_path, monkeypatch):
+    path = tmp_path / "progress.jsonl"
+    try:
+        _assess(tmp_path, monkeypatch, ("edge", "service"), ("--progress-file", str(path)))
+    finally:
+        controller._AssessmentProgress.path = None
+    # create-threat-model2's monitor greps this exact spelling and shows these lines before phase 1.
+    assert path.read_text().startswith('{"event": "run_start", ')
+    start = json.loads(path.read_text().splitlines()[0])
+    keys = ["Repositories", "Output", "Depth", "Budget", "Time", "Models"]
+    assert [line.split()[0] for line in start["lines"]] == keys
+    assert any(line.startswith("Budget      model calls stop at $5.00") for line in start["lines"])
+    assert all("\n" not in line for line in start["lines"])
+
+
 def test_the_progress_file_names_every_row_field_by_field(tmp_path):
     """A follower reads named fields, one record per line, never the padded grid."""
     path = tmp_path / "progress.jsonl"
