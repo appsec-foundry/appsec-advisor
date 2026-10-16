@@ -2080,7 +2080,7 @@ def test_colour_changes_no_column_of_the_console(monkeypatch, capsys):
     stripped = _ANSI.sub("", coloured).splitlines()
     plain_lines = plain.splitlines()
     # On a terminal the logo replaces the title line; every fact and row stays.
-    assert "   ╭───╮  appsec-advisor" in stripped
+    assert "   ╭  ▄█▄  ╮  appsec-advisor" in stripped
     assert "▶ AppSec Plugin — Headless Mode" not in "\n".join(stripped)
     facts = lambda lines: [line for line in lines if " : " in line]  # noqa: E731
     assert facts(stripped) == facts(plain_lines)
@@ -2106,7 +2106,7 @@ def test_a_long_fact_wraps_under_its_column_on_a_terminal(monkeypatch, capsys):
     lines = [_ANSI.sub("", line) for line in capsys.readouterr().err.splitlines() if line.strip()]
     assert len(lines) > 1
     assert all(len(line) <= 79 for line in lines)
-    assert " ".join(line[10:].strip() for line in lines).replace("Models     : ", "") == f"claude-sonnet-5-5 ({roles})"
+    assert " ".join(line.strip() for line in lines).replace("Models     : ", "") == f"claude-sonnet-5-5 ({roles})"
 
 
 @pytest.mark.parametrize("columns", [110, 160])
@@ -2142,7 +2142,10 @@ def test_width_bounds_every_console_line_on_and_off_a_terminal(monkeypatch, caps
     monkeypatch.setattr(sys.stderr, "isatty", lambda: terminal, raising=False)
     console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
     roles = ", ".join(f"role_{index}" for index in range(30))
-    console.facts(None, [("Models", f"claude-sonnet-5-5 ({roles})")])
+    console.facts(
+        "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
+        [("Models", f"claude-sonnet-5-5 ({roles})")],
+    )
     console.phase = "Threat analysis"
     reason = "STRIDE evidence does not cite an executable implementation: evidence[21] cites a blank line " * 2
     console.notice(reason.strip())

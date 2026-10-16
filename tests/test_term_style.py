@@ -80,3 +80,12 @@ def test_logo_lines_keep_their_width_in_colour() -> None:
     plain = logo(Style(False), "v1 · headless")
     coloured = logo(Style(True, True), "v1 · headless")
     assert [_ANSI.sub("", line) for line in coloured] == plain
+
+
+def test_a_long_logo_detail_wraps_under_its_column() -> None:
+    detail = "v1 · Headless Mode (deterministic controller, experimental)"
+    lines = logo(Style(False), detail, 50)
+    assert len(lines) > 3 and all(len(line) <= 50 for line in lines)
+    assert all(line.startswith(" " * 14) and line[14] != " " for line in lines[3:])
+    assert " ".join(line.strip() for line in lines[2:]).endswith(detail.split("v1 · ")[1])
+    assert logo(Style(False), detail, 200) == logo(Style(False), detail)
