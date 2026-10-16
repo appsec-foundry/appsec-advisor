@@ -463,15 +463,14 @@ def _unread_local(entry: dict, kind: str) -> dict:
     }
 
 
-def related_register(scope, names: Namespaces, workspace: Path, cfg: dict) -> list[str]:
+def related_register(scope, names: Namespaces, workspace: Path) -> list[str]:
     """Write one ``.cross-repo-register.json`` of qualified imported context.
 
     An import naming a selected repository is dropped: the current source
     assessment of that repository is authoritative. Remote imports keep the
-    URL guard; they require the allow-list unless the run is explicitly
-    trusted. Local imports outside the selected roots are named, never read.
+    URL guard and always require the allow-list, whatever the trust mode.
+    Local imports outside the selected roots are named, never read.
     """
-    strict = cfg.get("trust_mode") != "trusted"
     schema = load_related_repos._load_schema()  # noqa: SLF001
     now = datetime.now(timezone.utc)
     cache: dict[str, set] = {}
@@ -503,7 +502,7 @@ def related_register(scope, names: Namespaces, workspace: Path, cfg: dict) -> li
                         http_timeout=load_related_repos._DEFAULT_TIMEOUT,  # noqa: SLF001
                         outdated_days=load_related_repos._DEFAULT_OUTDATED_DAYS,  # noqa: SLF001
                         now=now,
-                        strict_urls=strict,
+                        strict_urls=True,
                     )
                 )
             else:
