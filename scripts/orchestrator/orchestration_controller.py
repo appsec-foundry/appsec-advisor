@@ -9085,7 +9085,7 @@ def _assessment_stride(
             jobs.infos.extend(
                 {
                     "undecided": {"component": component["name"], "target": target[:300]},
-                    "text": f"{component['name']}: STRIDE could not decide {target}",
+                    "text": f"{component['name']}: code location read but not judged: {target}",
                 }
                 for target in analysis.unresolved_targets(part, target_batch, qualified=len(scope.repositories) > 1)
             )
@@ -9556,7 +9556,10 @@ def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
     unowned = [entry["text"] for entry in entries if "unowned" in entry]
     undecided = [entry["text"] for entry in entries if "undecided" in entry]
     if len(undecided) > 1 and not verbose:
-        undecided = [f"STRIDE could not decide {len(undecided)} targets; the report's Scope and --verbose list them"]
+        undecided = [
+            f"{len(undecided)} security-relevant code locations stayed open: the model read them but could not "
+            "judge them; the report's Scope and --verbose list them"
+        ]
     entries = [entry for entry in entries if "component" in entry]
     if verbose or len(entries) <= 1:
         return unowned + undecided + [entry["text"] for entry in entries]
@@ -11289,7 +11292,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         "deliverables": list(delivered),
         "warnings": warnings,
         "infos": infos,
-        **({"runtime_files": str(workspace)} if workspace.is_dir() else {}),
+        # The kept workspace serves diagnosis; only --verbose names it.
+        **({"runtime_files": str(workspace)} if workspace.is_dir() and ns.verbose else {}),
         "spent_usd": round(budget.spent_usd, 2),
         "calls": budget.calls,
     }
@@ -11507,6 +11511,45 @@ def _launch_main(command: str, argv: list[str]) -> int:
     return 0
 
 
+def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
+    """The closing result block: what was assessed, what it found, where it is and what comes next.
+
+    Verdict, finding and mitigation rows come from the `show-threat-model`
+    summary, so both name the same numbers. Figures are counted, not listed:
+    the report embeds them.
+    """
+    from renderers.summarize_threat_model import completion_rows
+
+    kind = "Combined threat model" if len(outcome["repositories"]) > 1 else "Threat model"
+    head = f"✓ {kind} of {', '.join(outcome['repositories'])} written in {elapsed}"
+    cost = f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
+    if _AssessmentConsole.max_columns and len(head) + 1 + len(cost) > _AssessmentConsole.columns() - 1:
+        print(out(head, "ok", "bold") + "\n  " + out(cost, "muted"))
+    else:
+        print(out(head, "ok", "bold") + " " + out(cost, "muted"))
+    output = Path(outcome["output"])
+    figures = [name for name in outcome["deliverables"] if name.endswith(".svg")]
+    files = sorted(
+        (str(output / name) for name in outcome["deliverables"] if name not in figures),
+        key=lambda path: not path.endswith(".md"),
+    )
+    if figures and files:
+        files[-1] += f" (+ {_count_noun(len(figures), 'figure')})"
+    rows = [(key, value, None) for key, value in completion_rows(output)]
+    rows += [("Report" if index == 0 else "", path, "accent") for index, path in enumerate(files)]
+    if outcome.get("runtime_files"):
+        rows.append(("Run files", outcome["runtime_files"], "muted"))
+    rows.append(("Next", "/appsec-advisor:ask-threat-model · /appsec-advisor:review-threat-model", None))
+    # Values wrap flush under their column when --width narrows the console.
+    width = _AssessmentConsole.columns() - 1 - 14 if _AssessmentConsole.max_columns else 0
+    for key, value, role in rows:
+        pieces = textwrap.wrap(value, width, break_on_hyphens=False) if 20 < width < len(value) else [value]
+        roles = (role,) if role else ()
+        print(f"  {out(f'{key:<11}', 'muted')} {out(pieces[0], *roles)}")
+        for piece in pieces[1:]:
+            print(" " * 14 + out(piece, *roles))
+
+
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
     from jsonschema import SchemaError, ValidationError
@@ -11516,6 +11559,7 @@ def assess_main(argv: list[str]) -> int:
     from runtime.multi_repo_discovery import BudgetExhausted
 
     before = _draft_stamp(argv)
+    started = time.monotonic()
     try:
         try:
             outcome = assess_repositories(argv)
@@ -11570,21 +11614,16 @@ def assess_main(argv: list[str]) -> int:
             )
         return 1
     out, err = Style.for_stream(sys.stdout), Style.for_stream(sys.stderr)
-    kind = "Combined threat model" if len(outcome["repositories"]) > 1 else "Threat model"
-    print(
-        out(f"✓ {kind} of {', '.join(outcome['repositories'])} written to {outcome['output']}", "ok", "bold")
-        + out(f" ({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})", "muted")
-    )
-    for name in outcome["deliverables"]:
-        print(f"  {out(str(Path(outcome['output']) / name), 'accent')}")
-    if outcome.get("runtime_files"):
-        print(f"  {out('Run files:', 'muted')} {outcome['runtime_files']}")
+    _print_completion(outcome, _elapsed(time.monotonic() - started), out)
     fit = _AssessmentConsole.fit
     for warning in outcome.get("warnings") or []:
         # Wrapped as plain text; only the leading mark is coloured.
         print(err("⚠", "warn") + fit(f"⚠ {warning}")[1:], file=sys.stderr)
-    for info in outcome.get("infos") or []:
-        print(err(fit(f"ℹ {info}"), "muted"), file=sys.stderr)
+    if outcome.get("infos"):
+        # Coverage statements, not defects (REQ-FLW-005): one heading, one line each.
+        print(err("ℹ Coverage", "muted"), file=sys.stderr)
+        for info in outcome["infos"]:
+            print(err(fit(f"  · {info}", "    "), "muted"), file=sys.stderr)
     if outcome.get("gate_violations"):
         violations = outcome["gate_violations"]
         print(
