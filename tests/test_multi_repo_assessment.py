@@ -405,17 +405,18 @@ def test_default_console_writes_every_line_in_one_column_grid():
     # Numbered within the phases this run executes. PROGRESS, ELAPSED and LEFT
     # describe the whole run; the free-text detail comes last.
     assert _rows(lines) == [
-        ("1/8 Reconnaissance", "start", "planning", "<1m", "", ""),
+        ("1/8 Reconnaissance", "start", "planning", "<1m", "~33m", ""),
         # Components are planned while the phase runs, so its done line has a share.
-        # LEFT stays empty until a threat-analysis component has finished.
-        ("1/8 Reconnaissance", "done", "~5%", "1m", "", "1m38s · 1 repository"),
-        ("3/8 Trust boundaries", "start", "~12%", "1m", "", "3 crossings"),
-        ("3/8 Trust boundaries", "done", "~34%", "2m", "", "1m00s · 3 crossings"),
-        ("5/8 Threat analysis", "start", "~36%", "2m", "", "2 components"),
+        # Until a threat-analysis component has finished, LEFT scales the nominal
+        # run time to the planned components, so it shrinks once they are known.
+        ("1/8 Reconnaissance", "done", "~5%", "1m", "~17m", "1m38s · 1 repository"),
+        ("3/8 Trust boundaries", "start", "~12%", "1m", "~16m", "3 crossings"),
+        ("3/8 Trust boundaries", "done", "~34%", "2m", "~12m", "1m00s · 3 crossings"),
+        ("5/8 Threat analysis", "start", "~36%", "2m", "~11m", "2 components"),
         # Every STRIDE component gets its own line, so a model status within
         # the heartbeat interval adds none.
-        ("5/8 Threat analysis", "·", "~36%", "2m", "", "component 1/2 · API"),
-        ("5/8 Threat analysis", "⚠", "~36%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
+        ("5/8 Threat analysis", "·", "~36%", "2m", "~11m", "component 1/2 · API"),
+        ("5/8 Threat analysis", "⚠", "~36%", "3m", "~11m", "1 min: no model activity for 95 s (waiting for the API)"),
         # A finished component gets its own event, so `done` marks only a
         # phase's end; the share follows completions, not starts.
         ("5/8 Threat analysis", "✓", "~46%", "4m", "~5m", "1/2 components done · API · 2m00s"),
@@ -566,9 +567,12 @@ def test_time_stamps_and_durations_read_one_clock():
     assert _rows([done])[0][5] == "3m51s"
 
 
-@pytest.mark.parametrize(("components", "share"), [(2, "~36%"), (12, "~23%")])
-def test_progress_counts_the_planned_components(components, share):
-    """Controls and threat analysis scale with the component count; before it is known there is no share."""
+@pytest.mark.parametrize(("components", "share", "prior"), [(2, "~36%", "~11m"), (12, "~23%", "~30m")])
+def test_progress_counts_the_planned_components(components, share, prior):
+    """Controls and threat analysis scale with the component count; before it is known there is no share.
+
+    LEFT starts from a nominal run time scaled to those components, until a component finishes.
+    """
     lines, clock = [], _Clock()
     console = controller._AssessmentConsole(False, lines.append, clock=clock)
     console.step("Analyzing local architecture: api")
@@ -577,17 +581,17 @@ def test_progress_counts_the_planned_components(components, share):
     console.plan_components(components)
     console.step("Running deterministic source scanners")
     phase, event, progress, elapsed, left, _ = _rows(lines)[-1]
-    assert (phase, event, progress, elapsed, left) == ("5/8 Threat analysis", "start", share, "5m", "")
+    assert (phase, event, progress, elapsed, left) == ("5/8 Threat analysis", "start", share, "5m", prior)
     # Once a component has finished, LEFT extrapolates the measured speed:
     # elapsed × (1 − share) / share. A start alone is no progress (MR-16).
     console.step("Analyzing all STRIDE categories: api (1/2)")
     console.step("Analyzing all STRIDE categories: store (2/2)")
-    assert console._run(clock()).split()[-1] == "5m"
+    assert console._run_fields(clock())[2] == prior
     clock.tick(60)
     console.step("Finished STRIDE job: api (1/1)")
     console.step("Analyzed component: api (1/2)")
     exact = console.done
-    assert console._run(clock()).split()[-1] == "~" + controller._elapsed(360 * (1 - exact) / exact)
+    assert console._run_fields(clock())[2] == "~" + controller._elapsed(360 * (1 - exact) / exact)
 
 
 def test_phase_results_and_skipped_phases_shape_the_done_lines():

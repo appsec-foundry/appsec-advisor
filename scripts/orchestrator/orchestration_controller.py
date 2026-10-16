@@ -9793,9 +9793,12 @@ class _AssessmentConsole:
     detail starts with the phase's duration.
 
     PROGRESS counts finished work. Once the component count is known
-    (``plan_components``), Controls and STRIDE weigh per component, and LEFT
-    extrapolates the speed this run measured so far. Before that PROGRESS
-    says ``planning``. Time stamps and durations read one clock.
+    (``plan_components``), Controls and STRIDE weigh per component. LEFT
+    extrapolates the speed this run measured once a component has finished;
+    before that it scales a nominal run time to the planned phases and
+    components, so it changes as the run learns its size. Before the component
+    count is known PROGRESS says ``planning``. Time stamps and durations read
+    one clock.
 
     Off a terminal (CI, logs) a progress line follows a change after
     ``PROGRESS_SECONDS`` and comes at the latest after ``HEARTBEAT_SECONDS``;
@@ -9918,6 +9921,11 @@ class _AssessmentConsole:
         "Finalization": 12,
     }
     PER_COMPONENT = {"Controls": 6 / 9, "Threat analysis": 50 / 9}
+    # Wall clock of the nine-component, all-phases run those weights describe
+    # (Juice Shop, 33m), for the remaining time before this run has a speed of
+    # its own. It is a prior: the measured speed replaces it.
+    NOMINAL_SECONDS = 33 * 60
+    NOMINAL_WEIGHT = sum(WEIGHTS.values())
     _NAME_WIDTH = max(len(name) for name in WEIGHTS)
     # "n/N " before the phase name, then the event column.
     _PHASE_WIDTH = _NAME_WIDTH + 4
@@ -10170,6 +10178,14 @@ class _AssessmentConsole:
         total = sum(self._weight(name) for name in plan)
         self.done = max(self.done, (before + self._weight(self.phase) * self.fraction) / total)
 
+    def _expected_total(self) -> float:
+        """Seconds the planned phases take at the nominal speed, scaled to the component count.
+
+        Used until a component has finished and the run's own speed is known.
+        """
+        plan = self.plan if self.phase in self.plan else [*self.plan, self.phase]
+        return self.NOMINAL_SECONDS * sum(self._weight(name) for name in plan) / self.NOMINAL_WEIGHT
+
     def _measured(self) -> bool:
         """Whether a threat-analysis component has finished.
 
@@ -10192,12 +10208,12 @@ class _AssessmentConsole:
         elapsed, left = now - self.run_started, ""
         if self.done >= 1:
             share = "100%"
-        elif not self.components:
-            share = "planning"
         else:
-            share = f"~{min(99, round(100 * self.done))}%"
+            share = f"~{min(99, round(100 * self.done))}%" if self.components else "planning"
             if self.done > 0 and self._measured():
                 left = "~" + _elapsed(elapsed * (1 - self.done) / self.done)
+            else:
+                left = "~" + _elapsed(self._expected_total() * (1 - self.done))
         return share, _elapsed(elapsed), left
 
     def _row(self, event: str, detail: str = "", now: float | None = None, live: bool = False) -> str:
