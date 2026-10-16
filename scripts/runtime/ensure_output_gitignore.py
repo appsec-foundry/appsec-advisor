@@ -106,7 +106,12 @@ def ensure(output_dir: Path) -> str | None:
     """
     try:
         output_dir = output_dir.resolve()
-        root = _repo_root(output_dir)
+        # A first run calls this before the directory exists; git needs an
+        # existing directory to find the work tree that will contain it.
+        probe = output_dir
+        while not probe.is_dir() and probe != probe.parent:
+            probe = probe.parent
+        root = _repo_root(probe)
         if root is None:
             return None
         try:

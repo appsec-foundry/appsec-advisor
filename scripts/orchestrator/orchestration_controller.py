@@ -11363,6 +11363,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         if not console:
             say("Checking every selected repository for repository-owned agent configuration")
         _assessment_preflight(ns.repo)
+    # Before admission: the scope fingerprints the checkout, so a later
+    # .gitignore write would make the source look changed at publication.
+    ensure_output_gitignore.ensure(Path(ns.output))
     try:
         scope = admit(ns.repo, ns.output, minimum=minimum)
     except ScopeError as exc:
