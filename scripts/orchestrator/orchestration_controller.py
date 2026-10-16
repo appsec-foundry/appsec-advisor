@@ -10101,7 +10101,8 @@ class _AssessmentConsole:
             return line
         head, sep, tail = line.partition(" (")
         if key == "Trust mode":
-            return self.st(line, "ok" if "clean" in line else "warn")
+            role = "ok" if line.endswith("passed") else "warn" if line.endswith("skipped") else "muted"
+            return self.st(line, role)
         return self.st(head, self.FACT_ROLES.get(key, "bold")) + self.st(sep + tail, "muted")
 
     def step(self, text: str) -> None:
@@ -10432,7 +10433,12 @@ def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False
     elif ns.hard_budget is None:
         cut += " (default for the assessment depth; set --soft-budget or --hard-budget to change it)"
     limit = _elapsed(budget.timeout_s)
-    trust = "untrusted, preflight clean" if ns.trust_mode == "untrusted" else "trusted, no preflight"
+    # The trust mode only decides whether this start check runs; the analysis is the same.
+    trust = (
+        "untrusted: start check passed\nno escaping symlinks, IDE-loaded files or unlisted related-repository URLs"
+        if ns.trust_mode == "untrusted"
+        else "trusted: start check skipped\nescaping symlinks, IDE-loaded files and related-repository URLs are not checked"
+    )
     return [
         ("Repository" if len(ns.repo) == 1 else "Repositories", "\n".join(ns.repo)),
         ("Output", output),
