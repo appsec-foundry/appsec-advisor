@@ -2151,11 +2151,44 @@ def test_tight_budget_skips_optional_jobs_and_still_publishes_a_gated_report(tmp
     outcome, host, out = _assess(tmp_path, monkeypatch, ("records",), ("--hard-budget", "3", "--no-pdf"))
     assert outcome["status"] == "complete"
     assert "ms_renderer" not in host.roles and "secarch_renderer" in host.roles
-    assert any("preserve the budget" in warning for warning in outcome["warnings"])
+    # A planned budget skip is one console statement, never a run issue.
+    skipped = [info for info in outcome["infos"] if "to keep the budget reserve for the report" in info]
+    assert len(skipped) == 1 and "management summary" in skipped[0] and "USD" in skipped[0]
+    assert not any("budget" in warning for warning in outcome["warnings"])
+    issues = json.loads((out / ".run-issues.json").read_text())
+    assert not any("budget reserve" in json.dumps(issue) for issue in issues.get("issues", []))
     model = yaml.safe_load((out / "threat-model.yaml").read_text())
     assert all(t.get("evidence_check") != "verified" for t in model["threats"])
     assert "NARRATIVE_PLACEHOLDER" not in (out / "threat-model.md").read_text()
     assert not (out / ".assessment-work/budget-report.md").exists()
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("portal", "ledger")])
+def test_an_evidence_review_the_stride_reserve_blocked_runs_once_that_reserve_is_released(tmp_path, monkeypatch, names):
+    """The reserve for components not yet analyzed must not cancel a review the budget can still pay."""
+    import threading
+    from collections import Counter
+
+    from runtime.assessment_jobs import AssessmentBudget
+
+    attempts, local = Counter(), threading.local()
+    original = AssessmentBudget.available_usd
+
+    def progress(message):
+        if message.startswith("Independently verifying evidence: "):
+            attempts[message] += 1
+            local.first = attempts[message] == 1
+
+    def available(self):
+        # Each component's first review meets the reserve of still-pending STRIDE work.
+        _group, role, _optional = getattr(self._local, "job", (None, None, False))
+        return 0.0 if role == "evidence_verifier" and getattr(local, "first", False) else original(self)
+
+    monkeypatch.setattr(AssessmentBudget, "available_usd", available)
+    outcome, host, out = _assess(tmp_path, monkeypatch, names, progress=progress)
+    assert outcome["status"] == "complete" and attempts and set(attempts.values()) == {2}
+    assert "evidence_verifier" in host.roles
+    assert not any("budget reserve" in info for info in outcome["infos"])
 
 
 def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_path, monkeypatch):
