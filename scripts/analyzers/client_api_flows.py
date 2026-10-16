@@ -25,6 +25,14 @@ False-positive exclusions: test files, templates, comments, payload strings,
 unresolved methods, literals without a leading path segment, and routes whose
 path is only `/` never match. A router's
 root path alone does not establish its mounted client-visible URL.
+
+Routes no client code requests (server-rendered pages, forms, management
+endpoints) are reached directly. `direct_flows` gives them flows from the
+caller only for an authentication outcome no flow into that receiver already
+shows, so Figure 1 presents every proven method once without a line per route.
+Only application-tier receivers, proven outcomes, and routes no existing flow
+cites or references qualify; webhook paths are excluded because another
+service, not a person, calls them.
 """
 
 from __future__ import annotations
@@ -381,6 +389,80 @@ def flows(client_id: str, calls: dict[int, list[dict]], routes: list[dict], owne
                 "label": "API access",
             }
         out.append(flow)
+    return out
+
+
+_WEBHOOK_PATH_RE = re.compile(r"(?:^|/)web-?hooks?(?:/|$)", re.IGNORECASE)
+
+
+def direct_flows(
+    called: set[int], routes: list[dict], owner_of, tiers: dict[str, str], existing: list[dict], sender: str | None
+) -> list[dict]:
+    """Flows from the caller for authentication outcomes only uncalled routes prove, without IDs.
+
+    ``called`` holds the route indexes a client requests; ``tiers`` maps
+    component ids to their tier; ``sender`` is the role entity that uses this
+    repository's clients, or None for the generic user.
+    """
+    from renderers.figure1_security import authentication_profile
+
+    shown: dict[str, set] = {}
+    for flow in existing:
+        if not flow.get("interaction"):
+            shown.setdefault(flow.get("to"), set()).add(authentication_profile(flow)["key"])
+    covered = {id(route) for flow in existing for route in cited_routes(flow, routes)}
+    references = {ref for flow in existing for ref in flow.get("route_refs") or []}
+    groups: dict[tuple[str, str, str], list[int]] = {}
+    for index, route in enumerate(routes):
+        owner = owner_of(route)
+        outcome = route_outcome(route)
+        if (
+            index in called
+            or owner is None
+            or tiers.get(owner) != "application"
+            or outcome is None
+            or id(route) in covered
+            or _route_reference(route) in references
+            or _WEBHOOK_PATH_RE.search(str(route.get("path") or ""))
+        ):
+            continue
+        groups.setdefault((owner, outcome[0], outcome[1]), []).append(index)
+    out = []
+    for (owner, scheme, scope), members in sorted(groups.items()):
+        batch = []
+        # Like `flows`, a group keeps its full interface list across batches.
+        for start in range(0, len(members), MAX_ROUTE_REFS):
+            part = members[start : start + MAX_ROUTE_REFS]
+            auth_evidence: list[dict] = []
+            registrations: list[dict] = []
+            for index in part:
+                row = {"file": routes[index]["handler_file"], "line": routes[index]["handler_line"]}
+                if row not in registrations and len(registrations) < MAX_ROUTE_EVIDENCE:
+                    registrations.append(row)
+                for row in route_outcome(routes[index])[2]:
+                    if row not in auth_evidence and len(auth_evidence) < MAX_AUTH_EVIDENCE:
+                        auth_evidence.append(dict(row))
+            flow = {
+                "from": "external",
+                "to": owner,
+                "label": f"Direct requests ({scheme})",
+                "diagram_label": "Direct requests",
+                "protocol": "HTTP",
+                "data_classification": "Internal",
+                "direction": "request-response",
+                "evidence": registrations,
+                "provenance": "route-extraction",
+                "route_refs": sorted({_route_reference(routes[i]) for i in part}),
+                "authentication": {"scheme": scheme, "scope": scope, "evidence": auth_evidence},
+            }
+            if sender:
+                flow["from_entity"] = sender
+            batch.append(flow)
+        key = authentication_profile(batch[0])["key"]
+        if key in shown.get(owner, set()):
+            continue
+        shown.setdefault(owner, set()).add(key)
+        out.extend(batch)
     return out
 
 

@@ -8515,20 +8515,47 @@ def _assessment_client_api_flows(scope, components: dict, flows: dict, inventori
         def owner_of(route, owners=owners, modules=modules):
             return owners.get(modules.get(route.get("route_id"))) or owners.get(route.get("handler_file"))
 
-        for client in (c for c in local if c.get("tier") == "client"):
+        def admit(flow, rid=rid, repo=repo):
+            for row in _evidence_rows(flow):
+                source = repo.files.get(row["file"])
+                if source is None:
+                    raise ControllerError("Client route evidence cites source outside the admitted repository")
+                row.update(repository_id=rid, sha256=hashlib.sha256(source).hexdigest())
+                validate_source(scope, row, path_key="file")
+            result["data_flows"].append(flow)
+
+        clients = [c for c in local if c.get("tier") == "client"]
+        called: set[int] = set()
+        for client in clients:
             files = {row["path"]: repo.files[row["path"]] for row in client["paths"] if row["path"] in repo.files}
             calls = client_api_flows.client_calls(files, routes)
+            called.update(calls)
             calls = client_api_flows.uncovered_calls(
                 client["id"], calls, routes, owner_of, _repository_projection(result["data_flows"], rid)
             )
             for flow in client_api_flows.flows(client["id"], calls, routes, owner_of):
-                for row in _evidence_rows(flow):
-                    source = repo.files.get(row["file"])
-                    if source is None:
-                        raise ControllerError("Client route evidence cites source outside the admitted repository")
-                    row.update(repository_id=rid, sha256=hashlib.sha256(source).hexdigest())
-                    validate_source(scope, row, path_key="file")
-                result["data_flows"].append(flow)
+                admit(flow)
+        # Requests no client code makes come from the person using this
+        # repository's clients when exactly one regular role does, else the generic user.
+        regular = {
+            e["id"]
+            for e in result.get("external_entities") or []
+            if e.get("kind") == "legitimate-role" and e.get("access") != "internet-priv-user"
+        }
+        users = {
+            f["from_entity"]
+            for f in result["data_flows"]
+            if f.get("interaction") and f.get("from_entity") in regular and f["to"] in {c["id"] for c in clients}
+        }
+        for flow in client_api_flows.direct_flows(
+            called,
+            routes,
+            owner_of,
+            {c["id"]: c.get("tier") for c in local},
+            _repository_projection(result["data_flows"], rid),
+            next(iter(users)) if len(users) == 1 else None,
+        ):
+            admit(flow)
     return result
 
 
