@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -167,6 +168,11 @@ def test_dialog_answers_reach_the_checkout_context_without_a_session_run(tmp_pat
     action = controller.assess_context_preview(str(root))
     reports = root / "docs" / "security"
     assert Path(action["preview"]).is_file() and Path(action["output_dir"]) == reports
+    # The dialog belongs to this skill and names only the launch helpers' own save command.
+    instructions = Path(action["instruction_file"])
+    assert instructions.parent == controller.PLUGIN_ROOT / "skills" / "create-threat-model2"
+    commands = set(re.findall(r"orchestration_controller\.py\" ([a-z-]+)", instructions.read_text()))
+    assert commands == {"assess-context-save"}
     _answer(reports)
     saved = controller.assess_context_save(
         str(root), context_answer="answered", impact_choice=None, use_case_choice="confirmed"

@@ -112,19 +112,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" a
 ```
 
 On an error, print it and stop. Otherwise read the returned `preview` file and
-follow `$CLAUDE_PLUGIN_ROOT/skills/create-threat-model/modes/business-context.md`
-and then `modes/business-impact.md` in the same directory, with `$OUTPUT_DIR` as
-above, with two replacements:
-
-- Skip the `review-business-impact` call; go straight to the impact question.
-- Instead of `complete-preflight`, call with the same decision and choice flags:
-
-  ```bash
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" assess-context-save \
-    --repo "$REPO" --context-answer <decision> [--impact-choice <choice>] [--use-case-choice <choice>]
-  ```
-
-On rejection, print the reason and stop.
+follow the returned `instruction_file`, with `$REPO` and `$OUTPUT_DIR` as above.
 
 ## Launch
 

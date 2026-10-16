@@ -443,6 +443,7 @@ requirements:
       - skills/create-threat-model/SKILL-full-runtime.md
       - skills/create-threat-model/modes/business-context.md
       - skills/create-threat-model/modes/business-impact.md
+      - skills/create-threat-model2/business-context.md
       - skills/create-threat-model2/SKILL.md
     decisions: []
     documents:
@@ -1225,6 +1226,7 @@ requirements:
       - skills/create-threat-model/SKILL-full-runtime.md
       - skills/create-threat-model/modes/business-context.md
       - skills/create-threat-model/modes/business-impact.md
+      - skills/create-threat-model2/business-context.md
     decisions: []
     documents:
       - docs/threat-modeler.md

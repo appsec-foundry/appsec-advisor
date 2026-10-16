@@ -11753,7 +11753,7 @@ def assess_context_preview(repo: str) -> dict[str, Any]:
         "repo_root": str(root),
         "output_dir": str(output),
         "preview": str(output / business_context_preview.PREVIEW_NAME),
-        "instruction_file": str(PLUGIN_ROOT / "skills/create-threat-model/modes/business-context.md"),
+        "instruction_file": str(PLUGIN_ROOT / "skills/create-threat-model2/business-context.md"),
     }
 
 
