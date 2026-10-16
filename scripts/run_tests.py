@@ -194,6 +194,7 @@ GROUPS = {
         agent_logger_checkpoint_abort
         analyst_catalog
         analyst_cli
+        assessment_console
         analyst_controller
         analyst_host
         assessment_context
@@ -267,6 +268,7 @@ GROUPS = {
         hooks_schema
         lens_coverage
         live_canary
+        live_run_holder
         log_agent_end
         log_event
         log_shape_contract
@@ -783,7 +785,9 @@ SOURCE_TESTS = {
     "skills/abuse-cases/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} resolve_abuse_cases skill_definitions"),
     "skills/ask-threat-model/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
     "skills/help/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} help_reference skill_definitions"),
-    "skills/create-threat-model2/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} single_repo_controller skill_definitions"),
+    "skills/create-threat-model2/SKILL.md": _tests(
+        f"{_SKILL_FILE_TESTS} assessment_console single_repo_controller skill_definitions"
+    ),
     "data/supply-chain-controls.yaml": _tests("""
         emit_sca_practice
         scanner_review_regressions
@@ -5736,6 +5740,8 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
+    "scripts/runtime/assessment_console.py": _tests("assessment_console"),
+    "scripts/runtime/live_run_holder.py": _tests("live_run_holder"),
     "scripts/runtime/report_plugin_issue.py": _tests("""
         check_target_specificity
         gate_preconditions
