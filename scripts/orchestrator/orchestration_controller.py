@@ -10071,7 +10071,7 @@ class _AssessmentConsole:
                 mode = title.partition(" — ")[2] or title
                 with _AssessmentConsole._lock:
                     self.clear_status()
-                    for line in logo(st, f"v{version} · {mode}" if version else mode):
+                    for line in logo(st, f"v{version} · {mode}" if version else mode, self.columns() - 1):
                         self._out(line)
                 self.write("")
             elif self.max_columns:

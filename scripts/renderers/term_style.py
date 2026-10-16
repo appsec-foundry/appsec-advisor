@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import re
+import textwrap
 from typing import IO, Mapping
 
 RESET = "\033[0m"
@@ -136,11 +137,17 @@ def plugin_version() -> str:
         return ""
 
 
-def logo(st: Style, detail: str) -> list[str]:
+def logo(st: Style, detail: str, width: int | None = None) -> list[str]:
     """The three-line headless logo: a glowing iris in brackets, the name, the tagline and ``detail``.
 
     Shown only on a terminal; callers print their plain title line otherwise.
+    With ``width``, a ``detail`` too long for that many columns continues on
+    further lines under its own column instead of being cut at the edge.
     """
+    indent = 14  # The iris and its brackets before the text column.
+    pieces = [detail]
+    if width is not None and indent + len(detail) > width:
+        pieces = textwrap.wrap(detail, width - indent, break_on_hyphens=False) or [detail]
     bracket = lambda text: st(text, "iris_bracket")  # noqa: E731
     rim = lambda text: st(text, "iris_rim")  # noqa: E731
     top = rim("▄") + st("█", "iris") + rim("▄")
@@ -149,7 +156,8 @@ def logo(st: Style, detail: str) -> list[str]:
     return [
         f"   {bracket('╭')}  {top}  {bracket('╮')}  {st(st.gradient('appsec-advisor', 'iris', 'iris_bracket'), 'bold')}",
         f"   {bracket('│')} {middle} {bracket('│')}  {st(TAGLINE, 'muted')}",
-        f"   {bracket('╰')}  {bottom}  {bracket('╯')}  {st(detail, 'muted')}",
+        f"   {bracket('╰')}  {bottom}  {bracket('╯')}  {st(pieces[0], 'muted')}",
+        *(" " * indent + st(piece, "muted") for piece in pieces[1:]),
     ]
 
 
