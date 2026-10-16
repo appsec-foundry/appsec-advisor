@@ -55,6 +55,21 @@ def test_live_pid_stale_heartbeat_is_stale_with_hung_reason(tmp_path: Path):
     assert any("hung" in reason.lower() for reason in report["reasons"])
 
 
+def test_holder_stale_after_outranks_the_phase_default(tmp_path: Path):
+    # A controller run states its own threshold; check_state must agree with
+    # acquire_lock, or clean-run-state refuses a lock every launch treats as free.
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{os.getpid()}\n{int(time.time()) - 90}\nassessment-x\nstale_after=60\n")
+    assert check_state.classify(tmp_path)["state"] == "stale"
+    assert not check_state.clean(tmp_path)["skipped"]
+    assert not lock.exists()
+
+
+def test_holder_stale_after_keeps_a_young_heartbeat_active(tmp_path: Path):
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time()) - 30}\nassessment-x\nstale_after=60\n")
+    assert check_state.classify(tmp_path)["state"] == "active"
+
+
 def test_hung_lock_is_cleaned(tmp_path: Path):
     lock = tmp_path / ".appsec-lock"
     lock.write_text(f"{os.getpid()}\n{int(time.time()) - 600}\n")

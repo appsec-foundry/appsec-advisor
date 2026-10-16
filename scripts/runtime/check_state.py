@@ -274,8 +274,14 @@ def _resolve_threshold(output_dir: Path, checkpoint: dict | None) -> int:
     Reads phase from ``checkpoint`` (already parsed by caller) and depth
     from the optional ``.skill-config.json`` sidecar. Falls back to
     ``HEARTBEAT_STALE_SECONDS`` (the depth-agnostic default) when either
-    is absent or the YAML loader is unavailable.
+    is absent or the YAML loader is unavailable. A ``stale_after=`` the
+    holder wrote into the lock outranks both, as in ``runtime/acquire_lock.py``.
     """
+    from runtime.acquire_lock import _read_stale_after
+
+    own = _read_stale_after(output_dir / LOCK_FILE)
+    if own is not None:
+        return own
     if phase_budgets is None:  # pragma: no cover
         return HEARTBEAT_STALE_SECONDS
     phase = (checkpoint or {}).get("phase") if checkpoint else None
