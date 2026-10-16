@@ -64,6 +64,7 @@ if not __package__:
 
 
 import argparse
+import collections
 import json
 import re
 import subprocess
@@ -460,6 +461,9 @@ def gen_system_overview(yaml_data: dict) -> str:
     # A combined assessment names every selected checkout; the working
     # directory of this process is never one of them.
     sources = meta.get("source_repositories") if isinstance(meta.get("source_repositories"), list) else None
+    # One selected checkout reads like a single scan: its remote when known.
+    if sources and len(sources) == 1 and repository:
+        sources = None
     if sources:
         repository = ", ".join(
             f"`{row.get('label')}` (revision `{str(row.get('head') or '')[:12]}`"
@@ -486,7 +490,7 @@ def gen_system_overview(yaml_data: dict) -> str:
         lines.append(desc.rstrip("."))
         lines.append("")
 
-    lines.append(f"**{'Repositories' if sources else 'Repository'}:** {repository or '_n/a_'}")
+    lines.append(f"**{'Repositories' if sources and len(sources) > 1 else 'Repository'}:** {repository or '_n/a_'}")
     if runtime:
         # Runtime values like "Node.js 20 - 24" are product/version labels,
         # not code. Render in normal prose weight. The dot-TLD safety pass
@@ -521,7 +525,7 @@ def gen_system_overview(yaml_data: dict) -> str:
         crit_clause = (" Selection criteria: " + "; ".join(crit) + ".") if crit else ""
         lines.append(
             f"{name} comprises **{total}** modeled components; **{analyzed} of {total}** were analysed "
-            "with full STRIDE: " + ", ".join(f"**{n}**" for n in sel_names) + f".{crit_clause}"
+            "with full STRIDE." + crit_clause + "\n\n" + "\n".join(f"- {n}" for n in sel_names)
         )
         lines.append("")
         if screened:
@@ -544,8 +548,8 @@ def gen_system_overview(yaml_data: dict) -> str:
     else:
         lines.append(
             f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} of {name}: "
-            + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
-            + "."
+            + "\n\n"
+            + "\n".join(f"- {c.get('name', c.get('id', '?'))}" for c in components)
         )
         if cs and (screened or declined):
             clauses = ([screening_clause(screened, bold=True)] if screened else []) + (
@@ -559,6 +563,53 @@ def gen_system_overview(yaml_data: dict) -> str:
         elif cs:
             lines.append("")
             lines.append(f"All {cs.get('total') or len(components)} modeled components were analysed with full STRIDE.")
+        lines.append("")
+
+    # REQ-FLW-005: files the analysis recorded as not individually examined are a
+    # coverage gap of this assessment, stated next to the system boundary.
+    unexamined = [
+        row
+        for row in meta.get("unexamined_source") or []
+        if isinstance(row, dict) and row.get("component") and isinstance(row.get("files"), int) and row["files"] > 0
+    ]
+    if unexamined:
+        files = sum(row["files"] for row in unexamined)
+        lines.append(
+            f"**Not individually examined:** {files} source {'file' if files == 1 else 'files'} in "
+            f"{len(unexamined)} {'component' if len(unexamined) == 1 else 'components'} had no route, lead or "
+            "security signal (" + ", ".join(f"{row['component']} {row['files']}" for row in unexamined) + ")."
+        )
+        lines.append("")
+    undecided = [
+        row
+        for row in meta.get("undecided_targets") or []
+        if isinstance(row, dict) and row.get("component") and row.get("target")
+    ]
+    if undecided:
+        # A coverage gap like the two beside it, not a question for the team: the
+        # analysis read these locations but could not judge them.
+        per_component = collections.Counter(row["component"] for row in undecided)
+        lines.append(
+            f"**Not assessed:** {len(undecided)} security-relevant code "
+            f"{'location was' if len(undecided) == 1 else 'locations were'} read but could not be judged ("
+            + ", ".join(f"{name} {count}" for name, count in per_component.most_common())
+            + "); `threat-model.yaml` records each with its reason under `meta.undecided_targets`."
+        )
+        lines.append("")
+    unowned = meta.get("unowned_source") if isinstance(meta.get("unowned_source"), dict) else {}
+    if isinstance(unowned.get("files"), int) and unowned["files"] > 0:
+        directories = [
+            f"`{row['directory']}` {row['files']}"
+            for row in unowned.get("by_directory") or []
+            if isinstance(row, dict) and row.get("directory") and isinstance(row.get("files"), int)
+        ]
+        lines.append(
+            f"**Not assigned to any component:** {unowned['files']} program "
+            f"{'file belongs' if unowned['files'] == 1 else 'files belong'} to no component and "
+            f"{'was' if unowned['files'] == 1 else 'were'} not analysed"
+            + (f" ({', '.join(directories)})" if directories else "")
+            + "."
+        )
         lines.append("")
 
     out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or []
@@ -3697,7 +3748,7 @@ def _emit_v2_grouped_control(
     name = (c.get("control") or c.get("name") or c.get("domain") or "Control").strip()
     title = _friendly_subcontrol_title(name)
     if section_id and idx:
-        lines.append("".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(name), _v2_slug(title)})))
+        lines.append("".join(f'<a id="{s}"></a>' for s in _v2_anchor_ids(lines, _v2_slug(name), _v2_slug(title))))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
@@ -4934,7 +4985,10 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # anchors so `**Controls covered:**` link variants (LLM-filled
             # placeholder vs. mechanical) both resolve to this H4.
             lines.append(
-                "".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)}))
+                "".join(
+                    f'<a id="{s}"></a>'
+                    for s in _v2_anchor_ids(lines, _v2_slug(default_mech_raw), _v2_slug(default_mech))
+                )
             )
             lines.append(f"#### {section_id}.1 {default_mech}")
             lines.append("")

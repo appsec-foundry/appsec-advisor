@@ -277,7 +277,15 @@ def test_actor_discovery_cites_retrieved_sources_and_reaches_the_resolver(tmp_pa
     assert [role for role, _ in host.calls] == ["actor_discoverer", "actor_discoverer"]
     # Bounded cards only: no source text reaches the job outside its reads.
     context = host.calls[0][1]
-    assert set(context) == {"active_static_actors", "components", "external_entities", "data_flows", "routes"}
+    assert set(context) == {
+        "active_static_actors",
+        "components",
+        "external_entities",
+        "data_flows",
+        "routes",
+        "privileged_access_checks",
+    }
+    assert context["privileged_access_checks"] == []
     [route] = context["routes"]
     assert route["evidence"][0]["repository_id"] == by_label(scope)["edge"].repository_id
     assert route["evidence"][0]["file"] == "src/server.js"
@@ -293,9 +301,65 @@ def test_actor_discovery_cites_retrieved_sources_and_reaches_the_resolver(tmp_pa
     assert receipts == ["actor discovery: 1 proposed, 1 confirmed"]
 
 
+@pytest.mark.parametrize(
+    "check",
+    ["if user.role == 'admin':", "  if (payload.data.role === roles.administrator) {", "require_role('superuser')"],
+)
+def test_privileged_role_checks_reach_actor_discovery_as_preloaded_lines(tmp_path, check):
+    source = f"# if user.role == 'admin': only a comment\n{check}\n    grant()\n"
+    host = Discoverer(line=2)
+    scope, components, names, workspace = prepare(tmp_path, {"edge": {"app.py": source}})
+    edge = by_label(scope)["edge"]
+    cards = [{"paths": [{"repository_id": edge.repository_id, "path": "app.py"}]}]
+    [row] = assessment_posture.privileged_checks(scope, cards)
+    assert (row["repository_id"], row["file"], row["line"]) == (edge.repository_id, "app.py", 2)
+    jobs = AssessmentJobs(
+        scope, tmp_path / "jobs", AssessmentBudget(2, 0.05, 60, 120), host.factory, lambda: False, lambda: None
+    )
+    with combined_root(scope, names) as root:
+        seed(workspace, root, names, components)
+        cfg = {"repo_root": str(root), "assessment_depth": "standard"}
+        assessment_posture.run(scope, names, workspace, cfg)
+        assessment_posture.discover_actors(scope, jobs, names, workspace, cfg, lambda role, text: f"{role}: {text}")
+    # The check's lines arrive with the first packet, so the job needs no read call.
+    [(role, context)] = host.calls
+    assert [(r["file"], r["line"]) for r in context["privileged_access_checks"]] == [("app.py", 2)]
+
+
+def test_role_names_without_a_comparison_or_privilege_are_no_privileged_check(tmp_path):
+    source = "roles = {'admin': 'admin'}\nif user.role == 'customer':\n    pass\n# user.role === 'admin'\n"
+    scope, _components, _names, _workspace = prepare(tmp_path, {"edge": {"app.py": source}})
+    edge = by_label(scope)["edge"]
+    cards = [{"paths": [{"repository_id": edge.repository_id, "path": "app.py"}]}]
+    assert assessment_posture.privileged_checks(scope, cards) == []
+
+
+def test_a_confirmed_privileged_actor_gains_its_role_in_the_workspace_flows(tmp_path):
+    from tests.test_reconcile_privileged_roles import model, repo, resolved
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = repo(tmp_path / "root", "web/guard.ts")
+    components, flows = model()
+    (workspace / ".components.json").write_text(json.dumps({"components": components}))
+    (workspace / ".data-flows.json").write_text(json.dumps(flows))
+    (workspace / ".actors-resolved.json").write_text(json.dumps(resolved("Admin check. Evidence: web/guard.ts:3.")))
+    receipts = assessment_posture.reconcile_privileged_role(workspace, root)
+    assert receipts == ["privileged role added: ext-privileged-role for ACT-D-03 (flow df-002)"]
+    entities = read(workspace, ".data-flows.json")["external_entities"]
+    assert [e["access"] for e in entities] == ["internet-anon", "internet-priv-user"]
+    # Without a confirmation the flows stay as written.
+    (workspace / ".data-flows.json").write_text(json.dumps(flows))
+    (workspace / ".actors-resolved.json").write_text(json.dumps({"resolved_actors": [], "confirmed_relevant": []}))
+    assert assessment_posture.reconcile_privileged_role(workspace, root) == []
+    assert read(workspace, ".data-flows.json") == flows
+
+
 def test_actor_discovery_rejects_evidence_it_did_not_retrieve(tmp_path):
-    with pytest.raises(ValueError):
-        discover(tmp_path, Discoverer(line=3))
+    # The unretrieved evidence is never accepted; after STRIDE the failed job is replaced (OR-39).
+    _, _, workspace, receipts = discover(tmp_path, Discoverer(line=3))
+    assert receipts == ["actor discovery unavailable: the model job failed; deterministic actors kept"]
+    assert not (workspace / ".actors-discovered.json").exists()
 
 
 def test_quick_depth_skips_actor_discovery(tmp_path):
@@ -303,3 +367,23 @@ def test_quick_depth_skips_actor_discovery(tmp_path):
     _, _, workspace, receipts = discover(tmp_path, host, depth="quick")
     assert host.calls == [] and receipts == ["actor discovery skipped: quick depth"]
     assert read(workspace, ".actors-resolved.json")["quick_mode"] is True
+
+
+@pytest.mark.parametrize(("labels", "named"), [(("solo",), False), (("edge", "service"), True)])
+def test_posture_names_a_repository_only_when_several_are_selected(tmp_path, labels, named):
+    from runtime.multi_repo_scope import admit
+
+    from tests.test_multi_repo_controller import checkout
+
+    for label in labels:
+        checkout(tmp_path / label)
+    scope = admit([str(tmp_path / label) for label in labels], str(tmp_path / "out"), minimum=1)
+    names = Namespaces(scope)
+    repo = assessment_posture._Repo(scope.repositories[0], names)
+    label = repo.label
+    document = {"topology": {"zones": [{"name": "backend"}], "workloads": [{"zones": ["backend"]}]}}
+    zoned = assessment_posture._zones(document, None if names.single else label)
+    assert zoned["topology"]["zones"][0]["name"] == (f"{label}/backend" if named else "backend")
+    assert repo.text("see app.py:1", {("app.py", 1)}) == (f"see {label}/app.py:1" if named else "see app.py:1")
+    row = assessment_posture._sca_row(repo, {"control": "Dependency pinning", "evidence": []})
+    assert row["control"] == (f"Dependency pinning ({label})" if named else "Dependency pinning")

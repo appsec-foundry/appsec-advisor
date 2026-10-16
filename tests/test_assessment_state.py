@@ -15,7 +15,7 @@ from runtime import acquire_lock
 from runtime.analyst_host import HostCancelled, HostReply, TransportError
 from runtime.assessment_host import ExchangeError
 from runtime.assessment_jobs import AssessmentBudget, AssessmentJobs
-from runtime.assessment_state import AssessmentState
+from runtime.assessment_state import CACHE_NAME, STOP_NAME, AssessmentState
 from runtime.multi_repo_scope import AssessmentScope, ScopeError, admit
 
 
@@ -65,6 +65,73 @@ def stored(scope):
     return json.loads((scope.output / ".assessment-state.json").read_text())
 
 
+def test_budget_report_is_incomplete_redacted_and_resumable(scope):
+    from types import SimpleNamespace
+
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    state = lifecycle(scope)
+    state.budget.plan_completion()
+    repo = scope.repositories[0]
+    jobs = SimpleNamespace(
+        accepted_results={
+            "stride:example": {
+                "role": "stride_analyzer",
+                "selector": "stride:example",
+                "finding_count": 1,
+                "findings": [
+                    {
+                        "title": "<img src=x> [click](https://example.invalid) neutral fixture",
+                        "repository_id": repo.repository_id,
+                        "file": "app.py",
+                        "line": 1,
+                    }
+                ],
+            }
+        }
+    )
+    with pytest.raises(BudgetExhausted), state.hold():
+        path = state.budget_report(jobs)
+        text = path.read_text()
+        assert "Incomplete assessment" in text and "not a completed threat model" in text
+        assert "neutral fixture" not in text and "REDACTED" in text
+        assert "<img" not in text and "[click](" not in text
+        assert not (scope.output / "threat-model.md").exists()
+        raise BudgetExhausted("cost limit")
+    assert stored(scope)["status"] == "interrupted"
+    assert stored(scope)["partial_report"]["status"] == "incomplete"
+    assert stored(scope)["deliverables"] == {}
+    with lifecycle(scope, resume=True).hold():
+        pass
+
+
+@pytest.mark.parametrize("invalid", ["scope", "accounting", "cancelled", "contract"])
+def test_budget_report_refuses_invalid_security_context(scope, invalid):
+    from types import SimpleNamespace
+
+    state = lifecycle(scope)
+    with state.hold():
+        jobs = SimpleNamespace(accepted_results={})
+        if invalid == "scope":
+            (scope.repositories[0].root / "app.py").write_text("print('changed')\n")
+        elif invalid == "accounting":
+            state.budget.failed = True
+        elif invalid == "cancelled":
+            state.cancelled = True
+        else:
+            jobs.accepted_results["bad"] = {
+                "selector": "bad",
+                "role": "stride_analyzer",
+                "finding_count": 1,
+                "findings": [{"title": "bad", "repository_id": "foreign", "file": "a", "line": 0}],
+            }
+        from jsonschema import ValidationError
+
+        with pytest.raises((ExchangeError, ScopeError, ValidationError)):
+            state.budget_report(jobs)
+        assert not (state.directory / "budget-report.md").exists()
+
+
 def test_interrupted_session_releases_lock_and_resumes_same_identity(scope):
     initial = lifecycle(scope)
     with initial.hold():
@@ -98,17 +165,97 @@ def test_complete_session_binds_deliverables_and_detects_later_changes(scope):
     "field,value,named",
     [
         ("configuration", {"stride_model": "sonnet"}, "the assessment settings changed"),
-        ("runtime_sha256", "b" * 64, "the plugin version changed"),
         ("budget", AssessmentBudget(2.0, 0.05, 10, 60), "the budget or time limits changed"),
     ],
 )
-def test_changed_settings_or_runtime_reject_resume_and_name_the_change(scope, field, value, named):
+def test_changed_settings_reject_resume_and_name_the_change(scope, field, value, named):
     with lifecycle(scope).hold():
         pass
-    with pytest.raises(ExchangeError, match=f"cannot resume: {named} .*new scan is required") as caught:
+    with pytest.raises(
+        ExchangeError, match=f"cannot resume: {named} .*new scan is required: run again without --resume"
+    ) as caught:
         with lifecycle(scope, resume=True, **{field: value}).hold():
             pytest.fail("Changed request must not resume")
     assert "source code" not in str(caught.value)
+
+
+def _plugin_change_jobs(state, host_factory):
+    # As the controller does: every session may adopt cached jobs of an earlier unfinished run.
+    return AssessmentJobs(
+        state.scope,
+        state.directory / "jobs",
+        state.budget,
+        host_factory,
+        state.should_stop,
+        state.checkpoint,
+        cache=state.directory / CACHE_NAME,
+    )
+
+
+def test_resume_after_a_plugin_change_reuses_only_unchanged_jobs(scope):
+    schema = {"type": "object", "required": ["ok"], "properties": {"ok": {"const": True}}}
+
+    def job(selector, instructions):
+        return dict(
+            role="recon_scanner",
+            selector=selector,
+            instructions=instructions,
+            context={},
+            schema=schema,
+            allowed_sources=frozenset(),
+            validate=lambda a, r: None,
+        )
+
+    dispatched = []
+
+    class Host:
+        def __init__(self, role):
+            self.role = role
+
+        def invoke(self, *args):
+            dispatched.append(self.role)
+            return HostReply({"action": "complete", "reads": [], "artifact": {"ok": True}}, 0.01)
+
+    first = lifecycle(scope)
+    with first.hold():
+        jobs = _plugin_change_jobs(first, lambda role, ceiling: Host(role))
+        jobs.execute(**job("kept", "same prompt"))
+        jobs.execute(**job("changed", "old prompt"))
+    assert stored(scope)["status"] == "interrupted" and len(dispatched) == 2
+
+    resumed = lifecycle(scope, resume=True, runtime_sha256="b" * 64)
+    with resumed.hold():
+        assert resumed.runtime_changed and not resumed.resume
+        assert resumed.state["run_id"] != first.state["run_id"]
+        assert resumed.state["identity"]["runtime_sha256"] == "b" * 64
+        jobs = _plugin_change_jobs(resumed, lambda role, ceiling: Host(role))
+        jobs.execute(**job("kept", "same prompt"))
+        jobs.execute(**job("changed", "new prompt"))
+        assert len(dispatched) == 3  # only the job whose request changed ran again
+        assert resumed.budget.calls == 2 and resumed.budget.spent_usd == pytest.approx(0.02)
+
+
+def test_resume_after_a_plugin_change_still_refuses_a_completed_run_or_unknown_cost(scope):
+    with lifecycle(scope).hold() as state:
+        (scope.output / "threat-model.yaml").write_text("version: 2\n")
+        state.complete(["threat-model.yaml"])
+    with pytest.raises(ExchangeError, match="the plugin version changed .*run again with --rebuild"):
+        with lifecycle(scope, resume=True, runtime_sha256="b" * 64).hold():
+            pytest.fail("A completed run must not be continued after a plugin change")
+    # Unchanged plugin: a completed run still reopens as before.
+    with lifecycle(scope, resume=True).hold() as reopened:
+        assert not reopened.runtime_changed
+
+
+def test_resume_after_a_plugin_change_keeps_unknown_cost_blocking(scope):
+    with lifecycle(scope).hold():
+        pass
+    recorded = stored(scope)
+    recorded["accounting"]["unavailable"] = True
+    (scope.output / ".assessment-state.json").write_text(json.dumps(recorded))
+    with pytest.raises(ExchangeError, match="the plugin version changed"):
+        with lifecycle(scope, resume=True, runtime_sha256="b" * 64).hold():
+            pytest.fail("Unknown costs must not be refunded by a plugin change")
 
 
 def test_changed_source_cannot_resume_or_complete(scope):
@@ -261,12 +408,51 @@ def test_fresh_start_clears_an_unfinished_run_but_keeps_its_job_cache(scope, fin
         with first.hold():
             pass
     assert stored(scope)["status"] == finish
+    if finish == "failed":
+        (first.directory / "jobs" / "job-000000000000000000000000.receipt.json").write_text("{}")
+        (first.directory / "jobs" / "job-111111111111111111111111.json").write_text("{}")
     with lifecycle(scope).hold() as fresh:
         assert fresh.state["run_id"] != first.state["run_id"]
         assert fresh.state["accounting"]["calls"] == 0
         assert not (fresh.directory / "context").exists()
         if finish == "failed":
-            assert (fresh.directory / "jobs" / "job-000000000000000000000000.json").exists()
+            cached = {path.name for path in (fresh.directory / CACHE_NAME).iterdir()}
+            # The accepted pair is cached; an artifact without a receipt was never accepted.
+            assert cached == {"job-000000000000000000000000.json", "job-000000000000000000000000.receipt.json"}
+            assert not (fresh.directory / "jobs").exists()
+
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_resume_after_a_fresh_start_that_never_reached_a_cached_job(scope, rebuild):
+    """A cached job a paused fresh start never reached stays out of the resume check.
+
+    Without --rebuild a later session adopts it and charges its cost; with
+    --rebuild it is gone and the job is redone.
+    """
+    _accept_job(scope, usd=0.02)
+    with lifecycle(scope, replace=rebuild).hold():
+        pass  # paused before the job was reached
+    dispatched = []
+
+    class Host:
+        def invoke(self, *args):
+            dispatched.append(args)
+            return HostReply({"action": "complete", "reads": [], "artifact": {"ok": True}}, 0.03)
+
+    with lifecycle(scope, resume=True).hold() as resumed:
+        _plugin_change_jobs(resumed, lambda role, ceiling: Host()).execute(
+            role="recon_scanner",
+            selector="one",
+            instructions="trusted",
+            context={},
+            schema={"type": "object"},
+            allowed_sources=frozenset(),
+            validate=lambda a, r: None,
+        )
+        assert len(dispatched) == (1 if rebuild else 0)
+        assert resumed.budget.spent_usd == pytest.approx(0.03 if rebuild else 0.02)
+    with lifecycle(scope, resume=True).hold():
+        pass  # the adopted or redone receipt is covered by the accounting
 
 
 @pytest.mark.parametrize("extra", ["completed", "user-file", "malformed-state"])
@@ -536,7 +722,43 @@ def test_rebuild_keeps_a_directory_with_edited_or_foreign_files(scope, extra):
     _completed(scope)
     kept = scope.output / ("threat-model.md" if extra == "edited-report" else "notes.txt")
     kept.write_text("mine\n")
-    with pytest.raises(ExchangeError, match="did not write or that changed"):
+    with pytest.raises(ExchangeError, match=rf"did not write or that changed since \({kept.name}\)"):
         with lifecycle(scope, replace=True).hold():
             pytest.fail("--rebuild must not erase a user's file")
     assert kept.read_text() == "mine\n" and (scope.output / ".assessment-state.json").exists()
+
+
+def test_held_lock_heartbeats_on_its_own_clock(scope, monkeypatch):
+    monkeypatch.setattr(AssessmentState, "HEARTBEAT_SECONDS", 0.05)
+    state = lifecycle(scope)
+    with state.hold():
+        assert acquire_lock._read_stale_after(state.lock) == AssessmentState.STALE_AFTER_SECONDS
+        acquire_lock._write_lock(state.lock, os.getpid(), 1, state.state["run_id"])
+        deadline = time.monotonic() + 5
+        while acquire_lock._parse_lock(state.lock)[1] == 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert acquire_lock._parse_lock(state.lock)[1] > 1
+        assert acquire_lock._read_stale_after(state.lock) == AssessmentState.STALE_AFTER_SECONDS
+    assert not state.lock.exists()
+
+
+@pytest.mark.parametrize("request_kind", ["this-run", "other-run", "link"])
+def test_a_stop_request_reaches_the_run_at_its_next_checkpoint(scope, tmp_path, request_kind):
+    """`assess-stop` cannot signal a run in another PID namespace; the run reads its request instead."""
+    state = lifecycle(scope)
+    stop = scope.output / STOP_NAME
+    with pytest.raises(HostCancelled), state.hold():
+        run_id = state.state["run_id"]
+        if request_kind == "this-run":
+            stop.write_text(run_id + "\n")
+        elif request_kind == "other-run":
+            stop.write_text("assessment-other\n")
+        else:
+            (tmp_path / "elsewhere").write_text(run_id + "\n")
+            stop.symlink_to(tmp_path / "elsewhere")
+        state.checkpoint()
+        # Only a request naming this run, in a regular file, stops it.
+        assert state.cancelled is (request_kind == "this-run")
+        raise HostCancelled("stopped")
+    # A consumed request never stops the next run; another run's request is not this run's to remove.
+    assert {"this-run": not stop.exists(), "other-run": stop.is_file(), "link": stop.is_symlink()}[request_kind]

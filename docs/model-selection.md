@@ -34,7 +34,9 @@ The default role assignments are:
 | QA | qa_content, qa_routine | Sonnet 4.6; Haiku for qa_routine | Sonnet 4.6; Haiku for qa_routine | Sonnet 4.6 |
 | Coordination | orchestrator | Session model | Session model | Session model |
 
-A multi-repository assessment runs STRIDE on the latest Sonnet at quick and standard depth, because Sonnet 4.6 returns no STRIDE result through its single-call exchange. The run prints each role's model at the start, warns that STRIDE calls cost more after this move, and warns when an explicit setting puts STRIDE on Sonnet 4.6.
+A headless controller assessment, for one repository or several, runs STRIDE on the latest Sonnet at quick and standard depth, because Sonnet 4.6 returns no STRIDE result through its single-call exchange. The move does not raise cost: repricing the calls of a measured Juice Shop controller run at Sonnet 4.6 rates gave about $17 instead of the $11 it cost. The run prints each role's model at the start and warns when an explicit setting puts STRIDE on Sonnet 4.6.
+
+The controller assessment also runs repository discovery on the latest Sonnet instead of Haiku. Discovery must return validated components and cited interfaces; Haiku stopped at the thinking limit or repeated a rejected result until the call limit. `APPSEC_RECON_SCANNER_MODEL` or a shared model setting still selects another model.
 
 The explicit `sonnet` tier selects the latest Sonnet instead of this version split. `EXTENDED_MODEL_MATRIX` supplies the Haiku defaults for context resolution, reconnaissance, configuration scanning, and routine QA, subject to depth-specific routing.
 
@@ -118,10 +120,10 @@ For a repository below the size threshold, use a Sonnet 4.6 session and the defa
 
 ## When to use the latest Sonnet
 
-Sonnet 4.6 is the default because it does the same work for less money. Use the latest Sonnet, currently 5.5, in these cases:
+In the session-orchestrated pipeline, Sonnet 4.6 is the default because the benchmarks above measured the same work for less money. The headless controller assessment does not follow this default; see [Subagent defaults](#subagents--model_matrix-author-controlled-default). Use the latest Sonnet, currently 5.5, in these cases:
 
 - **Large repository.** From about 2,500 source files on, run the session on Sonnet 5.5. A long run needs its larger context window to finish cleanly.
-- **Several repositories in one run.** You don't need to change anything. STRIDE switches to Sonnet 5.5 on its own, because Sonnet 4.6 returns no result there.
+- **Headless controller assessment.** You don't need to change anything. STRIDE switches to Sonnet 5.5 on its own, because Sonnet 4.6 returns no result there.
 - **Quality before cost.** `--reasoning-model sonnet` puts finding, rating and merging threats on the latest Sonnet. It is not a pure upgrade: in our benchmark, Sonnet 5 missed some findings that 4.6 caught.
 
 In every other case, stay on the default.

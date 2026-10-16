@@ -11,6 +11,7 @@ reported ``✓ completed successfully`` (exit 0).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -21,6 +22,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-headless.sh"
+
+
+@pytest.fixture(autouse=True)
+def _single_repository_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the single-repository scan's wiring, which a single --repo reaches only when the controller is switched off."""
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "0")
 
 
 def _body() -> str:
@@ -753,3 +760,86 @@ def test_repeated_repository_selection_reaches_the_combined_assessment_before_ou
     assert message in result.stderr
     assert not output.exists()
     assert not marker.exists()
+
+
+def _run_banner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **env: str) -> subprocess.CompletedProcess:
+    """Run the wrapper up to a stub Claude that exits at once; return its output."""
+    repo, output = tmp_path / "repo", tmp_path / "out"
+    repo.mkdir()
+    launcher = tmp_path / "claude-stub"
+    launcher.write_text(
+        '#!/bin/sh\nif [ "$1" = "auth" ]; then printf \'{"loggedIn": true}\\n\'; exit 0; fi\nexit 42\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    monkeypatch.setenv("APPSEC_CLAUDE_EXECUTABLE", str(launcher))
+    for key in ("NO_COLOR", "FORCE_COLOR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--trust-mode", "trusted", "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def test_output_off_a_terminal_carries_no_escape_sequences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Logs and CI output read the summary as plain text, exactly as before."""
+    result = _run_banner(tmp_path, monkeypatch)
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "\x1b" not in result.stdout + result.stderr
+    assert "▶ AppSec Plugin — Headless Mode" in result.stdout
+    assert "\n  Skill      : create-threat-model\n" in result.stdout
+
+
+def test_forced_colour_styles_the_banner_without_changing_its_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_banner(tmp_path, monkeypatch, FORCE_COLOR="1")
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "\x1b[" in result.stdout
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    # The logo glyphs belong to tests/test_term_style.py; only the fields beside them are checked here.
+    assert "  appsec-advisor\n" in plain
+    assert "  code-derived STRIDE threat modeling\n" in plain
+    assert "\n  Skill      : create-threat-model\n" in plain
+
+
+@pytest.mark.parametrize("flag", ["--audit-requirements", "--check-requirements"])
+@pytest.mark.parametrize("controller", ["1", "0"])
+def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(
+    tmp_path: Path, flag: str, controller: str
+) -> None:
+    """A single --repo reaches the controller only for an assessment; the audit skill inspects its working directory."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    seen = tmp_path / "seen"
+    stub = tmp_path / "claude"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ]; then\n'
+        "  printf '{\"loggedIn\": true}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        f'printf "%s\\n" "$PWD" "$2" > "{seen}"\n'
+        'printf \'{"type": "result", "result": "done", "total_cost_usd": 0}\\n\'\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env = _headless_env(stub)
+    env["APPSEC_SINGLE_REPO_CONTROLLER"] = controller
+
+    subprocess.run(
+        [str(SCRIPT), flag, "--repo", str(repo), "--trust-mode", "trusted", "--quiet"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+
+    cwd, prompt = seen.read_text(encoding="utf-8").splitlines()[:2]
+    assert Path(cwd).resolve() == repo.resolve()
+    assert prompt.startswith("/appsec-advisor:audit-security-requirements")

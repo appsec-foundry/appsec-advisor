@@ -15,5 +15,6 @@
     "stride",
     "agents",
     "skills"
-  ]
+  ],
+  "types": "./types/progress.d.ts"
 }

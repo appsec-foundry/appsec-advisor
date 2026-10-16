@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -125,11 +126,11 @@ class TestHookNotice:
 
 
 class TestTheHeadlessWrapper:
-    def _cli(self, output: Path, run_id: str) -> str:
+    def _cli(self, output: Path, run_id: str, *extra: str) -> str:
         env = {key: value for key, value in os.environ.items() if key not in RUN_IDENTITY_VARS}
         env.update({"APPSEC_RUN_ID": run_id, "APPSEC_HEADLESS": "1"})
         result = subprocess.run(
-            [sys.executable, str(RELAY), "--output-dir", str(output)],
+            [sys.executable, str(RELAY), "--output-dir", str(output), *extra],
             capture_output=True,
             text=True,
             env=env,
@@ -142,6 +143,18 @@ class TestTheHeadlessWrapper:
         relay.persist(run_dir, _summary("/srv/app"))
         assert self._cli(run_dir, RUN_ID) == _summary("/srv/app")
         assert self._cli(run_dir, RUN_ID) == ""
+
+    def test_colour_is_added_at_print_time_only(self, run_dir):
+        """The record stays plain for the hooks; the terminal copy is coloured."""
+        relay.persist(run_dir, _summary("/srv/app"))
+        assert "\x1b" not in (run_dir / relay.RECORD).read_text(encoding="utf-8")
+        coloured = self._cli(run_dir, RUN_ID, "--color", "always")
+        assert "\x1b[" in coloured
+        assert "Next Steps" in re.sub(r"\x1b\[[0-9;]*m", "", coloured)
+
+    def test_no_colour_prints_the_record_verbatim(self, run_dir):
+        relay.persist(run_dir, _summary("/srv/app"))
+        assert self._cli(run_dir, RUN_ID, "--color", "never") == _summary("/srv/app")
 
     def test_leaves_another_runs_record_alone(self, run_dir):
         relay.persist(run_dir, _summary("/srv/app"))

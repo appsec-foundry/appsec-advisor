@@ -54,6 +54,24 @@ def test_non_urgent_and_non_fix_cards_are_outside_gate():
     assert errors == []
 
 
+def test_preservation_is_not_a_fix_but_remains_an_explicit_review_note():
+    for title in ("Preserve SQL injection for training", "Retain the authorization bypass in the lab"):
+        card = {"id": "M-001", "priority": "P3", "kind": "fix", "title": title}
+        assert quality.validate({"mitigations": [card]}) == [
+            "M-001: preserving a vulnerability or accepting its risk is not a fix"
+        ]
+        for kind in ("review", "investigate", "accept_risk"):
+            assert quality.validate({"mitigations": [{**card, "kind": kind}]}) == []
+    for title in (
+        "Keep injection defenses",
+        "Preserve request compatibility",
+        "Do not retain the unsafe behavior",
+        "Keep injection out of database queries",
+        "Keep the authorization bypass disabled",
+    ):
+        assert quality.validate({"mitigations": [{"id": "M-001", "priority": "P3", "title": title}]}) == []
+
+
 def test_urgent_code_example_needs_a_source_location():
     errors = quality.validate(
         {

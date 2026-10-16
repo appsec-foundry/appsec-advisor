@@ -15,7 +15,7 @@
     "calls": {"type": "integer", "minimum": 1, "maximum": 6},
     "usd": {"type": "number", "minimum": 0},
     "source_ranges": {
-      "type": "array", "maxItems": 12,
+      "type": "array", "maxItems": 48,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["repository_id", "path", "sha256", "start_line", "end_line"],

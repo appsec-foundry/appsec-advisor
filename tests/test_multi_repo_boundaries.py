@@ -363,6 +363,11 @@ def test_measured_source_context_qualifies_every_repository(tmp_path, names, lay
     }
     assessment = build_assessment(scope, components, receipt, flows, context, "standard")
     assert assessment["source_context"] == context
+    # The controller's earlier inventories stand in for a second scan unchanged.
+    from orchestrator.orchestration_controller import _assessment_inventories
+
+    earlier = {rid: row["routes"] for rid, row in _assessment_inventories(scope).items()}
+    assert assessment_source_context(scope, earlier) == context
 
 
 def test_unmeasured_recon_signals_stay_null_instead_of_false(tmp_path):

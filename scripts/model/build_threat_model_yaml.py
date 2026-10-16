@@ -1242,7 +1242,9 @@ def build_meta(
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
     commit_sha = _git(["rev-parse", "HEAD"], repo_root) or "unknown"
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root) or "unknown"
-    repo_url = _git(["remote", "get-url", "origin"], repo_root)
+    from shared._remote_url import public_remote_url
+
+    repo_url = public_remote_url(_git(["remote", "get-url", "origin"], repo_root))
 
     # project: sidecar fallback chain — recon-summary, then prior yaml meta.project, then repo basename
     project = recon_project or (prior_yaml or {}).get("meta", {}).get("project") or repo_root.name
@@ -1253,12 +1255,26 @@ def build_meta(
 
     from shared._manifest_readers import manifest_display_name, read_project_manifest
 
-    project_name = manifest_display_name(read_project_manifest(SimpleNamespace(repo_root=repo_root)))
+    manifest = read_project_manifest(SimpleNamespace(repo_root=repo_root))
+    project_name = manifest_display_name(manifest)
+    # The §1 overview reads these from meta; without them it searched the
+    # renderer's working directory, which is not the scanned repository.
+    # Manifest and README text is repository content: mask it like evidence.
+    from validators.secret_scan import mask_text
+
+    node = (manifest.get("engines") or {}).get("node") if isinstance(manifest.get("engines"), dict) else None
+    runtime = manifest.get("runtime") or (f"Node.js {node}" if isinstance(node, str) and node.strip() else None)
+    described = {
+        key: mask_text(value.strip())[0]
+        for key, value in (("project_description", manifest.get("description")), ("runtime", runtime))
+        if isinstance(value, str) and value.strip()
+    }
 
     return {
         "schema_version": 1,
         "project": project,
         **({"project_name": project_name} if project_name else {}),
+        **described,
         "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         # ``rebuild`` is an orchestration/cleanup mode, not a public assessment
         # mode.  The output contract deliberately exposes only a complete
@@ -1407,7 +1423,10 @@ def _conform_title(threat: dict) -> bool:
     if not cleaned or len(_clamp_title(cleaned)) < _TITLE_MINLEN:
         cleaned, lossy = _fallback_title(threat), True
     threat["title"] = _clamp_title(cleaned)
-    if lossy:
+    # Any change keeps the original: cleaning drops the "class — qualifier"
+    # separator and may cut the wording, so the title emitter must re-derive
+    # from the source, not from this conformed string.
+    if lossy or threat["title"] != raw.strip():
         threat.setdefault("_title_source", raw)
     return lossy
 
@@ -1572,7 +1591,9 @@ def _clean_title(raw: str) -> str:
         if len(s) <= 80:
             suffix = ""
         else:
-            s = s[:79].rstrip().rstrip(",;:-") + "…"
+            from shared._register_titles import _cut_at_word  # noqa: PLC0415
+
+            s = _cut_at_word(s, 79) + "…"
             suffix = ""
     return f"{s}{suffix}"
 

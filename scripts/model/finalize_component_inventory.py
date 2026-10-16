@@ -249,7 +249,9 @@ def annotate_workload_placement(components: list[dict[str, Any]], output_dir: Pa
             component["deployment_evidence"] = evidence[:MAX_DEPLOYMENT_EVIDENCE]
 
 
-def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def finalize(
+    repo_root: Path, output_dir: Path, *, whole_repository: bool = False
+) -> tuple[dict[str, Any], dict[str, Any]]:
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
     component_path = output_dir / ".components.json"
@@ -257,7 +259,7 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     _validate(document, COMPONENT_SCHEMA)
     original = document["components"]
     original_ids = [row.get("id") for row in original if isinstance(row, dict)]
-    finalized, injected = reconcile_inventory(original, repo_root)
+    finalized, injected = reconcile_inventory(original, repo_root, whole_repository=whole_repository)
     annotate_languages(finalized, repo_root)
     refine_model_capabilities(finalized, repo_root)
     annotate_workload_placement(finalized, output_dir)
@@ -306,7 +308,9 @@ def validate_receipt(output_dir: Path, repo_root: Path | None = None) -> dict[st
     return receipt
 
 
-def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
+def finalize_assessment(
+    scope, discoveries: list[dict], routes: dict[str, list[dict]] | None = None
+) -> tuple[dict, dict]:
     """Run existing component finalization against each frozen source tree.
 
     Local reconciliation, language/capability refinement and path/ORM guards
@@ -315,6 +319,8 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
     legacy consumers reject it until explicitly migrated. Nothing is written
     to a selected source checkout or the assessment's publication directory.
     """
+    from analyzers import serving_units
+    from analyzers.route_inventory import build_inventory as route_inventory
     from contexts.reconcile_multi_repo_architecture import _id, reconcile
     from orchestrator.build_stride_dispatch_manifest import _path_owns
     from validators.validate_assessment_architecture import (
@@ -349,7 +355,18 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
                 output / ".components.json",
                 {"schema_version": 1, "components": by_repo[repo.repository_id]["components"]},
             )
-            local, receipt = finalize(root, output)
+            # The snapshot holds exactly the admitted files, so ORM code is
+            # found even when discovery modelled no data tier.
+            local, receipt = finalize(root, output, whole_repository=True)
+            # A carried serving unit brings its handler modules or client source;
+            # an uncarried one would silently drop its findings, so it stops here.
+            # A caller that already scanned the routes passes them by repository.
+            rows = routes[repo.repository_id] if routes is not None else route_inventory(root)["routes"]
+            units = serving_units.scan(root, rows)
+            serving_units.adopt(units, local["components"], root, rows)
+            missing = serving_units.uncovered(units, local["components"])
+            if missing:
+                raise ValueError("No component carries these serving units: " + serving_units.describe(missing))
         collapsed += receipt["collapsed_duplicate_count"]
         injected_ids.extend(_id("component", repo.repository_id, cid) for cid in receipt["injected_component_ids"])
         hashes = {p: hashlib.sha256(data).hexdigest() for p, data in repo.files.items()}

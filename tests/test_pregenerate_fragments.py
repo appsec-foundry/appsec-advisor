@@ -139,6 +139,68 @@ class TestSystemOverview:
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
         assert "as built, not as designed" in md
 
+    @pytest.mark.parametrize(
+        ("rows", "sentence"),
+        [
+            (
+                [{"component": "Order store", "files": 11}, {"component": "Build pipeline", "files": 4}],
+                "**Not individually examined:** 15 source files in 2 components had no route, lead or "
+                "security signal (Order store 11, Build pipeline 4).",
+            ),
+            (
+                [{"component": "Ledger API", "files": 1}],
+                "**Not individually examined:** 1 source file in 1 component had no route, lead or "
+                "security signal (Ledger API 1).",
+            ),
+        ],
+    )
+    def test_scope_names_source_files_no_target_covered(self, minimal_yaml_data, rows, sentence):
+        """REQ-FLW-005: a coverage gap the analysis recorded reaches the report, not only the console."""
+        minimal_yaml_data["meta"]["unexamined_source"] = rows
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert sentence in md
+        assert md.index(sentence) < md.index("**Out of scope:**")
+
+    def test_scope_without_unexamined_source_states_nothing(self, minimal_yaml_data):
+        assert "Not individually examined" not in pf.gen_system_overview(minimal_yaml_data)
+
+    def test_scope_names_targets_the_analysis_could_not_decide(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["undecided_targets"] = [
+            {"component": "Web", "target": "routes/redirect.ts: allow-list helper was not supplied"}
+        ]
+        md = pf.gen_system_overview(minimal_yaml_data)
+        # A coverage gap in one line, not a question list beside the team questions.
+        assert (
+            "**Not assessed:** 1 security-relevant code location was read but could not be judged (Web 1); "
+            "`threat-model.yaml` records each with its reason under `meta.undecided_targets`."
+        ) in md
+        assert "Open analysis questions" not in md and "allow-list helper" not in md
+
+    @pytest.mark.parametrize("name", ["Orders API", "Billing worker"])
+    def test_scope_lists_components_and_counts_unassessed_locations(self, minimal_yaml_data, name):
+        minimal_yaml_data["components"] = [{"id": "service", "name": name}]
+        minimal_yaml_data["meta"]["undecided_targets"] = [
+            {"component": name, "target": f"module{i}.py: helper unavailable"} for i in range(12)
+        ]
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert f"\n- {name}\n" in md and f"**{name}**" not in md
+        assert (
+            f"**Not assessed:** 12 security-relevant code locations were read but could not be judged ({name} 12)" in md
+        )
+        assert "module0.py" not in md
+
+    def test_scope_names_program_files_outside_every_component(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["unowned_source"] = {
+            "files": 4,
+            "by_directory": [{"directory": "lib/", "files": 3}, {"directory": "(repository root)", "files": 1}],
+        }
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert (
+            "**Not assigned to any component:** 4 program files belong to no component and were not analysed "
+            "(`lib/` 3, `(repository root)` 1)." in md
+        )
+        assert "Not assigned to any component" not in pf.gen_system_overview({**minimal_yaml_data, "meta": {}})
+
     def test_method_boundary_is_independent_of_meta_scope(self):
         md = pf.gen_system_overview({"meta": {}, "components": []})
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
@@ -3592,6 +3654,8 @@ def test_system_overview_renders_component_selection_transparency():
     yaml_data = {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
     out = mod.gen_system_overview(yaml_data)
     assert "**2 of 4**" in out
+    assert "\n- Web Frontend\n- Auth Service" in out
+    assert "**Web Frontend**" not in out
     assert "Not analysed at this depth: Worker, Database" in out
     assert "Selection criteria" in out
     assert "business-critical surface" not in out
@@ -3768,6 +3832,26 @@ class TestEmitV2SubcontrolBlock:
         assert "jwt-verification-legacy-unsigned" in ids
         assert "jwt-verification-signed-signedjwtservice" in ids
         assert ids.count("jwt-verification") == 1
+
+    @pytest.mark.parametrize("control", ["Build Pipeline and Dependency Controls", "JWT Verification"])
+    def test_grouped_controls_keep_unique_anchors_with_repeated_friendly_titles(self, control):
+        import re
+
+        lines = []
+        for idx, suffix in enumerate(("Service A", "Service B"), 1):
+            pf._emit_v2_grouped_control(
+                lines,
+                {"control": f"{control} ({suffix})"},
+                [],
+                [],
+                "6.2 Identity",
+                section_id="6.2",
+                idx=idx,
+            )
+        ids = re.findall(r'<a id="([^"]+)"></a>', "\n".join(lines))
+        assert len(ids) == len(set(ids)) == 3
+        assert ids.count(pf._v2_slug(control)) == 1
+        assert all(pf._v2_slug(f"{control} ({suffix})") in ids for suffix in ("Service A", "Service B"))
 
     def test_flow_type_diagram_placeholder(self):
         lines: list[str] = []
@@ -4251,6 +4335,25 @@ def test_combined_scope_groups_components_by_repository(first, second):
     # A component spanning repositories keeps the flat sentence instead of a wrong grouping.
     model["components"][0]["paths"].append(f"{second}/shared.py")
     assert "in 2 repositories:" not in pf.gen_system_overview(model)
+
+
+@pytest.mark.parametrize("url", ["https://example.invalid/org/shop.git", "ssh://example.invalid/team/ledger.git"])
+def test_overview_of_one_selected_repository_reads_like_a_single_scan(url):
+    """One checkout shows its remote and description; several keep the repository list."""
+    sources = [{"label": "shop", "head": "a" * 40}]
+    meta = {
+        "project_name": "Shop",
+        "repo_url": url,
+        "project_description": "Order intake.",
+        "source_repositories": sources,
+    }
+    md = pf.gen_system_overview({"meta": meta, "components": [{"id": "api", "name": "Order API", "paths": ["app.py"]}]})
+    assert f"**Repository:** {url}" in md and "Repositories" not in md and "Order intake" in md
+    # Without a remote the one checkout is still named by its revision, as "Repository".
+    bare = pf.gen_system_overview({"meta": {**meta, "repo_url": None}, "components": []})
+    assert "**Repository:** `shop` (revision `aaaaaaaaaaaa`)" in bare
+    pair = {**meta, "source_repositories": [*sources, {"label": "billing", "head": "b" * 40}]}
+    assert "**Repositories:** `shop`" in pf.gen_system_overview({"meta": pair, "components": []})
 
 
 @pytest.mark.parametrize("labels", [["frontend", "backend"], ["north", "south", "east"]])

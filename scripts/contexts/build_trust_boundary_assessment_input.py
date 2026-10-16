@@ -879,12 +879,14 @@ def _qualified_evidence(repo, path: str, line: int) -> dict[str, Any]:
     }
 
 
-def assessment_source_context(scope) -> dict[str, Any]:
+def assessment_source_context(scope, route_inventories: dict[str, dict] | None = None) -> dict[str, Any]:
     """Measure the boundary source context of every admitted repository.
 
     Trusted scanners read only frozen snapshots, and every evidence row names
     its repository and file hash. The scanners prove presence, not absence:
     a recon signal without supporting evidence stays null instead of false.
+    ``route_inventories`` reuses inventories the controller already built
+    from the same snapshots; ``verify_unchanged`` keeps them current.
     """
     from analyzers.route_inventory import _AUTHN_PRESENT, _AUTHZ_PRESENT, build_inventory
     from orchestrator.assessment_declarations import declaration_summary
@@ -893,8 +895,11 @@ def assessment_source_context(scope) -> dict[str, Any]:
     per_repository: list[list[dict[str, Any]]] = []
     ci_evidence: list[dict[str, Any]] = []
     for repo in sorted(scope.repositories, key=lambda row: row.repository_id):
-        with scope.scanner_snapshot(repo.repository_id) as root:
-            inventory = build_inventory(root)
+        if route_inventories and repo.repository_id in route_inventories:
+            inventory = route_inventories[repo.repository_id]
+        else:
+            with scope.scanner_snapshot(repo.repository_id) as root:
+                inventory = build_inventory(root)
         _validate(inventory, ROUTE_SCHEMA)
         cards = []
         for row in inventory["routes"]:

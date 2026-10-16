@@ -3016,6 +3016,11 @@ _CAT13_SKIP_DIRS = frozenset({".claude", ".cursor", ".continue", ".codeium", ".a
 _CAT13_RUNTIME_ARTIFACT_DIRS = frozenset({".active-tool-calls", ".dispatch-context", ".fragments"})
 
 
+def cat13_line_signals(line: str) -> list[tuple[str, str]]:
+    """Return the (subcategory, strength) of every Cat-13 group one source line matches."""
+    return [(subcat, strength) for subcat, strength, pat in _CAT13_GROUPS if pat.search(line)]
+
+
 def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
     """Detect a genuine AI/LLM surface deterministically.
 
@@ -3046,9 +3051,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
         try:
             with p.open("r", encoding="utf-8", errors="replace") as f:
                 for n, line in enumerate(f, start=1):
-                    for subcat, strength, pat in _CAT13_GROUPS:
-                        if not pat.search(line):
-                            continue
+                    for subcat, strength in cat13_line_signals(line):
                         if strength == "strong":
                             strong_seen.add(subcat)
                         else:

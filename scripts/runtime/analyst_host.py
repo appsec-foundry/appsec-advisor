@@ -242,6 +242,7 @@ class ClaudeCliTransport:
         read_root: Path | None = None,
         events_path: Path | None = None,
         max_thinking_tokens: int | None = None,
+        short_cache: bool = False,
     ):
         """`events_path` records the host's event stream, one timestamped line per event.
 
@@ -249,7 +250,9 @@ class ClaudeCliTransport:
         limit still shows its turns, thinking estimates and retries.
         `max_thinking_tokens` stops a recorded call whose streamed thinking
         estimate exceeds it, as a time-limit stop; the host itself offers no
-        such bound with adaptive effort.
+        such bound with adaptive effort. `short_cache` writes the prompt with
+        the five-minute cache TTL instead of a subscription's one-hour default
+        (decision MD-11), for callers whose prompts are never read again later.
         """
         if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
             raise ValueError("unsupported host effort level")
@@ -261,9 +264,22 @@ class ClaudeCliTransport:
         self.read_root = read_root
         self.events_path = events_path
         self.max_thinking_tokens = max_thinking_tokens
+        self.short_cache = short_cache
         # Receives every parsed event of a recorded call, including partial
         # model output; a consumer may count it but must never display it.
         self.on_event: Callable[[dict], None] | None = None
+
+    def on_correction(self, reason: str) -> None:
+        """Record the controller's rejection of this call's answer in its event stream.
+
+        The reason is controller-authored and bounded; without it a correction
+        call in the recorded events has no visible cause.
+        """
+        if self.events_path is None or not self.events_path.exists():
+            return
+        line = json.dumps({"type": "controller_rejection", "reason": str(reason)[:2000]})
+        with open(self.events_path, "a", encoding="utf-8") as sink:
+            sink.write(f"-\t{line}\n")
 
     def argv(self, system: str, schema: dict) -> list[str]:
         return [
@@ -294,6 +310,8 @@ class ClaudeCliTransport:
     def environment(self) -> dict[str, str]:
         env = {k: v for k, v in os.environ.items() if not k.startswith(_DROPPED_ENV_PREFIXES)}
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+        if self.short_cache:
+            env["FORCE_PROMPT_CACHING_5M"] = "1"
         return env
 
     def invoke(
@@ -457,20 +475,25 @@ def _communicate_events(
     with open(events_path, "wb") as sink:
         reader = threading.Thread(target=pump, args=(proc.stdout, sink), daemon=True)
         reader.start()
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise HostTimeout("host call exceeded its time limit")
-            if max_thinking_tokens is not None and thinking[0] > max_thinking_tokens:
-                raise HostTimeout(f"host call exceeded its thinking limit of {max_thinking_tokens:,} tokens")
-            if should_stop():
-                raise HostCancelled("job cancelled")
-            try:
-                proc.wait(timeout=min(POLL_SECONDS, remaining))
-                break
-            except subprocess.TimeoutExpired:
-                pass
-        reader.join(timeout=TERMINATE_GRACE_SECONDS)
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise HostTimeout("host call exceeded its time limit")
+                if max_thinking_tokens is not None and thinking[0] > max_thinking_tokens:
+                    raise HostTimeout(f"host call exceeded its thinking limit of {max_thinking_tokens:,} tokens")
+                if should_stop():
+                    raise HostCancelled("job cancelled")
+                try:
+                    proc.wait(timeout=min(POLL_SECONDS, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            # A stopped call's pump still reads until the host is gone; end the
+            # host and the pump before the event file closes.
+            _stop_group(proc)
+            reader.join(timeout=TERMINATE_GRACE_SECONDS)
     return (result[0] if result else b""), (api_error[0] if api_error else None)
 
 

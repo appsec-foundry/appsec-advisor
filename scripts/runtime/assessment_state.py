@@ -16,23 +16,28 @@ import re
 import secrets
 import shutil
 import stat
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
-from shared._atomic_io import atomic_write_json
+from shared._atomic_io import atomic_write_json, atomic_write_text
 
 from runtime import acquire_lock
 from runtime.analyst_host import HostCancelled
 from runtime.assessment_host import ExchangeError
 from runtime.assessment_jobs import RECEIPT_SCHEMA, AssessmentBudget, _read_json, digest
+from runtime.multi_repo_discovery import BudgetExhausted
 from runtime.multi_repo_scope import AssessmentScope
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
+# `assess-stop` names the run to stop here; the run reads it at each checkpoint.
+STOP_NAME = ".assessment-stop"
 WORK_NAME = ".assessment-work"
+PARTIAL_REPORT = "budget-report.md"
 # What a refused resume names when its recorded identity no longer matches.
 _IDENTITY_LABELS = (
     ("scope_sha256", "the selected source code"),
@@ -40,10 +45,22 @@ _IDENTITY_LABELS = (
     ("runtime_sha256", "the plugin version"),
     ("limits", "the budget or time limits"),
 )
-# The controller keeps accepted job receipts under the work directory.
+# The controller keeps accepted job receipts under the work directory. Only
+# receipts this run accounted for live in jobs/; an unfinished earlier run's
+# accepted jobs wait in cache/ until a job adopts or discards them, so the
+# resume check never counts a receipt the run's accounting has not charged.
 JOBS_NAME = "jobs"
+CACHE_NAME = "cache"
 MAX_STATE_BYTES = 2_097_152
 MAX_DELIVERABLE_BYTES = 67_108_864
+
+
+class AssessmentPaused(Exception):
+    """The run stopped at a requested phase boundary; --resume continues it."""
+
+    def __init__(self, number: int, total: int, phase: str):
+        super().__init__(f"paused after phase {number}/{total} ({phase})")
+        self.number, self.total, self.phase = number, total, phase
 
 
 def _real_directory(path: Path, *, create=False):
@@ -88,12 +105,20 @@ def _deliverable(output: Path, name: str) -> str:
 
 
 class AssessmentState:
+    # The lock is refreshed on this clock, independent of job progress, and
+    # states the threshold after which a holder that stopped refreshing it (a
+    # process killed with its session) no longer blocks the directory.
+    HEARTBEAT_SECONDS = 20
+    STALE_AFTER_SECONDS = 60
+
     def __init__(self, scope, *, configuration, runtime_sha256, budget, resume=False, replace=False):
         if not isinstance(scope, AssessmentScope) or not isinstance(budget, AssessmentBudget):
             raise ExchangeError("Assessment lifecycle requires an admitted scope and full budget")
         if not isinstance(runtime_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", runtime_sha256):
             raise ExchangeError("Assessment lifecycle requires the trusted runtime fingerprint")
         self.scope, self.budget, self.resume, self.replace = scope, budget, resume, replace
+        # Component workers poll `should_stop` concurrently; one checkpoint at a time.
+        self._checkpoint_lock = threading.RLock()
         self.output = scope.output
         self.path = self.output / STATE_NAME
         self.directory = self.output / WORK_NAME
@@ -110,6 +135,8 @@ class AssessmentState:
             },
         }
         self.state = None
+        # Set when --resume continues an unfinished run after a plugin change.
+        self.runtime_changed = False
         self.cancelled = False
         self._held = False
         self._last_heartbeat = 0.0
@@ -124,14 +151,28 @@ class AssessmentState:
             self._open()
             self._held = True
             now = int(time.time())
-            acquire_lock._write_lock(self.lock, os.getpid(), now, self.state["run_id"], acquired_ts=now)
+            acquire_lock._write_lock(
+                self.lock, os.getpid(), now, self.state["run_id"], acquired_ts=now, stale_after=self.STALE_AFTER_SECONDS
+            )
             self.lock.chmod(0o600)
+            beating = threading.Event()
+
+            def heartbeat():
+                while not beating.wait(self.HEARTBEAT_SECONDS):
+                    try:
+                        self.checkpoint()
+                    except Exception:  # noqa: BLE001 - the run's own checkpoints report a lost lock
+                        return
+
+            threading.Thread(target=heartbeat, daemon=True).start()
             try:
                 self.checkpoint()
                 yield self
             except BaseException as error:
                 self.state["status"] = (
-                    "interrupted" if isinstance(error, (HostCancelled, KeyboardInterrupt)) else "failed"
+                    "interrupted"
+                    if isinstance(error, (HostCancelled, KeyboardInterrupt, AssessmentPaused, BudgetExhausted))
+                    else "failed"
                 )
                 self.checkpoint()
                 raise
@@ -140,6 +181,9 @@ class AssessmentState:
                     self.state["status"] = "interrupted"
                     self.checkpoint()
             finally:
+                beating.set()
+                if self._stop_requested():
+                    (self.output / STOP_NAME).unlink(missing_ok=True)
                 acquire_lock.release_lock(self.lock, self.state["run_id"])
                 self._held = False
 
@@ -150,12 +194,20 @@ class AssessmentState:
             raise ExchangeError("Assessment output belongs to another live run")
         if self.resume:
             self.state = _read_state(self.path)
+            if self.state["identity"] != self.identity and self._continues_after_plugin_change(self.state):
+                # MR-4: the earlier run's accepted jobs stay as a cache that the
+                # job layer rechecks per request; this session starts afresh.
+                self.resume, self.runtime_changed, self.state = False, True, None
+        if self.resume:
             if self.state["identity"] != self.identity:
+                again = (
+                    "run again with --rebuild"
+                    if self.state["status"] == "complete"
+                    else "run again without --resume; unchanged model steps are reused"
+                )
                 raise ExchangeError(
-                    "Assessment cannot resume: "
-                    + self._changed(self.state["identity"])
-                    + " changed since it started. A new scan is required: run without --resume in another "
-                    "--output or an emptied one"
+                    f"Assessment cannot resume: {self._changed(self.state['identity'])} changed since it "
+                    f"started. A new scan is required: {again}"
                 )
             accounting = self.state["accounting"]
             if not math.isfinite(accounting["spent_usd"]):
@@ -163,7 +215,10 @@ class AssessmentState:
             if self.state["expires_at"] != self.state["started_at"] + self.budget.timeout_s:
                 raise ExchangeError("Assessment resume deadline differs from its original limit")
             if accounting["unavailable"]:
-                raise ExchangeError("Assessment resume cannot reconcile an unfinished cost reservation")
+                raise ExchangeError(
+                    "Assessment resume cannot reconcile an unfinished cost reservation; rerun the same "
+                    "command without --resume, which reuses every accepted job that still matches"
+                )
             if (
                 accounting["calls"] > self.budget.max_calls
                 or accounting["spent_usd"] > self.budget.max_usd
@@ -195,6 +250,19 @@ class AssessmentState:
             }
             self.directory.mkdir(mode=0o700, exist_ok=True)
 
+    def _continues_after_plugin_change(self, earlier) -> bool:
+        """Whether --resume may continue an unfinished run whose only change is the plugin.
+
+        A completed run, an unknown-cost reservation, or any other identity
+        change still refuses the resume.
+        """
+        unchanged = {key: value for key, value in earlier["identity"].items() if key != "runtime_sha256"}
+        return (
+            unchanged == {key: value for key, value in self.identity.items() if key != "runtime_sha256"}
+            and earlier["status"] != "complete"
+            and not earlier["accounting"]["unavailable"]
+        )
+
     def _changed(self, identity) -> str:
         """Name what differs between a stored run identity and this one."""
         changed = [label for key, label in _IDENTITY_LABELS if identity.get(key) != self.identity.get(key)]
@@ -206,13 +274,19 @@ class AssessmentState:
         """Clear what an unfinished earlier assessment left, or refuse a fresh start.
 
         Only its own state file and work directory qualify, and only while the
-        state is not complete. Its accepted jobs stay as a cache that the job
-        layer rechecks against each new request. A completed run, a deliverable
+        state is not complete. Its accepted jobs move to the cache that the job
+        layer rechecks against each new request; --rebuild drops them with the
+        cache, so no session reuses them. A completed run, a deliverable
         or any other file still blocks, so a fresh start never erases a report
         or a user's file; only --rebuild removes an earlier run's own files.
         The refusal names why the earlier run cannot continue.
+
+        In a sole checkout's `docs/security` (MR-6) only the controller's own
+        files count: inputs and a legacy report beside them are kept as they are.
         """
         leftovers = {child.name for child in self.output.iterdir()} - {".appsec-lock", ".appsec-lock.guard"}
+        if self.scope.output_in_checkout():
+            leftovers &= self._own_names()
         if not leftovers:
             return
         if STATE_NAME in leftovers and leftovers <= {STATE_NAME, WORK_NAME}:
@@ -222,16 +296,19 @@ class AssessmentState:
                 status = None
             if status not in (None, "complete"):
                 if WORK_NAME in leftovers:
-                    # Accepted jobs stay as a cache the job layer rechecks
+                    # Accepted jobs become a cache the job layer rechecks
                     # against each new request; everything else is cleared.
                     _real_directory(self.directory)
+                    keep = set() if self.replace else {JOBS_NAME, CACHE_NAME}
                     for child in self.directory.iterdir():
-                        if child.name == JOBS_NAME:
+                        if child.name in keep:
                             _real_directory(child)
                         elif child.is_dir() and not child.is_symlink():
                             shutil.rmtree(child)
                         else:
                             child.unlink()
+                    if not self.replace:
+                        self._move_jobs_to_cache()
                 self.path.unlink()
                 return
         if STATE_NAME in leftovers:
@@ -239,16 +316,18 @@ class AssessmentState:
                 earlier = _read_state(self.path)
             except ExchangeError:
                 earlier = None
-            if self.replace and earlier is not None and self._remove_earlier_run(earlier, leftovers):
+            foreign = self._remove_earlier_run(earlier, leftovers) if self.replace and earlier is not None else None
+            if foreign == []:
                 return
             fresh = "choose another --output or empty this one"
             if earlier is None:
-                message = f"holds an unreadable earlier combined assessment; {fresh}"
+                message = f"holds an unreadable earlier assessment; {fresh}"
             elif self.replace:
-                message = f"holds files the earlier combined assessment did not write or that changed since; {fresh}"
+                shown = ", ".join(foreign[:3]) + (", ..." if len(foreign) > 3 else "")
+                message = f"holds files the earlier assessment did not write or that changed since ({shown}); {fresh}"
             elif earlier["identity"] != self.identity:
                 message = (
-                    "holds an earlier combined assessment that cannot be continued because "
+                    "holds an earlier assessment that cannot be continued because "
                     f"{self._changed(earlier['identity'])} changed since it started. A new scan is required: "
                     f"add --rebuild to replace it, or {fresh}"
                 )
@@ -268,12 +347,47 @@ class AssessmentState:
             f"({shown}); choose another --output or empty this one"
         )
 
-    def _remove_earlier_run(self, earlier, leftovers) -> bool:
+    def _move_jobs_to_cache(self):
+        """Move each accepted job (artifact and receipt) of the earlier run into the cache.
+
+        A newer job replaces a cached one of the same id as a pair; an artifact
+        without a receipt, or a receipt without an artifact, was never accepted
+        and is dropped.
+        """
+        jobs, cache = self.directory / JOBS_NAME, self.directory / CACHE_NAME
+        if not jobs.is_dir():
+            return
+        cache.mkdir(mode=0o700, exist_ok=True)
+        _real_directory(cache)
+        for artifact in sorted(jobs.glob("job-*.json")):
+            if artifact.name.endswith(".receipt.json"):
+                continue
+            receipt = artifact.with_name(artifact.name.removesuffix(".json") + ".receipt.json")
+            if not receipt.is_file():
+                continue
+            (cache / artifact.name).unlink(missing_ok=True)
+            (cache / receipt.name).unlink(missing_ok=True)
+            os.replace(artifact, cache / artifact.name)
+            os.replace(receipt, cache / receipt.name)
+        shutil.rmtree(jobs)
+
+    def _own_names(self) -> set[str]:
+        """The state, work directory and recorded deliverables of an earlier run."""
+        names = {STATE_NAME, WORK_NAME}
+        if self.path.is_file():
+            try:
+                names |= set(_read_state(self.path)["deliverables"])
+            except ExchangeError:
+                pass
+        return names
+
+    def _remove_earlier_run(self, earlier, leftovers) -> list[str]:
         """Remove an earlier assessment for --rebuild when it owns every file.
 
         Owned are its state, its work directory and each recorded deliverable
         whose bytes are unchanged. Any other or edited file keeps the
-        directory, so a rebuild never erases a user's file.
+        directory, so a rebuild never erases a user's file. Returns those
+        files, sorted; an empty list means the earlier run was removed.
         """
         owned = {STATE_NAME, WORK_NAME}
         for name, expected in earlier["deliverables"].items():
@@ -282,15 +396,18 @@ class AssessmentState:
                     owned.add(name)
             except ExchangeError:
                 continue
+        if self.scope.output_in_checkout():
+            # MR-6: an edited deliverable is kept until publication overwrites it.
+            leftovers &= owned
         if not leftovers <= owned:
-            return False
+            return sorted(leftovers - owned)
         if WORK_NAME in leftovers:
             _real_directory(self.directory)
             shutil.rmtree(self.directory)
         for name in sorted(leftovers - {STATE_NAME, WORK_NAME}):
             (self.output / name).unlink()
         self.path.unlink()
-        return True
+        return []
 
     def _check_receipts(self, accounting):
         """Require state accounting to cover every accepted job receipt.
@@ -338,6 +455,10 @@ class AssessmentState:
                 raise ExchangeError("Assessment liveness lock is not a bounded regular file")
 
     def checkpoint(self):
+        with self._checkpoint_lock:
+            self._checkpoint()
+
+    def _checkpoint(self):
         self._check_lock()
         if not self._held or acquire_lock.read_run_id(self.lock) != self.state["run_id"]:
             raise ExchangeError("Assessment no longer owns its output lock")
@@ -352,15 +473,31 @@ class AssessmentState:
         atomic_write_json(self.path, self.state)
         self.path.chmod(0o600)
         now = int(time.time())
-        acquire_lock._write_lock(self.lock, os.getpid(), now, self.state["run_id"])
+        acquire_lock._write_lock(
+            self.lock, os.getpid(), now, self.state["run_id"], stale_after=self.STALE_AFTER_SECONDS
+        )
         self.lock.chmod(0o600)
         self._last_heartbeat = time.monotonic()
+        # A signal cannot reach a run in another PID namespace, such as one
+        # started from a different sandboxed command; the request file can.
+        if self._stop_requested():
+            self.cancelled = True
+
+    def _stop_requested(self) -> bool:
+        """Whether `assess-stop` asked this run to stop: a small file naming its run ID, never a link."""
+        try:
+            descriptor = os.open(self.output / STOP_NAME, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return False
+        with os.fdopen(descriptor, "rb") as stream:
+            return stream.read(256).decode("utf-8", "replace").strip() == self.state["run_id"]
 
     def should_stop(self):
         if not self._held:
             raise ExchangeError("Assessment lifecycle is not active")
-        if time.monotonic() - self._last_heartbeat >= 10:
-            self.checkpoint()
+        with self._checkpoint_lock:
+            if time.monotonic() - self._last_heartbeat >= 10:
+                self.checkpoint()
         return self.cancelled
 
     def complete(self, deliverables):
@@ -370,5 +507,125 @@ class AssessmentState:
         self.budget.remaining_seconds()
         self.scope.verify_unchanged()
         self.state["deliverables"] = {name: _deliverable(self.output, name) for name in deliverables}
+        self.state.pop("partial_report", None)
+        (self.directory / PARTIAL_REPORT).unlink(missing_ok=True)
         self.state["status"] = "complete"
         self.checkpoint()
+
+    def budget_report(self, jobs):
+        """Publish a separate incomplete snapshot, never a canonical threat model.
+
+        Called while this session still owns its lock, after component workers
+        joined. Only results accepted or revalidated in this session qualify.
+        No cached file, failed answer or render draft is promoted here.
+        """
+        import html
+
+        from validators.redact_known_secrets import _STRING_LITERAL_RE
+        from validators.secret_scan import mask_text, scan_text
+
+        if self.cancelled or self.budget.failed:
+            raise ExchangeError("Cannot publish an incomplete report with unsettled accounting or cancellation")
+        self.scope.verify_unchanged()
+        self.checkpoint()
+        rows = sorted(jobs.accepted_results.values(), key=lambda row: row["selector"])
+        findings = [finding for row in rows for finding in row["findings"]][:200]
+        for finding in findings:
+            self.scope.read(finding["repository_id"], finding["file"], finding["line"], finding["line"])
+        count = sum(row["finding_count"] for row in rows)
+        # Redact against the captured source, without reopening arbitrary paths.
+        secrets_found = set()
+        for repo in self.scope.repositories:
+            for data in repo.files.values():
+                secrets_found.update(
+                    hit.value for hit in scan_text(data.decode("utf-8", errors="replace")) if hit.value
+                )
+            # A candidate may name a credential literal the generic scanner
+            # cannot classify. Remove every literal at its evidence line.
+            for finding in findings:
+                if finding["repository_id"] != repo.repository_id:
+                    continue
+                data = repo.files.get(finding["file"])
+                lines = data.decode("utf-8", errors="replace").splitlines() if data else []
+                if 0 < finding["line"] <= len(lines):
+                    secrets_found.update(m.group(2) for m in _STRING_LITERAL_RE.finditer(lines[finding["line"] - 1]))
+
+        def clean(value):
+            text = str(value)
+            for secret in sorted(secrets_found, key=len, reverse=True):
+                if len(secret) >= 4:
+                    text = text.replace(secret, "[REDACTED]")
+            text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]", "", text)
+            return " ".join(mask_text(text)[0].split())
+
+        partial = {
+            "status": "incomplete",
+            "reason": "budget",
+            "accepted_jobs": [{"role": clean(r["role"]), "selector": clean(r["selector"])} for r in rows[:500]],
+            "omitted_jobs": max(0, len(rows) - 500),
+            "findings": [{**f, "title": clean(f["title"]), "file": clean(f["file"])} for f in findings],
+            "omitted_findings": count - len(findings),
+            "remaining_jobs": [
+                {"selector": clean(key), "role": role, "jobs": number}
+                for key, (role, number) in sorted(self.budget.required.items())
+            ],
+        }
+        # This optional state field is also the report's structured contract.
+        candidate = {**self.state, "partial_report": partial}
+        Draft202012Validator(json.loads(SCHEMA.read_text())).validate(candidate)
+
+        def md(value):
+            # Render all source/model strings as inert single-line text.
+            return re.sub(r"([\\`*{}_\[\]()#+.!|>-])", r"\\\1", html.escape(str(value)))
+
+        lines = [
+            "# Incomplete assessment: budget limit",
+            "",
+            "This is an incomplete snapshot, not a completed threat model or security verdict.",
+            "Required analysis or report work remains. Any normal output files are not an accepted result of this attempt.",
+            "",
+            f"Accounted cost: USD {self.budget.spent_usd:.2f}; limit: USD {self.budget.max_usd:.2f}.",
+            "",
+            "## Accepted steps",
+            "",
+            *[f"- {md(r['role'])}: {md(r['selector'])}" for r in partial["accepted_jobs"]],
+            "",
+            "## Preliminary finding candidates",
+            "",
+            "These candidates passed their source-analysis contracts; independent verification, merging and final ratings may be missing.",
+            "Scanner-only findings and later review changes are not consolidated in this snapshot.",
+            "",
+            *[
+                f"- {md(f['title'])} ({md(f['repository_id'])}, {md(f['file'])}:{f['line']})"
+                for f in partial["findings"]
+            ],
+            "",
+            f"Additional accepted steps omitted: {partial['omitted_jobs']}; additional candidates omitted: {partial['omitted_findings']}.",
+            "",
+            "## Remaining work",
+            "",
+            *[f"- {md(r['selector'])}: {r['jobs']} required job(s)" for r in partial["remaining_jobs"]],
+            "- Any stages not reached still require execution; the outstanding job list is a plan, not complete coverage.",
+            "- Final model validation, report quality checks and publication have not completed.",
+            "",
+            "## Continue",
+            "",
+            "Increase --hard-budget or --max-duration as needed and rerun without --resume or --rebuild to reuse compatible accepted jobs.",
+            "The accounting includes reused job costs. --resume keeps the original limits and cannot replenish an exhausted budget.",
+            "",
+        ]
+        # Use the sanitized projection throughout, including the Markdown list.
+        clean_report = "\n".join(lines)
+        for secret in sorted(secrets_found, key=len, reverse=True):
+            if len(secret) >= 4:
+                clean_report = clean_report.replace(secret, "[REDACTED]")
+        text = mask_text(clean_report)[0]
+        if scan_text(text):
+            raise ExchangeError("Incomplete report did not pass secret redaction")
+        self.scope.verify_unchanged()
+        path = self.directory / PARTIAL_REPORT
+        atomic_write_text(path, text)
+        path.chmod(0o600)
+        self.state["partial_report"] = partial
+        self.checkpoint()
+        return path

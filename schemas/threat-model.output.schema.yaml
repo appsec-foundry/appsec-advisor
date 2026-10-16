@@ -58,6 +58,49 @@ properties:
       analysis_duration_seconds:
         type: [integer, "null"]
         minimum: 0
+      unexamined_source:
+        type: array
+        description: >-
+          Per component, the source files the analysis did not examine individually because they
+          carry no route, lead or security signal; rendered in §1 Scope as a coverage gap.
+        items:
+          type: object
+          additionalProperties: false
+          required: [component, files]
+          properties:
+            component: {type: string, minLength: 1}
+            files: {type: integer, minimum: 1}
+      undecided_targets:
+        type: array
+        description: >-
+          STRIDE targets a job read but could not decide, with the reason it named (MR-11); rendered
+          in §1 Scope as a coverage gap instead of a console warning.
+        items:
+          type: object
+          additionalProperties: false
+          required: [component, target]
+          properties:
+            component: {type: string, minLength: 1}
+            target: {type: string, minLength: 1, maxLength: 300}
+      unowned_source:
+        type: object
+        description: >-
+          Program files outside every component, which no analysis job reads, counted per top-level
+          directory (at most ten); rendered in §1 Scope as a coverage gap.
+        additionalProperties: false
+        required: [files, by_directory]
+        properties:
+          files: {type: integer, minimum: 1}
+          by_directory:
+            type: array
+            maxItems: 10
+            items:
+              type: object
+              additionalProperties: false
+              required: [directory, files]
+              properties:
+                directory: {type: string, minLength: 1}
+                files: {type: integer, minimum: 1}
       mode:
         type: string
         enum: [full, incremental]

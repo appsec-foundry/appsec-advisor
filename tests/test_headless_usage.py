@@ -202,6 +202,16 @@ class TestExtractUsage:
 # format_table
 # ---------------------------------------------------------------------------
 class TestFormatTable:
+    def test_colour_changes_no_character_of_the_table(self):
+        import re
+
+        from renderers.term_style import Style
+
+        usage = hu.extract_usage(_result_obj())
+        coloured = hu.format_table(usage, Style(True, True))
+        assert "\x1b[" in coloured
+        assert re.sub(r"\x1b\[[0-9;]*m", "", coloured) == hu.format_table(usage)
+
     def test_multi_model_has_total_row(self):
         table = hu.format_table(hu.extract_usage(_result_obj()))
         assert "claude-sonnet-4-6" in table

@@ -68,6 +68,7 @@ import argparse
 import ast
 import json
 import os
+import posixpath
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -183,6 +184,7 @@ class Finding:
     recommended_mitigation_title: str
     breach_vector: str
     evidence_tier: str | None = None
+    object_ref: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1878,8 +1880,42 @@ def scan_file(
                 continue
             if not _required_context_matches(lines, line_idx, check):
                 continue
-            findings.append(_catalog_finding(check, file_rel, evidence_lines, line_idx))
+            finding = _catalog_finding(check, file_rel, evidence_lines, line_idx)
+            if check.id in _OBJECT_LOOKUP_CHECKS:
+                # The hit itself may name the query call (AUTHZ-002), so the look-back ends at the
+                # match end, clipped to the hit line.
+                line_start = text.rfind("\n", 0, m.start()) + 1
+                line_end = text.find("\n", m.start())
+                end = m.end() if line_end < 0 else min(m.end(), line_end)
+                finding.object_ref = _query_object(lines, line_idx, end - line_start)
+            findings.append(finding)
     return findings
+
+
+# Owner-ID and object-lookup checks whose hit sits inside a data query.
+_OBJECT_LOOKUP_CHECKS = frozenset({"AUTHZ-001", "AUTHZ-002"})
+# A data-access call on a receiver: `AddressModel.findAll(`, `ordersCollection.update(`.
+_QUERY_CALL_RE = re.compile(
+    r"\b([A-Za-z_$][\w$]*)\s*\.\s*(?:findAll|findOne|findByPk|findById|findUnique|findFirst|findMany|find|"
+    r"count|create|bulkCreate|insert|insertOne|insertMany|update|updateOne|updateMany|upsert|increment|"
+    r"decrement|destroy|delete|deleteOne|deleteMany|remove|save|aggregate)\s*\("
+)
+_RECEIVER_SUFFIX_RE = re.compile(r"(?:Model|Models|Repository|Repo|Collection|Schema|Entity|Table|Dao|DAO|Store)$")
+
+
+def _query_object(lines: list[str], line_idx: int, column: int) -> str | None:
+    """The data object the query around a hit targets, or None when no single query encloses it.
+
+    The receiver of the nearest data-access call whose argument list is still open at the hit names the
+    object (`AddressModel.findAll({ where: { UserId: … } })` → `Address`). Looking back is bounded to the
+    statement lines just above the hit, so an unrelated query earlier in the function is never borrowed.
+    """
+    before = "\n".join([*lines[max(0, line_idx - 6) : line_idx], lines[line_idx][:column]])
+    for match in reversed(list(_QUERY_CALL_RE.finditer(before))):
+        tail = before[match.end() :]
+        if tail.count("(") - tail.count(")") >= 0 and ";" not in tail:
+            return _RECEIVER_SUFFIX_RE.sub("", match.group(1)) or match.group(1)
+    return None
 
 
 def _query_and_ownership_guard(lines: list[str], line_idx: int, check: Check) -> list[str]:
@@ -1920,6 +1956,254 @@ def _catalog_finding(check: Check, file_rel: str, evidence_lines: list[str], lin
     )
 
 
+# ---------------------------------------------------------------------------
+# Owner field bound to the authenticated identity by route middleware
+# ---------------------------------------------------------------------------
+#
+# Signal: a middleware function assigns `req.body|query|params.<field>` from
+# the authenticated identity (a token, session or verified claim) and calls
+# `next(`; route registrations mount it before a handler, directly or through
+# an earlier `<router>.use(<prefix>, …)` on the same router.
+# Trigger: an AUTHZ-001 hit binds that same request field inside a handler
+# whose every registration carries the middleware. The query then filters by
+# the session identity, so the hit is not an owner-ID injection.
+# Exclusions (the hit is kept): the assignment reads client input (body,
+# query, params, headers, cookies); the middleware never calls `next(`; a
+# handler cannot be resolved to its defining module through an import; any
+# registration of the handler lacks the middleware; the middleware binds a
+# different field or request part than the hit reads.
+
+_SCRIPT_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
+_IDENT = r"[A-Za-z_$][\w$]*"
+_TOP_LEVEL_DEFINITION_RE = re.compile(
+    rf"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?\s*({_IDENT})|(?:const|let|var)\s+({_IDENT})\s*[:=])"
+)
+_REQUEST_FIELD_ASSIGNMENT_RE = re.compile(rf"\breq\.(body|query|params)\.({_IDENT})\s*=(?!=)\s*(.+)")
+_NAMESPACE_IMPORT_RE = re.compile(rf"import\s+\*\s+as\s+({_IDENT})\s+from\s+['\"]([^'\"]+)['\"]")
+_NAMED_IMPORT_RE = re.compile(r"import\s*\{([^}]*)\}\s*from\s+['\"]([^'\"]+)['\"]")
+_REQUIRE_RE = re.compile(rf"(?:const|let|var)\s+({_IDENT})\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
+_DESTRUCTURED_REQUIRE_RE = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
+_ROUTE_CALL_RE = re.compile(rf"\b({_IDENT})\.(get|head|options|post|put|patch|delete|all|use)\s*\(")
+
+
+def _module_key(path: str) -> str:
+    """A repository module without its script extension or trailing `/index`."""
+    stem = posixpath.normpath(path)
+    for suffix in _SCRIPT_SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return stem[: -len("/index")] if stem.endswith("/index") else stem
+
+
+def _definition_bodies(text: str) -> list[tuple[str, int, list[str]]]:
+    """Return bounded, balanced top-level bodies; trailing code is not a body."""
+    lines = text.splitlines()
+    starts = [
+        (i, m.group(1) or m.group(2))
+        for i, line in enumerate(code_only(text).splitlines())
+        if (m := _TOP_LEVEL_DEFINITION_RE.match(line))
+    ]
+    result = []
+    for n, (start, name) in enumerate(starts):
+        body = "\n".join(lines[start : starts[n + 1][0] if n + 1 < len(starts) else len(lines)])
+        masked = code_only(body)
+        opening = masked.find("{")
+        if opening < 0:
+            continue
+        depth = 0
+        for offset in range(opening, len(masked)):
+            depth += (masked[offset] == "{") - (masked[offset] == "}")
+            if depth == 0:
+                result.append((name, start, body[: offset + 1].splitlines()))
+                break
+    return result
+
+
+def _identity_binding_middlewares(scripts: dict[str, str]) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """Recognize straight-line middleware factories, keyed by defining module.
+
+    Branches, callbacks, extra statements and early continuation are uncertain,
+    so they never establish the guarantee needed to suppress a finding.
+    """
+    bound: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for rel, text in scripts.items():
+        for name, _start, body in _definition_bodies(text):
+            joined = "\n".join(body)
+            factory = re.fullmatch(
+                rf"(?:export\s+)?const\s+{re.escape(name)}\s*=\s*\(\s*\)\s*=>\s*\{{\s*"
+                r"return\s*\(\s*req\s*,\s*res\s*,\s*next\s*\)\s*=>\s*\{(?P<body>.*?)\}\s*;?\s*\}",
+                joined,
+                re.S,
+            )
+            if not factory:
+                continue
+            statements = [s.strip() for s in re.split(r"[;\n]", factory["body"]) if s.strip()]
+            if not statements or statements[-1] != "next()":
+                continue
+            fields = set()
+            for statement in statements[:-1]:
+                m = _REQUEST_FIELD_ASSIGNMENT_RE.fullmatch(statement)
+                if not m or not re.fullmatch(
+                    rf"(?:(?:req\.(?:user|auth)|res\.locals\.user)(?:\.{_IDENT})+"
+                    rf"|sessions\.lookup\(readToken\(req\)\)(?:\.{_IDENT})+)",
+                    m.group(3),
+                ):
+                    break
+                fields.add((m.group(1), m.group(2)))
+            else:
+                if fields:
+                    bound[(_module_key(rel), name)] = fields
+    return bound
+
+
+def _imported_functions(rel: str, text: str) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """Namespace alias → module and imported name → module, for relative imports of one file."""
+
+    def resolve(spec: str) -> str | None:
+        return _module_key(posixpath.join(posixpath.dirname(rel), spec)) if spec.startswith(".") else None
+
+    namespaces: dict[str, str] = {}
+    names: dict[str, tuple[str, str]] = {}
+    masked = code_only(text)
+    for regex in (_NAMESPACE_IMPORT_RE, _REQUIRE_RE):
+        for match in regex.finditer(text):
+            if not masked[match.start() : match.start() + 6].strip():
+                continue
+            alias, spec = match.groups()
+            if (module := resolve(spec)) is not None:
+                namespaces[alias] = module
+    for regex in (_NAMED_IMPORT_RE, _DESTRUCTURED_REQUIRE_RE):
+        for match in regex.finditer(text):
+            if not masked[match.start() : match.start() + 6].strip():
+                continue
+            listed, spec = match.groups()
+            if (module := resolve(spec)) is None:
+                continue
+            for item in listed.split(","):
+                parts = re.split(r"\s+as\s+|\s*:\s*", item.strip())
+                if parts and parts[0]:
+                    names[parts[-1]] = (module, parts[0])
+    return namespaces, names
+
+
+def _handler_bindings(
+    scripts: dict[str, str], middlewares: dict[tuple[str, str], set[tuple[str, str]]]
+) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """(handler module, handler name) → the identity-bound request fields EVERY registration guarantees."""
+    seen: dict[tuple[str, str], list[set[tuple[str, str]]]] = {}
+    for rel, text in scripts.items():
+        namespaces, names = _imported_functions(rel, text)
+        module = _module_key(rel)
+        mounts: list[tuple[str, int, str, set[tuple[str, str]]]] = []
+        masked = code_only(text)
+        cursor = depth = 0
+        for m in _ROUTE_CALL_RE.finditer(text):
+            depth += masked[cursor : m.start()].count("{") - masked[cursor : m.start()].count("}")
+            cursor = m.start()
+            if not masked[m.start() : m.end(2)].strip():
+                continue
+            receiver, verb = m.group(1), m.group(2)
+            # A registration call is bounded so a malformed file cannot make every route rescan it.
+            call = text[m.end(2) : m.end(2) + 4000].lstrip()
+            opening = re.match(r"\(", call)
+            if opening is None or not call[: call_end(call, 0)].endswith(")"):
+                return {}  # An incomplete registration cannot establish exhaustive coverage.
+            all_args = _call_arguments(call, opening)
+            literal = re.fullmatch(r"(['\"])([^'\"\\]*)\1", all_args[0]) if all_args else None
+            path = literal[2] if literal else ""
+            args = all_args[1:] if literal or verb != "use" else all_args
+            position = m.start()
+            inherited: set[tuple[str, str]] = set()
+            for mount_receiver, mount_pos, prefix, fields in mounts:
+                if (
+                    mount_receiver == receiver
+                    and mount_pos < position
+                    and (path == prefix or path.startswith(prefix.rstrip("/") + "/"))
+                ):
+                    inherited = fields.copy()
+            guaranteed = inherited.copy()
+            # Conditional/nested registrations cannot establish a prefix guarantee.
+            line_start = text.rfind("\n", 0, m.start()) + 1
+            unconditional = literal is not None and depth == 0 and not masked[line_start : m.start()].strip()
+            for arg in args:
+                target = re.fullmatch(rf"(?:({_IDENT})\s*\.\s*)?({_IDENT})(\s*\(\s*\))?", arg)
+                if not target:
+                    # An unknown wrapper establishes no ownership guarantee.
+                    for qualifier, name in re.findall(rf"\b({_IDENT})\.({_IDENT})\b", code_only(arg)):
+                        if qualifier in namespaces:
+                            seen.setdefault((namespaces[qualifier], name), []).append(set())
+                    for name in re.findall(_IDENT, code_only(arg)):
+                        if name in names:
+                            seen.setdefault(names[name], []).append(set())
+                    guaranteed.clear()
+                    continue
+                qualifier, name, invoked = target.groups()
+                key = (
+                    ((namespaces[qualifier], name) if qualifier in namespaces else None)
+                    if qualifier
+                    else names.get(name, (module, name))
+                )
+                if key in middlewares and invoked and unconditional:
+                    guaranteed.update(middlewares[key])
+                else:
+                    if key is not None:
+                        seen.setdefault(key, []).append(guaranteed.copy())
+                    # An intervening handler can overwrite the request fields.
+                    guaranteed.clear()
+            if verb == "use":
+                mounts.append((receiver, position, path, guaranteed.copy() if unconditional else set()))
+    return {key: set.intersection(*sets) for key, sets in seen.items()}
+
+
+def _enclosing_definition(text: str, line_idx: int) -> str | None:
+    for name, start, body in reversed(_definition_bodies(text)):
+        if start <= line_idx < start + len(body):
+            return name
+    return None
+
+
+def _drop_identity_bound_owner_ids(findings: list[Finding], scripts: dict[str, str], check: Check) -> list[Finding]:
+    """Drop AUTHZ-001 hits whose request field every route registration binds to the session identity."""
+    module_counts: dict[str, int] = {}
+    for path in scripts:
+        key = _module_key(path)
+        module_counts[key] = module_counts.get(key, 0) + 1
+    middlewares = {
+        key: fields for key, fields in _identity_binding_middlewares(scripts).items() if module_counts[key[0]] == 1
+    }
+    if not middlewares:
+        return findings
+    bindings = _handler_bindings(scripts, middlewares)
+    kept: list[Finding] = []
+    for finding in findings:
+        text = scripts.get(finding.file.replace("\\", "/")) if finding.check_id == check.id else None
+        if text is None:
+            kept.append(finding)
+            continue
+        lines = text.splitlines()
+        hit = check.pattern.search(lines[finding.line - 1]) if 0 < finding.line <= len(lines) else None
+        handler = _enclosing_definition(text, finding.line - 1)
+        module = _module_key(finding.file.replace("\\", "/"))
+        guaranteed = bindings.get((module, handler or ""), set()) if module_counts[module] == 1 else set()
+        # A route binding is no longer a guarantee after the handler replaces
+        # request state or passes the request to an unknown mutating helper.
+        for name, start, _body in _definition_bodies(text):
+            if name == handler:
+                before = "\n".join(lines[start : finding.line - 1])
+                if hit:
+                    before += "\n" + lines[finding.line - 1][: hit.start()]
+                if re.search(
+                    r"\breq\.(?:body|query|params)(?:\.\w+|\[[^\]]*\])*\s*(?:[+?&|]*=|\+\+|--)", before
+                ) or re.search(r"\b(?!async\b|return\b|function\b)\w+\s*\(\s*req\s*[,)]", before):
+                    guaranteed = set()
+                break
+        if hit and (hit.group(2), hit.group(1)) in guaranteed:
+            continue
+        kept.append(finding)
+    return kept
+
+
 def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = False) -> list[Finding]:
     """Scan every readable repo file and number the findings `SAF-NNN` by file, line and check.
 
@@ -1927,6 +2211,7 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
     replaces any other hit with the same line and CWE.
     """
     findings: list[Finding] = []
+    scripts: dict[str, str] = {}
     for path in _walk_repo(repo_root):
         try:
             rel = str(path.relative_to(repo_root))
@@ -1934,6 +2219,8 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
             continue
         if _is_universally_excluded(rel) or not is_safe_to_read(path, repo_root):
             continue
+        if path.suffix in _SCRIPT_SUFFIXES:
+            scripts[rel.replace("\\", "/")] = without_comments(_read_source(path) or "", python=False)
         catalog_findings = scan_file(path, rel, checks)
         llm_findings = [] if catalog_only else _scan_llm_output_file(path, rel)
         expression_findings = [] if catalog_only else _scan_expression_inputs(path, rel)
@@ -1944,6 +2231,9 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
         findings.extend(f for f in catalog_findings if (f.line, tuple(f.cwe)) not in specific)
         findings.extend(llm_findings)
         findings.extend(f for f in expression_findings if (f.line, tuple(f.cwe)) not in specific)
+    owner_id = next((c for c in checks if c.id == "AUTHZ-001"), None)
+    if owner_id is not None:
+        findings = _drop_identity_bound_owner_ids(findings, scripts, owner_id)
     # Assign sequential local IDs (SAF-001, SAF-002, …) deterministically by
     # (file, line, check_id).
     findings.sort(key=lambda f: (f.file, f.line, f.check_id))

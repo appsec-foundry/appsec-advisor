@@ -123,6 +123,7 @@ def own_scanner_anchors(scope, components: list[dict]) -> int:
             {
                 "id": row["id"],
                 "name": row["name"],
+                "tier": row.get("tier"),
                 "paths": [p["path"] for p in row["paths"] if p["repository_id"] == rid],
             }
             for row in rows
