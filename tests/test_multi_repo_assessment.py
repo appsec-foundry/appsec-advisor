@@ -2401,7 +2401,7 @@ def test_each_running_component_gets_its_own_bar_and_the_area_clears_whole(capsy
     console.step("Analyzed component: Ledger (1/4)")
     written = capsys.readouterr().err
     # Three status lines are cleared from the bottom up before the permanent line.
-    assert written == "\r\033[K" + "\033[1A\033[K" * 2 and lines[-1].endswith("component 1/4 · Ledger · 0s")
+    assert written == "\r\033[K" + "\033[1A\033[K" * 2 and lines[-1].endswith("1/4 components done · Ledger · 0s")
     console.tick()
     assert len(_status_frames(capsys.readouterr().err)[-1]) == 2
     controller._AssessmentConsole.clear_status()
