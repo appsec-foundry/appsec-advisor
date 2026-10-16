@@ -231,7 +231,7 @@ def test_import_of_a_selected_repository_yields_to_its_current_assessment(tmp_pa
     scope = checkouts(tmp_path, names, {first: {"docs/related-repos.yaml": imports}}, remotes={second: remote})
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    receipts = declarations.related_register(scope, Namespaces(scope), workspace, {})
+    receipts = declarations.related_register(scope, Namespaces(scope), workspace)
 
     register = json.loads((workspace / ".cross-repo-register.json").read_text())
     assert [row["selected_repository"] for row in register["meta"]["authoritative_current"]] == [second, second]
@@ -250,7 +250,7 @@ def test_allow_list_still_rejects_an_unlisted_host(tmp_path, monkeypatch):
     imports = related(("ledger", "https://elsewhere.example.invalid/threat-model.yaml"))
     scope = checkouts(tmp_path, NAMES[0], {"edge": {"docs/related-repos.yaml": imports}})
     (tmp_path / "workspace").mkdir()
-    declarations.related_register(scope, Namespaces(scope), tmp_path / "workspace", {"trust_mode": "trusted"})
+    declarations.related_register(scope, Namespaces(scope), tmp_path / "workspace")
     register = json.loads((tmp_path / "workspace" / ".cross-repo-register.json").read_text())
     assert "not in APPSEC_URL_ALLOWLIST" in register["entries"][0]["threat_model"]["fetch_detail"]
 
@@ -258,13 +258,13 @@ def test_allow_list_still_rejects_an_unlisted_host(tmp_path, monkeypatch):
 def test_invalid_related_declaration_stops_the_run(tmp_path):
     scope = checkouts(tmp_path, NAMES[0], {"edge": {"docs/related-repos.yaml": {"related": [{"name": "x"}]}}})
     with pytest.raises(declarations.DeclarationError, match="edge/docs/related-repos.yaml"):
-        declarations.related_register(scope, Namespaces(scope), tmp_path, {})
+        declarations.related_register(scope, Namespaces(scope), tmp_path)
 
 
 def test_no_declarations_write_nothing(tmp_path):
     scope = checkouts(tmp_path, NAMES[0], {})
     names = Namespaces(scope)
-    assert declarations.related_register(scope, names, tmp_path, {}) == []
+    assert declarations.related_register(scope, names, tmp_path) == []
     assert not (tmp_path / ".cross-repo-register.json").exists()
     assert declarations.actor_declarations(scope, names) is None
     assert declarations.boundary_declarations(scope, qualified_components(scope)) == []

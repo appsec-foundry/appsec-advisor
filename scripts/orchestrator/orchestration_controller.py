@@ -10773,7 +10773,7 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
 
     from orchestrator.assessment_declarations import related_register
 
-    receipts += related_register(scope, names, workspace, cfg)
+    receipts += related_register(scope, names, workspace)
     receipts += assessment_posture.run(scope, names, workspace, cfg, progress=progress)
     receipts += assessment_posture.discover_actors(scope, jobs, names, workspace, cfg, _assessment_role_instructions)
     # The single-repository handoff adds a confirmed privileged role before boundary
