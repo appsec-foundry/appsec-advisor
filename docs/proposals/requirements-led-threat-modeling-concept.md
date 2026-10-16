@@ -10,6 +10,12 @@ The main deliverable is a human-maintained `threat-model.md` at the target repos
 
 Support three tasks: create an initial model, update it for a change, and review its assumptions, threats, and treatment. A scope can cover a system, a feature, or a proposed design change. Each model identifies its scope, responsible team, intended audience, source state, and review status.
 
+| Requested task | Result and write behavior |
+|---|---|
+| Create | Create an initial model when no model exists at the selected destination. If one already exists, preserve it and offer a focused update instead of replacing it. |
+| Update | Apply the requested changes to the existing model, preserving unaffected content and decisions. Include a new feature in that model rather than creating a separate feature file. |
+| Review | Present observations, gaps, and proposed changes in the conversation. Leave the model, its review status, and the security document unchanged. Applying suggestions requires an explicit update request. |
+
 The workflow is independent of the existing code assessment pipeline. A threat scenario can be relevant without an implementation flaw or a vulnerable source line. Existing controls and planned safeguards belong in the model alongside unresolved risks. Their presence does not establish that they work in production.
 
 Selective reuse of suitable catalogs, source handling, or validation helpers is possible after checking their semantics. Reuse should preserve this workflow's focus on design and team decisions. The separate [application security assessment concept](application-security-assessment-concept.md) describes the assessment naming proposal; implementing either concept does not depend on implementing the other.
@@ -41,14 +47,14 @@ When requirements are absent, derive a provisional understanding from the remain
 
 ## Entry flow and missing sources
 
-Use this sequence for creation. For an update or review, start from the existing model and inspect changed or missing sources before reopening questions.
+Use this sequence for creation. For an update or review, start from the existing model and inspect changed or missing sources before reopening questions. Apply the requested task's write behavior throughout; a review ends with feedback, not file changes.
 
 1. Establish the requested system or feature scope and authorized source locations. Ask a scope question first only when the target is ambiguous; do not explore unrelated projects to choose a target. Resolve any selected organization package and its applicable context before preliminary analysis.
-2. Discover candidate sources within that scope, starting with user-selected sources, the existing model, and repository documentation entry points. Look for requirements, specifications, architecture descriptions, ADRs, and diagrams without depending on exact filenames. Record what was read, inaccessible, unsupported, or left unread at the discovery limit. Report “not found in the inspected scope” rather than claiming that a document does not exist. Document links are candidates subject to access and path checks, not permission to read external locations.
+2. Discover candidate sources within that scope, starting with user-selected sources, the existing model, and repository documentation entry points. Check an existing model's purpose and scope under the repository integration rules below before treating it as the maintained model. Look for requirements, specifications, architecture descriptions, ADRs, and diagrams without depending on exact filenames. Record what was read, inaccessible, unsupported, or left unread at the discovery limit. Report “not found in the inspected scope” rather than claiming that a document does not exist. Document links are candidates subject to access and path checks, not permission to read external locations.
 3. Read relevant requirements and specifications, then architecture and other context. Use bounded architecture exploration where needed. Read available architecture before asking users to restate it, including when requirements are missing. An unreadable document does not trigger code execution, remote fetching, or unrestricted scanning.
 4. Use the source situations below to prepare a preliminary understanding and optional questions. Incorporate applicable organization context when identifying gaps and scenarios. If no useful sources exist, start with the user's description rather than inventing an architecture.
 5. Develop scenarios and treatments when sources or answers support a system-specific account of purpose, valuable assets or operations, actors, and an important interaction. Partial knowledge is sufficient with explicit uncertainty. If that basis remains absent, return an incomplete outcome describing the missing context rather than generic findings or an empty model.
-6. Review the draft's traceability, contradictions, and scope coverage before writing the model and its repository link. Preserve an existing model when there is no supported update. Report what was modeled and what still needs team input; a written draft does not establish team approval.
+6. Review traceability, contradictions, and scope coverage. For creation or an authorized update, write the supported model changes and its repository link. For a review, present feedback and proposed changes without writing either file. Preserve an existing model when there is no supported update. Report what was examined or modeled and what still needs team input; a written draft does not establish team approval.
 
 The source situations guide the next action without prescribing question wording:
 
@@ -95,7 +101,7 @@ For assets, reuse the organization's classification scheme where available. Also
 
 For worst-case scenarios, explore the most serious plausible harm within scope and state its prerequisites, affected parties, and reach. Keep impact separate from likelihood and avoid invented probabilities or financial estimates. Team concerns can reveal consequences that source files do not describe.
 
-The proposed default is a short guided dialogue, with optional deeper discussion and a mode without questions. That mode performs the same preliminary analysis and records material gaps without asking questions. A run without answers produces a draft when the available context supports one; otherwise the entry flow returns an incomplete outcome. Record useful answers as concise statements in the relevant model sections, with their source, applicability, and affected assumptions, scenarios, or decisions. Distinguish a user-reported fact, a desired future behavior, and an LLM inference; a reported control is not verified effectiveness. The conversation transcript is not part of the deliverable. Preserve conflicts with other sources and revisit answers when their supporting requirements, design, or scope change. Ask for the minimum context needed, without requesting credentials, personal records, or confidential incident details for inclusion in the model.
+The proposed default is a short guided dialogue, with optional deeper discussion and a mode without questions. That mode performs the same preliminary analysis and records material gaps without asking questions. A run without answers produces a draft or review feedback when the available context supports it; otherwise the entry flow returns an incomplete outcome. During creation or an authorized update, record useful answers as concise statements in the relevant model sections, with their source, applicability, and affected assumptions, scenarios, or decisions. During a review, include them in proposed changes without modifying the model. Distinguish a user-reported fact, a desired future behavior, and an LLM inference; a reported control is not verified effectiveness. The conversation transcript is not part of the deliverable. Preserve conflicts with other sources and revisit answers when their supporting requirements, design, or scope change. Ask for the minimum context needed, without requesting credentials, personal records, or confidential incident details for inclusion in the model.
 
 ## Reusable security context
 
@@ -150,6 +156,8 @@ Use qualitative, explained risk prioritization that considers plausible harm, pr
 
 Use `<repo>/threat-model.md` as the leading, directly editable artifact, where `<repo>` is the target repository root. Markdown and text-based diagrams allow the team to review changes through ordinary pull requests. A separate canonical YAML or JSON model is not needed for the initial workflow; add structured interchange only when a concrete consumer justifies it and its schema and synchronization rules are defined.
 
+Before changing an existing file, inspect its content, stated purpose, provenance where available, and scope. The filename alone does not distinguish a maintained design model from a generated assessment report. When that distinction or the intended use is unclear, preserve the file and ask the user how to use it before modification or conversion. If questions are disabled or no answer arrives, leave the file and its security-document link unchanged and report the unresolved choice. Do not automatically migrate an assessment or create a competing model file to bypass this choice.
+
 The proposed document structure is:
 
 | Section | Content |
@@ -165,7 +173,7 @@ The proposed document structure is:
 
 Keep each scenario readable as a short record. Link to detailed requirements, ADRs, issues, or tests instead of duplicating their contents. Use stable identifiers for scenarios and referenced model elements. A diagram summarizes the model; supporting text retains details that cannot be shown clearly. Mermaid is a proposed default for diagrams when the repository renderer supports it.
 
-Add a relative link from the existing `SECURITY.md` or `security.md` to the model, preserving the document's location, naming, and security reporting instructions. Reuse an existing model link rather than adding a duplicate. If neither document exists, create `<repo>/SECURITY.md` with a short security heading and model reference; do not invent a vulnerability reporting address or disclosure policy. Create the link only when the model exists, and resolve its relative path from the security document's location. For a security document at the repository root, the link section is:
+During creation or an authorized update, add a relative link from the existing `SECURITY.md` or `security.md` to the model, preserving the document's location, naming, and security reporting instructions. Reuse an existing model link rather than adding a duplicate. If neither document exists, create `<repo>/SECURITY.md` with a short security heading and model reference; do not invent a vulnerability reporting address or disclosure policy. Create the link only when the model exists, and resolve its relative path from the security document's location. A review can propose a missing link but does not write it. For a security document at the repository root, the link section is:
 
 ```markdown
 ## Threat model
@@ -205,6 +213,8 @@ Keep applicability, control state, and team decisions as separate dimensions. Pl
 
 Update the model alongside requirements and design changes that affect objectives, actors, permissions, assets, flows, dependencies, or operating assumptions. A focused update explains which source changed and which model elements and decisions need reconsideration. A broader review can be scheduled by the team according to its development process.
 
+A feature or design-change update extends the existing repository model. Integrate its actors, flows, scenarios, and treatments into the relevant sections, including affected shared boundaries, while retaining unrelated system content. Identify the scope actually examined; a feature review does not establish review of the entire application. If no model exists, an explicitly requested initial model may cover only that feature and must state that limitation. Separate files for individual features are outside the initial workflow.
+
 Preserve human edits, stable IDs, and still-applicable decisions. Modify affected sections rather than replacing the entire document. Retain treated or retired scenarios with enough rationale to explain their state, and use Git for textual history. Reopen a decision when its underlying assumptions materially change; do not silently extend an old acceptance to a new exposure.
 
 Review status describes actual work: a draft, a partially reviewed scope, or a recorded team review. Missing answers remain open. A document's existence, an empty threat list, or a passing structural check does not establish that its coverage or risk treatment is sufficient. Changes to an existing model should carry its review status forward only where the review still applies.
@@ -238,6 +248,9 @@ Evaluate behavior through small, neutral examples with different names and domai
 - Organization and project cases with the same mechanism retain both source references after merging. Conflicting obligations stay visible; invalid package content and unexamined cases are not silently treated as satisfied. Package updates preserve unrelated model content and reopen only affected decisions.
 - Instructions embedded in package content or an architecture summary cannot authorize commands, external reads, broader delegation, confidential publication, or risk acceptance.
 - A focused change preserves unrelated human prose, stable IDs, and still-valid decisions, and reopens decisions whose assumptions changed.
+- A review identifies gaps and proposed changes while leaving the model, its review status, and the security document unchanged, even when dialogue supplies new answers. An explicit subsequent update applies only the requested changes.
+- A feature update integrates new scenarios and affected shared boundaries into the existing model without a separate feature file or loss of unrelated content. Its review scope does not imply review of the whole application.
+- A creation request encountering an existing model preserves it and offers an update. An ambiguously identified model or assessment prompts a question before modification; declined or unavailable answers, including a mode without questions, leave the existing files unchanged.
 - Malicious instructions in a source cannot authorize execution, unrelated reads, data disclosure, or writes outside the selected artifacts; resource limits and cancellation work without corrupting an existing model.
 - The model link resolves using the repository's existing security-document naming, and existing disclosure instructions remain intact.
 
