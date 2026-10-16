@@ -8794,10 +8794,10 @@ def _assessment_controls(scope, jobs, architecture, *, progress):
 
     components = architecture["components"]["components"]
     fingerprint = architecture["finalization"]["component_inventory_fingerprint"]
-    controls = []
+
     # One component per job prevents a broad control context from becoming an
     # implicit source grant. Shared mechanisms can retain several scoped rows.
-    for position, component in enumerate(components, 1):
+    def analyze(position, component, jobs):
         progress(f"Assessing controls: {component['name']} ({position}/{len(components)})")
         context = {
             "source_scope_sha256": scope.inventory()["scope_sha256"],
@@ -8830,8 +8830,10 @@ def _assessment_controls(scope, jobs, architecture, *, progress):
                 scope, [component], fingerprint, artifact, ranges
             ),
         )
-        controls.extend(artifact["security_controls"])
-    return controls
+        return artifact["security_controls"]
+
+    results = _assessment_components_concurrently(jobs, components, analyze)
+    return [control for controls in results for control in controls]
 
 
 def _assessment_stride(
@@ -9133,7 +9135,9 @@ def _assessment_stride(
         progress(f"Analyzed component: {label(component)} ({next(finished)}/{len(components['components'])})")
         return document, review
 
-    documents, reviews = _assessment_components_concurrently(jobs, components["components"], analyze)
+    results = _assessment_components_concurrently(jobs, components["components"], analyze)
+    documents = [document for document, _ in results]
+    reviews = [review for _, review in results]
     scope.verify_unchanged()
     found = sum(len(document["threats"]) for document in documents) + sum(len(rows) for rows in scanned.values())
     _phase_result(progress, "Threat analysis", _count_noun(found, "finding"))
@@ -9150,7 +9154,7 @@ def _assessment_stride(
     return documents, reviews, merged
 
 
-# MR-16: components whose STRIDE and evidence-review jobs run at the same time.
+# Components whose control jobs or STRIDE and evidence-review jobs run at the same time.
 ASSESSMENT_COMPONENT_WORKERS = 4
 
 
@@ -9189,8 +9193,7 @@ def _assessment_components_concurrently(jobs, components, analyze):
         jobs.join(view)
     if failures:
         raise failures[0]
-    results = [future.result() for future in futures]
-    return [document for document, _ in results], [review for _, review in results]
+    return [future.result() for future in futures]
 
 
 # Candidate groups per merger exchange; the legacy merger admits at most 64.

@@ -1212,6 +1212,185 @@ def test_stride_and_review_jobs_receive_the_source_their_context_cites(tmp_path,
     assert reviews and all(reviews)
 
 
+def _control_scope(tmp_path, names, count=6):
+    roots = [tmp_path / name for name in names[:2]]
+    for root in roots:
+        checkout(root)
+    for index in range(count):
+        (roots[index % 2] / f"{names[2]}_{index}.py").write_text("value = 1\nassert value > 0\n")
+    scope = admit([str(root) for root in roots], str(tmp_path / "out"))
+    components = []
+    for index in range(count):
+        repo = next(repo for repo in scope.repositories if repo.root == roots[index % 2])
+        path = f"{names[2]}_{index}.py"
+        components.append(
+            dict(
+                id="component-" + hashlib.sha256(path.encode()).hexdigest()[:16],
+                name=f"Service {index}",
+                description="A service with its own source file.",
+                tier="application",
+                repository_ids=[repo.repository_id],
+                paths=[
+                    dict(
+                        repository_id=repo.repository_id, path=path, sha256=hashlib.sha256(repo.files[path]).hexdigest()
+                    )
+                ],
+            )
+        )
+    return scope, dict(
+        components=dict(components=components),
+        finalization=dict(
+            component_inventory_fingerprint="sha256:" + hashlib.sha256(json.dumps(components).encode()).hexdigest()
+        ),
+        data_flows=dict(data_flows=[]),
+    )
+
+
+@pytest.mark.parametrize("names", [("edge", "service", "unit"), ("gateway", "worker", "handler")])
+def test_controls_overlap_within_the_limit_keep_order_and_reuse_receipts(tmp_path, names):
+    import threading
+
+    scope, architecture = _control_scope(tmp_path, names)
+    components = architecture["components"]["components"]
+    positions = {component["id"]: index for index, component in enumerate(components)}
+    barrier = threading.Barrier(4)
+    second_finished = threading.Event()
+    lock = threading.Lock()
+    started, finished = set(), []
+    running, peak = [0], [0]
+
+    class ParallelHost(Host):
+        def invoke(self, role, prompt):
+            packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
+            component = packet["context"]["component"]
+            index = positions[component["id"]]
+            with lock:
+                first = index not in started
+                started.add(index)
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            try:
+                if first and index < 4:
+                    barrier.wait(5)
+                if index == 0:
+                    assert second_finished.wait(5), "Control jobs must overlap"
+                with lock:
+                    reply = super().invoke(role, prompt)
+                    if reply.payload["action"] == "complete":
+                        finished.append(index)
+                        if index == 1:
+                            second_finished.set()
+                    # Every supplied slice stays inside this component's source selection.
+                    allowed = {(p["repository_id"], p["path"]) for p in component["paths"]}
+                    assert all((s["repository_id"], s["path"]) in allowed for s in packet["source_slices"])
+                    return reply
+            finally:
+                with lock:
+                    running[0] -= 1
+
+    host = ParallelHost(scope)
+    budget = AssessmentBudget(2, 0.05, 60, 6000)
+    budget.plan_completion()
+    jobs = AssessmentJobs(scope, scope.output / ".assessment/jobs", budget, host.factory, lambda: False, lambda: None)
+    controls = controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    assert peak[0] == 4 and finished.index(1) < finished.index(0)
+    assert [row["component_ids"] for row in controls] == [[component["id"]] for component in components]
+    assert len(list(jobs.directory.glob("*.receipt.json"))) == len(components)
+    assert budget.calls == len(host.calls) == 2 * len(components)
+    assert budget.spent_usd == pytest.approx(0.01 * budget.calls) and not budget.failed
+
+    def no_new_host(role, ceiling):
+        pytest.fail("Accepted control jobs must be reused")
+
+    resumed = AssessmentJobs(scope, jobs.directory, budget, no_new_host, lambda: False, lambda: None)
+    assert controller._assessment_controls(scope, resumed, architecture, progress=lambda text: None) == controls
+    assert resumed.timing["control_analyst"]["reused"] == len(components)
+    assert budget.calls == len(host.calls)
+
+
+@pytest.mark.parametrize("outcome", ["empty", "foreign_evidence", "cancelled", "budget"])
+def test_parallel_controls_preserve_empty_results_and_fail_closed(tmp_path, outcome):
+    from runtime.analyst_host import HostCancelled
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    scope, architecture = _control_scope(tmp_path, ("front", "back", "check"))
+    components = architecture["components"]["components"]
+
+    class ControlledHost(Host):
+        def invoke(self, role, prompt):
+            reply = super().invoke(role, prompt)
+            if reply.payload["action"] == "complete":
+                if outcome == "empty":
+                    reply.payload["artifact"]["security_controls"] = []
+                elif outcome == "foreign_evidence":
+                    control = reply.payload["artifact"]["security_controls"][0]
+                    other = next(c for c in components if c["id"] not in control["component_ids"])
+                    row = other["paths"][0]
+                    control["evidence"] = [
+                        dict(repository_id=row["repository_id"], file=row["path"], line=2, sha256=row["sha256"])
+                    ]
+            return reply
+
+    host = ControlledHost(scope)
+    budget = AssessmentBudget(2, 0.05, 60, 6000)
+    budget.plan_completion()
+    if outcome == "budget":
+        budget.spent_usd = budget.max_usd
+    jobs = AssessmentJobs(
+        scope, scope.output / ".assessment/jobs", budget, host.factory, lambda: outcome == "cancelled", lambda: None
+    )
+    if outcome == "empty":
+        assert controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None) == []
+        assert len(list(jobs.directory.glob("*.receipt.json"))) == len(components)
+    else:
+        error = {"foreign_evidence": ExchangeError, "cancelled": HostCancelled, "budget": BudgetExhausted}[outcome]
+        with pytest.raises(error):
+            controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+        assert not list(jobs.directory.glob("*.receipt.json"))
+        if outcome != "foreign_evidence":
+            assert host.calls == []
+    assert not budget.failed and jobs.gaps == []
+
+
+def test_interrupted_parallel_controls_reuse_accepted_jobs(tmp_path):
+    import threading
+
+    from runtime.analyst_host import HostCancelled
+
+    scope, architecture = _control_scope(tmp_path, ("public", "internal", "route"))
+    interrupted = architecture["components"]["components"][1]["id"]
+    accepted = threading.Event()
+    directory = scope.output / ".assessment/jobs"
+
+    def checkpoint():
+        if any(directory.glob("*.receipt.json")):
+            accepted.set()
+
+    class InterruptedHost(Host):
+        def invoke(self, role, prompt):
+            packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
+            if packet["context"]["component"]["id"] == interrupted:
+                assert accepted.wait(5), "Another control job must finish before the interruption"
+                raise HostCancelled("Control assessment interrupted")
+            return super().invoke(role, prompt)
+
+    budget = AssessmentBudget(2, 0.05, 60, 6000)
+    budget.plan_completion()
+    jobs = AssessmentJobs(scope, directory, budget, InterruptedHost(scope).factory, lambda: False, checkpoint)
+    with pytest.raises(HostCancelled):
+        controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    receipts = {path.name: path.read_bytes() for path in directory.glob("*.receipt.json")}
+    assert 0 < len(receipts) < 6 and not budget.failed
+    calls = budget.calls
+    host = Host(scope)
+    resumed = AssessmentJobs(scope, directory, budget, host.factory, lambda: False, checkpoint)
+    controls = controller._assessment_controls(scope, resumed, architecture, progress=lambda text: None)
+    assert [row["component_ids"] for row in controls] == [[c["id"]] for c in architecture["components"]["components"]]
+    assert budget.calls - calls == len(host.calls) == 2 * (6 - len(receipts))
+    assert all((directory / name).read_bytes() == content for name, content in receipts.items())
+    assert resumed.timing["control_analyst"]["reused"] == len(receipts)
+
+
 def test_control_and_stride_contexts_omit_path_hashes_and_controls_answer_in_one_call(tmp_path):
     roots = [tmp_path / "edge", tmp_path / "service"]
     for root in roots:
@@ -1275,9 +1454,9 @@ def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, c
         return f"document {component}", f"review {component}"
 
     names = [f"c{n}" for n in range(count)]
-    documents, reviews = controller._assessment_components_concurrently(jobs, names, analyze)
+    results = controller._assessment_components_concurrently(jobs, names, analyze)
     assert 1 < peak[0] <= controller.ASSESSMENT_COMPONENT_WORKERS
-    assert documents == [f"document {n}" for n in names] and reviews == [f"review {n}" for n in names]
+    assert results == [(f"document {n}", f"review {n}") for n in names]
     assert jobs.notes == [f"note {n}" for n in names]
 
 
