@@ -514,7 +514,9 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     parse = controller._assessment_argument_parser().parse_args
     ns = parse(["--repo", "/r", "--output", "/o", "--soft-budget", "15", "--rebuild"])
     rows = dict(
-        controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a, b); m2 (c)")
+        controller._assessment_intro(
+            ns, controller._assessment_budget(ns), "standard", "Models: m1 (a, b); m2 (c)", "P"
+        )
     )
     assert rows["Budget"] == "model calls stop at $18.75 (1.25 × deprecated --soft-budget $15; use --hard-budget)"
     assert "report take priority" in rows["Completion reserve"]
@@ -522,15 +524,15 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     assert rows["Models"] == "m1 (a, b)\nm2 (c)"
     assert rows["Trust mode"].startswith("untrusted: start check passed\n")
     assert rows["Output"] == "/o (--rebuild: replaces any earlier assessment)"
-    assert "Phases" not in rows
+    assert "Phases" not in rows and rows["Pipeline"] == "P"
     ns = parse(
         ["--repo", "/r", "--output", "/o", "--hard-budget", "5", "--trust-mode", "trusted", "--max-duration", "3900"]
     )
-    rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "quick", "Models: m1 (a)"))
+    rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "quick", "Models: m1 (a)", "P"))
     assert rows["Budget"] == "model calls stop at $5.00" and rows["Time limit"] == "1h05m"
     assert rows["Trust mode"].startswith("trusted: start check skipped\n") and rows["Output"] == "/o"
     ns = parse(["--repo", "/r", "--output", "/o", "--interactive-launch"])
-    rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a)"))
+    rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a)", "P"))
     assert rows["Budget"] == (
         "model calls stop at $20.00 (default for the assessment depth; set --soft-budget or --hard-budget to change it)"
     )
@@ -2022,6 +2024,25 @@ def test_root_causes_are_synthesized_after_abuse_verification(tmp_path, monkeypa
 # ── Terminal colour ──────────────────────────────────────────────────────────
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def test_pipeline_names_the_phases_and_optional_steps_this_run_executes():
+    standard = controller._assessment_pipeline({"assessment_depth": "standard"})
+    assert standard == (
+        "Reconnaissance → Architecture → Trust boundaries → Controls → "
+        "Threat analysis → Consolidation → Abuse cases → Finalization"
+    )
+    thorough = controller._assessment_pipeline({"assessment_depth": "thorough", "architect_review": True})
+    assert "Consolidation (+ architect review)" in thorough
+    assert "Abuse cases (+ business abuse cases)" in thorough
+    # Each step's own gate decides: a dry run, a case selection or skipped
+    # abuse verification never shows a step the run leaves out.
+    assert "architect review" not in controller._assessment_pipeline({"architect_review": True, "dry_run": True})
+    selected = {"assessment_depth": "thorough", "only_abuse_case_ids": ["AC-1"]}
+    assert "business abuse cases" not in controller._assessment_pipeline(selected)
+    quick = controller._assessment_pipeline({"assessment_depth": "quick", "skip_abuse_case_verification": True})
+    assert "Abuse cases" not in quick and quick.endswith("Consolidation → Finalization")
+    assert quick.split(" → ") == controller._AssessmentConsole.planned_phases(abuse_cases=False)
 
 
 def _coloured_console_output(monkeypatch, capsys, **env):

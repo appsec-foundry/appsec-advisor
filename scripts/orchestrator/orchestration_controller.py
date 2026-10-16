@@ -9828,9 +9828,14 @@ class _AssessmentConsole:
             above = []
         self._status(self._row("·", " · ".join(part for part in (self.current, working) if part), live=True), above)
 
+    @classmethod
+    def planned_phases(cls, *, abuse_cases: bool) -> list[str]:
+        """The phases a run executes, in order; skipped abuse cases drop their phase."""
+        return [name for name in cls.WEIGHTS if abuse_cases or name != "Abuse cases"]
+
     def plan_phases(self, *, abuse_cases: bool) -> None:
         """Number the phases this run will execute; skipped abuse cases shorten the count."""
-        self.plan = [name for name in self.WEIGHTS if abuse_cases or name != "Abuse cases"]
+        self.plan = self.planned_phases(abuse_cases=abuse_cases)
 
     def plan_components(self, count: int) -> None:
         """Scale Controls and STRIDE to the run's components; RUN then shows a share."""
@@ -10418,7 +10423,9 @@ def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
     return lineup, warning
 
 
-def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False) -> list[tuple[str, str]]:
+def _assessment_intro(
+    ns, budget, depth: str, lineup: str, pipeline: str, runtime_changed=False
+) -> list[tuple[str, str]]:
     """Return the console header rows, shown once every pre-run check has passed."""
     output = ns.output
     if ns.rebuild:
@@ -10449,12 +10456,23 @@ def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False
         ("Depth", depth),
         ("Models", lineup.removeprefix("Models: ").replace("; ", "\n")),
         ("Trust mode", trust),
-        (
-            "Flow",
-            "scripts run every stage, merge, rank, render and check the report;\n"
-            "models answer bounded tool-less questions per component (no agent session)",
-        ),
+        ("Pipeline", pipeline),
     ]
+
+
+def _assessment_pipeline(cfg: dict[str, Any]) -> str:
+    """Name the phases this run executes and the optional steps it enables in them.
+
+    Uses the same gates as the steps themselves, so the header never promises a
+    step the run skips. Budget-driven omissions are decided later and not shown.
+    """
+    extras = {}
+    if cfg.get("architect_review") and not cfg.get("dry_run"):
+        extras["Consolidation"] = "architect review"
+    if cfg.get("assessment_depth") == "thorough" and not cfg.get("only_abuse_case_ids"):
+        extras["Abuse cases"] = "business abuse cases"
+    phases = _AssessmentConsole.planned_phases(abuse_cases=not cfg.get("skip_abuse_case_verification"))
+    return " → ".join(f"{name} (+ {extras[name]})" if name in extras else name for name in phases)
 
 
 def _assessment_cli_host_factory(work_root: Path, events_dir: Path | None = None):
@@ -11078,7 +11096,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     # were accepted, so a refused start prints only its reason.
                     console.facts(
                         "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
-                        _assessment_intro(ns, budget, depth, lineup, state.runtime_changed),
+                        _assessment_intro(ns, budget, depth, lineup, _assessment_pipeline(cfg), state.runtime_changed),
                     )
                     console.plan_phases(abuse_cases=not cfg.get("skip_abuse_case_verification"))
                     noticed = []
