@@ -9168,12 +9168,13 @@ def _assessment_stride(
         )
         if findings:
             progress("Independently verifying evidence: " + label(component))
-        parts = []
+        parts = evidence_parts[position] = []
         for number, batch in enumerate(batches, 1):
             selector = "evidence:" + component["id"] + (f":{number}/{len(batches)}" if len(batches) > 1 else "")
-            parts.append(
-                _assessment_evidence_review(
-                    jobs,
+
+            def review_batch(view, batch=batch, selector=selector):
+                return _assessment_evidence_review(
+                    view,
                     analysis,
                     scope,
                     identity,
@@ -9187,7 +9188,12 @@ def _assessment_stride(
                     targets=targets,
                     component_sources=analysis.source_selection(components["components"]),
                 )
-            )
+
+            parts.append(review_batch(jobs))
+            # The reserve for components not yet analyzed blocked this review;
+            # it is retried once their STRIDE work has released that reserve.
+            if any(gap["selector"] == selector and gap.get("budget") for gap in jobs.gaps):
+                deferred.append((position, len(parts) - 1, selector, label(component), review_batch))
         if parts:
             review = {**parts[0], "decisions": [row for part in parts for row in part["decisions"]]}
         else:
@@ -9195,9 +9201,23 @@ def _assessment_stride(
         progress(f"Analyzed component: {label(component)} ({next(finished)}/{len(components['components'])})")
         return document, review
 
+    evidence_parts, deferred = {}, []
     results = _assessment_components_concurrently(jobs, components["components"], analyze)
     documents = [document for document, _ in results]
     reviews = [review for _, review in results]
+    if deferred:
+        # Every STRIDE job is accepted now, so only the report's reserve remains.
+        selectors = {selector for _, _, selector, _, _ in deferred}
+        jobs.gaps[:] = [gap for gap in jobs.gaps if not (gap.get("budget") and gap["selector"] in selectors)]
+
+        def retry(_, item, view):
+            position, index, _selector, name, review_batch = item
+            progress("Independently verifying evidence: " + name)
+            evidence_parts[position][index] = review_batch(view)
+
+        _assessment_components_concurrently(jobs, deferred, retry)
+        for position in {item[0] for item in deferred}:
+            reviews[position - 1]["decisions"] = [row for part in evidence_parts[position] for row in part["decisions"]]
     scope.verify_unchanged()
     found = sum(len(document["threats"]) for document in documents) + sum(len(rows) for rows in scanned.values())
     _phase_result(progress, "Threat analysis", _count_noun(found, "finding"))
@@ -9638,6 +9658,23 @@ def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
             f"{_count_noun(files, 'source file')} without a route, lead or security signal in "
             f"{_count_noun(len(entries), 'component')} were not individually examined; --verbose lists them"
         ]
+    )
+
+
+def _budget_skip_info(gaps: list[dict], components: list[dict], budget) -> str:
+    """One console line for the optional jobs the completion reserve skipped, by role and component."""
+    names = {row["id"]: row["name"] for row in components}
+    roles: dict[str, list[str]] = {}
+    for gap in gaps:
+        listed = roles.setdefault(_AssessmentConsole.ROLE_LABELS.get(gap["role"], gap["role"]), [])
+        parts = gap["selector"].split(":")
+        name = names.get(parts[1]) if len(parts) > 1 else None
+        if name and name not in listed:
+            listed.append(name)
+    jobs = "; ".join(f"{role} ({', '.join(listed)})" if listed else role for role, listed in roles.items())
+    return (
+        f"{_count_noun(len(gaps), 'optional model job')} did not run, to keep the budget reserve for the report: "
+        f"{jobs}; deterministic replacements are used (USD {budget.spent_usd:.2f} of {budget.max_usd:.2f} spent)"
     )
 
 
@@ -11434,14 +11471,12 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     if not gap.get("budget")
                 ]
                 warnings.extend(failed)
-                warnings.extend(
-                    f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
-                    "was not completed to preserve the budget for required work; its deterministic replacement is used"
-                    for gap in jobs.gaps
-                    if gap.get("budget")
-                )
                 warnings.extend(jobs.notes)
                 infos.extend(_coverage_infos(jobs.infos, ns.verbose))
+                # A budget skip is the planned degradation, not a run issue (REQ-FLW-008).
+                skipped = [gap for gap in jobs.gaps if gap.get("budget")]
+                if skipped:
+                    infos.append(_budget_skip_info(skipped, architecture["components"]["components"], budget))
                 retry_warning = _assessment_retry_warning(budget.retries)
                 if retry_warning:
                     warnings.append(retry_warning)
