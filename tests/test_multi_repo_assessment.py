@@ -1728,14 +1728,41 @@ def test_every_stride_component_and_abuse_case_gets_its_own_line(capsys, live):
     )
 
 
-def test_a_completed_assessment_lists_each_delivered_file_on_its_own_line(tmp_path, monkeypatch, capsys):
-    delivered = ["threat-model.yaml", "threat-model.md", "threat-model.figure1.svg", "threat-model.pdf"]
+def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path, monkeypatch, capsys):
+    delivered = [
+        "threat-model.yaml",
+        "threat-model.md",
+        "threat-model.figure1.svg",
+        "threat-model.figure1-dark.svg",
+        "threat-model.pdf",
+    ]
+    (tmp_path / "threat-model.yaml").write_text(
+        "meta: {project: {name: Edge}}\nthreats:\n  - {t_id: T-001, risk: High}\n"
+        "mitigations:\n  - {id: M-001, priority: P1}\n"
+    )
     outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 3, "spent_usd": 1.0}
     monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "deliverables": delivered})
     assert controller.assess_main(["--repo", "edge"]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[0].startswith("✓ Threat model of edge written to")
-    assert out[1:] == [f"  {tmp_path / name}" for name in delivered]
+    assert re.fullmatch(r"✓ Threat model of edge written in \S+ \(3 model calls, ≈ USD 1\.00\)", out[0])
+    assert out[1:] == [
+        "  Findings    1 · High 1",
+        "  Mitigations 1 · 1 fix first (P1)",
+        # The report first; figures are counted, other exports stay listed.
+        f"  Report      {tmp_path / 'threat-model.md'}",
+        f"              {tmp_path / 'threat-model.yaml'}",
+        f"              {tmp_path / 'threat-model.pdf'} (+ 2 figures)",
+        "  Next        /appsec-advisor:ask-threat-model · /appsec-advisor:review-threat-model",
+    ]
+
+
+def test_coverage_statements_close_the_run_under_one_heading(tmp_path, monkeypatch, capsys):
+    outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1, "deliverables": []}
+    infos = ["3 program files belong to no component", "2 security-relevant code locations stayed open"]
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "infos": infos})
+    assert controller.assess_main(["--repo", "edge"]) == 0
+    err = capsys.readouterr().err.splitlines()
+    assert err[err.index("ℹ Coverage") :] == ["ℹ Coverage", *(f"  · {info}" for info in infos)]
 
 
 def test_a_terminal_shows_the_subject_in_work_as_one_rewritten_status_line(capsys, monkeypatch):

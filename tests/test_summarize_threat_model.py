@@ -285,7 +285,8 @@ def test_backlog_and_coverage(tmp_path):
     assert summary["coverage"] == {"with_mitigation": 2, "uncovered": 1}
 
     out = stm.render_text(summary, None, show_all=False)
-    assert "Backlog    1× P1 · 2× P2" in out
+    # The priority bands count mitigations and say so; no unitless "Backlog" line.
+    assert "Mitigations 4 · 1 fix first (P1) · 2 P2" in out and "Backlog" not in out
     assert "Coverage   2/3 findings have a mitigation · 1 without" in out
 
 
@@ -564,3 +565,24 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
 )
 def test_worst_case_row_leads_with_the_scenario_sentence(bullet, rows):
     assert stm.render_worst_case_table([bullet], indent="") == rows
+
+
+def test_completion_rows_share_the_overview_numbers(tmp_path):
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: Critical, mitigation_ids: [M-001]}
+          - {t_id: T-002, risk: High}
+        mitigations:
+          - {id: M-001, priority: P1}
+          - {id: M-002, priority: P3}
+    """
+    _write_model(tmp_path, body)
+    assert stm.completion_rows(tmp_path) == [
+        ("Findings", "2 · Critical 1 · High 1"),
+        ("Mitigations", "2 · 1 fix first (P1) · 1 P3"),
+    ]
+    # Without a readable model the closing summary names only its files.
+    assert stm.completion_rows(tmp_path / "missing") == []
+    (tmp_path / "threat-model.yaml").write_text(": not yaml: [")
+    assert stm.completion_rows(tmp_path) == []
