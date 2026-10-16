@@ -520,7 +520,7 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     assert "report take priority" in rows["Completion reserve"]
     assert rows["Time limit"] == "4h" and rows["Depth"] == "standard"
     assert rows["Models"] == "m1 (a, b)\nm2 (c)"
-    assert rows["Trust mode"] == "untrusted, preflight clean"
+    assert rows["Trust mode"].startswith("untrusted: start check passed\n")
     assert rows["Output"] == "/o (--rebuild: replaces any earlier assessment)"
     assert "Phases" not in rows
     ns = parse(
@@ -528,7 +528,7 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     )
     rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "quick", "Models: m1 (a)"))
     assert rows["Budget"] == "model calls stop at $5.00" and rows["Time limit"] == "1h05m"
-    assert rows["Trust mode"] == "trusted, no preflight" and rows["Output"] == "/o"
+    assert rows["Trust mode"].startswith("trusted: start check skipped\n") and rows["Output"] == "/o"
     ns = parse(["--repo", "/r", "--output", "/o", "--interactive-launch"])
     rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a)"))
     assert rows["Budget"] == (
@@ -2030,7 +2030,9 @@ def _coloured_console_output(monkeypatch, capsys, **env):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
-    console.facts("AppSec Plugin — Headless Mode", [("Repository", "/srv/app"), ("Trust mode", "untrusted, clean")])
+    console.facts(
+        "AppSec Plugin — Headless Mode", [("Repository", "/srv/app"), ("Trust mode", "untrusted: start check passed")]
+    )
     console.plan_components(2)
     console.step("Assessing controls: Gateway (1/2)")
     console.step("Analyzing all STRIDE categories: Gateway (1/2)")
