@@ -1,0 +1,23 @@
+{
+  "collapsed_duplicate_count": 0,
+  "component_ids": [
+    "component-1f61b207923dbaf5",
+    "component-290ae722e9565831",
+    "component-31ebe1b93ddf60d5",
+    "component-6ffadbc3868c2a3b",
+    "component-6ffaf23414c56207",
+    "component-790db1fed70651aa",
+    "component-8c3a32ee53769307",
+    "component-b213d5ab01236933",
+    "component-dff0840e0f4855be"
+  ],
+  "component_inventory_fingerprint": "sha256:3e08c3679335e0bed1f41559cdd7b1b4bf13010b2ed9308b6f3721a6e8602f75",
+  "injected_component_ids": [
+    "component-290ae722e9565831",
+    "component-31ebe1b93ddf60d5",
+    "component-6ffadbc3868c2a3b",
+    "component-8c3a32ee53769307",
+    "component-dff0840e0f4855be"
+  ],
+  "schema_version": 1
+}

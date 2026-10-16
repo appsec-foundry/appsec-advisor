@@ -1,0 +1,16 @@
+{
+  "bot_authored_commits": 0,
+  "cadence": "unknown",
+  "dep_update_commits": 0,
+  "evidence": [
+    "Git history is not read in a combined assessment \u2014 activity signal unavailable."
+  ],
+  "manifests_seen": [
+    "frontend/package.json",
+    "package.json"
+  ],
+  "merged_dep_prs": null,
+  "schema_version": 1,
+  "total_manifest_commits": 0,
+  "window_days": 90
+}

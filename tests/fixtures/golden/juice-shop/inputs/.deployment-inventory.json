@@ -1,0 +1,277 @@
+{
+  "ci": [
+    {
+      "facts": [
+        {
+          "text": "6 of 26 actions not SHA-pinned",
+          "tone": "decision"
+        },
+        {
+          "text": "16 workflows",
+          "tone": "note"
+        }
+      ],
+      "publishes": [
+        "Docker Hub"
+      ],
+      "source": ".github/workflows",
+      "system": "GitHub Actions"
+    },
+    {
+      "facts": [
+        {
+          "source": {
+            "file": ".gitlab-ci.yml",
+            "line": 6
+          },
+          "text": "test, dast disabled",
+          "tone": "decision"
+        },
+        {
+          "source": {
+            "file": ".gitlab-ci.yml",
+            "line": 5
+          },
+          "text": "SAST excludes paths",
+          "tone": "decision"
+        },
+        {
+          "source": {
+            "file": ".gitlab-ci.yml",
+            "line": 2
+          },
+          "text": "Auto DevOps template",
+          "tone": "note"
+        }
+      ],
+      "publishes": [
+        "GitLab registry",
+        "Kubernetes (auto deploy)"
+      ],
+      "source": ".gitlab-ci.yml",
+      "system": "GitLab CI"
+    }
+  ],
+  "compose": null,
+  "dependencies": {
+    "declared": 180,
+    "lockfile": false,
+    "manifests": 2,
+    "ranges": 174
+  },
+  "environments": [
+    {
+      "label": "Kubernetes \u00b7 GitLab Auto Deploy",
+      "platform": "kubernetes",
+      "source": ".gitlab/auto-deploy-values.yaml",
+      "tree": {
+        "children": [
+          {
+            "children": [],
+            "facts": [
+              {
+                "source": {
+                  "file": ".gitlab/auto-deploy-values.yaml",
+                  "line": 3
+                },
+                "text": "ClusterIP :3000 \u2192 3000",
+                "tone": "neutral"
+              }
+            ],
+            "kind": "service",
+            "note": "ingress and TLS from chart defaults",
+            "role": "entry",
+            "title": "Service :3000"
+          },
+          {
+            "children": [],
+            "facts": [],
+            "kind": "workload",
+            "title": "Pod"
+          }
+        ],
+        "facts": [],
+        "kind": "cluster",
+        "title": "Kubernetes \u00b7 GitLab Auto Deploy"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "entries": [
+        {
+          "name": "@ai-sdk/openai-compatible",
+          "role": "llm",
+          "version": "^2.0.35"
+        },
+        {
+          "name": "ai",
+          "role": "llm",
+          "version": "^6.0.116"
+        },
+        {
+          "name": "body-parser",
+          "role": "parse",
+          "version": "^1.20.4"
+        },
+        {
+          "name": "cors",
+          "role": "edge",
+          "version": "^2.8.5"
+        },
+        {
+          "name": "ethers",
+          "role": "framework",
+          "version": "^6.16.0"
+        },
+        {
+          "name": "express",
+          "role": "framework",
+          "version": "^4.22.1"
+        },
+        {
+          "name": "express-ipfilter",
+          "role": "edge",
+          "version": "^1.3.2"
+        },
+        {
+          "name": "express-jwt",
+          "role": "identity",
+          "version": "0.1.3"
+        },
+        {
+          "name": "express-rate-limit",
+          "role": "edge",
+          "version": "^7.5.1"
+        },
+        {
+          "name": "hbs",
+          "role": "render",
+          "version": "^4.2.0"
+        },
+        {
+          "name": "helmet",
+          "role": "edge",
+          "version": "^4.6.0"
+        },
+        {
+          "name": "js-yaml",
+          "role": "parse",
+          "version": "^3.14.0"
+        },
+        {
+          "name": "jsonwebtoken",
+          "role": "identity",
+          "version": "0.4.0"
+        },
+        {
+          "name": "libxml2-wasm",
+          "role": "parse",
+          "version": "^0.7.1"
+        },
+        {
+          "name": "marsdb",
+          "role": "framework",
+          "version": "^0.6.11"
+        },
+        {
+          "name": "multer",
+          "role": "parse",
+          "version": "^1.4.5-lts.1"
+        },
+        {
+          "name": "otplib",
+          "role": "identity",
+          "version": "^13.4.0"
+        },
+        {
+          "name": "pug",
+          "role": "render",
+          "version": "^3.0.3"
+        },
+        {
+          "name": "sanitize-html",
+          "role": "render",
+          "version": "1.4.2"
+        },
+        {
+          "name": "sequelize",
+          "role": "data",
+          "version": "^6.37.3"
+        },
+        {
+          "name": "socket.io",
+          "role": "framework",
+          "version": "^3.1.2"
+        },
+        {
+          "name": "sqlite3",
+          "role": "framework",
+          "version": "^5.1.7"
+        },
+        {
+          "name": "unzipper",
+          "role": "parse",
+          "version": "^0.12.3"
+        },
+        {
+          "name": "zod",
+          "role": "parse",
+          "version": "^4.4.3"
+        }
+      ],
+      "manifest": "package.json"
+    },
+    {
+      "entries": [
+        {
+          "name": "@angular/core",
+          "role": "framework",
+          "version": "^21.2.1"
+        },
+        {
+          "name": "ethers",
+          "role": "framework",
+          "version": "^5.7.2"
+        },
+        {
+          "name": "jwt-decode",
+          "role": "identity",
+          "version": "^4.0.0"
+        }
+      ],
+      "manifest": "frontend/package.json"
+    }
+  ],
+  "runtime": {
+    "base": {
+      "image": "gcr.io/distroless/nodejs24-debian13",
+      "line": 22,
+      "pin": "floating"
+    },
+    "build_stages": [
+      {
+        "image": "node:24",
+        "line": 1,
+        "pin": "tag"
+      }
+    ],
+    "command": "app.js",
+    "copies_repository": {
+      "line": 2,
+      "sensitive": [
+        "encryptionkeys/"
+      ]
+    },
+    "dockerfile": "Dockerfile",
+    "expose": [
+      "3000"
+    ],
+    "runtime_label": "Node.js 24",
+    "user": {
+      "line": 39,
+      "value": "65532"
+    }
+  },
+  "schema_version": 1
+}

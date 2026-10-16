@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "verdicts": [
+    {
+      "abuse_case_id": "AC-B-001",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "      const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })",
+            "file": "routes/basket.ts",
+            "line": 19
+          },
+          "matched_finding_id": "T-003",
+          "reason": "GET /rest/basket/:id is registered with no authorization middleware. retrieveBasket looks up the basket by the URL id alone. The comparison with the caller's basket id (user.bid) appears only inside challengeUtils.solveIf, which flags a solved challenge and does not block the request. Any caller can therefore read another user's basket and its products.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "confirmed"
+        }
+      ],
+      "chain_verdict": "fully_viable"
+    },
+    {
+      "abuse_case_id": "AC-B-003",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "          const updatedUser = await user.update({ password: newPassword })",
+            "file": "routes/resetPassword.ts",
+            "line": 44
+          },
+          "matched_finding_id": "T-050",
+          "reason": "POST /rest/user/reset-password lets an unauthenticated caller change any account's password with only the email and a security-question answer. This is a weak, guessable knowledge factor, not verified-owner re-authentication. The route has no throttling, no reset token and no session check, so a non-owner who knows or guesses the answer takes over the account.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "confirmed"
+        }
+      ],
+      "chain_verdict": "fully_viable"
+    },
+    {
+      "abuse_case_id": "AC-B-004",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": null,
+          "matched_finding_id": null,
+          "reason": "evidence not admitted (no evidence): The preselected review code (create, update, like, show) has no approval workflow, approver role or approved state, so the case does not apply as described. Likes are not approvals. Review edits have ",
+          "state": "decided",
+          "step": 1,
+          "verdict": "inconclusive",
+          "rejected_evidence": null
+        }
+      ],
+      "chain_verdict": "inconclusive"
+    },
+    {
+      "abuse_case_id": "AC-T-001",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "          feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml(",
+            "file": "frontend/src/app/about/about.component.ts",
+            "line": 119
+          },
+          "matched_finding_id": "T-001",
+          "reason": "Feedback comment is interpolated into HTML and passed to bypassSecurityTrustHtml with no sanitizer, so stored attacker markup renders as trusted HTML.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "confirmed"
+        },
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "    if (localStorage.getItem('token')) {",
+            "file": "frontend/src/app/Services/basket.service.ts",
+            "line": 64
+          },
+          "matched_finding_id": "T-110",
+          "reason": "Session token is read from localStorage, which injected script can read. No HttpOnly cookie control is visible.",
+          "state": "decided",
+          "step": 2,
+          "verdict": "confirmed"
+        },
+        {
+          "controls_found": [],
+          "evidence": null,
+          "matched_finding_id": null,
+          "reason": "The line shows an implicit-flow Google login (response_type=token, no PKCE). That is a different flow from replaying the stolen session token. Server-side acceptance or binding of a replayed token is not visible in the client code.",
+          "state": "decided",
+          "step": 3,
+          "verdict": "inconclusive"
+        }
+      ],
+      "chain_verdict": "inconclusive"
+    },
+    {
+      "abuse_case_id": "AC-T-002",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "      const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })",
+            "file": "routes/basket.ts",
+            "line": 19
+          },
+          "matched_finding_id": "T-003",
+          "reason": "retrieveBasket looks up the basket by attacker-supplied req.params.id and returns it. No ownership comparison gates the response. The user.bid comparison only feeds challengeUtils.solveIf.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "confirmed"
+        },
+        {
+          "controls_found": [],
+          "evidence": null,
+          "matched_finding_id": "T-043",
+          "reason": "The matched line only reads req.body.role inside a challenge-detection middleware and then calls next(). It does not persist anything. The persisting create or update handler is not in the supplied source, so mass assignment cannot be decided.",
+          "state": "decided",
+          "step": 2,
+          "verdict": "inconclusive"
+        }
+      ],
+      "chain_verdict": "inconclusive"
+    },
+    {
+      "abuse_case_id": "AC-T-004",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": null,
+          "matched_finding_id": "T-043",
+          "reason": "The matched code in routes/verify.ts is only a challenge-detection middleware that reads req.body.role and calls next(). It does not persist the body. The actual registration/user-creation handler that would bind the role field is not in the readable sources, so mass-assignment and any allowlist control cannot be decided.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "inconclusive"
+        }
+      ],
+      "chain_verdict": "inconclusive"
+    },
+    {
+      "abuse_case_id": "AC-T-005",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "const privateKey = '[PEM PRIVATE KEY \u2014 REDACTED]'",
+            "file": "lib/insecurity.ts",
+            "line": 21
+          },
+          "matched_finding_id": "T-020",
+          "reason": "RS256 private signing key is hardcoded as a string literal in source code; no vault/KMS/env loading control present.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "confirmed"
+        },
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })",
+            "file": "lib/insecurity.ts",
+            "line": 54
+          },
+          "matched_finding_id": "T-018",
+          "reason": "authorize() signs tokens with the hardcoded privateKey and the verification path trusts the matching public key; a token forged with the leaked key would be accepted. No key rotation or binding control found.",
+          "state": "decided",
+          "step": 2,
+          "verdict": "confirmed"
+        }
+      ],
+      "chain_verdict": "fully_viable"
+    },
+    {
+      "abuse_case_id": "AC-T-006",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>",
+            "file": "lib/xml.ts",
+            "line": 12
+          },
+          "matched_finding_id": null,
+          "reason": "The new Function() body is a fixed string ('return import(specifier)') and dynamicImport is only called with literals ('libxml2-wasm', 'libxml2-wasm/lib/nodejs.mjs'). The vm.runInContext script is also a constant. The attacker-controlled `data` is passed into the context as a variable and parsed as XML, not evaluated as code. The sink is real but receives no attacker input, so it does not hold as code execution. The XXE exposure is a different weakness.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "refuted"
+        }
+      ],
+      "chain_verdict": "inconclusive"
+    },
+    {
+      "abuse_case_id": "AC-T-007",
+      "step_verdicts": [
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "    const messages = req.body?.messages ?? []",
+            "file": "routes/chat.ts",
+            "line": 191
+          },
+          "matched_finding_id": "T-055",
+          "reason": "The client-supplied req.body.messages array is passed unfiltered to streamText, so an attacker controls the conversation turns (including any role) the model reads as instruction. No sanitising, delimiting or filtering control appears in the handler.",
+          "state": "decided",
+          "step": 1,
+          "verdict": "confirmed"
+        },
+        {
+          "controls_found": [],
+          "evidence": {
+            "excerpt": "          const couponCode = security.generateCoupon(discount) // vuln-code-snippet vuln-line chatbotPromptInjectionChallenge",
+            "file": "routes/chat.ts",
+            "line": 184
+          },
+          "matched_finding_id": "T-042",
+          "reason": "The generateCoupon tool runs with application authority. The discount limit of 10 appears only in the tool description, and execute has no server-side check on the value or the caller, so a manipulated model turn gets an arbitrary-discount coupon. Only getOrderById checks ownership.",
+          "state": "decided",
+          "step": 2,
+          "verdict": "confirmed"
+        }
+      ],
+      "chain_verdict": "fully_viable"
+    }
+  ]
+}

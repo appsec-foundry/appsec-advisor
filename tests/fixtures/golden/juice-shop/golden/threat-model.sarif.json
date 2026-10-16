@@ -1,0 +1,4896 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "utf16CodeUnits",
+      "properties": {
+        "trustBoundaries": [
+          {
+            "crossing": "component-1f61b207923dbaf5 → component-790db1fed70651aa",
+            "exposure": "internal",
+            "id": "tb-8"
+          },
+          {
+            "crossing": "component-290ae722e9565831 → component-b213d5ab01236933",
+            "exposure": "inferred",
+            "id": "tb-6"
+          },
+          {
+            "crossing": "external → component-1f61b207923dbaf5",
+            "exposure": "internet-facing",
+            "id": "tb-2"
+          },
+          {
+            "crossing": "external → component-6ffadbc3868c2a3b",
+            "exposure": "inferred",
+            "id": "tb-4"
+          },
+          {
+            "crossing": "external → component-dff0840e0f4855be",
+            "exposure": "inferred",
+            "id": "tb-5"
+          },
+          {
+            "crossing": "external → component-31ebe1b93ddf60d5",
+            "exposure": "internet-facing",
+            "id": "tb-3"
+          },
+          {
+            "crossing": "external → component-8c3a32ee53769307",
+            "exposure": "internet-facing",
+            "id": "tb-1"
+          },
+          {
+            "crossing": "external → component-dff0840e0f4855be",
+            "exposure": "inferred",
+            "id": "tb-7"
+          },
+          {
+            "crossing": "component-6ffaf23414c56207 → external",
+            "exposure": "outbound",
+            "id": "tb-9"
+          },
+          {
+            "crossing": "component-1f61b207923dbaf5 → external",
+            "exposure": "outbound",
+            "id": "tb-10"
+          },
+          {
+            "crossing": "component-6ffadbc3868c2a3b → external",
+            "exposure": "outbound",
+            "id": "tb-11"
+          }
+        ]
+      },
+      "results": [
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove sanitizer bypass for feedback comments"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/about/about.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 119
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An attacker submits feedback through the unauthenticated feedback API with a script-bearing comment. The About page wraps the comment in markup, marks it trusted HTML and renders it with innerHTML for every visitor, so the script runs and can read the JWT in localStorage."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-001"
+            ]
+          },
+          "ruleId": "T-001"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Issue session tokens in HttpOnly SameSite cookies"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/login/login.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 101
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "After login the JWT is written to localStorage and a JavaScript-set cookie, so it cannot be HttpOnly. Any XSS in the origin, such as the last-login-ip sink, reads the token and exfiltrates it."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-002"
+            ]
+          },
+          "ruleId": "T-002"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Check basket ownership before returning it"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/basket.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 19
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "retrieveBasket finds the basket by req.params.id with no comparison against the authenticated user's basket id. Any logged-in user can read another's basket."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-003"
+            ]
+          },
+          "ruleId": "T-003"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Restore authorization on product PUT route"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 370
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The isAuthorized middleware for PUT /api/Products/:id is commented out, while finale exposes the Product update endpoint. An anonymous caller can modify products."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-004"
+            ]
+          },
+          "ruleId": "T-004"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Render search term as text instead of trusted HTML"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/search-result/search-result.component.html",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The search heading binds searchValue (a SafeHtml) to innerHTML. If it derives from the URL search query, an attacker sends a crafted link and script runs in the victim session."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-005"
+            ]
+          },
+          "ruleId": "T-005"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use parameterized / bound queries…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/search.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or modifying arbitrary rows, bypassing authentication, or escalating to full database control."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-006"
+            ]
+          },
+          "ruleId": "T-006"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace req.body.UserId/userId/ownerId with req.user.id…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/dataExport.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 26
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-007"
+            ]
+          },
+          "ruleId": "T-008"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use bind parameters in login query"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/login.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 34
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated attacker posts an email such as admin@host'-- to /rest/user/login. The email is interpolated into raw SQL, so the password predicate is commented out and the query returns the admin row, yielding a signed session token for any account."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-008"
+            ],
+            "trustBoundaries": [
+              {
+                "crossing": "external → component-dff0840e0f4855be",
+                "exposure": "inferred",
+                "id": "tb-5",
+                "rationale": "The finding's evidence line is the interface this boundary cites; CWE-89 breaks its validation condition."
+              }
+            ]
+          },
+          "ruleId": "T-012"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Verify JWT signature in chat identity lookup"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/chat.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 45
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "getUserId decodes the bearer token with security.decode and trusts data.id. The getOrderById tool then looks up that user's email and returns their orders, so a forged token naming another user id exposes that user's orders. The route has no auth middleware. The decode implementation was not read; the flow evidence states it skips signature verification."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-009"
+            ]
+          },
+          "ruleId": "T-014"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove email-derived password from OAuth login"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/oauth/oauth.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 30
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The OAuth component registers and logs in the local account with password btoa(reverse(email)). An attacker who knows a victim's Google-linked email computes the password and logs in via the normal login endpoint, taking over the account."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-010"
+            ]
+          },
+          "ruleId": "T-016"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add `algorithms: ['RS256']` (or matching) to the expressJwt() options object."
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 53
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Without an algorithm allowlist the token middleware that guards every authenticated route accepts tokens an attacker signs with a weaker or unintended algorithm, so a forged token passes as any user on every protected route."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-011"
+            ]
+          },
+          "ruleId": "T-018"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace security-question recovery with a CSPRNG reset token delivered through…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/resetPassword.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 10
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An attacker who can research or guess the answer can satisfy the recovery check and take over the account without the original credential."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-012"
+            ]
+          },
+          "ruleId": "T-019"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Load JWT private key from secret store"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 21
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The RS256 private key is embedded in lib/insecurity.ts. Anyone with the source can sign a token with an arbitrary role claim, which isAuthorized and the role checks accept, and can also compute deluxe tokens derived from the same key."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-013"
+            ]
+          },
+          "ruleId": "T-020"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate wallet top-up amount server-side"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/wallet.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 27
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An authenticated user sends PUT /rest/wallet/balance with their own saved card id and an arbitrary balance value. The server only checks card ownership, then increments the wallet by the client-supplied number with no payment charge, type, range or sign validation, so the attacker mints wallet credit for free."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-014"
+            ]
+          },
+          "ruleId": "T-021"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Resolve the path, assert it stays within an allowed base directory…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/dataErasure.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 104
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "A request-controlled path with `../` can read arbitrary files (/etc/passwd, source, secrets) or write outside the intended root."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-015"
+            ]
+          },
+          "ruleId": "T-022"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Constrain zip entries to the upload directory"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 34
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated attacker uploads a zip whose entry names contain ../ sequences to /file-upload. The containment check only tests that the resolved path contains the working directory, so files are written anywhere under the app root, overwriting served content such as ftp/legal.md."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-016"
+            ]
+          },
+          "ruleId": "T-023"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add an owner column to the WHERE clause (UserId: req.user.id) or wrap the route…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/basketItems.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 68
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Any authenticated user can substitute another user's resource ID in the URL and read or modify the target record because the query filter has no ownership clause. Admin-only routes are excluded via the counter-pattern allowlist."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-017"
+            ]
+          },
+          "ruleId": "T-024"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use typed query predicates instead of $where"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/showProductReviews.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 36
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Request input read at routes/showProductReviews.ts:31 reaches an executable expression at routes/showProductReviews.ts:36. Observed path conditions: const id = !utils.isChallengeEnabled(challenges.noSqlCommandChallenge) ? Number(req.params.id) : utils.trunc(req.params.id, 40). The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-018"
+            ]
+          },
+          "ruleId": "T-027"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Query reviews with numeric equality filter"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/showProductReviews.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 36
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated caller sends a crafted :id to GET /rest/products/:id/reviews. The value is concatenated into a $where string, allowing arbitrary JavaScript predicates to return all reviews or run sleep."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-019"
+            ]
+          },
+          "ruleId": "T-028"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Query orders by field equality not where strings"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/trackOrder.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 18
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated caller supplies a crafted :id to GET /rest/track-order/:id. It is placed inside a JavaScript $where string for MarsDB, so the attacker can alter the predicate and return other customers' orders."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-020"
+            ]
+          },
+          "ruleId": "T-029"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Keep input as data; remove dynamic code or template-source compilation"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/userProfile.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 87
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Persisted record read at routes/userProfile.ts:41 reaches an executable expression at routes/userProfile.ts:87. Observed path conditions: if (username) {. The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-021"
+            ]
+          },
+          "ruleId": "T-030"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use crypto.randomBytes / crypto.randomUUID / webcrypto getRandomValues for any…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 53
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-022"
+            ]
+          },
+          "ruleId": "T-031"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove public key directory serving"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/keyServer.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 14
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Anyone requests /encryptionkeys and /encryptionkeys/:file, which list and serve key material via sendFile with no authentication. Only forward slashes are rejected."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-023"
+            ]
+          },
+          "ruleId": "T-032"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Disable external entities in XML parsing"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 79
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An attacker uploads an XML file with an external entity such as file:///etc/passwd. The parser (entity substitution and DTD load enabled) expands it and the result is embedded in the error response message."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-024"
+            ]
+          },
+          "ruleId": "T-033"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Allowlist and resolve-check profile image URLs"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/profileImageUrlUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 24
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "A logged-in user posts imageUrl and the server fetches it with no scheme, host or private-range restriction. The attacker targets internal services or cloud metadata and the response is saved under a public uploads path, readable afterwards."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-025"
+            ],
+            "trustBoundaries": [
+              {
+                "crossing": "component-1f61b207923dbaf5 → external",
+                "exposure": "outbound",
+                "id": "tb-10",
+                "rationale": "The finding's evidence line is the interface this boundary cites; CWE-918 breaks its egress-destination condition."
+              }
+            ]
+          },
+          "ruleId": "T-034"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace MD5 with argon2id or bcrypt in password setter"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/user.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 76
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The User password setter hashes passwords with the unsalted, fast MD5 digest from lib/insecurity. An attacker who obtains the SQLite file or a dump of the Users table can crack passwords quickly with rainbow tables or GPU brute force and take over accounts."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-026"
+            ]
+          },
+          "ruleId": "T-035"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove global sleep and evaluate no where strings"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/showProductReviews.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "A caller sends repeated requests whose :id injects sleep(2000) into the $where predicate. The global sleep spins the single Node thread for 2 seconds per record, so a few requests stall the whole server."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-027"
+            ]
+          },
+          "ruleId": "T-036"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove eval of stored username in profile render"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/userProfile.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 61
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An authenticated user sets username to #{...} via POST /profile and then loads GET /profile. The server strips the delimiters and passes the content to eval, executing attacker JavaScript in the Node process."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-028"
+            ]
+          },
+          "ruleId": "T-037"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 426
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The `PUT /api/BasketItems/:id` handler (server.ts:426) loads a resource by a request-supplied id and enforces authentication but no ownership predicate in the handler body, so any authenticated user can access another user's object."
+          },
+          "ruleId": "T-038"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 309
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The state-changing / management route `POST /file-upload` (server.ts:309) has no authentication or authorization check in its handler body, so it is reachable by an unauthenticated caller."
+          },
+          "ruleId": "T-039"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add an explicit auth middleware…"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 598
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-029"
+            ]
+          },
+          "ruleId": "T-041"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Enforce coupon cap and eligibility in server code"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/chat.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 184
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "LLM06/ASI02: the 10% cap and eligibility rules exist only in the system prompt. An unauthenticated caller of /rest/chat uses prompt injection so the model calls generateCoupon with discount 99, and the server issues the code without checks."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-030"
+            ]
+          },
+          "ruleId": "T-042"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Strip role from registration body server-side"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/verify.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 53
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated caller POSTs /api/Users with role set to admin. The middleware chain only inspects req.body.role and calls next, passing the body to the generated create endpoint, which may store the role."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-031"
+            ]
+          },
+          "ruleId": "T-043"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Derive review author from authenticated token"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/createProductReviews.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 26
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated caller sends PUT /rest/products/:id/reviews with an arbitrary author value. The route is registered without isAuthorized (server.ts:633). The handler stores req.body.author verbatim (createProductReviews.ts:26). The caller can post reviews as any user, including admin."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-032"
+            ]
+          },
+          "ruleId": "T-044"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Require current password for password changes"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/changePassword.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 39
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The current password is verified only when supplied. A caller holding a session token omits it and sets a new password; the new password also travels in the query string."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-033"
+            ]
+          },
+          "ruleId": "T-045"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Load cookie secret from environment"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 289
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "cookie-parser is configured with a static secret in source. Anyone with the source can forge signed cookies."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-034"
+            ]
+          },
+          "ruleId": "T-046"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Switch to authorization code flow with PKCE and state"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/login/login.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 148
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Google login uses response_type=token with no state or nonce and no PKCE. An attacker can inject a token or authorization response into a victim's browser (login CSRF), and the access token is exposed in the URL fragment and later sent to userinfo as a query parameter."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-035"
+            ]
+          },
+          "ruleId": "T-047"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove hardcoded test credentials from client code"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/login/login.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 62
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The login component ships a valid testing username and password in the client bundle. Anyone reading the bundle can log in as that account if it exists on the server."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-036"
+            ]
+          },
+          "ruleId": "T-048"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add Socket.IO authentication middleware via io.use"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/startup/registerWebsocketEvents.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An attacker, from a browser or a non-browser Socket.IO client that CORS does not restrict, connects to the server without any credential. The connection handler accepts it and lets it emit the verify* and notification events. Server-side state is therefore exposed to anonymous callers."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-037"
+            ],
+            "trustBoundaries": [
+              {
+                "crossing": "external → component-8c3a32ee53769307",
+                "exposure": "internet-facing",
+                "id": "tb-1",
+                "rationale": "The finding's evidence line is the interface this boundary cites; CWE-306 breaks its authentication condition."
+              }
+            ]
+          },
+          "ruleId": "T-049"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Rate limit and token-gate password reset"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/resetPassword.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "POST /rest/user/reset-password is unauthenticated and registered without rate limiting. An attacker guesses the knowledge-based security answer for a target email repeatedly and, on a match, sets a new password and takes over the account."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-038"
+            ]
+          },
+          "ruleId": "T-050"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use exact URL match in redirect allowlist"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 136
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "isRedirectAllowed uses url.includes, so an attacker URL that merely contains an allowlisted address passes. Used with the redirect endpoint it enables phishing from a trusted origin."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-039"
+            ]
+          },
+          "ruleId": "T-051"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Reject null bytes before validating the file name"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileServer.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 28
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The server checks that the file name ends in .md or .pdf (fileServer.ts:27) and only afterwards truncates at a null byte (line 28). A request such as file.bak%2500.md passes the allowlist. The truncated name is then served from ftp/ (line 33). Other non-allowlisted files in ftp/ become downloadable. The behaviour of cutOffPoisonNullByte is not shown in the slices read."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-040"
+            ]
+          },
+          "ruleId": "T-052"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate coupons server-side against issued state"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/order.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 201
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Checkout trusts req.body.couponData, a base64 string of campaign code and date. The campaign table is in source, so an attacker submits e.g. WMNSDY2019 with its validOn timestamp and receives a 75 percent discount without any server-issued coupon."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-041"
+            ]
+          },
+          "ruleId": "T-053"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate review id as a string before querying"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/likeProductReviews.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 35
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An authenticated attacker posts a JSON body with id as an operator object such as {\"$ne\":-1}. It is used directly as the MarsDB selector, so the update increments likes on and rewrites likedBy for all reviews."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-042"
+            ],
+            "trustBoundaries": [
+              {
+                "crossing": "component-1f61b207923dbaf5 → component-790db1fed70651aa",
+                "exposure": "internal",
+                "id": "tb-8",
+                "rationale": "Request-derived id is interpreted as a MarsDB selector at the reviews collection update."
+              }
+            ]
+          },
+          "ruleId": "T-054"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate chat messages schema and allow user role only"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/chat.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 191
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "LLM01/ASI01: req.body.messages is passed straight to streamText. A caller can send system, assistant or tool-role messages and fabricated history to override the rules and trigger tools."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-043"
+            ]
+          },
+          "ruleId": "T-055"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Always sanitize product description in model setter"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/product.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 45
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "When the restfulXssChallenge flag is enabled, the Product description setter stores input without any sanitization, so an attacker able to write a product description can persist HTML or script that is later rendered to other users."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-044"
+            ]
+          },
+          "ruleId": "T-056"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add cosign signing step to release workflow; or use actions/attest-build-proven…"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/codeql-analysis.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/frontend-bundle-analysis.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/image_actions.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/lint-fixer.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/lock.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/pr-compliance.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/rebase.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/release.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/stale.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Missing Container Image Signing: Unsigned container images cannot be verified for provenance — any registry intermediary could substitute them."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-045"
+            ]
+          },
+          "ruleId": "T-057"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove curl-pipe-shell Heroku CLI install"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 358
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The heroku job downloads install.sh from a remote host and pipes it to sh on the runner that deploys to production; a compromised or MITM'd download runs arbitrary code in the deploy job."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-046"
+            ]
+          },
+          "ruleId": "T-058"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use `npm ci --ignore-scripts` and audit required postinstalls separately"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Dependency Install Scripts Run at Build Time: Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-047"
+            ]
+          },
+          "ruleId": "T-059"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Pin image-actions and related actions to commit SHAs"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/image_actions.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "image_actions.yml runs calibreapp/image-actions pinned to the mutable main branch and passes GITHUB_TOKEN. If that upstream branch is compromised, malicious code runs in CI on push to master/develop with a token able to open pull requests."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-048"
+            ]
+          },
+          "ruleId": "T-060"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Use npm ci with lockfile in release builds"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/release.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 55
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "release.yml runs npm install --production and installs grunt-cli globally unpinned, with lifecycle scripts enabled (package.json postinstall). Dependency versions can drift or a poisoned fresh release be pulled into packaged release artifacts."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-049"
+            ]
+          },
+          "ruleId": "T-061"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Pin base image to @sha256:<digest>"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Unpinned Container Base Image: Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:…) ensures the exact image bytes are used on every build."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-050"
+            ]
+          },
+          "ruleId": "T-062"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Render export data as text, not via document.write"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/data-export/data-export.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 71
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The data export handler writes the server-supplied userData string directly into a new browser window with document.write. If an attacker has stored markup in any exported field (for example reviews or feedback), it executes as script in the app origin when the victim exports their data, exposing the JWT in localStorage."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-051"
+            ]
+          },
+          "ruleId": "T-063"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove sanitizer bypass and bind order ID as text"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/track-result/track-result.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 48
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The track-result page wraps the orderId returned by the order-tracking API in HTML, marks it trusted, and binds it to innerHtml. An attacker who gets markup into that value, or into the id query parameter if the server echoes it, runs script in the victim's session. The script can read the JWT in localStorage."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-052"
+            ]
+          },
+          "ruleId": "T-064"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Always sanitize stored login IP value"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/saveLoginIp.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 32
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An authenticated user sends a crafted True-Client-IP header to /rest/saveLoginIp. When the challenge is enabled the value skips sanitization and is persisted as lastLoginIp, which can later be rendered in the browser as script."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-053"
+            ]
+          },
+          "ruleId": "T-065"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Ignore request-supplied layout and render options"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/dataErasure.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 107
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An authenticated user posts to /dataerasure with a layout path. The value is resolved and checked against a denylist of substrings (ftp, ctf.key, encryptionkeys) (dataErasure.ts:104-105). The whole request body is then passed as render options (line 107-109). Other readable server files can be rendered, and the first 100 characters are returned (line 114). A denylist is not a containment check."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-054"
+            ]
+          },
+          "ruleId": "T-066"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Omit answer from CAPTCHA response"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/imageCaptcha.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 31
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The image CAPTCHA endpoint serializes the full record, including the plaintext answer, in the JSON response, so a script reads the answer and defeats the CAPTCHA."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-055"
+            ]
+          },
+          "ruleId": "T-067"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Limit joined user attributes in memories"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/memory.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 24
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "GET /rest/memories has no auth and returns each memory joined with its full UserModel record, which can expose emails and other user attributes."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-056"
+            ]
+          },
+          "ruleId": "T-068"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Omit CAPTCHA answer from the response"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/captcha.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 31
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The captcha handler returns the whole captcha object including answer, so any client can read the answer and bypass the CAPTCHA protecting feedback."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-057"
+            ]
+          },
+          "ruleId": "T-069"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Return uniform response for security question lookup"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/securityQuestion.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 21
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated caller queries GET /rest/user/security-question?email= for candidate addresses. A returned question reveals the account exists and gives reset hints, while an empty object means none."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-058"
+            ]
+          },
+          "ruleId": "T-070"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Restrict metrics endpoint access"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/metrics.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 92
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "GET /metrics returns all registered metrics, including user counts, wallet totals and order counts, without authentication."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-059"
+            ]
+          },
+          "ruleId": "T-071"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Store order PDFs outside the public ftp directory"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/order.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 45
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "placeOrder writes order PDFs containing the customer email to ftp/, which server.ts exposes with unauthenticated directory listing. Any visitor can list and download other customers' order confirmations."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-060"
+            ]
+          },
+          "ruleId": "T-072"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove or authenticate the log directory route"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 281
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "/support/logs is registered with serveIndex and file serving, with no authentication middleware. Anyone can list and read access logs, which contain request URLs, IPs and possibly tokens in query strings."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-061"
+            ]
+          },
+          "ruleId": "T-073"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Require admin auth for log access"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/logfileServer.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 14
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Anyone browses /support/logs and downloads access logs via sendFile, exposing request URLs, IPs and tokens in query strings."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-062"
+            ]
+          },
+          "ruleId": "T-074"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Encrypt or tokenize card numbers in Card model"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/card.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 38
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The Card model stores the full card number as a plain integer column in the unencrypted SQLite file. An attacker with file or database read access obtains all stored card numbers."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-063"
+            ]
+          },
+          "ruleId": "T-075"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Move wallet mnemonic to secret store"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/checkKeys.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 10
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Anyone with read access to the repository or build artifact obtains the BIP-39 mnemonic and derives the wallet private key, which is also the value the endpoint accepts as the secret. The key controls the associated Ethereum account."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-064"
+            ]
+          },
+          "ruleId": "T-076"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Enforce HTTPS and avoid sending private keys"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/Services/keys.service.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 45
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "submitKey posts a user's private key to the API at environment.hostServer, which is plain HTTP in the shipped development environment. A network attacker on the path can read the key in transit."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-065"
+            ]
+          },
+          "ruleId": "T-077"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Send password change as POST body"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/Services/user.service.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 54
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "changePassword places the current, new and repeat passwords in the URL query string of a GET request. They end up in browser history, proxy and server access logs, and Referer headers, where an attacker with log or history access can recover them."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-066"
+            ]
+          },
+          "ruleId": "T-078"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Send OAuth token in Authorization header"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/Services/user.service.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 68
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "oauthLogin appends the Google access token to the userinfo URL as the access_token query parameter, so the token can leak through browser history, proxies and logs. The implicit flow response_type=token also exposes it in the URL fragment."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-067"
+            ],
+            "trustBoundaries": [
+              {
+                "crossing": "component-6ffaf23414c56207 → external",
+                "exposure": "outbound",
+                "id": "tb-9",
+                "rationale": "The access token crosses the Google boundary inside a URL query string, which leaks it."
+              }
+            ]
+          },
+          "ruleId": "T-079"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Restrict notification replay to authenticated owners"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/startup/registerWebsocketEvents.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 30
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An attacker connects to the socket without credentials. The server replays every stored notification, including the CTF flag field, to the new socket. Solved-challenge data is exposed to anyone who can connect. The same data is also broadcast with io.emit to all clients."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-068"
+            ]
+          },
+          "ruleId": "T-080"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Return only non-sensitive reset fields"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/resetPassword.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 46
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "After a successful reset the handler sends the updated user model as JSON, which can include the password hash and totpSecret fields to the unauthenticated caller."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-069"
+            ]
+          },
+          "ruleId": "T-081"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Cap size and time of image downloads"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/profileImageUrlUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 30
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The fetched response is piped to disk with no size cap or timeout. An authenticated user points imageUrl at a huge or endless stream and fills the server disk or ties up the handler."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-070"
+            ]
+          },
+          "ruleId": "T-082"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Bound chat input and add per-caller rate limit"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/chat.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 191
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "LLM10: /rest/chat is unauthenticated, accepts an unbounded messages array, and has no rate limiter. Attackers send large histories repeatedly to consume provider tokens and server resources. Only a 10-step cap and retry config exist."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-071"
+            ]
+          },
+          "ruleId": "T-083"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Authenticate before upload and cap file size"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 698
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "POST /rest/memories runs the uploadToDisk multer first, with no fileSize limit. The mime check uses the client-declared type. appendUserId runs only after the file is already written to disk. An unauthenticated attacker can send large files repeatedly and exhaust disk space."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-072"
+            ]
+          },
+          "ruleId": "T-084"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate addresses and cap the wallet set"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/web3Wallet.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 16
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unauthenticated attacker repeatedly POSTs distinct walletAddress values (or large strings) to /rest/web3/walletExploitAddress. Each is added to a process-wide Set that is never bounded or pruned, growing memory until the server degrades."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-073"
+            ],
+            "trustBoundaries": [
+              {
+                "crossing": "external → component-6ffadbc3868c2a3b",
+                "exposure": "inferred",
+                "id": "tb-4",
+                "rationale": "walletExploitAddress body is used without validation at the internet-facing web3 route."
+              }
+            ]
+          },
+          "ruleId": "T-085"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate payload types in socket event handlers"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/startup/registerWebsocketEvents.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An attacker emits verifyLocalXssChallenge with a numeric or object payload. utils.contains calls str.includes on a non-string, which throws a TypeError inside the socket listener. Because the handler has no try/catch, this may produce an uncaught exception and terminate the process. The verifySvgInjectionChallenge handler has the same flaw: data?.match is not a function for non-string data."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-074"
+            ]
+          },
+          "ruleId": "T-086"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Fail closed when no CAPTCHA exists"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/imageCaptcha.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 52
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "verifyImageCaptcha calls next() whenever no CAPTCHA exists in the last five minutes for the user, so an attacker simply never requests one and submits the data export directly, skipping the CAPTCHA."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-075"
+            ]
+          },
+          "ruleId": "T-087"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Require successful payment before role upgrade"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/deluxe.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 43
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An authenticated customer posts to /rest/deluxe-membership with a paymentMode that is neither 'wallet' nor 'card'. Neither payment branch runs, but the role is still updated to deluxe (deluxe.ts:43). The user obtains a paid role for free, and a fresh token with that role is issued (line 48)."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-076"
+            ]
+          },
+          "ruleId": "T-088"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add USER <non-root-uid>"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "test/smoke/Dockerfile",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Container Runs as Root: Containers running as root expand container-escape blast radius."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-077"
+            ]
+          },
+          "ruleId": "T-089"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Add `permissions: { contents: read }` at workflow root; elevate per-job only wh…"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 25
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-078"
+            ]
+          },
+          "ruleId": "T-090"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Restrict user listing to admin role"
+              }
+            }
+          ],
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/authenticatedUsers.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 12
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "GET /rest/user/authentication-details requires only a valid JWT, then returns every user including email, role, last login time and other fields. A low-privilege customer enumerates admins and accounting users for targeting."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-079"
+            ]
+          },
+          "ruleId": "T-091"
+        },
+        {
+          "fixes": [
+            {
+              "description": {
+                "text": "Store session tokens in HttpOnly cookies"
+              }
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/Services/basket.service.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 64
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Token exfiltrated from local/session storage via the Step 1 payload."
+          },
+          "properties": {
+            "mitigationIds": [
+              "M-080"
+            ]
+          },
+          "ruleId": "T-110"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "appsec-advisor",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An attacker submits feedback through the unauthenticated feedback API with a script-bearing comment. The About page wraps the comment in markup, marks it trusted HTML and renders it with innerHTML for every visitor, so the script runs and can read the JWT in localStorage."
+              },
+              "id": "T-001",
+              "name": "Tampering/xss-via-trusted-html-sanitizer-bypass",
+              "properties": {
+                "cwe": "CWE-79",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An attacker submits feedback through the unauthenticated feedback API with a script-bearing comment."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "After login the JWT is written to localStorage and a JavaScript-set cookie, so it cannot be HttpOnly. Any XSS in the origin, such as the last-login-ip sink, reads the token and exfiltrates it."
+              },
+              "id": "T-002",
+              "name": "Information Disclosure/session-token-in-script-readable-storage",
+              "properties": {
+                "cwe": "CWE-922",
+                "impact": "High",
+                "likelihood": "Medium",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "After login the JWT is written to localStorage and a JavaScript-set cookie, so it cannot be HttpOnly."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "retrieveBasket finds the basket by req.params.id with no comparison against the authenticated user's basket id. Any logged-in user can read another's basket."
+              },
+              "id": "T-003",
+              "name": "Elevation of Privilege/systemic-idor-missing-ownership-checks",
+              "properties": {
+                "cwe": "CWE-639",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "retrieveBasket finds the basket by req.params.id with no comparison against the authenticated user's basket id."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The isAuthorized middleware for PUT /api/Products/:id is commented out, while finale exposes the Product update endpoint. An anonymous caller can modify products."
+              },
+              "id": "T-004",
+              "name": "Elevation of Privilege/missing-authorization-on-product-update",
+              "properties": {
+                "cwe": "CWE-862",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "The isAuthorized middleware for PUT /api/Products/:id is commented out, while finale exposes the Product update endpoint."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The search heading binds searchValue (a SafeHtml) to innerHTML. If it derives from the URL search query, an attacker sends a crafted link and script runs in the victim session."
+              },
+              "id": "T-005",
+              "name": "Tampering/angular-sanitizer-bypass-rendering-untru",
+              "properties": {
+                "cwe": "CWE-79",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "The search heading binds searchValue (a SafeHtml) to innerHTML."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or modifying arbitrary rows, bypassing authentication, or escalating to full database control."
+              },
+              "id": "T-006",
+              "name": "Tampering/sql-injection-request-data-interpolated-",
+              "properties": {
+                "cwe": "CWE-89",
+                "impact": "Critical",
+                "likelihood": "Critical",
+                "risk": "Critical",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or modifying arbitrary rows, bypassing authentication, or escalating to full database control."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts."
+              },
+              "id": "T-008",
+              "name": "Tampering/broken-authorization-attacker-controlled",
+              "properties": {
+                "cwe": "CWE-639",
+                "impact": "Critical",
+                "likelihood": "Critical",
+                "risk": "Critical",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated attacker posts an email such as admin@host'-- to /rest/user/login. The email is interpolated into raw SQL, so the password predicate is commented out and the query returns the admin row, yielding a signed session token for any account."
+              },
+              "id": "T-012",
+              "name": "Tampering/sql-injection-in-login-email-lookup-logi",
+              "properties": {
+                "cwe": "CWE-89",
+                "impact": "Critical",
+                "likelihood": "High",
+                "risk": "Critical",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated attacker posts an email such as admin@host'-- to /rest/user/login."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "getUserId decodes the bearer token with security.decode and trusts data.id. The getOrderById tool then looks up that user's email and returns their orders, so a forged token naming another user id exposes that user's orders. The route has no auth middleware. The decode implementation was not read; the flow evidence states it skips signature verification."
+              },
+              "id": "T-014",
+              "name": "Spoofing/chat-identity-taken-from-unverified-jwt-",
+              "properties": {
+                "cwe": "CWE-347",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "getUserId decodes the bearer token with security.decode and trusts data.id."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The OAuth component registers and logs in the local account with password btoa(reverse(email)). An attacker who knows a victim's Google-linked email computes the password and logs in via the normal login endpoint, taking over the account."
+              },
+              "id": "T-016",
+              "name": "Spoofing/predictable-password-derived-from-oauth-",
+              "properties": {
+                "cwe": "CWE-1391",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "The OAuth component registers and logs in the local account with password btoa(reverse(email))."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Without an algorithm allowlist the token middleware that guards every authenticated route accepts tokens an attacker signs with a weaker or unintended algorithm, so a forged token passes as any user on every protected route."
+              },
+              "id": "T-018",
+              "name": "Spoofing/insecure-jwt-verification",
+              "properties": {
+                "cwe": "CWE-347",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "Without an algorithm allowlist the token middleware that guards every authenticated route accepts tokens an attacker signs with a weaker or unintended algorithm, so a forged token passes as any user on every protected route."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An attacker who can research or guess the answer can satisfy the recovery check and take over the account without the original credential."
+              },
+              "id": "T-019",
+              "name": "Spoofing/password-reset-accepts-a-security-questi",
+              "properties": {
+                "cwe": "CWE-640",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "An attacker who can research or guess the answer can satisfy the recovery check and take over the account without the original credential."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The RS256 private key is embedded in lib/insecurity.ts. Anyone with the source can sign a token with an arbitrary role claim, which isAuthorized and the role checks accept, and can also compute deluxe tokens derived from the same key."
+              },
+              "id": "T-020",
+              "name": "Spoofing/hardcoded-jwt-private-signing-key-in-sou",
+              "properties": {
+                "cwe": "CWE-798",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "configuration-defect",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "The RS256 private key is embedded in lib/insecurity.ts."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An authenticated user sends PUT /rest/wallet/balance with their own saved card id and an arbitrary balance value. The server only checks card ownership, then increments the wallet by the client-supplied number with no payment charge, type, range or sign validation, so the attacker mints wallet credit for free."
+              },
+              "id": "T-021",
+              "name": "Tampering/wallet-top-up-accepts-unvalidated-balanc",
+              "properties": {
+                "cwe": "CWE-20",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An authenticated user sends PUT /rest/wallet/balance with their own saved card id and an arbitrary balance value."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A request-controlled path with `../` can read arbitrary files (/etc/passwd, source, secrets) or write outside the intended root."
+              },
+              "id": "T-022",
+              "name": "Tampering/path-traversal-filesystem-access-from-re",
+              "properties": {
+                "cwe": "CWE-22",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "A request-controlled path with `../` can read arbitrary files (/etc/passwd, source, secrets) or write outside the intended root."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated attacker uploads a zip whose entry names contain ../ sequences to /file-upload. The containment check only tests that the resolved path contains the working directory, so files are written anywhere under the app root, overwriting served content such as ftp/legal.md."
+              },
+              "id": "T-023",
+              "name": "Tampering/zip-entry-path-traversal-on-complaint-up",
+              "properties": {
+                "cwe": "CWE-22",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated attacker uploads a zip whose entry names contain ../ sequences to /file-upload."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Any authenticated user can substitute another user's resource ID in the URL and read or modify the target record because the query filter has no ownership clause. Admin-only routes are excluded via the counter-pattern allowlist."
+              },
+              "id": "T-024",
+              "name": "Tampering/idor-resource-lookup-by-url-parameter-wi",
+              "properties": {
+                "cwe": "CWE-639",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Any authenticated user can substitute another user's resource ID in the URL and read or modify the target record because the query filter has no ownership clause."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Request input read at routes/showProductReviews.ts:31 reaches an executable expression at routes/showProductReviews.ts:36. Observed path conditions: const id = !utils.isChallengeEnabled(challenges.noSqlCommandChallenge) ? Number(req.params.id) : utils.trunc(req.params.id, 40). The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification."
+              },
+              "id": "T-027",
+              "name": "Tampering/input-in-executable-nosql-predicate-rout",
+              "properties": {
+                "cwe": "CWE-943",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Request input read at routes/showProductReviews.ts:31 reaches an executable expression at routes/showProductReviews.ts:36."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated caller sends a crafted :id to GET /rest/products/:id/reviews. The value is concatenated into a $where string, allowing arbitrary JavaScript predicates to return all reviews or run sleep."
+              },
+              "id": "T-028",
+              "name": "Tampering/nosql-where-injection-in-product-reviews",
+              "properties": {
+                "cwe": "CWE-943",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated caller sends a crafted :id to GET /rest/products/:id/reviews."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated caller supplies a crafted :id to GET /rest/track-order/:id. It is placed inside a JavaScript $where string for MarsDB, so the attacker can alter the predicate and return other customers' orders."
+              },
+              "id": "T-029",
+              "name": "Tampering/nosql-where-injection-in-order-tracking-",
+              "properties": {
+                "cwe": "CWE-943",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated caller supplies a crafted :id to GET /rest/track-order/:id."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Persisted record read at routes/userProfile.ts:41 reaches an executable expression at routes/userProfile.ts:87. Observed path conditions: if (username) {. The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification."
+              },
+              "id": "T-030",
+              "name": "Tampering/input-compiled-as-template-source-routes",
+              "properties": {
+                "cwe": "CWE-1336",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Persisted record read at routes/userProfile.ts:41 reaches an executable expression at routes/userProfile.ts:87."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs."
+              },
+              "id": "T-031",
+              "name": "Tampering/non-cryptographic-rng-for-a-secret-token",
+              "properties": {
+                "cwe": "CWE-330",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Anyone requests /encryptionkeys and /encryptionkeys/:file, which list and serve key material via sendFile with no authentication. Only forward slashes are rejected."
+              },
+              "id": "T-032",
+              "name": "Information Disclosure/unauthenticated-encryption-key-file-down",
+              "properties": {
+                "cwe": "CWE-552",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "Anyone requests /encryptionkeys and /encryptionkeys/:file, which list and serve key material via sendFile with no authentication."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An attacker uploads an XML file with an external entity such as file:///etc/passwd. The parser (entity substitution and DTD load enabled) expands it and the result is embedded in the error response message."
+              },
+              "id": "T-033",
+              "name": "Information Disclosure/xxe-file-content-disclosure-in-upload-er",
+              "properties": {
+                "cwe": "CWE-611",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "An attacker uploads an XML file with an external entity such as file:///etc/passwd."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A logged-in user posts imageUrl and the server fetches it with no scheme, host or private-range restriction. The attacker targets internal services or cloud metadata and the response is saved under a public uploads path, readable afterwards."
+              },
+              "id": "T-034",
+              "name": "Information Disclosure/server-side-request-forgery-in-profile-i",
+              "properties": {
+                "cwe": "CWE-918",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "A logged-in user posts imageUrl and the server fetches it with no scheme, host or private-range restriction."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The User password setter hashes passwords with the unsalted, fast MD5 digest from lib/insecurity. An attacker who obtains the SQLite file or a dump of the Users table can crack passwords quickly with rainbow tables or GPU brute force and take over accounts."
+              },
+              "id": "T-035",
+              "name": "Information Disclosure/weak-md5-password-hashing-in-user-setter",
+              "properties": {
+                "cwe": "CWE-916",
+                "impact": "High",
+                "likelihood": "Medium",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "The User password setter hashes passwords with the unsalted, fast MD5 digest from lib/insecurity."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A caller sends repeated requests whose :id injects sleep(2000) into the $where predicate. The global sleep spins the single Node thread for 2 seconds per record, so a few requests stall the whole server."
+              },
+              "id": "T-036",
+              "name": "Denial of Service/blocking-busy-wait-sleep-reachable-from-",
+              "properties": {
+                "cwe": "CWE-400",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Denial of Service",
+                "tags": [
+                  "security",
+                  "denial of service"
+                ]
+              },
+              "shortDescription": {
+                "text": "A caller sends repeated requests whose :id injects sleep(2000) into the $where predicate."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An authenticated user sets username to #{...} via POST /profile and then loads GET /profile. The server strips the delimiters and passes the content to eval, executing attacker JavaScript in the Node process."
+              },
+              "id": "T-037",
+              "name": "Elevation of Privilege/code-injection-through-eval-of-profile-u",
+              "properties": {
+                "cwe": "CWE-95",
+                "impact": "High",
+                "likelihood": "Medium",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "An authenticated user sets username to #{...} via POST /profile and then loads GET /profile."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The `PUT /api/BasketItems/:id` handler (server.ts:426) loads a resource by a request-supplied id and enforces authentication but no ownership predicate in the handler body, so any authenticated user can access another user's object."
+              },
+              "id": "T-038",
+              "name": "Elevation of Privilege/idor-broken-object-level-authorization-p",
+              "properties": {
+                "cwe": "CWE-639",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "The `PUT /api/BasketItems/:id` handler (server.ts:426) loads a resource by a request-supplied id and enforces authentication but no ownership predicate in the handler body, so any authenticated user can access another user's object."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The state-changing / management route `POST /file-upload` (server.ts:309) has no authentication or authorization check in its handler body, so it is reachable by an unauthenticated caller."
+              },
+              "id": "T-039",
+              "name": "Elevation of Privilege/sensitive-routes-registered-without-auth",
+              "properties": {
+                "cwe": "CWE-862",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "The state-changing / management route `POST /file-upload` (server.ts:309) has no authentication or authorization check in its handler body, so it is reachable by an unauthenticated caller."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it."
+              },
+              "id": "T-041",
+              "name": "Elevation of Privilege/sensitive-routes-registered-without-auth",
+              "properties": {
+                "cwe": "CWE-862",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "LLM06/ASI02: the 10% cap and eligibility rules exist only in the system prompt. An unauthenticated caller of /rest/chat uses prompt injection so the model calls generateCoupon with discount 99, and the server issues the code without checks."
+              },
+              "id": "T-042",
+              "name": "Elevation of Privilege/chatbot-coupon-tool-lacks-server-side-di",
+              "properties": {
+                "cwe": "CWE-863",
+                "impact": "Medium",
+                "likelihood": "High",
+                "owaspAsiIds": [
+                  "ASI02"
+                ],
+                "owaspLlmIds": [
+                  "LLM06"
+                ],
+                "risk": "High",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege",
+                  "owasp-llm:LLM06",
+                  "owasp-asi:ASI02"
+                ]
+              },
+              "shortDescription": {
+                "text": "LLM06/ASI02: the 10% cap and eligibility rules exist only in the system prompt."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated caller POSTs /api/Users with role set to admin. The middleware chain only inspects req.body.role and calls next, passing the body to the generated create endpoint, which may store the role."
+              },
+              "id": "T-043",
+              "name": "Elevation of Privilege/role-accepted-from-user-registration-bod",
+              "properties": {
+                "cwe": "CWE-915",
+                "impact": "High",
+                "likelihood": "Medium",
+                "risk": "High",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated caller POSTs /api/Users with role set to admin."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated caller sends PUT /rest/products/:id/reviews with an arbitrary author value. The route is registered without isAuthorized (server.ts:633). The handler stores req.body.author verbatim (createProductReviews.ts:26). The caller can post reviews as any user, including admin."
+              },
+              "id": "T-044",
+              "name": "Spoofing/unauthenticated-review-creation-with-spo",
+              "properties": {
+                "cwe": "CWE-290",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated caller sends PUT /rest/products/:id/reviews with an arbitrary author value."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The current password is verified only when supplied. A caller holding a session token omits it and sets a new password; the new password also travels in the query string."
+              },
+              "id": "T-045",
+              "name": "Spoofing/password-change-allowed-without-current-",
+              "properties": {
+                "cwe": "CWE-620",
+                "impact": "High",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "The current password is verified only when supplied."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "cookie-parser is configured with a static secret in source. Anyone with the source can forge signed cookies."
+              },
+              "id": "T-046",
+              "name": "Spoofing/hardcoded-cookie-parser-signing-secret-s",
+              "properties": {
+                "cwe": "CWE-798",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "configuration-defect",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "cookie-parser is configured with a static secret in source."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Google login uses response_type=token with no state or nonce and no PKCE. An attacker can inject a token or authorization response into a victim's browser (login CSRF), and the access token is exposed in the URL fragment and later sent to userinfo as a query parameter."
+              },
+              "id": "T-047",
+              "name": "Spoofing/oauth-implicit-flow-without-state-nonce-",
+              "properties": {
+                "cwe": "CWE-352",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "Google login uses response_type=token with no state or nonce and no PKCE."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The login component ships a valid testing username and password in the client bundle. Anyone reading the bundle can log in as that account if it exists on the server."
+              },
+              "id": "T-048",
+              "name": "Spoofing/hardcoded-testing-credentials-in-login-c",
+              "properties": {
+                "cwe": "CWE-798",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "The login component ships a valid testing username and password in the client bundle."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An attacker, from a browser or a non-browser Socket.IO client that CORS does not restrict, connects to the server without any credential. The connection handler accepts it and lets it emit the verify* and notification events. Server-side state is therefore exposed to anonymous callers."
+              },
+              "id": "T-049",
+              "name": "Spoofing/unauthenticated-websocket-channel",
+              "properties": {
+                "cwe": "CWE-306",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "An attacker, from a browser or a non-browser Socket.IO client that CORS does not restrict, connects to the server without any credential."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "POST /rest/user/reset-password is unauthenticated and registered without rate limiting. An attacker guesses the knowledge-based security answer for a target email repeatedly and, on a match, sets a new password and takes over the account."
+              },
+              "id": "T-050",
+              "name": "Spoofing/unthrottled-security-answer-password-res",
+              "properties": {
+                "cwe": "CWE-307",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "POST /rest/user/reset-password is unauthenticated and registered without rate limiting."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "isRedirectAllowed uses url.includes, so an attacker URL that merely contains an allowlisted address passes. Used with the redirect endpoint it enables phishing from a trusted origin."
+              },
+              "id": "T-051",
+              "name": "Spoofing/substring-redirect-allowlist-check-insec",
+              "properties": {
+                "cwe": "CWE-601",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Spoofing",
+                "tags": [
+                  "security",
+                  "spoofing"
+                ]
+              },
+              "shortDescription": {
+                "text": "isRedirectAllowed uses url.includes, so an attacker URL that merely contains an allowlisted address passes."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The server checks that the file name ends in .md or .pdf (fileServer.ts:27) and only afterwards truncates at a null byte (line 28). A request such as file.bak%2500.md passes the allowlist. The truncated name is then served from ftp/ (line 33). Other non-allowlisted files in ftp/ become downloadable. The behaviour of cutOffPoisonNullByte is not shown in the slices read."
+              },
+              "id": "T-052",
+              "name": "Tampering/file-type-allowlist-bypass-through-null-",
+              "properties": {
+                "cwe": "CWE-158",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "The server checks that the file name ends in .md or .pdf (fileServer.ts:27) and only afterwards truncates at a null byte (line 28)."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Checkout trusts req.body.couponData, a base64 string of campaign code and date. The campaign table is in source, so an attacker submits e.g. WMNSDY2019 with its validOn timestamp and receives a 75 percent discount without any server-issued coupon."
+              },
+              "id": "T-053",
+              "name": "Tampering/client-supplied-coupon-data-grants-expir",
+              "properties": {
+                "cwe": "CWE-840",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Checkout trusts req.body.couponData, a base64 string of campaign code and date."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An authenticated attacker posts a JSON body with id as an operator object such as {\"$ne\":-1}. It is used directly as the MarsDB selector, so the update increments likes on and rewrites likedBy for all reviews."
+              },
+              "id": "T-054",
+              "name": "Tampering/nosql-selector-injection-in-review-likes",
+              "properties": {
+                "cwe": "CWE-943",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An authenticated attacker posts a JSON body with id as an operator object such as {\"$ne\":-1}."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "LLM01/ASI01: req.body.messages is passed straight to streamText. A caller can send system, assistant or tool-role messages and fabricated history to override the rules and trigger tools."
+              },
+              "id": "T-055",
+              "name": "Tampering/client-supplied-chat-messages-passed-to-",
+              "properties": {
+                "cwe": "CWE-1427",
+                "impact": "Medium",
+                "likelihood": "High",
+                "owaspAsiIds": [
+                  "ASI01"
+                ],
+                "owaspLlmIds": [
+                  "LLM01"
+                ],
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering",
+                  "owasp-llm:LLM01",
+                  "owasp-asi:ASI01"
+                ]
+              },
+              "shortDescription": {
+                "text": "LLM01/ASI01: req.body.messages is passed straight to streamText."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "When the restfulXssChallenge flag is enabled, the Product description setter stores input without any sanitization, so an attacker able to write a product description can persist HTML or script that is later rendered to other users."
+              },
+              "id": "T-056",
+              "name": "Tampering/unsanitized-product-description-setter-p",
+              "properties": {
+                "cwe": "CWE-116",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "When the restfulXssChallenge flag is enabled, the Product description setter stores input without any sanitization, so an attacker able to write a product description can persist HTML or script that is later rendered to other users."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Missing Container Image Signing: Unsigned container images cannot be verified for provenance — any registry intermediary could substitute them."
+              },
+              "id": "T-057",
+              "name": "Tampering/missing-container-image-signing",
+              "properties": {
+                "cwe": "CWE-347",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "config-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Missing Container Image Signing: Unsigned container images cannot be verified for provenance — any registry intermediary could substitute them."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The heroku job downloads install.sh from a remote host and pipes it to sh on the runner that deploys to production; a compromised or MITM'd download runs arbitrary code in the deploy job."
+              },
+              "id": "T-058",
+              "name": "Tampering/unverified-remote-script-piped-to-shell-",
+              "properties": {
+                "cwe": "CWE-494",
+                "impact": "High",
+                "likelihood": "Low",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "The heroku job downloads install.sh from a remote host and pipes it to sh on the runner that deploys to production; a compromised or MITM'd download runs arbitrary code in the deploy job."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Dependency Install Scripts Run at Build Time: Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time."
+              },
+              "id": "T-059",
+              "name": "Tampering/untrusted-npm-install-postinstall-script",
+              "properties": {
+                "cwe": "CWE-506",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "config-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Dependency Install Scripts Run at Build Time: Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "image_actions.yml runs calibreapp/image-actions pinned to the mutable main branch and passes GITHUB_TOKEN. If that upstream branch is compromised, malicious code runs in CI on push to master/develop with a token able to open pull requests."
+              },
+              "id": "T-060",
+              "name": "Tampering/mutable-main-branch-action-reference-wit",
+              "properties": {
+                "cwe": "CWE-829",
+                "impact": "High",
+                "likelihood": "Low",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "image_actions.yml runs calibreapp/image-actions pinned to the mutable main branch and passes GITHUB_TOKEN."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "release.yml runs npm install --production and installs grunt-cli globally unpinned, with lifecycle scripts enabled (package.json postinstall). Dependency versions can drift or a poisoned fresh release be pulled into packaged release artifacts."
+              },
+              "id": "T-061",
+              "name": "Tampering/release-build-uses-non-locked-dependency",
+              "properties": {
+                "cwe": "CWE-829",
+                "impact": "High",
+                "likelihood": "Low",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "release.yml runs npm install --production and installs grunt-cli globally unpinned, with lifecycle scripts enabled (package.json postinstall)."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Unpinned Container Base Image: Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:…) ensures the exact image bytes are used on every build."
+              },
+              "id": "T-062",
+              "name": "Tampering/unpinned-container-base-image",
+              "properties": {
+                "cwe": "CWE-1104",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "config-scan",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "Unpinned Container Base Image: Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The data export handler writes the server-supplied userData string directly into a new browser window with document.write. If an attacker has stored markup in any exported field (for example reviews or feedback), it executes as script in the app origin when the victim exports their data, exposing the JWT in localStorage."
+              },
+              "id": "T-063",
+              "name": "Tampering/unsanitized-document-write-of-data-expor",
+              "properties": {
+                "cwe": "CWE-79",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "The data export handler writes the server-supplied userData string directly into a new browser window with document.write."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The track-result page wraps the orderId returned by the order-tracking API in HTML, marks it trusted, and binds it to innerHtml. An attacker who gets markup into that value, or into the id query parameter if the server echoes it, runs script in the victim's session. The script can read the JWT in localStorage."
+              },
+              "id": "T-064",
+              "name": "Tampering/dom-xss-through-sanitizer-bypass-on-orde",
+              "properties": {
+                "cwe": "CWE-79",
+                "impact": "High",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "The track-result page wraps the orderId returned by the order-tracking API in HTML, marks it trusted, and binds it to innerHtml."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An authenticated user sends a crafted True-Client-IP header to /rest/saveLoginIp. When the challenge is enabled the value skips sanitization and is persisted as lastLoginIp, which can later be rendered in the browser as script."
+              },
+              "id": "T-065",
+              "name": "Tampering/unsanitized-login-ip-header-stored-when-",
+              "properties": {
+                "cwe": "CWE-79",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Tampering",
+                "tags": [
+                  "security",
+                  "tampering"
+                ]
+              },
+              "shortDescription": {
+                "text": "An authenticated user sends a crafted True-Client-IP header to /rest/saveLoginIp."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An authenticated user posts to /dataerasure with a layout path. The value is resolved and checked against a denylist of substrings (ftp, ctf.key, encryptionkeys) (dataErasure.ts:104-105). The whole request body is then passed as render options (line 107-109). Other readable server files can be rendered, and the first 100 characters are returned (line 114). A denylist is not a containment check."
+              },
+              "id": "T-066",
+              "name": "Information Disclosure/template-layout-path-read-via-request-bo",
+              "properties": {
+                "cwe": "CWE-73",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "An authenticated user posts to /dataerasure with a layout path."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The image CAPTCHA endpoint serializes the full record, including the plaintext answer, in the JSON response, so a script reads the answer and defeats the CAPTCHA."
+              },
+              "id": "T-067",
+              "name": "Information Disclosure/captcha-answer-returned-to-client-imagec",
+              "properties": {
+                "cwe": "CWE-200",
+                "impact": "Low",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "The image CAPTCHA endpoint serializes the full record, including the plaintext answer, in the JSON response, so a script reads the answer and defeats the CAPTCHA."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "GET /rest/memories has no auth and returns each memory joined with its full UserModel record, which can expose emails and other user attributes."
+              },
+              "id": "T-068",
+              "name": "Information Disclosure/unauthenticated-memories-listing-with-us",
+              "properties": {
+                "cwe": "CWE-200",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "GET /rest/memories has no auth and returns each memory joined with its full UserModel record, which can expose emails and other user attributes."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The captcha handler returns the whole captcha object including answer, so any client can read the answer and bypass the CAPTCHA protecting feedback."
+              },
+              "id": "T-069",
+              "name": "Information Disclosure/captcha-answer-returned-to-the-client-ca",
+              "properties": {
+                "cwe": "CWE-201",
+                "impact": "Low",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "The captcha handler returns the whole captcha object including answer, so any client can read the answer and bypass the CAPTCHA protecting feedback."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated caller queries GET /rest/user/security-question?email= for candidate addresses. A returned question reveals the account exists and gives reset hints, while an empty object means none."
+              },
+              "id": "T-070",
+              "name": "Information Disclosure/user-enumeration-via-security-question-l",
+              "properties": {
+                "cwe": "CWE-204",
+                "impact": "Low",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated caller queries GET /rest/user/security-question?email= for candidate addresses."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "GET /metrics returns all registered metrics, including user counts, wallet totals and order counts, without authentication."
+              },
+              "id": "T-071",
+              "name": "Information Disclosure/unauthenticated-prometheus-metrics-endpo",
+              "properties": {
+                "cwe": "CWE-306",
+                "impact": "Low",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "GET /metrics returns all registered metrics, including user counts, wallet totals and order counts, without authentication."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "placeOrder writes order PDFs containing the customer email to ftp/, which server.ts exposes with unauthenticated directory listing. Any visitor can list and download other customers' order confirmations."
+              },
+              "id": "T-072",
+              "name": "Information Disclosure/order-pdfs-with-customer-email-in-listed",
+              "properties": {
+                "cwe": "CWE-538",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "placeOrder writes order PDFs containing the customer email to ftp/, which server.ts exposes with unauthenticated directory listing."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "/support/logs is registered with serveIndex and file serving, with no authentication middleware. Anyone can list and read access logs, which contain request URLs, IPs and possibly tokens in query strings."
+              },
+              "id": "T-073",
+              "name": "Information Disclosure/unauthenticated-log-directory-browsing-s",
+              "properties": {
+                "cwe": "CWE-548",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "/support/logs is registered with serveIndex and file serving, with no authentication middleware."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Anyone browses /support/logs and downloads access logs via sendFile, exposing request URLs, IPs and tokens in query strings."
+              },
+              "id": "T-074",
+              "name": "Information Disclosure/unauthenticated-access-log-download-logf",
+              "properties": {
+                "cwe": "CWE-552",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "Anyone browses /support/logs and downloads access logs via sendFile, exposing request URLs, IPs and tokens in query strings."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The Card model stores the full card number as a plain integer column in the unencrypted SQLite file. An attacker with file or database read access obtains all stored card numbers."
+              },
+              "id": "T-075",
+              "name": "Information Disclosure/plaintext-payment-card-storage-card-ts-3",
+              "properties": {
+                "cwe": "CWE-311",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "The Card model stores the full card number as a plain integer column in the unencrypted SQLite file."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Anyone with read access to the repository or build artifact obtains the BIP-39 mnemonic and derives the wallet private key, which is also the value the endpoint accepts as the secret. The key controls the associated Ethereum account."
+              },
+              "id": "T-076",
+              "name": "Information Disclosure/hardcoded-wallet-mnemonic-in-source-chec",
+              "properties": {
+                "cwe": "CWE-798",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "Anyone with read access to the repository or build artifact obtains the BIP-39 mnemonic and derives the wallet private key, which is also the value the endpoint accepts as the secret."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "submitKey posts a user's private key to the API at environment.hostServer, which is plain HTTP in the shipped development environment. A network attacker on the path can read the key in transit."
+              },
+              "id": "T-077",
+              "name": "Information Disclosure/private-key-submitted-over-configurable-",
+              "properties": {
+                "cwe": "CWE-319",
+                "impact": "High",
+                "likelihood": "Low",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "submitKey posts a user's private key to the API at environment.hostServer, which is plain HTTP in the shipped development environment."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "changePassword places the current, new and repeat passwords in the URL query string of a GET request. They end up in browser history, proxy and server access logs, and Referer headers, where an attacker with log or history access can recover them."
+              },
+              "id": "T-078",
+              "name": "Information Disclosure/passwords-sent-as-get-query-parameters-u",
+              "properties": {
+                "cwe": "CWE-598",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "changePassword places the current, new and repeat passwords in the URL query string of a GET request."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "oauthLogin appends the Google access token to the userinfo URL as the access_token query parameter, so the token can leak through browser history, proxies and logs. The implicit flow response_type=token also exposes it in the URL fragment."
+              },
+              "id": "T-079",
+              "name": "Information Disclosure/oauth-access-token-in-userinfo-query-str",
+              "properties": {
+                "cwe": "CWE-598",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "oauthLogin appends the Google access token to the userinfo URL as the access_token query parameter, so the token can leak through browser history, proxies and logs."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An attacker connects to the socket without credentials. The server replays every stored notification, including the CTF flag field, to the new socket. Solved-challenge data is exposed to anyone who can connect. The same data is also broadcast with io.emit to all clients."
+              },
+              "id": "T-080",
+              "name": "Information Disclosure/stored-notifications-and-flags-sent-to-u",
+              "properties": {
+                "cwe": "CWE-200",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "An attacker connects to the socket without credentials."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "After a successful reset the handler sends the updated user model as JSON, which can include the password hash and totpSecret fields to the unauthenticated caller."
+              },
+              "id": "T-081",
+              "name": "Information Disclosure/reset-response-returns-full-user-object-",
+              "properties": {
+                "cwe": "CWE-200",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "After a successful reset the handler sends the updated user model as JSON, which can include the password hash and totpSecret fields to the unauthenticated caller."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The fetched response is piped to disk with no size cap or timeout. An authenticated user points imageUrl at a huge or endless stream and fills the server disk or ties up the handler."
+              },
+              "id": "T-082",
+              "name": "Denial of Service/unbounded-remote-download-for-profile-im",
+              "properties": {
+                "cwe": "CWE-400",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Denial of Service",
+                "tags": [
+                  "security",
+                  "denial of service"
+                ]
+              },
+              "shortDescription": {
+                "text": "The fetched response is piped to disk with no size cap or timeout."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "LLM10: /rest/chat is unauthenticated, accepts an unbounded messages array, and has no rate limiter. Attackers send large histories repeatedly to consume provider tokens and server resources. Only a 10-step cap and retry config exist."
+              },
+              "id": "T-083",
+              "name": "Denial of Service/unbounded-chat-input-with-no-rate-limit-",
+              "properties": {
+                "cwe": "CWE-770",
+                "impact": "Medium",
+                "likelihood": "High",
+                "owaspLlmIds": [
+                  "LLM10"
+                ],
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Denial of Service",
+                "tags": [
+                  "security",
+                  "denial of service",
+                  "owasp-llm:LLM10"
+                ]
+              },
+              "shortDescription": {
+                "text": "LLM10: /rest/chat is unauthenticated, accepts an unbounded messages array, and has no rate limiter."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "POST /rest/memories runs the uploadToDisk multer first, with no fileSize limit. The mime check uses the client-declared type. appendUserId runs only after the file is already written to disk. An unauthenticated attacker can send large files repeatedly and exhaust disk space."
+              },
+              "id": "T-084",
+              "name": "Denial of Service/unbounded-disk-upload-ahead-of-authentic",
+              "properties": {
+                "cwe": "CWE-770",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Denial of Service",
+                "tags": [
+                  "security",
+                  "denial of service"
+                ]
+              },
+              "shortDescription": {
+                "text": "POST /rest/memories runs the uploadToDisk multer first, with no fileSize limit."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An unauthenticated attacker repeatedly POSTs distinct walletAddress values (or large strings) to /rest/web3/walletExploitAddress. Each is added to a process-wide Set that is never bounded or pruned, growing memory until the server degrades."
+              },
+              "id": "T-085",
+              "name": "Denial of Service/unbounded-unvalidated-wallet-set-on-open",
+              "properties": {
+                "cwe": "CWE-770",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Denial of Service",
+                "tags": [
+                  "security",
+                  "denial of service"
+                ]
+              },
+              "shortDescription": {
+                "text": "An unauthenticated attacker repeatedly POSTs distinct walletAddress values (or large strings) to /rest/web3/walletExploitAddress."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An attacker emits verifyLocalXssChallenge with a numeric or object payload. utils.contains calls str.includes on a non-string, which throws a TypeError inside the socket listener. Because the handler has no try/catch, this may produce an uncaught exception and terminate the process. The verifySvgInjectionChallenge handler has the same flaw: data?.match is not a function for non-string data."
+              },
+              "id": "T-086",
+              "name": "Denial of Service/unhandled-exception-from-non-string-even",
+              "properties": {
+                "cwe": "CWE-248",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Denial of Service",
+                "tags": [
+                  "security",
+                  "denial of service"
+                ]
+              },
+              "shortDescription": {
+                "text": "An attacker emits verifyLocalXssChallenge with a numeric or object payload."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "verifyImageCaptcha calls next() whenever no CAPTCHA exists in the last five minutes for the user, so an attacker simply never requests one and submits the data export directly, skipping the CAPTCHA."
+              },
+              "id": "T-087",
+              "name": "Elevation of Privilege/fail-open-image-captcha-verification-ima",
+              "properties": {
+                "cwe": "CWE-636",
+                "impact": "Low",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "verifyImageCaptcha calls next() whenever no CAPTCHA exists in the last five minutes for the user, so an attacker simply never requests one and submits the data export directly, skipping the CAPTCHA."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "An authenticated customer posts to /rest/deluxe-membership with a paymentMode that is neither 'wallet' nor 'card'. Neither payment branch runs, but the role is still updated to deluxe (deluxe.ts:43). The user obtains a paid role for free, and a fresh token with that role is issued (line 48)."
+              },
+              "id": "T-088",
+              "name": "Elevation of Privilege/deluxe-membership-granted-without-paymen",
+              "properties": {
+                "cwe": "CWE-840",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "An authenticated customer posts to /rest/deluxe-membership with a paymentMode that is neither 'wallet' nor 'card'."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Container Runs as Root: Containers running as root expand container-escape blast radius."
+              },
+              "id": "T-089",
+              "name": "Elevation of Privilege/container-runs-as-root",
+              "properties": {
+                "cwe": "CWE-250",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "config-scan",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "Container Runs as Root: Containers running as root expand container-escape blast radius."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+              },
+              "id": "T-090",
+              "name": "Elevation of Privilege/missing-workflow-permissions-block",
+              "properties": {
+                "cwe": "CWE-732",
+                "impact": "Medium",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "source": "config-scan",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "GET /rest/user/authentication-details requires only a valid JWT, then returns every user including email, role, last login time and other fields. A low-privilege customer enumerates admins and accounting users for targeting."
+              },
+              "id": "T-091",
+              "name": "Elevation of Privilege/any-authenticated-user-lists-all-account",
+              "properties": {
+                "cwe": "CWE-862",
+                "impact": "Medium",
+                "likelihood": "High",
+                "risk": "Medium",
+                "source": "stride",
+                "stride": "Elevation of Privilege",
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ]
+              },
+              "shortDescription": {
+                "text": "GET /rest/user/authentication-details requires only a valid JWT, then returns every user including email, role, last login time and other fields."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Token exfiltrated from local/session storage via the Step 1 payload."
+              },
+              "id": "T-110",
+              "name": "Information Disclosure/session-token-stored-in-web-accessible-c",
+              "properties": {
+                "cwe": "CWE-922",
+                "impact": "High",
+                "likelihood": "High",
+                "risk": "High",
+                "source": "source-scan",
+                "stride": "Information Disclosure",
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ]
+              },
+              "shortDescription": {
+                "text": "Token exfiltrated from local/session storage via the Step 1 payload."
+              }
+            }
+          ],
+          "semanticVersion": "0.6.0-beta.5",
+          "version": "0.6.0-beta.5"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

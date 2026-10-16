@@ -1,0 +1,18 @@
+{
+  "abuse_case_id": "AC-B-001",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "      const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })",
+        "file": "routes/basket.ts",
+        "line": 19
+      },
+      "matched_finding_id": "T-003",
+      "reason": "GET /rest/basket/:id is registered with no authorization middleware. retrieveBasket looks up the basket by the URL id alone. The comparison with the caller's basket id (user.bid) appears only inside challengeUtils.solveIf, which flags a solved challenge and does not block the request. Any caller can therefore read another user's basket and its products.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "confirmed"
+    }
+  ]
+}

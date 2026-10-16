@@ -128,7 +128,7 @@ Fixture layout:
 
 `freeze` (Step 2): `--run` must contain `threat-model.yaml`; `--repo` is **pinned by SHA**, not vendored (keep large repos as a submodule); `--archive` also writes a `.tgz`. `freeze` refuses to overwrite an existing `--into`.
 
-`replay` (Step 3): `--stage all` or a comma list `yaml,md,sarif,scanner`; `--repo` overrides the source repo for the scanner stage. Exit `0` only when the manifest verifies **and** every selected stage shows no drift; any diff is printed as a unified diff and exits non-zero. The scanner stage is *skipped* (not failed) when the source repo is unavailable.
+`replay` (Step 3): `--stage all` or a comma list `yaml,md,sarif,scanner`; `--repo` names the source repo for the scanner stage; the fixture records only its commit. Exit `0` only when the manifest verifies **and** every selected stage shows no drift; any diff is printed as a unified diff and exits non-zero. The scanner stage is *skipped* (not failed) when the source repo is unavailable.
 
 ## In CI / pytest
 

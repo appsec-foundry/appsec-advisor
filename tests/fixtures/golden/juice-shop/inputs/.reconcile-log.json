@@ -1,0 +1,1130 @@
+{
+  "title_normalisations": [
+    {
+      "kind": "threat",
+      "id": "T-006",
+      "from": "SQL injection \u2014 routes/search.ts:23",
+      "to": "SQL injection (routes/search.ts:23)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-012",
+      "from": "SQL injection in login email lookup \u2014 routes/login.ts:34",
+      "to": "SQL injection in login email lookup (routes/login.ts:34)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-014",
+      "from": "Chat identity taken from unverified JWT \u2014 routes/chat.ts:45",
+      "to": "Chat identity taken from unverified JWT (routes/chat.ts:45)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-016",
+      "from": "Predictable password derived from OAuth email \u2014 oauth.component.ts:30",
+      "to": "Predictable password derived from OAuth email (oauth.component.ts:30)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-019",
+      "from": "Password reset accepts a security-question answer \u2014 routes/resetPassword.ts:10",
+      "to": "Password reset accepts a security-question answer (routes/resetPassword.ts:10)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-020",
+      "from": "Hardcoded JWT private signing key in source \u2014 lib/insecurity.ts:21",
+      "to": "Hardcoded JWT private signing key in source (lib/insecurity.ts:21)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-021",
+      "from": "Wallet top-up accepts unvalidated balance amount \u2014 routes/wallet.ts:27",
+      "to": "Wallet top-up accepts unvalidated balance amount (routes/wallet.ts:27)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-022",
+      "from": "Path traversal \u2014 routes/dataErasure.ts:104",
+      "to": "Path traversal (routes/dataErasure.ts:104)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-023",
+      "from": "Zip entry path traversal on complaint upload \u2014 routes/fileUpload.ts:34",
+      "to": "Zip entry path traversal on complaint upload (routes/fileUpload.ts:34)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-024",
+      "from": "IDOR \u2014 routes/basketItems.ts:68",
+      "to": "IDOR (routes/basketItems.ts:68)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-027",
+      "from": "Input in executable NoSQL predicate \u2014 routes/showProductReviews.ts:36",
+      "to": "Input in executable NoSQL predicate (routes/showProductReviews.ts:36)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-028",
+      "from": "NoSQL where injection in product reviews \u2014 routes/showProductReviews.ts:36",
+      "to": "NoSQL where injection in product reviews (routes/showProductReviews.ts:36)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-029",
+      "from": "NoSQL where injection in order tracking \u2014 routes/trackOrder.ts:18",
+      "to": "NoSQL where injection in order tracking (routes/trackOrder.ts:18)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-030",
+      "from": "Input compiled as template source \u2014 routes/userProfile.ts:87",
+      "to": "Input compiled as template source (routes/userProfile.ts:87)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-031",
+      "from": "Non-cryptographic RNG for a secret/token \u2014 lib/insecurity.ts:53",
+      "to": "Non-cryptographic RNG for a secret/token (lib/insecurity.ts:53)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-032",
+      "from": "Unauthenticated encryption key file download \u2014 routes/keyServer.ts:14",
+      "to": "Unauthenticated encryption key file download (routes/keyServer.ts:14)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-033",
+      "from": "XXE file content disclosure in upload errors \u2014 routes/fileUpload.ts:79",
+      "to": "XXE file content disclosure in upload errors (routes/fileUpload.ts:79)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-034",
+      "from": "Server-side request forgery in profile \u2014 routes/profileImageUrlUpload.ts:24",
+      "to": "Server-side request forgery in profile (routes/profileImageUrlUpload.ts:24)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-036",
+      "from": "Blocking busy-wait sleep reachable \u2014 routes/showProductReviews.ts:23",
+      "to": "Blocking busy-wait sleep reachable (routes/showProductReviews.ts:23)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-037",
+      "from": "Code injection \u2014 routes/userProfile.ts:61",
+      "to": "Code injection (routes/userProfile.ts:61)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-038",
+      "from": "IDOR / broken object-level authorization \u2014 server.ts:426",
+      "to": "IDOR / broken object-level authorization (server.ts:426)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-042",
+      "from": "Chatbot coupon tool lacks server-side discount limit \u2014 routes/chat.ts:184",
+      "to": "Chatbot coupon tool lacks server-side discount limit (routes/chat.ts:184)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-043",
+      "from": "Role accepted from user registration body \u2014 routes/verify.ts:53",
+      "to": "Role accepted from user registration body (routes/verify.ts:53)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-044",
+      "from": "Unauthenticated review creation \u2014 routes/createProductReviews.ts:26",
+      "to": "Unauthenticated review creation (routes/createProductReviews.ts:26)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-045",
+      "from": "Password change allowed without current password \u2014 routes/changePassword.ts:39",
+      "to": "Password change allowed without current password (routes/changePassword.ts:39)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-046",
+      "from": "Hardcoded cookie-parser signing secret \u2014 server.ts:289",
+      "to": "Hardcoded cookie-parser signing secret (server.ts:289)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-047",
+      "from": "OAuth implicit flow without state, nonce or PKCE \u2014 login.component.ts:148",
+      "to": "OAuth implicit flow without state, nonce or PKCE (login.component.ts:148)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-048",
+      "from": "Hardcoded testing credentials in login component \u2014 login.component.ts:62",
+      "to": "Hardcoded testing credentials in login component (login.component.ts:62)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-050",
+      "from": "Unthrottled security-answer password reset \u2014 routes/resetPassword.ts:41",
+      "to": "Unthrottled security-answer password reset (routes/resetPassword.ts:41)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-051",
+      "from": "Substring redirect allowlist check \u2014 lib/insecurity.ts:136",
+      "to": "Substring redirect allowlist check (lib/insecurity.ts:136)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-052",
+      "from": "File type allowlist bypass \u2014 routes/fileServer.ts:28",
+      "to": "File type allowlist bypass (routes/fileServer.ts:28)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-053",
+      "from": "Client-supplied coupon data grants expired discounts \u2014 routes/order.ts:201",
+      "to": "Client-supplied coupon data grants expired discounts (routes/order.ts:201)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-054",
+      "from": "NoSQL selector injection in review likes \u2014 routes/likeProductReviews.ts:35",
+      "to": "NoSQL selector injection in review likes (routes/likeProductReviews.ts:35)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-055",
+      "from": "Client-supplied chat messages passed to model unvalidated \u2014 routes/chat.ts:191",
+      "to": "Client-supplied chat messages passed to model unvalidated (routes/chat.ts:191)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-056",
+      "from": "Unsanitized product description setter \u2014 models/product.ts:45",
+      "to": "Unsanitized product description setter (models/product.ts:45)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-057",
+      "from": "Missing Container Image Signing \u2014 ci.yml:1",
+      "to": "Missing Container Image Signing (ci.yml:1)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-058",
+      "from": "Unverified remote script piped to shell in deploy workflow \u2014 ci.yml:358",
+      "to": "Unverified remote script piped to shell in deploy workflow (ci.yml:358)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-061",
+      "from": "Release build uses non-locked dependency installation \u2014 release.yml:55",
+      "to": "Release build uses non-locked dependency installation (release.yml:55)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-063",
+      "from": "Unsanitized document.write of data export response \u2014 data-export.component.ts:71",
+      "to": "Unsanitized document.write of data export response (data-export.component.ts:71)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-064",
+      "from": "DOM XSS \u2014 track-result.component.ts:48",
+      "to": "DOM XSS (track-result.component.ts:48)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-065",
+      "from": "Unsanitized login IP header stored when challenge \u2014 routes/saveLoginIp.ts:32",
+      "to": "Unsanitized login IP header stored when challenge (routes/saveLoginIp.ts:32)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-066",
+      "from": "Template layout path read \u2014 routes/dataErasure.ts:107",
+      "to": "Template layout path read (routes/dataErasure.ts:107)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-067",
+      "from": "CAPTCHA answer returned to client \u2014 routes/imageCaptcha.ts:31",
+      "to": "CAPTCHA answer returned to client (routes/imageCaptcha.ts:31)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-068",
+      "from": "Unauthenticated memories listing with user data \u2014 routes/memory.ts:24",
+      "to": "Unauthenticated memories listing with user data (routes/memory.ts:24)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-069",
+      "from": "CAPTCHA answer returned to the client \u2014 routes/captcha.ts:31",
+      "to": "CAPTCHA answer returned to the client (routes/captcha.ts:31)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-070",
+      "from": "User enumeration \u2014 routes/securityQuestion.ts:21",
+      "to": "User enumeration (routes/securityQuestion.ts:21)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-071",
+      "from": "Unauthenticated Prometheus metrics endpoint \u2014 routes/metrics.ts:92",
+      "to": "Unauthenticated Prometheus metrics endpoint (routes/metrics.ts:92)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-072",
+      "from": "Order PDFs with customer email in listed directory \u2014 routes/order.ts:45",
+      "to": "Order PDFs with customer email in listed directory (routes/order.ts:45)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-073",
+      "from": "Unauthenticated log directory browsing \u2014 server.ts:281",
+      "to": "Unauthenticated log directory browsing (server.ts:281)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-074",
+      "from": "Unauthenticated access log download \u2014 routes/logfileServer.ts:14",
+      "to": "Unauthenticated access log download (routes/logfileServer.ts:14)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-075",
+      "from": "Plaintext payment card storage \u2014 models/card.ts:38",
+      "to": "Plaintext payment card storage (models/card.ts:38)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-076",
+      "from": "Hardcoded wallet mnemonic in source \u2014 routes/checkKeys.ts:10",
+      "to": "Hardcoded wallet mnemonic in source (routes/checkKeys.ts:10)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-077",
+      "from": "Private key submitted over configurable HTTP origin \u2014 keys.service.ts:45",
+      "to": "Private key submitted over configurable HTTP origin (keys.service.ts:45)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-078",
+      "from": "Passwords sent as GET query parameters \u2014 user.service.ts:54",
+      "to": "Passwords sent as GET query parameters (user.service.ts:54)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-079",
+      "from": "OAuth access token in userinfo query string \u2014 user.service.ts:68",
+      "to": "OAuth access token in userinfo query string (user.service.ts:68)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-080",
+      "from": "Stored notifications and flags sent \u2014 registerWebsocketEvents.ts:30",
+      "to": "Stored notifications and flags sent (registerWebsocketEvents.ts:30)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-081",
+      "from": "Reset response returns full user object \u2014 routes/resetPassword.ts:46",
+      "to": "Reset response returns full user object (routes/resetPassword.ts:46)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-082",
+      "from": "Unbounded remote download for profile image \u2014 routes/profileImageUrlUpload.ts:30",
+      "to": "Unbounded remote download for profile image (routes/profileImageUrlUpload.ts:30)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-083",
+      "from": "Unbounded chat input with no rate limit on LLM endpoint \u2014 routes/chat.ts:191",
+      "to": "Unbounded chat input with no rate limit on LLM endpoint (routes/chat.ts:191)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-085",
+      "from": "Unbounded unvalidated wallet set on open endpoint \u2014 routes/web3Wallet.ts:16",
+      "to": "Unbounded unvalidated wallet set on open endpoint (routes/web3Wallet.ts:16)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-086",
+      "from": "Unhandled exception from non-string event \u2014 registerWebsocketEvents.ts:41",
+      "to": "Unhandled exception from non-string event (registerWebsocketEvents.ts:41)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-087",
+      "from": "Fail-open image CAPTCHA verification \u2014 routes/imageCaptcha.ts:52",
+      "to": "Fail-open image CAPTCHA verification (routes/imageCaptcha.ts:52)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-088",
+      "from": "Deluxe membership granted without payment \u2014 routes/deluxe.ts:43",
+      "to": "Deluxe membership granted without payment (routes/deluxe.ts:43)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-091",
+      "from": "Any authenticated user lists all accounts \u2014 routes/authenticatedUsers.ts:12",
+      "to": "Any authenticated user lists all accounts (routes/authenticatedUsers.ts:12)"
+    },
+    {
+      "kind": "threat",
+      "id": "T-110",
+      "from": "Session token stored in web-accessible client storage \u2014 basket.service.ts:64",
+      "to": "Session token stored in web-accessible client storage (basket.service.ts:64)"
+    }
+  ],
+  "attack_path_target_overrides": [
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-scripting",
+      "llm_target": "victim",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-scripting",
+      "llm_target": "victim",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-scripting",
+      "llm_target": "victim",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-scripting",
+      "llm_target": "victim",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-scripting",
+      "llm_target": "victim",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-scripting",
+      "llm_target": "victim",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    }
+  ],
+  "attack_path_gap_fills": [
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-001",
+        "T-002",
+        "T-005",
+        "T-063",
+        "T-064",
+        "T-065",
+        "T-110"
+      ],
+      "merged_count": 7,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "7 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "privilege-escalation",
+      "merged_findings": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-042"
+      ],
+      "merged_count": 11,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "11 finding(s) classify as 'privilege-escalation' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-006",
+        "T-012",
+        "T-027",
+        "T-028",
+        "T-029",
+        "T-030",
+        "T-033",
+        "T-054"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "auth-bypass",
+      "merged_findings": [
+        "T-014",
+        "T-018",
+        "T-020",
+        "T-031",
+        "T-035",
+        "T-046",
+        "T-048",
+        "T-076"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'auth-bypass' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-022",
+        "T-023",
+        "T-032",
+        "T-034",
+        "T-051",
+        "T-052",
+        "T-067",
+        "T-068"
+      ],
+      "merged_count": 15,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "15 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "remote-code-execution",
+      "merged_findings": [
+        "T-037"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'remote-code-execution' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "missing_finding_count": 1,
+      "appended_findings": [
+        "T-047"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'cross-site-request-forgery' has 1 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "supply-chain",
+      "missing_finding_count": 8,
+      "appended_findings": [
+        "T-057",
+        "T-058",
+        "T-059",
+        "T-060",
+        "T-061"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'supply-chain' has 8 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-001",
+        "T-002",
+        "T-005",
+        "T-063",
+        "T-064",
+        "T-065",
+        "T-110"
+      ],
+      "merged_count": 7,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "7 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "privilege-escalation",
+      "merged_findings": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-042"
+      ],
+      "merged_count": 11,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "11 finding(s) classify as 'privilege-escalation' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-006",
+        "T-012",
+        "T-027",
+        "T-028",
+        "T-029",
+        "T-030",
+        "T-033",
+        "T-054"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "auth-bypass",
+      "merged_findings": [
+        "T-014",
+        "T-018",
+        "T-020",
+        "T-031",
+        "T-035",
+        "T-046",
+        "T-048",
+        "T-076"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'auth-bypass' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-022",
+        "T-023",
+        "T-032",
+        "T-034",
+        "T-051",
+        "T-052",
+        "T-067",
+        "T-068"
+      ],
+      "merged_count": 15,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "15 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "remote-code-execution",
+      "merged_findings": [
+        "T-037"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'remote-code-execution' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "missing_finding_count": 1,
+      "appended_findings": [
+        "T-047"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'cross-site-request-forgery' has 1 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "supply-chain",
+      "missing_finding_count": 8,
+      "appended_findings": [
+        "T-057",
+        "T-058",
+        "T-059",
+        "T-060",
+        "T-061"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'supply-chain' has 8 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-001",
+        "T-002",
+        "T-005",
+        "T-063",
+        "T-064",
+        "T-065",
+        "T-110"
+      ],
+      "merged_count": 7,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "7 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "privilege-escalation",
+      "merged_findings": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-042"
+      ],
+      "merged_count": 11,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "11 finding(s) classify as 'privilege-escalation' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-006",
+        "T-012",
+        "T-027",
+        "T-028",
+        "T-029",
+        "T-030",
+        "T-033",
+        "T-054"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "auth-bypass",
+      "merged_findings": [
+        "T-014",
+        "T-018",
+        "T-020",
+        "T-031",
+        "T-035",
+        "T-046",
+        "T-048",
+        "T-076"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'auth-bypass' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-022",
+        "T-023",
+        "T-032",
+        "T-034",
+        "T-051",
+        "T-052",
+        "T-067",
+        "T-068"
+      ],
+      "merged_count": 15,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "15 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "remote-code-execution",
+      "merged_findings": [
+        "T-037"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'remote-code-execution' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "missing_finding_count": 1,
+      "appended_findings": [
+        "T-047"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'cross-site-request-forgery' has 1 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "supply-chain",
+      "missing_finding_count": 8,
+      "appended_findings": [
+        "T-057",
+        "T-058",
+        "T-059",
+        "T-060",
+        "T-061"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'supply-chain' has 8 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-001",
+        "T-002",
+        "T-005",
+        "T-063",
+        "T-064",
+        "T-065",
+        "T-110"
+      ],
+      "merged_count": 7,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "7 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "privilege-escalation",
+      "merged_findings": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-042"
+      ],
+      "merged_count": 11,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "11 finding(s) classify as 'privilege-escalation' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-006",
+        "T-012",
+        "T-027",
+        "T-028",
+        "T-029",
+        "T-030",
+        "T-033",
+        "T-054"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "auth-bypass",
+      "merged_findings": [
+        "T-014",
+        "T-018",
+        "T-020",
+        "T-031",
+        "T-035",
+        "T-046",
+        "T-048",
+        "T-076"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'auth-bypass' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-022",
+        "T-023",
+        "T-032",
+        "T-034",
+        "T-051",
+        "T-052",
+        "T-067",
+        "T-068"
+      ],
+      "merged_count": 15,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "15 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "remote-code-execution",
+      "merged_findings": [
+        "T-037"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'remote-code-execution' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "missing_finding_count": 1,
+      "appended_findings": [
+        "T-047"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'cross-site-request-forgery' has 1 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "supply-chain",
+      "missing_finding_count": 8,
+      "appended_findings": [
+        "T-057",
+        "T-058",
+        "T-059",
+        "T-060",
+        "T-061"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'supply-chain' has 8 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-001",
+        "T-002",
+        "T-005",
+        "T-063",
+        "T-064",
+        "T-065",
+        "T-110"
+      ],
+      "merged_count": 7,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "7 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "privilege-escalation",
+      "merged_findings": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-042"
+      ],
+      "merged_count": 11,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "11 finding(s) classify as 'privilege-escalation' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-006",
+        "T-012",
+        "T-027",
+        "T-028",
+        "T-029",
+        "T-030",
+        "T-033",
+        "T-054"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "auth-bypass",
+      "merged_findings": [
+        "T-014",
+        "T-018",
+        "T-020",
+        "T-031",
+        "T-035",
+        "T-046",
+        "T-048",
+        "T-076"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'auth-bypass' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-022",
+        "T-023",
+        "T-032",
+        "T-034",
+        "T-051",
+        "T-052",
+        "T-067",
+        "T-068"
+      ],
+      "merged_count": 15,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "15 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "remote-code-execution",
+      "merged_findings": [
+        "T-037"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'remote-code-execution' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "missing_finding_count": 1,
+      "appended_findings": [
+        "T-047"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'cross-site-request-forgery' has 1 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "supply-chain",
+      "missing_finding_count": 8,
+      "appended_findings": [
+        "T-057",
+        "T-058",
+        "T-059",
+        "T-060",
+        "T-061"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'supply-chain' has 8 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-001",
+        "T-002",
+        "T-005",
+        "T-063",
+        "T-064",
+        "T-065",
+        "T-110"
+      ],
+      "merged_count": 7,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "7 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "privilege-escalation",
+      "merged_findings": [
+        "T-003",
+        "T-004",
+        "T-008",
+        "T-024",
+        "T-038",
+        "T-039",
+        "T-041",
+        "T-042"
+      ],
+      "merged_count": 11,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "11 finding(s) classify as 'privilege-escalation' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-006",
+        "T-012",
+        "T-027",
+        "T-028",
+        "T-029",
+        "T-030",
+        "T-033",
+        "T-054"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "auth-bypass",
+      "merged_findings": [
+        "T-014",
+        "T-018",
+        "T-020",
+        "T-031",
+        "T-035",
+        "T-046",
+        "T-048",
+        "T-076"
+      ],
+      "merged_count": 8,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "8 finding(s) classify as 'auth-bypass' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-022",
+        "T-023",
+        "T-032",
+        "T-034",
+        "T-051",
+        "T-052",
+        "T-067",
+        "T-068"
+      ],
+      "merged_count": 15,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "15 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "remote-code-execution",
+      "merged_findings": [
+        "T-037"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'remote-code-execution' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "missing_finding_count": 1,
+      "appended_findings": [
+        "T-047"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'cross-site-request-forgery' has 1 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    },
+    {
+      "class": "supply-chain",
+      "missing_finding_count": 8,
+      "appended_findings": [
+        "T-057",
+        "T-058",
+        "T-059",
+        "T-060",
+        "T-061"
+      ],
+      "source": "M-11 attack-paths gap-filler",
+      "reason": "taxonomy cluster 'supply-chain' has 8 matching finding(s) in threats[] but no entry in LLM-authored attack_paths"
+    }
+  ]
+}

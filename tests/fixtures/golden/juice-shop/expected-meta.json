@@ -1,0 +1,19 @@
+{
+  "assessment_depth": "standard",
+  "fixture_version": 1,
+  "plugin_version": "0.6.0-beta.5",
+  "repo": {
+    "branch": "HEAD",
+    "commit_sha": "33518f5a0911e25d9df747b1e70fb7af279a755c",
+    "dirty": false
+  },
+  "scanners": {
+    ".route-inventory.json": "analyzers/route_inventory.py",
+    ".source-auth-findings.json": "analyzers/source_auth_scanner.py"
+  },
+  "sentinels": {
+    "date": "2000-01-01",
+    "generated": "2000-01-01T00:00:00Z",
+    "sha": "0000000000000000000000000000000000000000"
+  }
+}

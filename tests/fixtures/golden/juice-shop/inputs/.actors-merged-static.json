@@ -1,0 +1,731 @@
+{
+  "schema_version": 1,
+  "actors_inputs_fingerprint": "8825b4c744abe74814bce962591ee77b368522878a1d5f7d5808c994199034bc",
+  "catalog_actors": [
+    {
+      "id": "ACT-D-01",
+      "label": "anonymous-internet-attacker",
+      "access": [
+        "internet",
+        "dmz"
+      ],
+      "trust_positions": [
+        "public-endpoint-reach"
+      ],
+      "capabilities": {
+        "sophistication": "medium",
+        "tooling": [
+          "off-the-shelf",
+          "social-eng"
+        ],
+        "dwell_time": "short",
+        "surface_reach": [
+          "internet"
+        ]
+      },
+      "motivation": "financial",
+      "description": "Unauthenticated attacker with internet access. Exploits publicly reachable endpoints via automated scanning, credential stuffing, or injection attacks.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_public_routes"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 1.2,
+        "TH-02": 1.0,
+        "TH-03": 0.8,
+        "TH-04": 1.2,
+        "TH-05": 1.3,
+        "TH-06": 0.9
+      },
+      "heatmap_slug": "internet-anon",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning",
+        "collapse_note": "When self-registration is open, any internet visitor becomes a low-priv authenticated user in seconds \u2014 auth wall is not a real reach barrier. Severity modulation uses max() over the equivalence class.\n"
+      },
+      "equivalent_to": [
+        "ACT-D-01",
+        "ACT-D-02"
+      ],
+      "collapse_reason": "open-self-registration",
+      "collapse_primary": "ACT-D-01"
+    },
+    {
+      "id": "ACT-D-02",
+      "label": "authenticated-low-priv-user",
+      "access": [
+        "internet",
+        "authenticated-user-session"
+      ],
+      "trust_positions": [
+        "authenticated-user-authority"
+      ],
+      "capabilities": {
+        "sophistication": "low",
+        "tooling": [
+          "off-the-shelf"
+        ],
+        "dwell_time": "short",
+        "surface_reach": [
+          "internet",
+          "lateral"
+        ]
+      },
+      "motivation": "curiosity",
+      "description": "Authenticated user with standard (non-admin) privileges. Exploits IDOR, broken object-level authorization, or self-registration abuse.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_auth_surface"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 0.9,
+        "TH-02": 1.0,
+        "TH-03": 1.0,
+        "TH-04": 1.1,
+        "TH-05": 0.9,
+        "TH-06": 1.2
+      },
+      "equivalent_when": [
+        "has_open_self_registration"
+      ],
+      "heatmap_slug": "internet-user",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning",
+        "collapse_note": "When self-registration is open, any internet visitor becomes a low-priv authenticated user in seconds \u2014 auth wall is not a real reach barrier. Severity modulation uses max() over the equivalence class.\n"
+      },
+      "equivalent_to": [
+        "ACT-D-01",
+        "ACT-D-02"
+      ],
+      "collapse_reason": "open-self-registration",
+      "collapse_primary": "ACT-D-01"
+    },
+    {
+      "id": "ACT-D-03",
+      "label": "authenticated-high-priv-user",
+      "access": [
+        "internet",
+        "authenticated-user-session",
+        "authenticated-admin-session"
+      ],
+      "trust_positions": [
+        "privileged-user-authority"
+      ],
+      "capabilities": {
+        "sophistication": "medium",
+        "tooling": [
+          "off-the-shelf",
+          "debugger"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "internet",
+          "lateral",
+          "persistent"
+        ]
+      },
+      "motivation": "disruption",
+      "description": "Admin or privileged operator. Exploits admin-only endpoints, abuses elevated permissions, or performs privilege-escalation from standard role.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_role_concept"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 0.8,
+        "TH-02": 1.1,
+        "TH-03": 1.2,
+        "TH-04": 1.2,
+        "TH-05": 1.0,
+        "TH-06": 1.3
+      },
+      "heatmap_slug": "internet-priv-user",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    },
+    {
+      "id": "ACT-D-04",
+      "label": "malicious-insider-dev",
+      "access": [
+        "local-fs",
+        "ci-cd-secrets",
+        "ci-cd-runtime",
+        "internal-network",
+        "staging-env"
+      ],
+      "trust_positions": [
+        "source-repository-write-authority"
+      ],
+      "capabilities": {
+        "sophistication": "high",
+        "tooling": [
+          "debugger",
+          "network-sniffer",
+          "off-the-shelf"
+        ],
+        "dwell_time": "months",
+        "surface_reach": [
+          "local",
+          "lateral",
+          "persistent"
+        ]
+      },
+      "motivation": "financial",
+      "description": "Developer or contractor with repository read access, local dev environment, and typically CI/CD access. Can exfiltrate secrets, inject malicious code, or pivot from staging to production.\n",
+      "activation_conditions": {
+        "opt_in": true
+      },
+      "scope_note": "Malicious insiders with repository or pipeline access",
+      "severity_modulation": {
+        "TH-01": 1.0,
+        "TH-02": 1.4,
+        "TH-03": 0.9,
+        "TH-04": 1.3,
+        "TH-05": 0.8,
+        "TH-06": 1.2
+      },
+      "heatmap_slug": "insider",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": false,
+        "activation_reason": "opt-in actor not enabled (enable: in .appsec/actors.yaml or the org profile)"
+      }
+    },
+    {
+      "id": "ACT-D-05",
+      "label": "malicious-insider-ops",
+      "access": [
+        "prod-env",
+        "prod-readonly-db",
+        "prod-write-db",
+        "deployment-pipeline",
+        "internal-network"
+      ],
+      "trust_positions": [
+        "production-operator-authority"
+      ],
+      "capabilities": {
+        "sophistication": "high",
+        "tooling": [
+          "off-the-shelf",
+          "debugger"
+        ],
+        "dwell_time": "months",
+        "surface_reach": [
+          "lateral",
+          "persistent"
+        ]
+      },
+      "motivation": "disruption",
+      "description": "Operator or SRE with production access. Can exfiltrate prod data, tamper with running configuration, bypass audit trails, or abuse deployment rights.\n",
+      "activation_conditions": {
+        "opt_in": true
+      },
+      "scope_note": "Malicious insiders with production access",
+      "severity_modulation": {
+        "TH-01": 0.8,
+        "TH-02": 1.3,
+        "TH-03": 1.4,
+        "TH-04": 1.5,
+        "TH-05": 1.1,
+        "TH-06": 1.2
+      },
+      "heatmap_slug": "insider",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": false,
+        "activation_reason": "opt-in actor not enabled (enable: in .appsec/actors.yaml or the org profile)"
+      }
+    },
+    {
+      "id": "ACT-D-06",
+      "label": "supply-chain-attacker",
+      "access": [
+        "build-pipeline",
+        "ci-cd-runtime",
+        "internet"
+      ],
+      "trust_positions": [
+        "software-supply-chain-control"
+      ],
+      "capabilities": {
+        "sophistication": "high",
+        "tooling": [
+          "custom-malware",
+          "off-the-shelf"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "persistent"
+        ]
+      },
+      "motivation": "espionage",
+      "description": "External attacker targeting the software supply chain: dependency confusion, maintainer account takeover, build artifact tampering, or malicious package publication.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_ci_pipeline"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 0.8,
+        "TH-02": 1.5,
+        "TH-03": 0.7,
+        "TH-04": 1.1,
+        "TH-05": 0.9,
+        "TH-06": 1.3
+      },
+      "heatmap_slug": "build-time",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    },
+    {
+      "id": "ACT-D-07",
+      "label": "compromised-third-party-service",
+      "access": [
+        "internet",
+        "peer-service"
+      ],
+      "trust_positions": [
+        "trusted-service-control"
+      ],
+      "capabilities": {
+        "sophistication": "high",
+        "tooling": [
+          "custom-malware",
+          "off-the-shelf"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "lateral"
+        ]
+      },
+      "motivation": "espionage",
+      "description": "An external service that this application integrates with, whose API or webhook delivery has been compromised. Reach via malicious API responses, poisoned webhook payloads, or SSRF redirections. Note: cross-repo actor pulls (related-repos.yaml) are NOT supported \u2014 Phase 2.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_external_apis"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 1.1,
+        "TH-02": 1.2,
+        "TH-03": 0.7,
+        "TH-04": 1.2,
+        "TH-05": 1.0,
+        "TH-06": 1.1
+      },
+      "heatmap_slug": "internet-anon",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    },
+    {
+      "id": "ACT-D-08",
+      "label": "physical-device-holder",
+      "access": [
+        "client-device",
+        "mobile-device",
+        "local-fs"
+      ],
+      "trust_positions": [
+        "client-device-possession"
+      ],
+      "capabilities": {
+        "sophistication": "low",
+        "tooling": [
+          "off-the-shelf",
+          "debugger"
+        ],
+        "dwell_time": "short",
+        "surface_reach": [
+          "local"
+        ]
+      },
+      "motivation": "financial",
+      "description": "Attacker with physical or logical access to an end-user device: extracts locally cached credentials, tokens in localStorage/IndexedDB, or sensitive data from offline storage.\n",
+      "activation_conditions": {
+        "opt_in": true
+      },
+      "scope_note": "Attackers holding a user's device",
+      "severity_modulation": {
+        "TH-01": 1.0,
+        "TH-02": 0.8,
+        "TH-03": 0.7,
+        "TH-04": 1.3,
+        "TH-05": 0.6,
+        "TH-06": 1.1
+      },
+      "heatmap_slug": "victim-required",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": false,
+        "activation_reason": "opt-in actor not enabled (enable: in .appsec/actors.yaml or the org profile)"
+      }
+    },
+    {
+      "id": "ACT-D-09",
+      "label": "tenant-from-adjacent-tenancy",
+      "access": [
+        "authenticated-user-session",
+        "adjacent-tenant"
+      ],
+      "trust_positions": [
+        "tenant-membership"
+      ],
+      "capabilities": {
+        "sophistication": "medium",
+        "tooling": [
+          "off-the-shelf"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "lateral"
+        ]
+      },
+      "motivation": "financial",
+      "description": "Legitimate co-tenant within the same multi-tenant instance. Attempts cross-tenant data access via IDOR, shared-cache poisoning, or missing RLS policies. Activation requires BOTH: (a) tenant ID field in schema (tenant_id, organization_id, workspace_id, etc.) AND (b) tenant-scoping pattern (middleware/context, RLS policy, FK to tenants table).\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_multi_tenancy_signal"
+        ],
+        "signal_logic": "all"
+      },
+      "severity_modulation": {
+        "TH-01": 0.9,
+        "TH-02": 1.2,
+        "TH-03": 0.8,
+        "TH-04": 1.4,
+        "TH-05": 0.7,
+        "TH-06": 1.3
+      },
+      "heatmap_slug": "internet-user",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    }
+  ],
+  "resolved_actors": [
+    {
+      "id": "ACT-D-01",
+      "label": "anonymous-internet-attacker",
+      "access": [
+        "internet",
+        "dmz"
+      ],
+      "trust_positions": [
+        "public-endpoint-reach"
+      ],
+      "capabilities": {
+        "sophistication": "medium",
+        "tooling": [
+          "off-the-shelf",
+          "social-eng"
+        ],
+        "dwell_time": "short",
+        "surface_reach": [
+          "internet"
+        ]
+      },
+      "motivation": "financial",
+      "description": "Unauthenticated attacker with internet access. Exploits publicly reachable endpoints via automated scanning, credential stuffing, or injection attacks.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_public_routes"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 1.2,
+        "TH-02": 1.0,
+        "TH-03": 0.8,
+        "TH-04": 1.2,
+        "TH-05": 1.3,
+        "TH-06": 0.9
+      },
+      "heatmap_slug": "internet-anon",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning",
+        "collapse_note": "When self-registration is open, any internet visitor becomes a low-priv authenticated user in seconds \u2014 auth wall is not a real reach barrier. Severity modulation uses max() over the equivalence class.\n"
+      },
+      "equivalent_to": [
+        "ACT-D-01",
+        "ACT-D-02"
+      ],
+      "collapse_reason": "open-self-registration",
+      "collapse_primary": "ACT-D-01"
+    },
+    {
+      "id": "ACT-D-02",
+      "label": "authenticated-low-priv-user",
+      "access": [
+        "internet",
+        "authenticated-user-session"
+      ],
+      "trust_positions": [
+        "authenticated-user-authority"
+      ],
+      "capabilities": {
+        "sophistication": "low",
+        "tooling": [
+          "off-the-shelf"
+        ],
+        "dwell_time": "short",
+        "surface_reach": [
+          "internet",
+          "lateral"
+        ]
+      },
+      "motivation": "curiosity",
+      "description": "Authenticated user with standard (non-admin) privileges. Exploits IDOR, broken object-level authorization, or self-registration abuse.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_auth_surface"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 0.9,
+        "TH-02": 1.0,
+        "TH-03": 1.0,
+        "TH-04": 1.1,
+        "TH-05": 0.9,
+        "TH-06": 1.2
+      },
+      "equivalent_when": [
+        "has_open_self_registration"
+      ],
+      "heatmap_slug": "internet-user",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning",
+        "collapse_note": "When self-registration is open, any internet visitor becomes a low-priv authenticated user in seconds \u2014 auth wall is not a real reach barrier. Severity modulation uses max() over the equivalence class.\n"
+      },
+      "equivalent_to": [
+        "ACT-D-01",
+        "ACT-D-02"
+      ],
+      "collapse_reason": "open-self-registration",
+      "collapse_primary": "ACT-D-01"
+    },
+    {
+      "id": "ACT-D-03",
+      "label": "authenticated-high-priv-user",
+      "access": [
+        "internet",
+        "authenticated-user-session",
+        "authenticated-admin-session"
+      ],
+      "trust_positions": [
+        "privileged-user-authority"
+      ],
+      "capabilities": {
+        "sophistication": "medium",
+        "tooling": [
+          "off-the-shelf",
+          "debugger"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "internet",
+          "lateral",
+          "persistent"
+        ]
+      },
+      "motivation": "disruption",
+      "description": "Admin or privileged operator. Exploits admin-only endpoints, abuses elevated permissions, or performs privilege-escalation from standard role.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_role_concept"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 0.8,
+        "TH-02": 1.1,
+        "TH-03": 1.2,
+        "TH-04": 1.2,
+        "TH-05": 1.0,
+        "TH-06": 1.3
+      },
+      "heatmap_slug": "internet-priv-user",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    },
+    {
+      "id": "ACT-D-06",
+      "label": "supply-chain-attacker",
+      "access": [
+        "build-pipeline",
+        "ci-cd-runtime",
+        "internet"
+      ],
+      "trust_positions": [
+        "software-supply-chain-control"
+      ],
+      "capabilities": {
+        "sophistication": "high",
+        "tooling": [
+          "custom-malware",
+          "off-the-shelf"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "persistent"
+        ]
+      },
+      "motivation": "espionage",
+      "description": "External attacker targeting the software supply chain: dependency confusion, maintainer account takeover, build artifact tampering, or malicious package publication.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_ci_pipeline"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 0.8,
+        "TH-02": 1.5,
+        "TH-03": 0.7,
+        "TH-04": 1.1,
+        "TH-05": 0.9,
+        "TH-06": 1.3
+      },
+      "heatmap_slug": "build-time",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    },
+    {
+      "id": "ACT-D-07",
+      "label": "compromised-third-party-service",
+      "access": [
+        "internet",
+        "peer-service"
+      ],
+      "trust_positions": [
+        "trusted-service-control"
+      ],
+      "capabilities": {
+        "sophistication": "high",
+        "tooling": [
+          "custom-malware",
+          "off-the-shelf"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "lateral"
+        ]
+      },
+      "motivation": "espionage",
+      "description": "An external service that this application integrates with, whose API or webhook delivery has been compromised. Reach via malicious API responses, poisoned webhook payloads, or SSRF redirections. Note: cross-repo actor pulls (related-repos.yaml) are NOT supported \u2014 Phase 2.\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_external_apis"
+        ]
+      },
+      "severity_modulation": {
+        "TH-01": 1.1,
+        "TH-02": 1.2,
+        "TH-03": 0.7,
+        "TH-04": 1.2,
+        "TH-05": 1.0,
+        "TH-06": 1.1
+      },
+      "heatmap_slug": "internet-anon",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    },
+    {
+      "id": "ACT-D-09",
+      "label": "tenant-from-adjacent-tenancy",
+      "access": [
+        "authenticated-user-session",
+        "adjacent-tenant"
+      ],
+      "trust_positions": [
+        "tenant-membership"
+      ],
+      "capabilities": {
+        "sophistication": "medium",
+        "tooling": [
+          "off-the-shelf"
+        ],
+        "dwell_time": "weeks",
+        "surface_reach": [
+          "lateral"
+        ]
+      },
+      "motivation": "financial",
+      "description": "Legitimate co-tenant within the same multi-tenant instance. Attempts cross-tenant data access via IDOR, shared-cache poisoning, or missing RLS policies. Activation requires BOTH: (a) tenant ID field in schema (tenant_id, organization_id, workspace_id, etc.) AND (b) tenant-scoping pattern (middleware/context, RLS policy, FK to tenants table).\n",
+      "activation_conditions": {
+        "required_signals": [
+          "has_multi_tenancy_signal"
+        ],
+        "signal_logic": "all"
+      },
+      "severity_modulation": {
+        "TH-01": 0.9,
+        "TH-02": 1.2,
+        "TH-03": 0.8,
+        "TH-04": 1.4,
+        "TH-05": 0.7,
+        "TH-06": 1.3
+      },
+      "heatmap_slug": "internet-user",
+      "_provenance": {
+        "layer": "plugin",
+        "source_file": "data/actors/default-library.yaml",
+        "active": true,
+        "activation_reason": "activate-with-warning (signals not available)",
+        "signal_status": "activate-with-warning"
+      }
+    }
+  ],
+  "disabled_actors": []
+}

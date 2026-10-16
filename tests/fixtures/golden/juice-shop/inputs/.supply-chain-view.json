@@ -1,0 +1,516 @@
+{
+  "schema_version": 1,
+  "fingerprint": "c9d7adfd9eda14112ff913fd67d3d0130487038788c857dd6cd34d4ff0fd7a39",
+  "elements": [
+    {
+      "id": "repository",
+      "column": "sources",
+      "kind": "repository",
+      "label": "Source repository",
+      "detail": ".github/workflows \u00b7 .gitlab-ci.yml",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml"
+        },
+        {
+          "file": ".github/workflows/codeql-analysis.yml"
+        },
+        {
+          "file": ".github/workflows/frontend-bundle-analysis.yml"
+        },
+        {
+          "file": ".github/workflows/image_actions.yml"
+        },
+        {
+          "file": ".github/workflows/lint-fixer.yml"
+        }
+      ]
+    },
+    {
+      "id": "input:package:npm",
+      "column": "sources",
+      "kind": "package",
+      "ecosystem": "npm",
+      "label": "npm registry",
+      "detail": "25 install steps \u00b7 lockfile enforced in 0",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 36
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 38
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 51
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 71
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 110
+        }
+      ],
+      "manifest_detail": "180 declared \u00b7 174 by range \u00b7 lockfile absent"
+    },
+    {
+      "id": "input:github_action",
+      "column": "sources",
+      "kind": "github_action",
+      "label": "GitHub Actions",
+      "detail": "92 references \u00b7 7 not SHA-pinned",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 29
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 31
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 45
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 47
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 63
+        }
+      ]
+    },
+    {
+      "id": "input:base_image",
+      "column": "sources",
+      "kind": "base_image",
+      "label": "Base images",
+      "detail": "3 references \u00b7 3 not digest-pinned",
+      "sources": [
+        {
+          "file": "Dockerfile",
+          "line": 1
+        },
+        {
+          "file": "Dockerfile",
+          "line": 22
+        },
+        {
+          "file": "test/smoke/Dockerfile",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "id": "input:remote_script",
+      "column": "sources",
+      "kind": "remote_script",
+      "label": "Remote installers",
+      "detail": "1 piped to a shell",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 358
+        }
+      ]
+    },
+    {
+      "id": "input:ci_include",
+      "column": "sources",
+      "kind": "ci_include",
+      "label": "CI includes",
+      "detail": "1 reference \u00b7 1 not SHA-pinned",
+      "sources": [
+        {
+          "file": ".gitlab-ci.yml",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "id": "ci:github-actions",
+      "column": "build",
+      "kind": "ci",
+      "label": "GitHub Actions",
+      "coverage": "full",
+      "detail": "16 workflows",
+      "facts": [
+        "6 of 26 actions not SHA-pinned",
+        "16 workflows"
+      ],
+      "sources": [
+        {
+          "file": ".github/workflows"
+        }
+      ],
+      "boundaries": [
+        {
+          "id": "tb-3",
+          "confidence": "confirmed",
+          "crossing": "ingress",
+          "evidence": {
+            "file": ".github/workflows/ci.yml",
+            "line": 14
+          }
+        }
+      ]
+    },
+    {
+      "id": "ci:gitlab-ci",
+      "column": "build",
+      "kind": "ci",
+      "label": "GitLab CI",
+      "coverage": "full",
+      "detail": ".gitlab-ci.yml",
+      "facts": [
+        "test, dast disabled",
+        "SAST excludes paths",
+        "Auto DevOps template"
+      ],
+      "sources": [
+        {
+          "file": ".gitlab-ci.yml"
+        }
+      ]
+    },
+    {
+      "id": "artifact:image:docker-io-bkimminich-juice-shop",
+      "column": "artifacts",
+      "kind": "artifact",
+      "artifact": "container_image",
+      "pushed": true,
+      "label": "docker.io/bkimminich/juice-shop",
+      "detail": "pushed",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 338
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 86
+        }
+      ]
+    },
+    {
+      "id": "artifact:inventory:gitlab-ci:gitlab-registry",
+      "column": "artifacts",
+      "kind": "artifact",
+      "artifact": "inventory",
+      "pushed": true,
+      "label": "GitLab registry",
+      "detail": "published by GitLab CI (inventory only)",
+      "owner": "ci:gitlab-ci",
+      "sources": [
+        {
+          "file": ".gitlab-ci.yml"
+        }
+      ]
+    },
+    {
+      "id": "execution",
+      "column": "execution",
+      "kind": "execution",
+      "label": "Running system",
+      "channels": [
+        "Kubernetes \u00b7 GitLab Auto Deploy"
+      ],
+      "sources": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "input:package:npm",
+      "to": "ci:github-actions",
+      "status": "evidenced",
+      "label": "fetched",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 36
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 38
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 51
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 71
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 110
+        }
+      ]
+    },
+    {
+      "from": "input:github_action",
+      "to": "ci:github-actions",
+      "status": "evidenced",
+      "label": "fetched",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 29
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 31
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 45
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 47
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 63
+        }
+      ]
+    },
+    {
+      "from": "input:base_image",
+      "to": "ci:github-actions",
+      "status": "evidenced",
+      "label": "fetched",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 338
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 86
+        }
+      ]
+    },
+    {
+      "from": "input:remote_script",
+      "to": "ci:github-actions",
+      "status": "evidenced",
+      "label": "fetched",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 358
+        }
+      ]
+    },
+    {
+      "from": "repository",
+      "to": "ci:github-actions",
+      "status": "evidenced",
+      "label": "checkout",
+      "sources": [
+        {
+          "file": ".github/workflows"
+        }
+      ]
+    },
+    {
+      "from": "repository",
+      "to": "ci:gitlab-ci",
+      "status": "evidenced",
+      "label": "checkout",
+      "sources": [
+        {
+          "file": ".gitlab-ci.yml"
+        }
+      ]
+    },
+    {
+      "from": "ci:github-actions",
+      "to": "artifact:image:docker-io-bkimminich-juice-shop",
+      "status": "evidenced",
+      "label": "push",
+      "sources": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 338
+        }
+      ]
+    },
+    {
+      "from": "artifact:image:docker-io-bkimminich-juice-shop",
+      "to": "execution",
+      "status": "unknown",
+      "label": "not evidenced",
+      "sources": []
+    },
+    {
+      "from": "ci:gitlab-ci",
+      "to": "artifact:inventory:gitlab-ci:gitlab-registry",
+      "status": "unknown",
+      "label": "inventory only",
+      "sources": [
+        {
+          "file": ".gitlab-ci.yml"
+        }
+      ]
+    },
+    {
+      "from": "artifact:inventory:gitlab-ci:gitlab-registry",
+      "to": "execution",
+      "status": "unknown",
+      "label": "not evidenced",
+      "sources": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "F-057",
+      "title": "Missing Container Image Signing (ci.yml:1)",
+      "severity": "Medium",
+      "element": "artifact:image:docker-io-bkimminich-juice-shop",
+      "entry": "artifact",
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "line": 1
+      }
+    },
+    {
+      "id": "F-058",
+      "title": "Unverified remote script piped to shell in deploy workflow (ci.yml:358)",
+      "severity": "Medium",
+      "element": "input:remote_script",
+      "entry": "ci-input",
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "line": 358
+      }
+    },
+    {
+      "id": "F-059",
+      "title": "Untrusted npm Install/Postinstall Scripts Enabled",
+      "severity": "Medium",
+      "element": "input:package:npm",
+      "entry": "dependency",
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 4
+      }
+    },
+    {
+      "id": "F-060",
+      "title": "Mutable main branch action reference with write token",
+      "severity": "Medium",
+      "element": "input:github_action",
+      "entry": "ci-input",
+      "evidence": {
+        "file": ".github/workflows/image_actions.yml",
+        "line": 33
+      }
+    },
+    {
+      "id": "F-061",
+      "title": "Release build uses non-locked dependency installation (release.yml:55)",
+      "severity": "Medium",
+      "element": "input:package:npm",
+      "entry": "dependency",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "line": 55
+      }
+    },
+    {
+      "id": "F-062",
+      "title": "Unpinned Container Base Image",
+      "severity": "Medium",
+      "element": "input:base_image",
+      "entry": "ci-input",
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 1
+      }
+    },
+    {
+      "id": "F-089",
+      "title": "Container Runs as Root \u2014 Dockerfile:1",
+      "severity": "Medium",
+      "element": "unowned",
+      "entry": null,
+      "evidence": {
+        "file": "test/smoke/Dockerfile",
+        "line": 1
+      }
+    },
+    {
+      "id": "F-090",
+      "title": "Missing Workflow Permissions Block",
+      "severity": "Medium",
+      "element": "ci:github-actions",
+      "entry": null,
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "line": 25
+      }
+    }
+  ],
+  "entries": [
+    {
+      "entry": "dependency",
+      "element": "input:package:npm",
+      "severity": "Medium",
+      "findings": [
+        "F-059",
+        "F-061"
+      ]
+    },
+    {
+      "entry": "ci-input",
+      "element": "input:remote_script",
+      "severity": "Medium",
+      "findings": [
+        "F-058",
+        "F-060",
+        "F-062"
+      ]
+    },
+    {
+      "entry": "artifact",
+      "element": "artifact:image:docker-io-bkimminich-juice-shop",
+      "severity": "Medium",
+      "findings": [
+        "F-057"
+      ]
+    }
+  ],
+  "highlighted_path": {
+    "finding": "F-059",
+    "entry": "dependency",
+    "element": "input:package:npm",
+    "steps": [
+      {
+        "n": 1,
+        "from": "input:package:npm",
+        "to": "ci:github-actions",
+        "via": {
+          "file": "Dockerfile",
+          "line": 4
+        }
+      },
+      {
+        "n": 2,
+        "from": "ci:github-actions",
+        "to": "artifact:image:docker-io-bkimminich-juice-shop",
+        "via": {
+          "file": ".github/workflows/ci.yml",
+          "line": 338
+        }
+      }
+    ]
+  }
+}

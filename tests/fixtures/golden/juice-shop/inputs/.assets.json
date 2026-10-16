@@ -1,0 +1,77 @@
+{
+  "assets": [
+    {
+      "classification": "Restricted",
+      "component_refs": [
+        {
+          "component_id": "component-6ffadbc3868c2a3b",
+          "evidence": [
+            {
+              "file": "routes/nftMint.ts",
+              "line": 18
+            }
+          ],
+          "relation": "processed"
+        }
+      ],
+      "description": "Credential read from ALCHEMY_API_KEY for the blockchain RPC endpoint.",
+      "id": "A-001",
+      "name": "Alchemy API key"
+    },
+    {
+      "classification": "Confidential",
+      "component_refs": [
+        {
+          "component_id": "component-b213d5ab01236933",
+          "evidence": [
+            {
+              "file": "models/index.ts",
+              "line": 30
+            }
+          ],
+          "relation": "stored"
+        }
+      ],
+      "description": "Sequelize-managed SQLite data (users, baskets, cards, addresses, etc.).",
+      "id": "A-002",
+      "name": "Application relational data"
+    },
+    {
+      "classification": "Restricted",
+      "component_refs": [
+        {
+          "component_id": "component-1f61b207923dbaf5",
+          "evidence": [
+            {
+              "file": "routes/chat.ts",
+              "line": 110
+            }
+          ],
+          "relation": "processed"
+        }
+      ],
+      "description": "Credential read from LLM_API_KEY for the chatbot provider.",
+      "id": "A-003",
+      "name": "LLM provider API key"
+    },
+    {
+      "classification": "Confidential",
+      "component_refs": [
+        {
+          "component_id": "component-790db1fed70651aa",
+          "evidence": [
+            {
+              "file": "data/mongodb.ts",
+              "line": 9
+            }
+          ],
+          "relation": "stored"
+        }
+      ],
+      "description": "MarsDB collections for product reviews and orders.",
+      "id": "A-004",
+      "name": "Reviews and orders collections"
+    }
+  ],
+  "schema_version": 1
+}

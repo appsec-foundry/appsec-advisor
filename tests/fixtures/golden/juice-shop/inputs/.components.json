@@ -1,0 +1,657 @@
+{
+  "components": [
+    {
+      "capabilities": [
+        {
+          "capability": "file-upload",
+          "evidence": [
+            {
+              "file": "server.ts",
+              "line": 692
+            },
+            {
+              "file": "server.ts",
+              "line": 698
+            }
+          ]
+        },
+        {
+          "capability": "websocket-endpoint",
+          "evidence": [
+            {
+              "file": "lib/startup/registerWebsocketEvents.ts",
+              "line": 20
+            },
+            {
+              "file": "lib/startup/registerWebsocketEvents.ts",
+              "line": 23
+            }
+          ]
+        },
+        {
+          "capability": "blockchain-client",
+          "evidence": [
+            {
+              "file": "routes/nftMint.ts",
+              "line": 18
+            },
+            {
+              "file": "routes/web3Wallet.ts",
+              "line": 20
+            }
+          ]
+        },
+        {
+          "capability": "code-evaluation",
+          "evidence": [
+            {
+              "file": "routes/b2bOrder.ts",
+              "line": 23
+            },
+            {
+              "file": "routes/captcha.ts",
+              "line": 22
+            },
+            {
+              "file": "routes/fileUpload.ts",
+              "line": 109
+            },
+            {
+              "file": "routes/userProfile.ts",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "description": "Express HTTP application in server.ts that registers REST routes, Socket.IO events, and Web3 listeners.",
+      "id": "component-1f61b207923dbaf5",
+      "language": "TypeScript",
+      "name": "Juice Shop Express server",
+      "paths": [
+        "lib/startup/registerWebsocketEvents.ts",
+        "routes/address.ts",
+        "routes/appConfiguration.ts",
+        "routes/appVersion.ts",
+        "routes/b2bOrder.ts",
+        "routes/basket.ts",
+        "routes/basketItems.ts",
+        "routes/captcha.ts",
+        "routes/changePassword.ts",
+        "routes/chat.ts",
+        "routes/continueCode.ts",
+        "routes/countryMapping.ts",
+        "routes/coupon.ts",
+        "routes/createProductReviews.ts",
+        "routes/currentUser.ts",
+        "routes/dataErasure.ts",
+        "routes/dataExport.ts",
+        "routes/delivery.ts",
+        "routes/deluxe.ts",
+        "routes/easterEgg.ts",
+        "routes/fileServer.ts",
+        "routes/fileUpload.ts",
+        "routes/imageCaptcha.ts",
+        "routes/keyServer.ts",
+        "routes/languages.ts",
+        "routes/likeProductReviews.ts",
+        "routes/logfileServer.ts",
+        "routes/memory.ts",
+        "routes/metrics.ts",
+        "routes/nftMint.ts",
+        "routes/order.ts",
+        "routes/orderHistory.ts",
+        "routes/payment.ts",
+        "routes/premiumReward.ts",
+        "routes/privacyPolicyProof.ts",
+        "routes/profileImageFileUpload.ts",
+        "routes/profileImageUrlUpload.ts",
+        "routes/quarantineServer.ts",
+        "routes/recycles.ts",
+        "routes/repeatNotification.ts",
+        "routes/restoreProgress.ts",
+        "routes/search.ts",
+        "routes/securityQuestion.ts",
+        "routes/showProductReviews.ts",
+        "routes/trackOrder.ts",
+        "routes/updateProductReviews.ts",
+        "routes/updateUserProfile.ts",
+        "routes/userProfile.ts",
+        "routes/verify.ts",
+        "routes/videoHandler.ts",
+        "routes/vulnCodeFixes.ts",
+        "routes/vulnCodeSnippet.ts",
+        "routes/wallet.ts",
+        "routes/web3Wallet.ts",
+        "server.ts"
+      ],
+      "tier": "application"
+    },
+    {
+      "complexity": "simple",
+      "deployment_zones": [],
+      "description": "Executable ORM model definitions, setters, and query construction in the application process.",
+      "framework": "sequelize",
+      "handles_sensitive_data": false,
+      "id": "component-290ae722e9565831",
+      "language": "TypeScript",
+      "name": "Sequelize application data access",
+      "paths": [
+        "models/address.ts",
+        "models/basket.ts",
+        "models/basketitem.ts",
+        "models/captcha.ts",
+        "models/card.ts",
+        "models/challenge.ts",
+        "models/challengeDependency.ts",
+        "models/complaint.ts",
+        "models/delivery.ts",
+        "models/feedback.ts",
+        "models/hint.ts",
+        "models/imageCaptcha.ts",
+        "models/index.ts",
+        "models/memory.ts",
+        "models/privacyRequests.ts",
+        "models/product.ts",
+        "models/quantity.ts",
+        "models/recycle.ts",
+        "models/securityAnswer.ts",
+        "models/securityQuestion.ts",
+        "models/user.ts",
+        "models/wallet.ts"
+      ],
+      "tier": "application"
+    },
+    {
+      "complexity": "simple",
+      "deployment_zones": [
+        "ci-cd-runtime",
+        "build-pipeline"
+      ],
+      "description": "Continuous-integration / deployment workflows (.github/workflows/ci.yml, .github/workflows/codeql-analysis.yml, .github/workflows/frontend-bundle-analysis.yml, .github/workflows/image_actions.yml, \u2026). Build and release automation holding repository, registry and deploy credentials, with supply-chain reach into the produced artifact.",
+      "framework": null,
+      "handles_sensitive_data": true,
+      "id": "component-31ebe1b93ddf60d5",
+      "name": "CI/CD Pipeline",
+      "paths": [
+        ".dockerignore",
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql-analysis.yml",
+        ".github/workflows/frontend-bundle-analysis.yml",
+        ".github/workflows/image_actions.yml",
+        ".github/workflows/lint-fixer.yml",
+        ".github/workflows/lock.yml",
+        ".github/workflows/pr-compliance.yml",
+        ".github/workflows/rebase.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/stale.yml",
+        ".github/workflows/update-challenges-ebook.yml",
+        ".github/workflows/update-challenges-www-legacy.yml",
+        ".github/workflows/update-challenges-www.yml",
+        ".github/workflows/update-news-www-legacy.yml",
+        ".github/workflows/update-news-www.yml",
+        ".github/workflows/zap_scan.yml",
+        ".gitlab-ci.yml",
+        ".npmrc",
+        "Dockerfile",
+        "docker-compose.test.yml",
+        "frontend/package.json",
+        "package.json",
+        "test/smoke/Dockerfile"
+      ],
+      "tier": "application"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "blockchain-client",
+          "evidence": [
+            {
+              "file": "routes/nftMint.ts",
+              "line": 18
+            },
+            {
+              "file": "routes/web3Wallet.ts",
+              "line": 20
+            }
+          ]
+        }
+      ],
+      "complexity": "moderate",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "description": "Blockchain/web3 endpoints handling wallet addresses, NFT minting, and on-chain key material (ethers). Internet-facing crypto-asset surface with its own key-handling and ownership-verification trust boundary.",
+      "framework": "ethers",
+      "handles_sensitive_data": true,
+      "id": "component-6ffadbc3868c2a3b",
+      "language": "TypeScript",
+      "name": "Web3 / Wallet / NFT Surface",
+      "paths": [
+        "routes/checkKeys.ts",
+        "routes/nftMint.ts",
+        "routes/redirect.ts",
+        "routes/web3Wallet.ts"
+      ],
+      "tier": "application"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "blockchain-client",
+          "evidence": [
+            {
+              "file": "frontend/src/app/faucet/faucet.component.ts",
+              "line": 29
+            },
+            {
+              "file": "frontend/src/app/faucet/faucet.component.ts",
+              "line": 110
+            },
+            {
+              "file": "frontend/src/app/faucet/faucet.component.ts",
+              "line": 137
+            },
+            {
+              "file": "frontend/src/app/faucet/faucet.component.ts",
+              "line": 217
+            }
+          ]
+        },
+        {
+          "capability": "oauth-client",
+          "evidence": [
+            {
+              "file": "frontend/src/app/login/login.component.ts",
+              "line": 31
+            },
+            {
+              "file": "frontend/src/app/login/login.component.ts",
+              "line": 148
+            }
+          ]
+        }
+      ],
+      "description": "Angular single-page client application for the shop.",
+      "id": "component-6ffaf23414c56207",
+      "language": "TypeScript",
+      "name": "Angular frontend",
+      "paths": [
+        "frontend/src/app/Models/backup.model.ts",
+        "frontend/src/app/Models/challenge.model.ts",
+        "frontend/src/app/Models/deliveryMethod.model.ts",
+        "frontend/src/app/Models/hint.model.ts",
+        "frontend/src/app/Models/product.model.ts",
+        "frontend/src/app/Models/review.model.ts",
+        "frontend/src/app/Models/securityQuestion.model.ts",
+        "frontend/src/app/Services/address.service.ts",
+        "frontend/src/app/Services/administration.service.ts",
+        "frontend/src/app/Services/basket.service.ts",
+        "frontend/src/app/Services/captcha.service.ts",
+        "frontend/src/app/Services/challenge.service.ts",
+        "frontend/src/app/Services/chat.service.ts",
+        "frontend/src/app/Services/code-fixes.service.ts",
+        "frontend/src/app/Services/code-snippet.service.ts",
+        "frontend/src/app/Services/complaint.service.ts",
+        "frontend/src/app/Services/configuration.service.ts",
+        "frontend/src/app/Services/conversation-storage.service.ts",
+        "frontend/src/app/Services/country-mapping.service.ts",
+        "frontend/src/app/Services/ctf-system-wide-notification.service.ts",
+        "frontend/src/app/Services/data-subject.service.ts",
+        "frontend/src/app/Services/delivery.service.ts",
+        "frontend/src/app/Services/feedback.service.ts",
+        "frontend/src/app/Services/hint.service.ts",
+        "frontend/src/app/Services/image-captcha.service.ts",
+        "frontend/src/app/Services/keys.service.ts",
+        "frontend/src/app/Services/languages.service.ts",
+        "frontend/src/app/Services/local-backup.service.ts",
+        "frontend/src/app/Services/order-history.service.ts",
+        "frontend/src/app/Services/payment.service.ts",
+        "frontend/src/app/Services/photo-wall.service.ts",
+        "frontend/src/app/Services/product-review.service.ts",
+        "frontend/src/app/Services/product.service.ts",
+        "frontend/src/app/Services/quantity.service.ts",
+        "frontend/src/app/Services/recycle.service.ts",
+        "frontend/src/app/Services/request.interceptor.ts",
+        "frontend/src/app/Services/security-answer.service.ts",
+        "frontend/src/app/Services/security-question.service.ts",
+        "frontend/src/app/Services/snack-bar-helper.service.ts",
+        "frontend/src/app/Services/socket-io.service.ts",
+        "frontend/src/app/Services/track-order.service.ts",
+        "frontend/src/app/Services/two-factor-auth-service.ts",
+        "frontend/src/app/Services/user.service.ts",
+        "frontend/src/app/Services/vuln-lines.service.ts",
+        "frontend/src/app/Services/wallet.service.ts",
+        "frontend/src/app/Services/window-ref.service.ts",
+        "frontend/src/app/about/about.component.html",
+        "frontend/src/app/about/about.component.ts",
+        "frontend/src/app/accounting/accounting.component.html",
+        "frontend/src/app/accounting/accounting.component.ts",
+        "frontend/src/app/address-create/address-create.component.html",
+        "frontend/src/app/address-create/address-create.component.ts",
+        "frontend/src/app/address-select/address-select.component.html",
+        "frontend/src/app/address-select/address-select.component.ts",
+        "frontend/src/app/address/address.component.html",
+        "frontend/src/app/address/address.component.ts",
+        "frontend/src/app/administration/administration.component.html",
+        "frontend/src/app/administration/administration.component.ts",
+        "frontend/src/app/app.component.html",
+        "frontend/src/app/app.component.ts",
+        "frontend/src/app/app.guard.ts",
+        "frontend/src/app/app.routing.ts",
+        "frontend/src/app/basket/basket.component.html",
+        "frontend/src/app/basket/basket.component.ts",
+        "frontend/src/app/challenge-solved-notification/challenge-solved-notification.component.html",
+        "frontend/src/app/challenge-solved-notification/challenge-solved-notification.component.ts",
+        "frontend/src/app/challenge-status-badge/challenge-status-badge.component.html",
+        "frontend/src/app/challenge-status-badge/challenge-status-badge.component.ts",
+        "frontend/src/app/change-password/change-password.component.html",
+        "frontend/src/app/change-password/change-password.component.ts",
+        "frontend/src/app/chatbot/chat-conversation/chat-conversation.component.html",
+        "frontend/src/app/chatbot/chat-conversation/chat-conversation.component.ts",
+        "frontend/src/app/chatbot/chat-input-box/chat-input-box.component.html",
+        "frontend/src/app/chatbot/chat-input-box/chat-input-box.component.ts",
+        "frontend/src/app/chatbot/chat-welcome-page/chat-welcome-page.component.ts",
+        "frontend/src/app/chatbot/chat-welcome-screen/chat-welcome-screen.component.html",
+        "frontend/src/app/chatbot/chat-welcome-screen/chat-welcome-screen.component.ts",
+        "frontend/src/app/chatbot/chat.model.ts",
+        "frontend/src/app/chatbot/chatbot.component.html",
+        "frontend/src/app/chatbot/chatbot.component.ts",
+        "frontend/src/app/coding-challenge-page/coding-challenge-page.component.html",
+        "frontend/src/app/coding-challenge-page/coding-challenge-page.component.ts",
+        "frontend/src/app/coding-challenge-page/coding-challenge.types.ts",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-find-it/coding-challenge-find-it.component.html",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-find-it/coding-challenge-find-it.component.ts",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-find-it/format-selected-lines.ts",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-fix-it/coding-challenge-fix-it.component.html",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-fix-it/coding-challenge-fix-it.component.ts",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-section/coding-challenge-section.component.html",
+        "frontend/src/app/coding-challenge-page/components/coding-challenge-section/coding-challenge-section.component.ts",
+        "frontend/src/app/coding-challenge-page/helpers/handle-verdict.ts",
+        "frontend/src/app/complaint/complaint.component.html",
+        "frontend/src/app/complaint/complaint.component.ts",
+        "frontend/src/app/contact/contact.component.html",
+        "frontend/src/app/contact/contact.component.ts",
+        "frontend/src/app/ctf-system-wide-notification/ctf-system-wide-notification.component.html",
+        "frontend/src/app/ctf-system-wide-notification/ctf-system-wide-notification.component.ts",
+        "frontend/src/app/data-export/data-export.component.html",
+        "frontend/src/app/data-export/data-export.component.ts",
+        "frontend/src/app/delivery-method/delivery-method.component.html",
+        "frontend/src/app/delivery-method/delivery-method.component.ts",
+        "frontend/src/app/deluxe-user/deluxe-user.component.html",
+        "frontend/src/app/deluxe-user/deluxe-user.component.ts",
+        "frontend/src/app/error-page/error-page.component.html",
+        "frontend/src/app/error-page/error-page.component.ts",
+        "frontend/src/app/faucet/faucet.component.html",
+        "frontend/src/app/faucet/faucet.component.ts",
+        "frontend/src/app/faucet/faucet.module.ts",
+        "frontend/src/app/feedback-details/feedback-details.component.html",
+        "frontend/src/app/feedback-details/feedback-details.component.ts",
+        "frontend/src/app/forgot-password/forgot-password.component.html",
+        "frontend/src/app/forgot-password/forgot-password.component.ts",
+        "frontend/src/app/last-login-ip/last-login-ip.component.html",
+        "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+        "frontend/src/app/login/login.component.html",
+        "frontend/src/app/login/login.component.ts",
+        "frontend/src/app/mat-search-bar/abstract-value-accessor.ts",
+        "frontend/src/app/mat-search-bar/mat-search-bar.component.html",
+        "frontend/src/app/mat-search-bar/mat-search-bar.component.ts",
+        "frontend/src/app/navbar/navbar.component.html",
+        "frontend/src/app/navbar/navbar.component.ts",
+        "frontend/src/app/nft-unlock/nft-unlock.component.html",
+        "frontend/src/app/nft-unlock/nft-unlock.component.ts",
+        "frontend/src/app/oauth/oauth.component.html",
+        "frontend/src/app/oauth/oauth.component.ts",
+        "frontend/src/app/order-completion/order-completion.component.html",
+        "frontend/src/app/order-completion/order-completion.component.ts",
+        "frontend/src/app/order-history/order-history.component.html",
+        "frontend/src/app/order-history/order-history.component.ts",
+        "frontend/src/app/order-summary/order-summary.component.html",
+        "frontend/src/app/order-summary/order-summary.component.ts",
+        "frontend/src/app/password-strength-info/password-strength-info.component.html",
+        "frontend/src/app/password-strength-info/password-strength-info.component.ts",
+        "frontend/src/app/password-strength/password-strength.component.html",
+        "frontend/src/app/password-strength/password-strength.component.ts",
+        "frontend/src/app/payment-method/payment-method.component.html",
+        "frontend/src/app/payment-method/payment-method.component.ts",
+        "frontend/src/app/payment/payment.component.html",
+        "frontend/src/app/payment/payment.component.ts",
+        "frontend/src/app/photo-wall/mime-type.validator.ts",
+        "frontend/src/app/photo-wall/photo-wall.component.html",
+        "frontend/src/app/photo-wall/photo-wall.component.ts",
+        "frontend/src/app/privacy-policy/privacy-policy.component.html",
+        "frontend/src/app/privacy-policy/privacy-policy.component.ts",
+        "frontend/src/app/privacy-security/privacy-security.component.html",
+        "frontend/src/app/privacy-security/privacy-security.component.ts",
+        "frontend/src/app/product-details/product-details.component.html",
+        "frontend/src/app/product-details/product-details.component.ts",
+        "frontend/src/app/product-review-edit/product-review-edit.component.html",
+        "frontend/src/app/product-review-edit/product-review-edit.component.ts",
+        "frontend/src/app/product/product.component.html",
+        "frontend/src/app/product/product.component.ts",
+        "frontend/src/app/purchase-basket/purchase-basket.component.html",
+        "frontend/src/app/purchase-basket/purchase-basket.component.ts",
+        "frontend/src/app/qr-code/qr-code.component.html",
+        "frontend/src/app/qr-code/qr-code.component.ts",
+        "frontend/src/app/recycle/recycle.component.html",
+        "frontend/src/app/recycle/recycle.component.ts",
+        "frontend/src/app/register/register.component.html",
+        "frontend/src/app/register/register.component.ts",
+        "frontend/src/app/roles.ts",
+        "frontend/src/app/saved-address/saved-address.component.html",
+        "frontend/src/app/saved-address/saved-address.component.ts",
+        "frontend/src/app/saved-payment-methods/saved-payment-methods.component.html",
+        "frontend/src/app/saved-payment-methods/saved-payment-methods.component.ts",
+        "frontend/src/app/score-board/components/challenge-card/challenge-card.component.html",
+        "frontend/src/app/score-board/components/challenge-card/challenge-card.component.ts",
+        "frontend/src/app/score-board/components/challenges-unavailable-warning/challenges-unavailable-warning.component.html",
+        "frontend/src/app/score-board/components/challenges-unavailable-warning/challenges-unavailable-warning.component.ts",
+        "frontend/src/app/score-board/components/coding-challenge-progress-score-card/coding-challenge-progress-score-card.component.html",
+        "frontend/src/app/score-board/components/coding-challenge-progress-score-card/coding-challenge-progress-score-card.component.ts",
+        "frontend/src/app/score-board/components/difficulty-overview-score-card/difficulty-overview-score-card.component.html",
+        "frontend/src/app/score-board/components/difficulty-overview-score-card/difficulty-overview-score-card.component.ts",
+        "frontend/src/app/score-board/components/difficulty-stars/difficulty-stars.component.html",
+        "frontend/src/app/score-board/components/difficulty-stars/difficulty-stars.component.ts",
+        "frontend/src/app/score-board/components/filter-settings/components/category-filter/category-filter.component.html",
+        "frontend/src/app/score-board/components/filter-settings/components/category-filter/category-filter.component.ts",
+        "frontend/src/app/score-board/components/filter-settings/components/score-board-additional-settings-dialog/score-board-additional-settings-dialog.component.html",
+        "frontend/src/app/score-board/components/filter-settings/components/score-board-additional-settings-dialog/score-board-additional-settings-dialog.component.ts",
+        "frontend/src/app/score-board/components/filter-settings/filter-settings.component.html",
+        "frontend/src/app/score-board/components/filter-settings/filter-settings.component.ts",
+        "frontend/src/app/score-board/components/filter-settings/pipes/difficulty-selection-summary.pipe.ts",
+        "frontend/src/app/score-board/components/hacking-challenge-progress-score-card/hacking-challenge-progress-score-card.component.html",
+        "frontend/src/app/score-board/components/hacking-challenge-progress-score-card/hacking-challenge-progress-score-card.component.ts",
+        "frontend/src/app/score-board/components/score-card/score-card.component.html",
+        "frontend/src/app/score-board/components/score-card/score-card.component.ts",
+        "frontend/src/app/score-board/components/tutorial-mode-warning/tutorial-mode-warning.component.html",
+        "frontend/src/app/score-board/components/tutorial-mode-warning/tutorial-mode-warning.component.ts",
+        "frontend/src/app/score-board/components/warning-card/warning-card.component.html",
+        "frontend/src/app/score-board/components/warning-card/warning-card.component.ts",
+        "frontend/src/app/score-board/filter-settings/FilterSetting.ts",
+        "frontend/src/app/score-board/filter-settings/query-params-converters.ts",
+        "frontend/src/app/score-board/helpers/challenge-filtering.ts",
+        "frontend/src/app/score-board/helpers/challenge-sorting.ts",
+        "frontend/src/app/score-board/score-board.component.html",
+        "frontend/src/app/score-board/score-board.component.ts",
+        "frontend/src/app/score-board/types/EnrichedChallenge.ts",
+        "frontend/src/app/search-result/search-result.component.html",
+        "frontend/src/app/search-result/search-result.component.ts",
+        "frontend/src/app/server-started-notification/server-started-notification.component.html",
+        "frontend/src/app/server-started-notification/server-started-notification.component.ts",
+        "frontend/src/app/shared/codemirror-extensions.ts",
+        "frontend/src/app/shared/codemirror-theme.ts",
+        "frontend/src/app/sidenav/sidenav.component.html",
+        "frontend/src/app/sidenav/sidenav.component.ts",
+        "frontend/src/app/token-sale/token-sale.component.html",
+        "frontend/src/app/token-sale/token-sale.component.ts",
+        "frontend/src/app/track-result/track-result.component.html",
+        "frontend/src/app/track-result/track-result.component.ts",
+        "frontend/src/app/two-factor-auth-enter/two-factor-auth-enter.component.html",
+        "frontend/src/app/two-factor-auth-enter/two-factor-auth-enter.component.ts",
+        "frontend/src/app/two-factor-auth/two-factor-auth.component.html",
+        "frontend/src/app/two-factor-auth/two-factor-auth.component.ts",
+        "frontend/src/app/user-details/user-details.component.html",
+        "frontend/src/app/user-details/user-details.component.ts",
+        "frontend/src/app/wallet-web3/wallet-web3.component.html",
+        "frontend/src/app/wallet-web3/wallet-web3.component.ts",
+        "frontend/src/app/wallet-web3/wallet-web3.module.ts",
+        "frontend/src/app/wallet/wallet.component.html",
+        "frontend/src/app/wallet/wallet.component.ts",
+        "frontend/src/app/web3-sandbox/web3-sandbox.component.html",
+        "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+        "frontend/src/app/web3-sandbox/web3-sandbox.module.ts",
+        "frontend/src/app/welcome-banner/welcome-banner.component.html",
+        "frontend/src/app/welcome-banner/welcome-banner.component.ts",
+        "frontend/src/app/welcome/welcome.component.html",
+        "frontend/src/app/welcome/welcome.component.ts",
+        "frontend/src/assets/private/CopyShader.js",
+        "frontend/src/assets/private/EffectComposer.js",
+        "frontend/src/assets/private/MaskPass.js",
+        "frontend/src/assets/private/OrbitControls.js",
+        "frontend/src/assets/private/RenderPass.js",
+        "frontend/src/assets/private/ShaderPass.js",
+        "frontend/src/assets/private/dat.gui.min.js",
+        "frontend/src/assets/private/stats.min.js",
+        "frontend/src/assets/private/three.js",
+        "frontend/src/assets/private/threejs-demo.html",
+        "frontend/src/assets/public/ContractABIs.ts",
+        "frontend/src/confetti/index.ts",
+        "frontend/src/environments/environment.prod.ts",
+        "frontend/src/environments/environment.ts",
+        "frontend/src/hacking-instructor/challenges/adminSection.ts",
+        "frontend/src/hacking-instructor/challenges/bonusPayload.ts",
+        "frontend/src/hacking-instructor/challenges/codingChallenges.ts",
+        "frontend/src/hacking-instructor/challenges/domXss.ts",
+        "frontend/src/hacking-instructor/challenges/exposedCredentials.ts",
+        "frontend/src/hacking-instructor/challenges/forgedFeedback.ts",
+        "frontend/src/hacking-instructor/challenges/loginAdmin.ts",
+        "frontend/src/hacking-instructor/challenges/loginBender.ts",
+        "frontend/src/hacking-instructor/challenges/loginJim.ts",
+        "frontend/src/hacking-instructor/challenges/passwordStrength.ts",
+        "frontend/src/hacking-instructor/challenges/privacyPolicy.ts",
+        "frontend/src/hacking-instructor/challenges/reflectedXss.ts",
+        "frontend/src/hacking-instructor/challenges/scoreBoard.ts",
+        "frontend/src/hacking-instructor/challenges/viewBasket.ts",
+        "frontend/src/hacking-instructor/helpers/helpers.ts",
+        "frontend/src/hacking-instructor/index.ts",
+        "frontend/src/hacking-instructor/tutorialUnavailable.ts",
+        "frontend/src/index.html",
+        "frontend/src/main.ts",
+        "frontend/src/vitest.d.ts"
+      ],
+      "tier": "client"
+    },
+    {
+      "description": "Embedded MarsDB collections for reviews and orders.",
+      "id": "component-790db1fed70651aa",
+      "name": "MarsDB embedded store",
+      "paths": [
+        "data/mongodb.ts"
+      ],
+      "tier": "data"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "websocket-endpoint",
+          "evidence": [
+            {
+              "file": "lib/startup/registerWebsocketEvents.ts",
+              "line": 20
+            },
+            {
+              "file": "lib/startup/registerWebsocketEvents.ts",
+              "line": 23
+            }
+          ]
+        }
+      ],
+      "complexity": "simple",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "description": "Server-side socket.io real-time channel pushing live events to connected browsers. Internet-facing WebSocket surface with its own connection auth/origin checks and message-handler trust boundary.",
+      "framework": "socket.io",
+      "handles_sensitive_data": false,
+      "id": "component-8c3a32ee53769307",
+      "language": "TypeScript",
+      "name": "Real-time WebSocket Channel",
+      "paths": [
+        "lib/challengeUtils.ts",
+        "lib/startup/registerWebsocketEvents.ts"
+      ],
+      "tier": "application"
+    },
+    {
+      "description": "Sequelize-managed SQLite database stored in a local file.",
+      "id": "component-b213d5ab01236933",
+      "name": "SQLite embedded store",
+      "paths": [
+        "models/index.ts"
+      ],
+      "tier": "data"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "jwt-issuer",
+          "evidence": [
+            {
+              "file": "lib/insecurity.ts",
+              "line": 54
+            }
+          ]
+        },
+        {
+          "capability": "mfa-verifier",
+          "evidence": [
+            {
+              "file": "routes/2fa.ts",
+              "line": 31
+            },
+            {
+              "file": "routes/2fa.ts",
+              "line": 119
+            }
+          ]
+        },
+        {
+          "capability": "websocket-endpoint",
+          "evidence": [
+            {
+              "file": "lib/startup/registerWebsocketEvents.ts",
+              "line": 20
+            },
+            {
+              "file": "lib/startup/registerWebsocketEvents.ts",
+              "line": 23
+            }
+          ]
+        }
+      ],
+      "complexity": "moderate",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "description": "Login, token/session issuance, password-reset and MFA handlers (routes/login.ts, routes/saveLoginIp.ts, lib/insecurity.ts, lib/startup/registerWebsocketEvents.ts, \u2026). The credential-bearing entry surface \u2014 the highest-value authentication boundary in the system.",
+      "framework": null,
+      "handles_sensitive_data": true,
+      "id": "component-dff0840e0f4855be",
+      "language": "TypeScript",
+      "name": "Authentication & Session Surface",
+      "paths": [
+        "lib/insecurity.ts",
+        "lib/startup/registerWebsocketEvents.ts",
+        "routes/2fa.ts",
+        "routes/authenticatedUsers.ts",
+        "routes/login.ts",
+        "routes/resetPassword.ts",
+        "routes/saveLoginIp.ts"
+      ],
+      "tier": "application"
+    }
+  ],
+  "schema_version": 1
+}
