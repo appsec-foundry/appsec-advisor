@@ -1869,6 +1869,49 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
     ]
 
 
+def test_the_whole_closing_block_is_kept_as_plain_text_in_the_work_directory(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".assessment-work").mkdir()
+    (tmp_path / "threat-model.yaml").write_text("threats:\n  - {t_id: T-001, risk: High}\n")
+    outcome = {
+        "repositories": ["edge"],
+        "output": str(tmp_path),
+        "calls": 3,
+        "spent_usd": 1.0,
+        "deliverables": ["threat-model.md"],
+        "warnings": ["one optional job was replaced"],
+        "infos": ["3 program files belong to no component"],
+        "gate_violations": ["T-001(high)"],
+        "fail_on": "high",
+    }
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: outcome)
+    assert controller.assess_main(["--repo", "edge"]) == 20
+    console = capsys.readouterr()
+    saved = (tmp_path / ".assessment-work" / controller.ASSESSMENT_SUMMARY_NAME).read_text()
+    # The head, which a tail of the log loses first, and every line after it, without colour codes.
+    assert saved.startswith("✓ Threat model of edge written in ")
+    assert "  Next        " in saved and "⚠ one optional job was replaced" in saved
+    assert saved.rstrip().endswith("✗ PR gate: 1 new threat(s) at or above 'high': T-001(high)")
+    assert "\033[" not in saved
+    err = controller.ANSI_RE.sub("", console.err).splitlines()
+    closing = err[err.index("⚠ one optional job was replaced") :]
+    assert saved.splitlines() == controller.ANSI_RE.sub("", console.out).splitlines() + closing
+
+
+def test_a_summary_defect_after_publication_keeps_the_run_successful(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".assessment-work").mkdir()
+    outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1, "deliverables": []}
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: outcome)
+
+    def broken(output):
+        raise ValueError("unreadable model")
+
+    monkeypatch.setattr("renderers.summarize_threat_model.completion_rows", broken)
+    assert controller.assess_main(["--repo", "edge"]) == 0
+    err = capsys.readouterr().err
+    assert f"completion summary unavailable: unreadable model; the report is in {tmp_path}" in err
+    assert "completion summary not saved: unreadable model" in err
+
+
 def test_coverage_statements_close_the_run_under_one_heading(tmp_path, monkeypatch, capsys):
     outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1, "deliverables": []}
     infos = ["3 program files belong to no component", "2 security-relevant code locations stayed open"]
