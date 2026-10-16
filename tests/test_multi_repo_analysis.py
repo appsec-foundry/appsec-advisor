@@ -1544,6 +1544,48 @@ def test_a_scanner_lead_on_a_registration_line_joins_its_route_decision(tmp_path
 
 
 @pytest.mark.parametrize(
+    "registration,handler", [("server.ts", "routes/login.ts"), ("src/app.js", "handlers/v2/session.js")]
+)
+@pytest.mark.parametrize("owner", ["same", "other"])
+def test_data_flow_evidence_on_a_registration_line_joins_its_route_decision(tmp_path, registration, handler, owner):
+    """A data flow citing a registration line adds no handler-less target there (it would stay unresolved)."""
+    files = {
+        registration: (
+            b"const app = express()\n"
+            b"app.post('/rest/user/login', login())\n"
+            b"const sessionSecret = process.env.SECRET || 'fallback'\n"
+        ),
+        handler: b"export const login = () => (req, res) => db.query(req.body.email)\n",
+    }
+    scope, server = _owned_sources(tmp_path, files, sorted(files) if owner == "same" else [registration])
+    rid = scope.repositories[0].repository_id
+    auth = dict(server, id="component-2", name="Auth", paths=[dict(repository_id=rid, path=handler)])
+
+    def cite(line):
+        return {"repository_id": rid, "file": registration, "line": line}
+
+    architecture = {
+        "components": {"components": [server] + ([auth] if owner == "other" else [])},
+        "data_flows": {"data_flows": [{"id": "df-1", "evidence": [cite(2), cite(3)]}]},
+        "route_inventories": {rid: {"routes": [_route("R-1", "POST", "/rest/user/login", registration, 2)]}},
+        "route_handler_modules": {rid: {"R-1": handler}},
+    }
+    by_anchor = {
+        (t["evidence"]["file"], t["evidence"]["line"]): t
+        for t in stage.analysis_targets(scope, server, architecture, [])
+    }
+    assert (registration, 2) not in by_anchor
+    if owner == "same":
+        # Decided with the handler, which reads the registration beside it.
+        assert by_anchor[(handler, 1)]["kinds"] == ["route", "data-flow"]
+    else:
+        # The handler's owner decides the route; this component adds nothing for it.
+        assert handler not in {file for file, _ in by_anchor}
+    # Data-flow evidence on any other line stays its own target.
+    assert by_anchor[(registration, 3)]["kinds"] == ["data-flow"]
+
+
+@pytest.mark.parametrize(
     "script,reference,template",
     [
         ("src/app/about/about.component.ts", "./about.component.html", "src/app/about/about.component.html"),

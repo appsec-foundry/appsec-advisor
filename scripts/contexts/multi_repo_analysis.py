@@ -247,9 +247,10 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     the handler: a component owning the handler module but not the
     registration file still decides the route, with the registration window
     as a related read; the registration file's component leaves a route whose
-    handler another finalized component owns to that component. A scanner
-    lead at a registration line joins the decision of the route registered
-    there instead of becoming a second target. A target in a component file
+    handler another finalized component owns to that component. Evidence at a
+    registration line, whether scanner lead, data flow, capability or outbound
+    call, joins the decision of the route registered there instead of becoming
+    a second target. A target in a component file
     or in the template it names (`template_pairs`) reads the other file as
     related. A file without any
     other lead becomes a target only when
@@ -391,26 +392,35 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
                 target = add({"repository_id": rid, "file": path, "line": remaining[0][0]}, "route")
                 if target is not None:
                     list_routes(target, remaining, rid, path)
-    for rid, destinations in architecture.get("egress_inventories", {}).items():
-        for destination in destinations:
-            for evidence in destination["evidence"]:
-                add({**evidence, "repository_id": rid}, "outbound-call")
-    for evidence in source_rows(component):
-        add(evidence, "component-capability")
-    for flow in architecture["data_flows"]["data_flows"]:
-        for evidence in source_rows(flow):
-            add(evidence, "data-flow")
-    for finding in scanned:
-        evidence = finding["evidence"]
+
+    def lead(evidence, kind):
+        """A target for `evidence`, unless it cites a registration line whose route is decided elsewhere.
+
+        Such evidence joins the handler's target, or none when another
+        component decides the route: a second target at the registration
+        line would lack the handler and stay unresolved.
+        """
         rid, path = evidence.get("repository_id"), evidence.get("file")
         if (rid, path) in own and evidence.get("line"):
             joined = registered.get((rid, path, code_line(rid, path, evidence["line"])))
             if joined is not None:
                 for target in joined:
-                    if "scanner-lead" not in target["kinds"]:
-                        target["kinds"].append("scanner-lead")
-                continue
-        add(evidence, "scanner-lead")
+                    if kind not in target["kinds"]:
+                        target["kinds"].append(kind)
+                return
+        add(evidence, kind)
+
+    for rid, destinations in architecture.get("egress_inventories", {}).items():
+        for destination in destinations:
+            for evidence in destination["evidence"]:
+                lead({**evidence, "repository_id": rid}, "outbound-call")
+    for evidence in source_rows(component):
+        lead(evidence, "component-capability")
+    for flow in architecture["data_flows"]["data_flows"]:
+        for evidence in source_rows(flow):
+            lead(evidence, "data-flow")
+    for finding in scanned:
+        lead(finding["evidence"], "scanner-lead")
     # A file without a lead is investigated when it shows a security signal;
     # neither a known route elsewhere nor an unsupported stack hides it.
     # A first-code-line lead does not claim to enumerate all mechanisms in a file.
