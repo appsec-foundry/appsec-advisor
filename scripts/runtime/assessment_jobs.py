@@ -59,6 +59,7 @@ class AssessmentBudget(DiscoveryBudget):
         ):
             raise ExchangeError("Invalid full-assessment budget")
         self.deadline = time.monotonic() + self.timeout_s
+        self._clocks = (time.monotonic(), time.time())
         self.failed = False
         self.init_retries()
         self.required = {}
@@ -128,6 +129,20 @@ class AssessmentBudget(DiscoveryBudget):
             return 0.0
         return available
 
+    def _charge_sleep(self):
+        """Take the time the machine slept off the deadline.
+
+        The monotonic clock stops during suspend, but the run's limit
+        (`expires_at`) is wall time: a run must not wake up and keep going
+        after it expired.
+        """
+        with self._lock:
+            monotonic, wall = time.monotonic(), time.time()
+            slept = (wall - self._clocks[1]) - (monotonic - self._clocks[0])
+            if slept > 0:
+                self.deadline -= slept
+            self._clocks = (monotonic, wall)
+
     def call_seconds(self):
         seconds = self.remaining_seconds()
         if self.reserve_completion:
@@ -148,6 +163,7 @@ class AssessmentBudget(DiscoveryBudget):
 
     def remaining_seconds(self):
         # Every individual exchange still has the existing one-hour ceiling.
+        self._charge_sleep()
         try:
             return min(3600, super().remaining_seconds())
         except HostCancelled as exc:

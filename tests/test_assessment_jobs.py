@@ -228,6 +228,18 @@ def test_assessment_duration_remains_bounded(seconds):
         AssessmentBudget(1, 0.1, 10, seconds)
 
 
+def test_time_asleep_counts_against_the_deadline(monkeypatch):
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    budget = AssessmentBudget(1.0, 0.05, 10, 3600)
+    assert budget.remaining_seconds() > 3500
+    # Suspend: wall time moves on, the monotonic clock does not.
+    woke = time.time() + 2 * 3600
+    monkeypatch.setattr(time, "time", lambda: woke)
+    with pytest.raises(BudgetExhausted):
+        budget.remaining_seconds()
+
+
 def test_aggregate_deadline_and_unknown_cost_close_dispatch(tmp_path):
     jobs, host, kwargs, _ = setup(tmp_path)
     jobs.budget.deadline = 0
