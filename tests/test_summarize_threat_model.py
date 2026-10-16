@@ -586,3 +586,23 @@ def test_completion_rows_share_the_overview_numbers(tmp_path):
     assert stm.completion_rows(tmp_path / "missing") == []
     (tmp_path / "threat-model.yaml").write_text(": not yaml: [")
     assert stm.completion_rows(tmp_path) == []
+
+
+def test_completion_rows_name_the_register_count_when_practice_sites_fold(tmp_path):
+    """The console states the §8 card count whenever the headline folds practice
+    sites, as the show-threat-model overview does."""
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: High}
+          - {t_id: T-002, risk: High, evidence_tier: insecure-practice}
+        weaknesses:
+          - kind: implementation
+            severity: Medium
+            severity_basis: observed-practice
+            observable_backing: {practice_evidence: [{file: a.ts, line: 1, id: T-002}]}
+    """
+    _write_model(tmp_path, body)
+    rows = stm.completion_rows(tmp_path)
+    assert rows[0] == ("Findings", "1 · High 1")
+    assert rows[1] == ("", "§8 register lists 2; practice sites fold into weaknesses")

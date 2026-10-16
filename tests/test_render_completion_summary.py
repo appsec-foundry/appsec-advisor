@@ -231,12 +231,19 @@ class TestSeverityBasisMatchesTheReport:
         register, so the console must not count them as standalone findings."""
         model = self._model(
             [
-                {"risk": "High", "evidence_tier": "insecure-practice"},
-                {"risk": "High", "evidence_tier": "insecure-practice"},
+                {"id": "T-001", "risk": "High", "evidence_tier": "insecure-practice"},
+                {"id": "T-002", "risk": "High", "evidence_tier": "insecure-practice"},
                 {"risk": "High"},
                 {"risk": "Critical"},
             ],
-            weaknesses=[{"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}],
+            weaknesses=[
+                {
+                    "kind": "implementation",
+                    "severity_basis": "confirmed",
+                    "severity": "High",
+                    "observable_backing": {"practice_evidence": [{"id": "T-001"}, {"id": "T-002"}]},
+                }
+            ],
         )
         m = rcs.extract_metrics(model, "")
 

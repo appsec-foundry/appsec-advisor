@@ -102,16 +102,56 @@ def test_risk_distribution_without_weakness_register_counts_every_threat():
     }
 
 
+def _practice_weakness(*ids):
+    return {
+        "kind": "implementation",
+        "severity_basis": "observed-practice",
+        "severity": "Medium",
+        "observable_backing": {"practice_evidence": [{"file": "a.ts", "line": 1, "id": i} for i in ids]},
+    }
+
+
 def test_risk_distribution_folds_practice_sites_when_weaknesses_exist():
     data = _model(
         [
-            {"risk": "Critical", "evidence_tier": "insecure-practice"},
-            {"risk": "Critical"},
+            {"id": "T-001", "risk": "Critical", "evidence_tier": "insecure-practice"},
+            {"id": "T-002", "risk": "Critical"},
         ],
-        weaknesses=[{"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}],
+        weaknesses=[_practice_weakness("T-001")],
     )
     counts = sr.risk_distribution_counts(data)
     assert counts["critical"] == 1
+
+
+@pytest.mark.parametrize(
+    "listed,folds",
+    [
+        (["T-007"], True),  # listed by its weakness
+        (["F-007"], True),  # listed under its display id
+        (["T-070"], False),  # a different finding is listed
+        ([], False),  # the weakness lists no practice site
+    ],
+)
+def test_practice_site_folds_only_when_a_weakness_lists_it(listed, folds):
+    """A practice site no weakness lists must stay a finding: folding it drops
+    it from the headline and from every weakness at once."""
+    site = {"id": "T-007", "risk": "Medium", "evidence_tier": "insecure-practice"}
+    data = _model([site], weaknesses=[_practice_weakness(*listed)])
+    headline = sum(sr.risk_distribution_counts(data).values())
+    assert headline == (0 if folds else 1)
+    represented = [p["id"][2:] for w in data["weaknesses"] for p in w["observable_backing"]["practice_evidence"]]
+    # Invariant: every register finding is in the headline or under a weakness.
+    assert headline == 1 or site["id"][2:] in represented
+
+
+def test_practice_site_above_its_weakness_severity_still_folds():
+    """Membership alone decides: a practice-only weakness takes its severity
+    from design signals, never from its unproven sites."""
+    data = _model(
+        [{"id": "T-001", "risk": "Critical", "evidence_tier": "insecure-practice"}],
+        weaknesses=[_practice_weakness("T-001")],
+    )
+    assert sum(sr.risk_distribution_counts(data).values()) == 0
 
 
 def test_risk_distribution_adds_design_risk_weakness_once():
@@ -203,12 +243,12 @@ def test_finding_confirmation_counts_the_risk_distribution_findings(with_registe
         {"risk": "Medium", "evidence_tier": "confirmed-exploitable", "evidence_check": "ambiguous"},
         {"risk": "Medium", "evidence_tier": "confirmed-exploitable"},
         {"risk": "High", "source": "coverage-gap", "evidence_check": "verified"},
-        {"risk": "High", "evidence_tier": "insecure-practice", "evidence_check": "verified"},
+        {"id": "T-005", "risk": "High", "evidence_tier": "insecure-practice", "evidence_check": "verified"},
         {"risk": "Critical", "evidence_check": "refuted"},
         {"risk": "unrated", "evidence_check": "verified"},
     ]
     weaknesses = (
-        [{"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}, {"kind": "implementation"}]
+        [{"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}, _practice_weakness("T-005")]
         if with_register
         else []
     )
