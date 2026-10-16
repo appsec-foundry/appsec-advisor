@@ -301,6 +301,43 @@ def test_a_failed_best_effort_scanner_is_a_run_warning(tmp_path, monkeypatch):
     assert any("analyzers/source_auth_scanner.py failed" in warning for warning in outcome["warnings"])
 
 
+def test_requested_exports_and_slug_are_published(tmp_path, monkeypatch):
+    """Every export flag the session runtime accepted still produces its deliverable, stamped copies included."""
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    real = controller._run_script
+
+    # The PDF exporter needs a browser the test environment may not grant; its
+    # own tests cover the conversion, this one the controller's wiring.
+    def run_script(name, args, *rest, **kwargs):
+        if name == "exporters/export_pdf.py":
+            Path(args[args.index("--output") + 1]).write_bytes(b"%PDF-1.7\n")
+            return None
+        return real(name, args, *rest, **kwargs)
+
+    monkeypatch.setattr(controller, "_run_script", run_script)
+    outcome, _, out = _assess(
+        tmp_path,
+        monkeypatch,
+        ("solo",),
+        ("--yaml", "--sarif", "--threatdragon", "--pdf", "--pentest-tasks", "--slug", "probe"),
+    )
+    assert outcome["status"] == "complete"
+    expected = (
+        "threat-model.md",
+        "threat-model.yaml",
+        "threat-model.sarif.json",
+        "threat-model.threatdragon.json",
+        "threat-model.pdf",
+        "pentest-tasks.yaml",
+    )
+    for name in expected:
+        assert (out / name).is_file(), name
+        stamped = controller.stamp_threat_model._stamped_name(name, "probe")
+        assert (out / stamped).is_file(), stamped
+    assert json.loads((out / "threat-model.sarif.json").read_text())["runs"]
+    assert yaml.safe_load((out / "pentest-tasks.yaml").read_text())
+
+
 def test_a_failed_export_publishes_nothing_and_leaves_the_earlier_report(tmp_path, monkeypatch):
     """RB-5: deliverables are staged, so an export failure never leaves a new model beside an old report."""
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
