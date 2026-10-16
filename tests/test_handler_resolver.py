@@ -300,6 +300,106 @@ def test_registration_guards_keep_their_signal(tmp_path):
     assert route(ri.build_inventory(tmp_path), "/feedback")["authn_signal"] == "middleware_present"
 
 
+PUBLIC_HANDLER = "export function submit () {\n  return (req, res) => res.json(req.body)\n}\n"
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        # An identity cache: verifies through a callback and always continues.
+        "export const remember = () => (req, res, next) => {\n"
+        "  const token = req.cookies.token\n"
+        "  if (token) {\n"
+        "    jwt.verify(token, KEY, (err, claims) => { if (!err) seen.set(token, claims) })\n"
+        "  }\n"
+        "  next()\n"
+        "}\n",
+        # An audit hook: decodes through a same-file helper and always continues.
+        "export const remember = () => function (req, res, next) {\n"
+        "  inspect(req)\n"
+        "  next()\n"
+        "}\n"
+        "function inspect (request) {\n"
+        "  const claims = jwt.decode(request.headers.authorization)\n"
+        "  if (claims) audit.push(claims.sub)\n"
+        "}\n",
+    ],
+    ids=["callback-verify-cache", "decode-audit-helper"],
+)
+def test_a_global_pass_through_credential_loader_does_not_hide_an_open_route(tmp_path, hook):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app(
+                "routes/feedback",
+                "submit",
+                "/feedback",
+                "import { remember } from './lib/identity'\napp.use(remember())\n",
+            ),
+            "lib/identity.ts": hook,
+            "routes/feedback.ts": PUBLIC_HANDLER,
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/feedback")
+    assert row["authn_handler_signal"] == "none" and row["authn_signal"] == "absent"
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [
+        "  req.user = jwt.verify(req.headers.authorization, KEY)\n  next()\n",
+        "  if (!sessions.get(req.cookies.session)) return next(createError(401))\n  next()\n",
+        "  if (!sessions.get(req.cookies.session)) return res.sendStatus(StatusCodes.UNAUTHORIZED)\n  next()\n",
+        "  if (!sessions.get(req.cookies.session)) throw new HttpError(401)\n  next()\n",
+    ],
+    ids=["synchronous-verify", "next-with-error", "named-status", "throw"],
+)
+def test_a_credential_middleware_that_can_stop_the_request_stays_unresolved(tmp_path, stop):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app(
+                "routes/feedback",
+                "submit",
+                "/feedback",
+                "import { gate } from './lib/gate'\napp.use(gate())\n",
+            ),
+            "lib/gate.ts": f"export const gate = () => (req, res, next) => {{\n{stop}}}\n",
+            "routes/feedback.ts": PUBLIC_HANDLER,
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/feedback")
+    assert row["authn_handler_signal"] == "unresolved" and row["authn_signal"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("read", "expected"),
+    [
+        ("const { stepToken, code } = req.body", "unresolved"),
+        ("const stepToken = req.body.stepToken", "unresolved"),
+        ("const stepToken = req.query?.resumeToken", "unresolved"),
+        ("const stepToken = req.body.csrfToken", "none"),
+        ("const { captchaToken } = req.body", "none"),
+    ],
+)
+def test_a_token_read_from_the_body_or_query_is_a_credential(tmp_path, read, expected):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("routes/step", "confirm", "/step"),
+            "routes/step.ts": (
+                "export function confirm () {\n"
+                "  return (req, res) => {\n"
+                f"    {read}\n"
+                "    res.json({ ok: true })\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert route(ri.build_inventory(tmp_path), "/step")["authn_handler_signal"] == expected
+
+
 LIST_HANDLER = "export function listOrders () {\n  return (req, res) => res.json([])\n}\n"
 
 
