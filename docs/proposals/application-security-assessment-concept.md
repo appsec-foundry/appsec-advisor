@@ -1,6 +1,6 @@
 # Application security assessment concept
 
-Status: discussion draft, 2026-10-13. This proposal does not change approved requirements, record an accepted technical decision, or authorize implementation.
+Status: discussion draft, 2026-10-16; target release 0.6. This proposal does not change approved requirements, record an accepted technical decision, or authorize implementation.
 
 The proposed main workflow is **Application Security Assessment**, invoked through `/appsec-advisor:create-security-assessment`. Its result is a **Security Assessment Report**, saved as `security-assessment.md` with canonical data in `security-assessment.yaml`. The report subtitle makes its focus on security architecture, threats, and requirements implementation explicit. Threat modeling remains an analysis method and part of the result. This release changes commands, report titles, file names, and the default storage location together. It preserves the analysis content and removes the repository-publication skill. New project-document analysis and a design-based threat-modeling workflow are outside this proposal's implementation scope.
 
@@ -48,27 +48,48 @@ Use an action for the main skill and a consistent assessment noun for consumers.
 
 | Current skill | Proposed public name | Responsibility |
 |---|---|---|
-| `create-threat-model` | `create-security-assessment` | Run the assessment and produce the report. |
-| `update-threat-model` | `update-security-assessment` | Explain how to update an existing assessment; retain its current non-mutating helper behavior. |
+| `create-threat-model2` | `create-security-assessment` | Run the assessment and produce the report. The controller-based workflow becomes the only assessment workflow. |
+| `create-threat-model` | Removed; no replacement under this name. | Retire the legacy assessment workflow. The name stays reserved for the deferred design-based workflow. |
+| `update-threat-model` | Removed; no assessment replacement. | Its only behavior is a notice that incremental updates are unavailable; `create-security-assessment` help carries that notice. |
 | `show-threat-model` | `show-security-assessment` | Present an existing report. |
 | `ask-threat-model` | `ask-security-assessment` | Answer questions using the assessment. |
-| `review-threat-model` | `review-security-assessment` | Review and triage its findings. |
+| `review-threat-model` | `triage-security-assessment` | Triage findings: fix, accept risk, or build a remediation plan. “Review” would suggest checking report quality, which is `eval`. |
 | `export-threat-model` | `export-security-assessment` | Generate supported exports from an existing result. |
 | `publish-threat-model` | Removed; no assessment replacement. | Retire the workflow that makes generated files trackable and commits them to the analyzed repository. |
-| `threat-model-health` | `security-assessment-health` | Inspect freshness, retained artifacts, and active-run state. |
+| `threat-model-health` | `security-assessment-health` | Inspect freshness, retained artifacts, and active-run state. Its overlap with `status` and `show` is a separate topic; this release only renames it. |
 | `eval-threat-model` | `eval-security-assessment` | Evaluate result quality for development and testing. |
 
 Keep `analyze-threats`, `audit-security-requirements`, `verify-requirements`, `authnz-review`, and `security-score` as distinct specialized workflows. Their scopes do not become full assessments because the main workflow is renamed. Keep `status` and run-diagnostic commands unchanged.
 
-The renamed release does not retain the old assessment commands as aliases. Reserve `create-threat-model` for the later design-based workflow. Announce the command changes as an incompatible release boundary and update first-party invocations, headless launchers, packaging policies, and permissions together. Existing automation must explicitly select `create-security-assessment`; it must never silently start a future design-only workflow. Removal of command aliases does not authorize deleting existing reports or their retained state.
+The renamed release does not retain the old assessment commands as aliases or notice stubs; an old command name is simply unknown until a future workflow claims it. Reserve `create-threat-model` for the later design-based workflow. Announce the command changes as an incompatible release boundary and update first-party invocations, headless launchers, packaging policies, and permissions together. Existing automation must explicitly select `create-security-assessment`; it must never silently start a future design-only workflow. Removal of command aliases does not authorize deleting existing reports or their retained state.
 
 ## Proposed delivered files
 
-Use an application-specific directory outside the analyzed repositories as the default assessment destination. On Linux, place it under `$XDG_DATA_HOME/appsec-advisor/assessments/<application-id>/`, with `~/.local/share` as the base when `XDG_DATA_HOME` is unset or empty. Follow the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/) for the base directory; the `appsec-advisor/assessments/` layout is this product's choice, not an assessment-industry standard. Preserve `--output` as an explicit destination override.
+Use an application-specific directory outside the analyzed repositories as the default assessment destination. Assessment results can name exploitable weaknesses with file and line, attack paths, and pentest tasks. Inside a checkout, an ignore rule protects only against `git add .`, not against forced adds, copied or archived checkouts, synchronized project folders, CI workspace uploads, or other tools reading the repository. Outside the checkout, sharing becomes a deliberate export.
 
-Keep the report, canonical YAML, figures, retained triage, and assessment history together in that application directory. These are durable data, not disposable cache. Use a stable application identity so unrelated projects with the same display name cannot share results or overwrite one another. A combined assessment has its own identity for the selected application scope. The identity and lookup mechanism still need an implementation contract; model-authored names and repository content cannot select arbitrary write paths. Non-Linux default locations remain to be specified before claiming equivalent platform support.
+| Platform | Default base |
+|---|---|
+| Linux, including WSL | `$XDG_DATA_HOME/appsec-advisor/assessments/`, with `~/.local/share` as the base when `XDG_DATA_HOME` is unset or empty |
+| macOS | `~/Library/Application Support/appsec-advisor/assessments/` |
+| Windows | `%LOCALAPPDATA%\appsec-advisor\assessments\` |
 
-All assessment consumers, including show, ask, review, health, export, and specialized analysis that uses an existing assessment, resolve the same application destination. Completion output links to the generated report. A missing or ambiguous association cannot silently select another application's assessment. The default run keeps generated artifacts outside the source checkout and does not need publication exceptions in that checkout's `.gitignore`.
+Follow the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/) for the Linux base: assessments are durable user data, so neither the state nor the cache directory fits. The `appsec-advisor/assessments/` layout is this product's choice, not an assessment-industry standard. Preserve `--output` as an explicit destination override.
+
+Each application gets one directory named `<repo-name>-<hash8>`, for example `juice-shop-3f9a1c2e`. The name only helps a human find it; the hash makes it unique. Derive the hash from the normalized `origin` remote URL, or from the canonical repository root path when no remote exists. Clones and worktrees of the same remote therefore share one assessment, and the existing run lock serializes their runs. A combined assessment has its own identity for the selected application scope.
+
+```
+<base>/juice-shop-3f9a1c2e/
+├── security-assessment.md
+├── security-assessment.yaml
+├── figures/
+├── history/
+├── triage/
+└── .run/          # intermediate artifacts of the current or last run
+```
+
+Keep the report, canonical YAML, figures, retained triage, and assessment history together in that application directory. These are durable data, not disposable cache. Repository-owned inputs such as abuse cases, business context, and `.appsec/actors.yaml` stay in the repository.
+
+All assessment consumers, including show, ask, triage, health, export, and specialized analysis that uses an existing assessment, resolve the same application destination. Completion output prints the full path to the generated report, and `status` shows the resolved destination for the current repository. A missing or ambiguous association cannot silently select another application's assessment. The default run keeps generated artifacts outside the source checkout and does not need publication exceptions in that checkout's `.gitignore`.
 
 Change the common basename while preserving established formats and optional export behavior.
 
@@ -102,9 +123,9 @@ The first release changes public names and artifact storage without adding analy
 
 ### Export and sharing
 
-Remove `publish-threat-model` rather than renaming it. Its repository-specific `.gitignore` changes and signed Git commit are unnecessary for the external default destination. `export-security-assessment` continues to produce local files in the requested supported formats. Export does not authorize a Git commit, upload, or external publication, and this proposal adds no automatic sharing workflow.
+Remove `publish-threat-model` rather than renaming it. Its repository-specific `.gitignore` changes and signed Git commit are unnecessary for the external default destination. `export-security-assessment` continues to produce local files in the requested supported formats. Export does not authorize a Git commit, upload, or external publication, and this proposal adds no automatic sharing workflow. Sharing with a team happens only through an explicit export to a location the operator chooses; there is no configurable shared team destination.
 
-Retain shared secret validation and artifact-selection controls when retiring the publishing helper. Any future supported publication path must still satisfy `REQ-USE-007` and `REQ-TRU-002`. Private sidecars and `pentest-tasks.yaml` do not become ordinary publication artifacts because their parent directory moved. Related-repository analysis currently uses published YAML; its consumers need explicit local assessment references or operator-provided shared locations after the move. A path under one user's data directory is not a portable team reference.
+Retain shared secret validation and artifact-selection controls when retiring the publishing helper. Any future supported publication path must still satisfy `REQ-USE-007` and `REQ-TRU-002`. Private sidecars and `pentest-tasks.yaml` do not become ordinary publication artifacts because their parent directory moved. Related-repository analysis currently uses published YAML; its consumers need explicit assessment references, such as an exported YAML path, after the move. A path under one user's data directory is not a portable team reference.
 
 ## Trust and analysis boundaries
 
@@ -121,11 +142,22 @@ The workflow and storage transition preserves these boundaries:
 - Retain existing secret exclusion and artifact-selection controls. Moving files outside the checkout does not make private sidecars suitable for sharing.
 - Preserve explicit authorization for publication and other consequential actions. Running `create-security-assessment` does not itself authorize publishing or changing the analyzed project.
 
+The external destination itself must not become a weakness:
+
+- Create the application directory with mode `0700` and its files with mode `0600`.
+- Strip user information such as `https://token@host/...` from the remote URL before hashing, and never write the remote URL to files or logs.
+- Build `<repo-name>` as a sanitized, length-limited `[a-z0-9-]` slug. Repository content and model output never contribute to the path.
+- Refuse to write when the destination or a parent below the base is a symbolic link, belongs to another user, or has broader permissions than required.
+- Scope cleanup and migration to one application directory.
+- Declare only `<base>/appsec-advisor/**` in permissions and sandbox guidance, never the whole home directory.
+
+The external location does not protect against processes running as the same user, including Windows processes reaching a WSL home, against home-directory backups or synchronization, or against a lost unencrypted device. User documentation states these limits and points to disk encryption.
+
 Implementation needs boundary tests for destination resolution, application isolation, and migration. This concept does not establish that those new paths are safe.
 
 ## Compatibility and migration
 
-This release changes invocation names and artifact locations together. Data semantics and admitted analysis sources remain unchanged. Build the shared resolver before switching producers and consumers, but ship the public command and file transition in one release.
+Release 0.6 changes invocation names and artifact locations together; the changelog marks it as breaking with short upgrade instructions. Data semantics and admitted analysis sources remain unchanged. Build the shared resolver before switching producers and consumers, but ship the public command and file transition in one release.
 
 New assessments use `security-assessment.*` in the resolved external application directory unless the operator supplies `--output`. There is no release in which a new assessment command deliberately retains the old default filenames, and no old assessment command aliases. Document this boundary for existing users, organization packages, and CI callers under `REQ-EVO-003`.
 
@@ -133,11 +165,13 @@ Before switching the default filenames, update every first-party reader and writ
 
 When both naming sets exist, use validated run identity and artifact provenance to establish whether they represent the same result. If the relationship is ambiguous or contradictory, stop the affected operation with a concrete migration instruction. File modification time alone is not sufficient. A stale success report from a previous run cannot satisfy completion of a new run.
 
-At the next interactive assessment, offer once to import a detected legacy assessment into the external application directory. Explain that the import preserves existing results, history, and triage decisions. Import only after the operator agrees; declining or leaving the question unanswered does not authorize migration. Keep the old files after a successful import as well. Removing them is a separate operator action. Headless runs do not ask questions or infer migration consent; their explicit migration interface remains to be specified.
+At the next interactive assessment, offer once to import a detected legacy assessment into the external application directory. Explain that the import preserves existing results, history, and triage decisions. Import only after the operator agrees; declining or leaving the question unanswered does not authorize migration. Keep the old files after a successful import as well. Removing them is a separate operator action. Headless runs do not ask questions or infer migration consent. When they detect a legacy assessment without an explicit option, they stop with a concrete instruction instead of migrating or silently starting a fresh assessment. `--migrate-legacy` allows the import; `--ignore-legacy` starts without it and leaves the old files untouched.
+
+Only a legacy assessment that finished is offered for import. A run that was interrupted under the old version is not migrated or resumed; the message says it is incomplete and that the assessment must be started again.
 
 Migration from `docs/security/` to the external destination should check for an active run, validate the source set, preserve history and triage, update relative figure links, and install a coherent new artifact set. Preserve relative source-evidence links and repository-qualified references when moving away from the checkout. Never rename files underneath an active run. Define how an interrupted legacy run is resumed or completed before migration. Implement the transaction and rollback behavior in deterministic code. Neither deletion of the old set nor changes to tracked files are implicit.
 
-Do not write a second assessment under the old filenames. Existing consumers move to the new names or use explicitly selected legacy inputs during migration. The support window for reading and migrating old artifacts remains open; it is separate from the removal of command aliases in the first release.
+Do not write a second assessment under the old filenames. Existing consumers move to the new names or use explicitly selected legacy inputs during migration. Reading and migrating old artifacts is supported for one release: 0.6 detects legacy results in `docs/security/` and offers the import; the following release no longer treats that location as an assessment destination.
 
 Optional exports retain their current meaning. SARIF contains applicable findings, not the complete assessment. Threat Dragon represents the threat-model subset and remains subject to its documented information loss. A rename does not change that limitation. Exports, any future publication, and cleanup use explicit artifact sets; a broader wildcard must not accidentally disclose private sidecars or pentest tasks.
 
@@ -147,28 +181,39 @@ The following locations establish concrete change surfaces. They are an initial 
 
 | Surface | Current locations | Expected work |
 |---|---|---|
-| Public skills and help | `skills/create-threat-model/`, related skill directories, `skills/help/`, `README.md` | Replace assessment command names without aliases; update descriptions, invocation examples, and completion guidance. |
+| Public skills and help | `skills/create-threat-model2/`, related skill directories, `skills/help/`, `README.md` | Move `create-threat-model2` to `create-security-assessment` with `git mv`; replace consumer command names without aliases; remove `update-threat-model`; update descriptions, invocation examples, and completion guidance. |
 | Packaging policy | `scripts/runtime/skill_policy_gate.py`, `scripts/package_internal_plugin.py`, `docs/internal-plugin-packaging.md`, decision `EX-3` | Replace the currently mandatory `create-threat-model` assessment capability without permitting policy bypass. An approved decision change precedes changing the mandatory name. |
 | Routing and headless execution | `scripts/orchestrator/orchestration_controller.py`, `scripts/runtime/resolve_config.py`, `scripts/run-headless.sh` | Normalize commands; make output detection, compose recovery, success gates, update, and resume use the selected artifact set. |
 | Canonical result and rendering | `scripts/model/build_threat_model_yaml.py`, `scripts/renderers/compose_threat_model.py`, `data/sections-contract.yaml`, `templates/`, `schemas/threat-model.output*.schema.yaml` | Change visible titles and destinations together; preserve canonical analysis semantics. |
 | Report authoring and QA | `agents/`, `agents/shared/`, fragment schemas and validators | Align result terminology and file references; preserve report sections and evidence rules. |
-| Exports and post-run consumers | `scripts/exporters/`, export, ask, review, show, and health skills, `scripts/appsec-analyst-cli` | Resolve the application destination and legacy migration inputs; preserve finding anchors, triage links, relative assets, and explicit paths. |
+| Exports and post-run consumers | `scripts/exporters/`, export, ask, triage, show, and health skills, `scripts/appsec-analyst-cli` | Resolve the application destination and legacy migration inputs; preserve finding anchors, triage links, relative assets, and explicit paths. |
 | Repository publication | `skills/publish-threat-model/`, `scripts/model/publish_threat_model.py`, shared secret validator, publication tests | Remove the public skill and repository-commit workflow without deleting shared secret checks or broadening the publishable artifact set. |
 | Requirements integration | `scripts/requirements/`, `scripts/contexts/build_requirements_contexts.py`, `schemas/requirements-*.schema.*` | Preserve catalog discovery, assessment, and report traceability when moving the output directory. |
 | Context routing | `data/context-routing-catalog.yaml`, `data/context-routing-bindings.json`, context builders | Update affected artifact references while preserving context selection and budgets. |
 | Related and combined repositories | `scripts/shared/assessment_sources.py`, `scripts/runtime/multi_repo_scope.py`, related-repository readers | Resolve explicit external assessment references and legacy inputs; preserve repository-qualified evidence and source identities. |
 | Storage, retained state, and permissions | `scripts/runtime/resolve_config.py`, `scripts/runtime/runtime_cleanup.py`, cleanup and audit-artifact contracts, `data/required-permissions.yaml` | Introduce the XDG data destination and application lookup; preserve baseline, history, audit, triage, and input discovery; scope cleanup to one assessment and update declared command and file targets. |
 | Distribution and documentation | `.claude-plugin/`, `README.md`, `CONTRIBUTING.md`, `docs/threat-modeler.md`, `docs/headless-mode.md`, `docs/threat-dragon-export.md`, `docs/configuration.md`, `docs/model-selection.md`, `docs/org-profiles.md`, `docs/threat-analyst.md`, `docs/security-requirements-audit-skill.md`, `docs/harvester.md`, `docs/baselines/README.md`, `examples/` | Present the new workflow consistently; document compatibility. Rename `docs/threat-modeler.md` to `docs/security-assessment.md` and update every inbound link in the same change. Coordinate separately with external launchers and CI templates. |
+| Session banner | `scripts/runtime/session_banner.py` | Replace the hardcoded `REVIEW`, `CREATE`, `REBUILD`, and `REFRESH` command literals and the `docs/security` / `threat-model.yaml` lookup with the shared resolver. The banner stays a cheap read and does not parse the full YAML. Keep the literals whole, because packaging rewrites the namespace and `check_namespace_leaks` fails the build otherwise. |
+| Progress pane | `hooks/progress.tsx`, `hooks/progress.test.ts`, `types/progress.d.ts` | The pane title, the step-command match on `create-threat-model2`, and `REPORT_DIR = 'docs/security'` all change. The pane reads run state from the checkout today; it needs the resolved external run directory, which is the only place where the pane would otherwise show nothing after the move. |
+| Prompt hook and policy hooks | `scripts/analyzers/security_steering.py`, `scripts/runtime/skill_policy_gate.py`, `scripts/runtime/plugin_read_gate.py`, `scripts/runtime/plugin_write_gate.py`, `scripts/runtime/agent_logger.py` | Steering looks for `.org-profile-effective.json` and writes `.hook-events.log` under `docs/security/`; both move to the resolved directory. The skill policy gate and the read and write gates must allow the new external base and the new skill names. Log writers must not fall back to the checkout when resolution fails. |
+| Permissions and target setup | `data/required-permissions.yaml`, `skills/setup-target`, `skills/check-permissions` | Replace `${REPO_ROOT}/docs/security` rules with `<base>/appsec-advisor/**`. `business-context.md` stays a repository-owned input in the checkout. Default `OUTPUT_DIR` documentation changes. |
+| Repository ignore rules | `.gitignore`, publication preflight | The `docs/security/` ignore entries stay for legacy results. New results never appear in the checkout, so no new exception is needed. |
+| Maintainer CI and issue templates | `.github/workflows/threat-model-dispatch.yml`, `.github/workflows/repair-agent.yml`, `.github/workflows/fixture-e2e-dispatch.yml`, `.github/threat-model-presets.json`, `scripts/ci_triage.sh`, `tests/test_ci_dispatch_workflows.py`, `.github/ISSUE_TEMPLATE/` | These workflows are this repository's own test harness against example repositories, not a product feature. Rename `threat-model-dispatch` to `assessment-dispatch` together with its title, preset file, runbooks, triage script, and tests. The workflows keep writing into the workspace through an explicit `--output`, because a CI runner's data directory does not outlive the job; they read `security-assessment.md` for the job summary, and repair-agent detects a finished run by that name. |
+| Maintainer commands | `.claude/commands/` | `fix-plugin-defect.md` and `e2e-full.md` point at `<target>/docs/security` and `threat-model.md`; update the paths and skill names. |
 | Report templates | `templates/fragments/` | Change visible report titles and references to the result document; leave section content unchanged. |
 | Internal documentation | `docs/internal/` contracts, decisions, and runbooks | Update references to skill names and artifact paths; decision wording follows the confirmation rule below. |
 | Release notes | `CHANGELOG.md` | Describe the renamed commands and files, external default destination, removed publish skill, and migration boundary. |
 | Regression evidence | `scripts/run_tests.py`, skill, resolver, controller, schema, compose, export, publication, and cleanup tests | Update only affected routes and guards; prove compatibility rather than replacing old fixtures to hide breakage. |
+
+The plugin ships no status line of its own. The surfaces a user sees during and after a run are the session banner, the progress pane, and the controller's console output; the first two read the output directory and need the shared resolver. A status line a user configured themselves, such as a HUD, reads nothing from this plugin and stays unaffected. Any such script that watches `docs/security` directly is outside the plugin and is covered by the release notes.
 
 Dated analysis documents keep their original names. Existing run-state files below `docs/security/` are migration inputs, not documentation to rewrite as part of this concept edit.
 
 The [approved requirements](../../requirements.md) need review around `REQ-PUR-*`, `REQ-MOD-*`, `REQ-REQ-001`, `REQ-BIZ-*`, `REQ-RPT-*`, `REQ-ANA-*`, `REQ-TRU-*`, and `REQ-EVO-003`. The [decision catalog](../internal/decisions.md) includes relevant artifact, context, and packaging choices, notably `RA-1`, `RA-3`, `RA-6`, and `EX-3`. Wording changes to requirements or decisions require the operator to confirm the exact text and its meaning before those files are edited. This draft identifies the affected promises without replacing their wording. For example, `REQ-PUR-004` currently states that “the threat model must help developers, architects, and AppSec reviewers understand risks and plan remediation”; its new wording needs that confirmation.
 
 ## Delivery sequence and acceptance evidence
+
+Before this transition, retire the legacy workflow as a separate step so that a pipeline change and a name change never share one release. First verify that `create-threat-model2` covers every flag, mode, and consumer of `create-threat-model`, including the headless launcher, and inventory scripts, agents, and tests that only the legacy workflow uses. Then tag the last commit containing the legacy skill as `archive/create-threat-model`, remove `skills/create-threat-model/` in one commit, and remove the legacy-only code. Restoring the legacy skill later uses `git checkout archive/create-threat-model -- skills/create-threat-model`; no archive directory stays in the repository, because validators would keep scanning it and it would stop matching the current scripts.
 
 Deliver the workflow and storage transition together. These work packages contain no new document-analysis feature.
 
@@ -199,4 +244,4 @@ This release combines public terminology, command replacement without aliases, r
 
 The largest effort is likely in artifact lifecycle compatibility and application-to-output resolution. This is an impact assessment, not a measured schedule. Before estimating delivery dates, inventory all path consumers, external launchers, organization package policies, and schema-version assumptions.
 
-Implementation planning still needs to settle application identity and lookup, non-Linux storage defaults, the headless migration interface, interrupted legacy runs, and the legacy-artifact support window. Project-document comparison and the future design-based workflow require their own concepts and do not block this transition. Remote connectors, autonomous publication, and general functional verification are also outside this proposal.
+Implementation planning still needs to settle the exact remote URL normalization. Project-document comparison and the future design-based workflow require their own concepts and do not block this transition. Remote connectors, autonomous publication, and general functional verification are also outside this proposal.
