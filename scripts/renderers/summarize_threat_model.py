@@ -731,6 +731,9 @@ def completion_rows(output_dir: Path) -> list[tuple[str, str]]:
     rows.append(
         ("Findings", " · ".join([str(sum(counts.values())), *(f"{sev} {n}" for sev, n in counts.items() if n)]))
     )
+    # The overview's own note on why §8 can list more cards than the headline.
+    if summary["totals"]["threats"] != sum(counts.values()):
+        rows.append(("", f"§8 register lists {summary['totals']['threats']}; practice sites fold into weaknesses"))
     if summary["totals"]["mitigations"]:
         rows.append(("Mitigations", mitigation_line(summary["totals"]["mitigations"], summary["backlog"])))
     return rows

@@ -7477,7 +7477,15 @@ def test_section8_names_its_basis_when_it_differs_from_the_summary(tmp_path: Pat
     model = yaml.safe_load(model_path.read_text())
     if fold:
         model["threats"][0]["evidence_tier"] = "insecure-practice"
-        model["weaknesses"] = [{"id": "W-001", "kind": "implementation", "severity": "High"}]
+        site = model["threats"][0].get("id") or model["threats"][0].get("t_id")
+        model["weaknesses"] = [
+            {
+                "id": "W-001",
+                "kind": "implementation",
+                "severity": "High",
+                "observable_backing": {"practice_evidence": [{"id": site}]},
+            }
+        ]
         model_path.write_text(yaml.safe_dump(model, sort_keys=False))
     rendered, _ = compose.render(CONTRACT, out)
 

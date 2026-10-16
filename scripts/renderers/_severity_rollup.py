@@ -57,7 +57,9 @@ Three tallies exist in the model and they are deliberately different:
 
 Management-Summary basis
     ``risk``, minus ``insecure-practice`` sites folded into the weakness
-    register, plus each ``design-risk`` weakness once at its heading severity
+    register (only sites a weakness lists in ``practice_evidence``,
+    :func:`folds_into_weakness`; any other practice site stays a finding),
+    plus each ``design-risk`` weakness once at its heading severity
     (it has no confirmed instance in ``threats[]`` and would otherwise be
     invisible). This is what :func:`risk_distribution_counts` computes and
     what the report leads with.
@@ -148,6 +150,34 @@ def is_folded_practice(threat: dict | None) -> bool:
     return (threat.get("evidence_tier") or "") == "insecure-practice"
 
 
+def _practice_member_numbers(yaml_data: dict) -> set[str]:
+    """Numbers of the findings some weakness lists in ``practice_evidence``.
+    Keyed on the digits so ``T-NNN`` and ``F-NNN`` references resolve alike."""
+    numbers: set[str] = set()
+    for w in yaml_data.get("weaknesses") or []:
+        if not isinstance(w, dict):
+            continue
+        for p in (w.get("observable_backing") or {}).get("practice_evidence") or []:
+            num = str(p.get("id") or "").strip()[2:] if isinstance(p, dict) else ""
+            if num.isdigit():
+                numbers.add(num)
+    return numbers
+
+
+def folds_into_weakness(threat: dict | None, members: set[str]) -> bool:
+    """True when a practice site is listed by a weakness and so represented
+    there. A practice site no weakness lists stays a standalone finding:
+    folding it would drop it from the headline and from every weakness.
+
+    Deliberately membership only: a practice site rated above its weakness
+    still folds, because a weakness backed only by practice sites takes its
+    severity from design signals, not from the unproven sites
+    (``model/merge_threats.py``, ``observed-practice`` basis)."""
+    if not threat or not is_folded_practice(threat):
+        return False
+    return str(threat.get("id") or threat.get("t_id") or "").strip()[2:] in members
+
+
 def practice_fold_active(yaml_data: dict) -> bool:
     """True when the weakness register is populated, so practice sites fold."""
     return weakness_basis_breakdown(yaml_data) is not None
@@ -179,10 +209,10 @@ def weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | Non
 
 def _tallied_threats(yaml_data: dict) -> list[tuple[dict, str]]:
     """The ``threats[]`` rows the Risk-distribution tally counts, with their tally key."""
-    fold_practice = practice_fold_active(yaml_data)
+    members = _practice_member_numbers(yaml_data) if practice_fold_active(yaml_data) else set()
     rows = []
     for t in yaml_data.get("threats") or []:
-        if fold_practice and is_folded_practice(t):
+        if folds_into_weakness(t, members):
             continue
         sev = (t.get("risk") or t.get("severity") or "").strip().lower()
         if sev in DISTRIBUTION_KEYS:
@@ -213,7 +243,8 @@ def risk_distribution_counts(yaml_data: dict) -> dict[str, int]:
     """Severity tally for the Management-Summary Risk-distribution line.
 
     Folded insecure-practice sites are excluded (they live under a weakness's
-    ``practice_evidence``, not as standalone findings). A ``design-risk``
+    ``practice_evidence``, not as standalone findings; which sites fold is
+    :func:`folds_into_weakness`). A ``design-risk``
     weakness is added once at its heading severity: it has NO confirmed
     instance in ``threats[]``, so a design-risk Critical (which may rank #1
     per §9.3) would otherwise be invisible here. ``confirmed`` weaknesses are
