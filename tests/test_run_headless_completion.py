@@ -804,3 +804,41 @@ def test_forced_colour_styles_the_banner_without_changing_its_fields(
     assert "╭───╮  appsec-advisor" in plain
     assert "│ ◆ │  code-derived STRIDE threat modeling" in plain
     assert "\n  Skill      : create-threat-model\n" in plain
+
+
+@pytest.mark.parametrize("flag", ["--audit-requirements", "--check-requirements"])
+@pytest.mark.parametrize("controller", ["1", "0"])
+def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(
+    tmp_path: Path, flag: str, controller: str
+) -> None:
+    """A single --repo reaches the controller only for an assessment; the audit skill inspects its working directory."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    seen = tmp_path / "seen"
+    stub = tmp_path / "claude"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ]; then\n'
+        "  printf '{\"loggedIn\": true}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        f'printf "%s\\n" "$PWD" "$2" > "{seen}"\n'
+        'printf \'{"type": "result", "result": "done", "total_cost_usd": 0}\\n\'\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env = _headless_env(stub)
+    env["APPSEC_SINGLE_REPO_CONTROLLER"] = controller
+
+    subprocess.run(
+        [str(SCRIPT), flag, "--repo", str(repo), "--trust-mode", "trusted", "--quiet"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+
+    cwd, prompt = seen.read_text(encoding="utf-8").splitlines()[:2]
+    assert Path(cwd).resolve() == repo.resolve()
+    assert prompt.startswith("/appsec-advisor:audit-security-requirements")

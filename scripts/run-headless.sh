@@ -262,13 +262,19 @@ fi
 # paths with spaces or shell metacharacters stay literal data.
 # A single --repo takes the same path; APPSEC_SINGLE_REPO_CONTROLLER=0 sends
 # it to the single-repository scan instead.
+# A requirements audit is the standalone audit skill, not an assessment, and
+# stays on the session path below.
 REPO_COUNT=0
+REQUIREMENTS_AUDIT=""
 for _a in "$@"; do
-    [ "$_a" = "--repo" ] && REPO_COUNT=$((REPO_COUNT + 1))
+    case "$_a" in
+        --repo) REPO_COUNT=$((REPO_COUNT + 1)) ;;
+        --audit-requirements|--check-requirements) REQUIREMENTS_AUDIT="1" ;;
+    esac
 done
 REPO_MIN=1
 [ "${APPSEC_SINGLE_REPO_CONTROLLER:-1}" = "0" ] && REPO_MIN=2
-if [ "$REPO_COUNT" -ge "$REPO_MIN" ]; then
+if [ "$REPO_COUNT" -ge "$REPO_MIN" ] && [ -z "$REQUIREMENTS_AUDIT" ]; then
     if [ "$BILLING_MODE" = "subscription" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
         AUTH_JSON=$("$CLAUDE_EXECUTABLE" auth status 2>/dev/null) || AUTH_JSON="{}"
         if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
@@ -1175,6 +1181,11 @@ except OSError:
     os.setpgrp()
 os.execvp(sys.argv[1], sys.argv[1:])
 '
+# The audit skill inspects its working directory and takes no --repo, so the
+# session starts in the selected repository. Every later path is absolute.
+if [ "$SKILL" = "audit-security-requirements" ]; then
+    cd "$REPO_PATH" || die "Repository path does not exist: $REPO_PATH"
+fi
 if [ -n "$RESULT_CAPTURE" ]; then
     python3 -c "$SESSION_LAUNCHER" "$@" < /dev/null > "$RESULT_CAPTURE" &
 else
