@@ -215,6 +215,19 @@ The [approved requirements](../../requirements.md) need review around `REQ-PUR-*
 
 Before this transition, retire the legacy workflow as a separate step so that a pipeline change and a name change never share one release. First verify that `create-threat-model2` covers every flag, mode, and consumer of `create-threat-model`, including the headless launcher, and inventory scripts, agents, and tests that only the legacy workflow uses. Then tag the last commit containing the legacy skill as `archive/create-threat-model`, remove `skills/create-threat-model/` in one commit, and remove the legacy-only code. Restoring the legacy skill later uses `git checkout archive/create-threat-model -- skills/create-threat-model`; no archive directory stays in the repository, because validators would keep scanning it and it would stop matching the current scripts.
 
+The reference result of the legacy workflow is a thorough OWASP Juice Shop run, kept for later use as a baseline:
+
+| Property | Value |
+|---|---|
+| Workflow | `create-threat-model`, plugin `0.6.0-beta.5` from a development checkout; the exact plugin commit was not recorded |
+| Target | `https://github.com/juice-shop/juice-shop.git`, commit `33518f5a0911e25d9df747b1e70fb7af279a755c` |
+| Run | 2026-10-11, full mode, depth `thorough`, Opus for every role, 99 minutes |
+| Result | 79 findings: 5 Critical, 33 High, 41 Medium |
+| Invocation | `--thorough --sarif --pentest-tasks --pentest-format strix --pentest-target http://localhost:3000 --threatdragon --pdf --html --slug juice-shop-thorough-v0.6.0b5 --keep-runtime-files` |
+| Published files | `appsec-advisor-examples`, `threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.*` (report, YAML, figures, SARIF, Threat Dragon, HTML, PDF) |
+
+Later assessments of the same target commit and depth can be tested and compared against this result: finding count and severity mix, covered components and STRIDE categories, individual findings by component, CWE, and evidence location, and report structure. The YAML is the comparison basis; the Markdown report shows the presentation. Differences are evidence to examine, not automatic regressions, because model output varies between runs. The run's pentest tasks and intermediate artifacts are not published; they exist only in the local output directory of that run.
+
 Deliver the workflow and storage transition together. These work packages contain no new document-analysis feature.
 
 | Package | Deliverable | Acceptance evidence |
@@ -227,6 +240,48 @@ Exercise the full lifecycle for packages 1 and 2: create, supported update, resu
 Verify that configured catalog assessments retain their statuses, evidence links, and canonical traceability after the move. Existing business-context inputs and retained operator answers remain available. The presence of `requirements.md` or `specs/` alone does not trigger a new selection dialog or comparison stage.
 
 Use task-scoped routed tests and existing fixtures. Changes to deterministic report production require the golden-fixture replay described by the threat-fixture runbook. Keep old-schema and old-layout fixtures as migration evidence.
+
+### Legacy retirement inventory
+
+Static analysis on 2026-10-16 compared `create-threat-model` with `create-threat-model2`. It is an inventory to verify file by file before deleting, not a deletion list.
+
+**Capabilities `create-threat-model2` lacks:**
+
+| Capability | State |
+|---|---|
+| `--incremental` and the bare rerun that goes incremental (`REQ-USE-004`) | Refused |
+| `--rerender`, `--base`, `--dry-run`, `--pr-mode`, `--restore-from` | Refused |
+| `--clean-cache`, `--clean-all` | Refused |
+| `--help` | Falls through to the controller's argument help |
+| Free-text focus (`REQ-FLW-009`) | Accepted by the resolver, never read by the assessment |
+| QA reviewer and fragment-fixer repair loop | Absent; only deterministic `qa_checks` run |
+| Organization context injection | Absent |
+| `--output` | Lock, progress file and close step stay in `docs/security`, output goes to the given folder |
+
+Whether changelog history carries over between full runs, and whether the branding flags work end to end, are unverified.
+
+Two reported gaps were checked against the code and are not gaps. The requirements check with `--requirements` exists: the assessment loads the catalog, gives each component its requirements, and renders requirement links. `--audit-requirements` and `--check-requirements` start the separate audit workflow and are rightly refused by the assessment. The secret protection also blocks publication (`REQ-TRU-002`): models only see pattern-masked source, and `redact_known_secrets.py` scans the report, model, exports and fragments after exact-value redaction and stops the run on a residual secret. Unlike the legacy run, it stops instead of masking and continuing.
+
+**Legacy-only code, by confidence.** The session-driven `next` path is a separate state machine; the `assess` path runs every phase in-process and reuses none of it, only the deterministic tail (pregenerate, compose, `qa_checks`, exporters, completion summary).
+
+- Skill files: the ten tracked `SKILL-*.md` files and `HELP.txt`.
+- Controller: about 238 of 362 top-level symbols, roughly 7,000 of 12,300 lines; `main` and the launch commands stay.
+- Scripts: about 25 certain (for example the wait, watchdog, stage-state, stage-stats, inline-shortcut, section-integrity, baseline-persist and duration-estimate scripts) and about 9 likely. The editorial chain and a few helpers were already dead.
+- Agents: `appsec-fragment-fixer` certain; `appsec-qa-reviewer`, `appsec-config-scanner`, `appsec-context-resolver` likely.
+- Tests: about 45 whole files and many mixed ones; about 50 routes in `scripts/run_tests.py`; context budgets, bindings for several requirements, permissions entries, and the headless, model-selection and orchestration-action documents.
+
+**Looks legacy but stays:** the report-error skill uses `wait_agent_calls`, `dispatch_window` and `agent_lifecycle`; the assessment uses `acquire_lock`, `qa_checks`, `pregenerate_fragments`, `render_completion_summary`, parts of `appsec-threat-renderer.md`, the shared prose and lens files, and the hooks use `agent_logger` and `budget_watchdog`.
+
+**Alive code that points into the legacy skill:** `modes/business-context.md` and `modes/business-impact.md` (used by `create-threat-model2` and the controller, and still describing legacy calls), `run-headless.sh` without `--repo` (lines 709-745) and its remaining lines needed for `--audit-requirements`, the packaging and smoke-test scripts that require `create-threat-model`, the status and session-banner command references, and five analyzer tests that use a legacy helper.
+
+Dropping incremental updates and focus changes what `REQ-USE-004` and `REQ-FLW-009` promise; their wording needs operator confirmation before any change.
+
+**Decisions for the replacement:**
+
+- **Incremental updates are dropped for now.** `create-threat-model2` states that only full assessments exist when `--incremental` is given. `REQ-USE-004` is adjusted after the operator confirms its wording.
+- **Free-text focus is rejected, not ignored.** The replacement stops with a clear message instead of silently running a full assessment. `REQ-FLW-009` is adjusted after the operator confirms its wording.
+- **`--rerender` and the QA reviewer repair loop are not rebuilt.** Deterministic checks are enough for the replacement; a faulty report is fixed by a new run. Rerender can be added later.
+- **A report folder inside the checkout gets an ignore rule** before the run admits its source, as in the legacy workflow. Once results live outside the repository, this applies only to an explicit `--output` into a checkout.
 
 ## Deferred: project-document comparison
 
