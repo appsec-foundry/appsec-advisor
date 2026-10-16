@@ -10639,6 +10639,24 @@ def _assessment_intro(
     ]
 
 
+def _assessment_start_lines(ns, budget, depth: str, cfg: dict[str, Any], state) -> list[str]:
+    """What the run is about to spend and where, as the console header states it, one line per fact.
+
+    For a follower that shows the start in a conversation: the header's
+    rows for repository, output, depth, budget, time limit and models, each
+    on one line, without the trust and pipeline rows the header adds.
+    """
+    lineup, _ = _assessment_model_lines(cfg, compact=True)
+    rows = dict(_assessment_intro(ns, budget, depth, lineup, _assessment_pipeline(cfg), state.runtime_changed))
+    lines = []
+    for key in ("Repository", "Repositories", "Output", "Depth", "Budget", "Time limit", "Models"):
+        if key in rows:
+            parts = rows[key].splitlines()
+            # The budget's second line explains priorities, not the limit.
+            lines.append(f"{key:<11} {parts[0] if key == 'Budget' else '; '.join(parts)}")
+    return lines
+
+
 def _assessment_pipeline(cfg: dict[str, Any]) -> str:
     """Name the phases this run executes and the optional steps it enables in them.
 
@@ -11274,6 +11292,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     cfg, compact=console is not None and _AssessmentConsole.max_columns is not None
                 )
                 depth = str(cfg.get("assessment_depth") or "standard")
+                _AssessmentProgress.emit("run_start", lines=_assessment_start_lines(ns, budget, depth, cfg, state))
                 kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
                 if console:
                     # One header after the output directory, scope and configuration

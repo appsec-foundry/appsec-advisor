@@ -167,7 +167,7 @@ preflight granted it, plus `--width 72` when the arguments contain no
 `--width` (the output panel cuts longer lines instead of wrapping them):
 
 ```bash
-APPSEC_SINGLE_REPO_CONTROLLER=1 "$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
+"$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
   --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch [--rebuild] \
   --progress-file "$OUTPUT_DIR/.assessment-progress.jsonl" <remaining-arguments>
 ```
@@ -196,7 +196,7 @@ description `threat-model progress`, and this command:
 
 ```bash
 tail -n +1 -F "$OUTPUT_DIR/.assessment-progress.jsonl" 2>/dev/null | grep --line-buffered -E \
-  '"event": "(phase_start|phase_done|warning|end)"'
+  '"event": "(run_start|phase_start|phase_done|warning|end)"'
 ```
 
 Only milestones reach the conversation, since every monitor event costs a
@@ -206,6 +206,8 @@ JSON event; read its fields by name, never by position. For each event, print
 one line, in arrival order, in the style of create-threat-model's stage
 banners (`[, left <left>]` only when `left` is not empty):
 
+- `run_start` (once, before the first phase): its `lines` verbatim in one code
+  block, the run's repository, output, depth, budget, time limit and models
 - `phase_start`: `▶ Phase <number>/<total> — <phase> starting  (<progress>, elapsed <elapsed>[, left <left>])`
 - `phase_done`: `✓ Phase <number>/<total> — <phase>: <detail>`
 - `warning`: `⚠ <detail>` (a warning never ends the assessment)
