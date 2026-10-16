@@ -11646,7 +11646,7 @@ def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> N
     rows += [("Report" if index == 0 else "", path, "accent") for index, path in enumerate(files)]
     if outcome.get("runtime_files"):
         rows.append(("Run files", outcome["runtime_files"], "muted"))
-    rows.append(("Next", "/appsec-advisor:ask-threat-model · /appsec-advisor:review-threat-model", None))
+    rows += _completion_step_rows(output, outcome["deliverables"])
     # Values wrap flush under their column when --width narrows the console.
     width = _AssessmentConsole.columns() - 1 - 14 if _AssessmentConsole.max_columns else 0
     for key, value, role in rows:
@@ -11655,6 +11655,34 @@ def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> N
         print(f"  {out(f'{key:<11}', 'muted')} {out(pieces[0], *roles)}", file=stream)
         for piece in pieces[1:]:
             print(" " * 14 + out(piece, *roles), file=stream)
+    from renderers.render_completion_summary import render_security_notice
+
+    for line in render_security_notice(output):
+        print(out(line, "warn") if line.strip() else line, file=stream)
+
+
+def _completion_step_rows(output: Path, deliverables) -> list[tuple[str, str, str | None]]:
+    """The Next and Also rows, by the single-repository summary's own rules.
+
+    Their inputs come from this run, never from the files that summary reads
+    from the output directory, which may still hold an earlier scan's. The
+    report step is left out: the Report rows above already name the report.
+    """
+    from renderers.render_completion_summary import build_follow_ups, build_next_steps
+    from renderers.summarize_threat_model import completion_severity_counts
+
+    metrics = {"threats_by_sev": completion_severity_counts(output)}
+    cfg = {"write_sarif": "threat-model.sarif.json" in deliverables}
+    rows: list[tuple[str, str, str | None]] = []
+    for key, steps in (
+        ("Next", build_next_steps(output, output, metrics, cfg)[1:]),
+        ("Also", build_follow_ups(output, metrics, cfg)),
+    ):
+        for index, step in enumerate(steps):
+            head, *rest = step.split("\n")
+            rows.append((key if index == 0 else "", head, None))
+            rows += [("", f"  {line}", None) for line in rest]
+    return rows
 
 
 def _print_closing(outcome: dict, elapsed: str, out: Style, err: Style, stdout=None, stderr=None) -> None:

@@ -2161,6 +2161,10 @@ class TestRenderMisc:
         out = "\n".join(rcs.render_security_notice(tmp_path))
         assert "NOT git-ignored" in out
 
+    def test_security_notice_outside_a_repository(self, tmp_path: Path):
+        # `git check-ignore` exits 128 there; that is no evidence the report would be committed.
+        assert rcs.render_security_notice(tmp_path) == []
+
     def test_security_notice_git_error(self, tmp_path: Path, monkeypatch):
         def boom(*a, **k):
             raise OSError("no git")
