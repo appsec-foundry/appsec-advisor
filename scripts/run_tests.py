@@ -788,6 +788,9 @@ SOURCE_TESTS = {
     "skills/create-threat-model2/SKILL.md": _tests(
         f"{_SKILL_FILE_TESTS} assessment_console single_repo_controller skill_definitions"
     ),
+    "skills/create-threat-model2/business-context.md": _tests(
+        f"{_SKILL_FILE_TESTS} single_repo_controller skill_definitions"
+    ),
     "data/supply-chain-controls.yaml": _tests("""
         emit_sca_practice
         scanner_review_regressions
