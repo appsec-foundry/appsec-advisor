@@ -2585,3 +2585,99 @@ def test_a_successful_correction_is_counted_not_listed(verbose):
     assert len(listed) == (3 if verbose else 0)
     done = next(row[5] for row in rows if row[1] == "done" and row[0].endswith("Threat analysis"))
     assert done.endswith("3 answers corrected (STRIDE 2, evidence review 1)")
+
+
+@pytest.mark.parametrize("roles", [0, 1, 2])
+def test_controller_draws_uncalled_routes_once_per_authentication_method(tmp_path, roles):
+    from analyzers.client_api_flows import settle_access_groups
+    from renderers.figure1_dfd import build_figure1_dfd_svg
+    from validators.validate_assessment_architecture import _evidence_rows, validate_schema, validate_source
+
+    from tests.test_client_api_flows import route
+
+    scope = _scope(
+        tmp_path,
+        ("portal", "service"),
+        {"ui/api.ts": "client.get('/records')\n", "server.ts": "route()\n" * 14, "lib/guard.ts": "guard()\n" * 4},
+    )
+    rid = scope.repositories[0].repository_id
+    components = {
+        "components": [
+            {
+                "id": "component-web",
+                "name": "Portal",
+                "tier": "client",
+                "repository_ids": [rid],
+                "paths": [{"repository_id": rid, "path": "ui/api.ts"}],
+            },
+            {
+                "id": "component-api",
+                "name": "Service",
+                "tier": "application",
+                "repository_ids": [rid],
+                "paths": [{"repository_id": rid, "path": "server.ts"}],
+            },
+        ]
+    }
+    routes = [
+        route("GET", "/records", 10, "verified", "bearer", "present"),
+        route("GET", "/account", 11, "verified", "cookie", "present"),
+        route("POST", "/account", 12, "verified", "cookie", "present"),
+        route("GET", "/reports", 13, "verified", "bearer", "present"),
+        route("GET", "/pending", 14),
+    ]
+    entry = {
+        "repository_id": rid,
+        "file": "ui/api.ts",
+        "line": 1,
+        "sha256": hashlib.sha256(scope.repositories[0].files["ui/api.ts"]).hexdigest(),
+    }
+    roles_rows = [
+        {
+            "id": f"ext-member-{n}",
+            "name": f"Member {n}",
+            "kind": "legitimate-role",
+            "access": "internet-user",
+            "description": "Signed-in member",
+            "evidence": [dict(entry)],
+        }
+        for n in range(roles)
+    ]
+    uses = [
+        {
+            "id": f"df-10{n}",
+            "from": "external",
+            "from_entity": row["id"],
+            "to": "component-web",
+            "interaction": True,
+            "label": "Use",
+            "protocol": "HTTPS",
+            "data_classification": "Public",
+            "direction": "request-response",
+            "provenance": "recon",
+            "evidence": [dict(entry)],
+        }
+        for n, row in enumerate(roles_rows)
+    ]
+    original = {
+        "schema_version": 2,
+        "source_scope_sha256": scope.inventory()["scope_sha256"],
+        "component_inventory_fingerprint": "sha256:" + "a" * 64,
+        "external_entities": roles_rows,
+        "data_flows": uses,
+    }
+    result = controller._assessment_client_api_flows(scope, components, original, {rid: {"routes": {"routes": routes}}})
+    direct = [f for f in result["data_flows"] if f["label"].startswith("Direct requests")]
+    # Bearer is already shown on the client's flow; only the cookie method needs a direct flow.
+    assert [(f["authentication"]["scheme"], f["route_refs"]) for f in direct] == [
+        ("cookie", ["GET /account", "POST /account"])
+    ]
+    assert direct[0].get("from_entity") == ("ext-member-0" if roles == 1 else None)
+    for index, flow in enumerate(result["data_flows"], 1):
+        flow["id"] = f"df-{index:03d}"
+    settle_access_groups(result["data_flows"])
+    validate_schema(result, "fragments/data-flows-v2.schema.json")
+    for row in _evidence_rows(direct):
+        assert row["repository_id"] == rid
+        validate_source(scope, row, path_key="file")
+    assert "Session cookie" in build_figure1_dfd_svg({**components, **result}, {}, {}, detail=False)

@@ -392,3 +392,55 @@ def test_an_ambiguous_absolute_or_origin_base_resolves_no_route(definitions):
     source = f"export class OrderService {{\n{definitions}  find (id) {{ return this.http.get(`${{this.host}}/${{id}}`) }}\n}}\n"
     routes = [route("GET", "/api/orders/:id", 10, "verified", "bearer", "present")]
     assert client_calls({"ui/orders.service.ts": source.encode()}, routes) == {}
+
+
+def _direct(routes, called=(), existing=(), tiers=None, sender=None):
+    from analyzers.client_api_flows import direct_flows
+
+    return direct_flows(set(called), routes, lambda _: "api", tiers or {"api": "application"}, list(existing), sender)
+
+
+@pytest.mark.parametrize(("path", "sender"), [("/account", None), ("/v2/settings/profile", "ext-member")])
+def test_uncalled_routes_add_one_direct_flow_per_method_not_yet_shown(path, sender):
+    routes = [
+        route("GET", "/records", 10, "verified", "bearer", "present"),
+        route("GET", path, 11, "verified", "cookie", "present"),
+        route("POST", path, 12, "verified", "cookie", "present"),
+        route("GET", "/health", 13, "none", "none", "absent"),
+    ]
+    [shown] = flows("web", {0: [{"file": "ui/api.ts", "line": 1}]}, routes, lambda _: "api")
+    direct = _direct(routes, called={0}, existing=[shown], sender=sender)
+    assert [(f["authentication"]["scheme"], f["route_refs"]) for f in direct] == [
+        ("cookie", [f"GET {path}", f"POST {path}"]),
+        ("none", ["GET /health"]),
+    ]
+    assert all(f["from"] == "external" and f.get("from_entity") == sender for f in direct)
+    assert direct[0]["evidence"] == [{"file": "server.ts", "line": 11}, {"file": "server.ts", "line": 12}]
+
+
+@pytest.mark.parametrize("case", ["shown-method", "unknown", "webhook", "cited", "referenced", "data-tier", "called"])
+def test_direct_flows_skip_shown_unproven_service_called_and_covered_routes(case):
+    path = "/hooks/webhook" if case == "webhook" else "/account"
+    signal = ("unresolved", None, "unknown") if case == "unknown" else ("verified", "cookie", "present")
+    routes = [route("GET", path, 11, *signal)]
+    existing = []
+    if case == "shown-method":
+        existing = _direct([route("POST", "/other", 12, "verified", "cookie", "present")])
+    elif case in {"cited", "referenced"}:
+        existing = [
+            {
+                "from": "web",
+                "to": "api",
+                "evidence": [{"file": "server.ts", "line": 11}] if case == "cited" else [],
+                "route_refs": ["GET /account"] if case == "referenced" else [],
+            }
+        ]
+    tiers = {"api": "data"} if case == "data-tier" else None
+    assert _direct(routes, called={0} if case == "called" else (), existing=existing, tiers=tiers) == []
+
+
+def test_direct_flows_keep_every_interface_beyond_the_reference_cap():
+    routes = [route("GET", f"/pages/{n}", 100 + n, "verified", "cookie", "present") for n in range(40)]
+    direct = _direct(routes)
+    assert len(direct) == 2
+    assert sorted(ref for f in direct for ref in f["route_refs"]) == sorted(f"GET /pages/{n}" for n in range(40))
