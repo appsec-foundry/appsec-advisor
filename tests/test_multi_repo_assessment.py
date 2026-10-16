@@ -408,20 +408,21 @@ def test_default_console_writes_every_line_in_one_column_grid():
         ("1/8 Reconnaissance", "start", "planning", "<1m", "", ""),
         # Components are planned while the phase runs, so its done line has a share.
         # LEFT stays empty until a threat-analysis component has finished.
-        ("1/8 Reconnaissance", "done", "~10%", "1m", "", "1m38s · 1 repository"),
-        ("3/8 Trust boundaries", "start", "~21%", "1m", "", "3 crossings"),
-        ("3/8 Trust boundaries", "done", "~33%", "2m", "", "1m00s · 3 crossings"),
-        ("5/8 Threat analysis", "start", "~38%", "2m", "", "2 components"),
+        ("1/8 Reconnaissance", "done", "~5%", "1m", "", "1m38s · 1 repository"),
+        ("3/8 Trust boundaries", "start", "~12%", "1m", "", "3 crossings"),
+        ("3/8 Trust boundaries", "done", "~34%", "2m", "", "1m00s · 3 crossings"),
+        ("5/8 Threat analysis", "start", "~36%", "2m", "", "2 components"),
         # Every STRIDE component gets its own line, so a model status within
         # the heartbeat interval adds none.
-        ("5/8 Threat analysis", "·", "~38%", "2m", "", "component 1/2 · API"),
-        ("5/8 Threat analysis", "⚠", "~38%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
-        # A finished component gets its line; the share follows completions, not starts.
-        ("5/8 Threat analysis", "done", "~50%", "4m", "~4m", "1/2 components done · API · 2m00s"),
-        ("5/8 Threat analysis", "·", "~50%", "4m", "~4m", "component 2/2 · Store"),
+        ("5/8 Threat analysis", "·", "~36%", "2m", "", "component 1/2 · API"),
+        ("5/8 Threat analysis", "⚠", "~36%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
+        # A finished component gets its own event, so `done` marks only a
+        # phase's end; the share follows completions, not starts.
+        ("5/8 Threat analysis", "✓", "~46%", "4m", "~5m", "1/2 components done · API · 2m00s"),
+        ("5/8 Threat analysis", "·", "~46%", "4m", "~5m", "component 2/2 · Store"),
         # MR-17: a successful correction is counted on the done line, its reason only under --verbose.
-        ("5/8 Threat analysis", "done", "~63%", "7m", "~4m", "4m30s · 2 components · 1 answer corrected (STRIDE 1)"),
-        ("8/8 Finalization", "start", "~82%", "7m", "~1m", ""),
+        ("5/8 Threat analysis", "done", "~56%", "7m", "~5m", "4m30s · 2 components · 1 answer corrected (STRIDE 1)"),
+        ("8/8 Finalization", "start", "~79%", "7m", "~1m", ""),
         ("8/8 Finalization", "done", "100%", "7m", "", "30s"),
     ]
     # No model-call detail or crossing hash in the default view.
@@ -460,11 +461,8 @@ def test_the_progress_file_names_every_row_field_by_field(tmp_path):
     assert path.read_text().startswith('{"event": "phase_start", ')
 
     # The earlier run's records are gone; every grid row has its record, in order.
-    def kind(event, detail):
-        return "component_done" if "components done ·" in detail else controller._AssessmentConsole.EVENTS[event]
-
     assert [(r["event"], r["detail"]) for r in records[:-1]] == [
-        (kind(event, detail), detail) for _, event, _, _, _, detail in _rows(lines)
+        (controller._AssessmentConsole.EVENTS[event], detail) for _, event, _, _, _, detail in _rows(lines)
     ]
     finished = next(r for r in records if r["event"] == "component_done")
     assert finished == {
@@ -473,9 +471,9 @@ def test_the_progress_file_names_every_row_field_by_field(tmp_path):
         "phase": "Threat analysis",
         "number": 5,
         "total": 8,
-        "progress": "~50%",
+        "progress": "~46%",
         "elapsed": "4m",
-        "left": "~4m",
+        "left": "~5m",
         "detail": "1/2 components done · API · 2m00s",
     }
     assert [r["detail"] for r in records if r["event"] == "warning"] == [
@@ -568,7 +566,7 @@ def test_time_stamps_and_durations_read_one_clock():
     assert _rows([done])[0][5] == "3m51s"
 
 
-@pytest.mark.parametrize(("components", "share"), [(2, "~38%"), (12, "~25%")])
+@pytest.mark.parametrize(("components", "share"), [(2, "~36%"), (12, "~23%")])
 def test_progress_counts_the_planned_components(components, share):
     """Controls and threat analysis scale with the component count; before it is known there is no share."""
     lines, clock = [], _Clock()
@@ -1846,7 +1844,7 @@ def test_every_stride_component_and_abuse_case_gets_its_own_line(capsys, live):
         "abuse case 2/2 · AC-902",
     ]
     # A finish counts completions, never a start slot: Ledger started second but finished first.
-    assert [row[5] for row in rows if row[1] == "done" and "components done" in row[5]] == [
+    assert [row[5] for row in rows if row[1] == "✓"] == [
         "1/2 components done · Ledger ?[2J? · 0s",
         "2/2 components done · Gateway · 10s",
     ]
@@ -1876,10 +1874,11 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
     assert out[1:] == [
         "  Findings    1 · High 1",
         "  Mitigations 1 · 1 fix first (P1)",
-        # The report first; figures are counted, other exports stay listed.
+        # The report first; figures are counted on their own row, other exports stay listed.
         f"  Report      {tmp_path / 'threat-model.md'}",
         f"              {tmp_path / 'threat-model.yaml'}",
-        f"              {tmp_path / 'threat-model.pdf'} (+ 2 figures)",
+        f"              {tmp_path / 'threat-model.pdf'}",
+        "              + 2 figures",
         # The single-repository summary's rules: findings to triage, then questions about them.
         "  Next        Triage the findings — /appsec-advisor:review-threat-model",
         "              Or just ask me:",

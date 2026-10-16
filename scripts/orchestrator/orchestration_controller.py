@@ -9757,8 +9757,9 @@ class _AssessmentConsole:
 
     Each line reads ``TIME  PHASE  EVENT  PROGRESS  ELAPSED  LEFT  DETAIL``.
     PHASE is numbered within this run, so a skipped phase (abuse cases)
-    shortens N. EVENT is ``start`` and ``done`` for a phase's bounds, ``·``
-    for progress, and ``⚠`` (stalled or stopped model call, plugin change) or
+    shortens N. EVENT is ``start`` and ``done`` for a phase's bounds, ``✓``
+    for a finished component, ``·`` for progress, and ``⚠`` (stalled or
+    stopped model call, plugin change) or
     ``↻`` (rejected answer) for lines that need attention. PROGRESS, ELAPSED
     and LEFT always describe the whole run. DETAIL describes the phase and
     comes last, so its length never shifts a column; a ``done`` line's
@@ -9792,7 +9793,7 @@ class _AssessmentConsole:
     # Width of the status line's progress bar.
     BAR_WIDTH = 12
     # Colour of a row's phase and event columns, by event.
-    EVENT_ROLES = {"start": "accent", "done": "ok", "⚠": "warn", "↻": "warn"}
+    EVENT_ROLES = {"start": "accent", "done": "ok", "✓": "ok", "⚠": "warn", "↻": "warn"}
     # Reader-facing names of the model roles in liveness and completion lines.
     ROLE_LABELS = {
         "recon_scanner": "discovery",
@@ -9873,23 +9874,23 @@ class _AssessmentConsole:
     # Prefix of a phase's result step: "<RESULT><phase>: <what it produced>".
     RESULT = "Phase result: "
     _POSITION = re.compile(r"\s*\((\d+)/(\d+)\)$")
-    # Expected share of a run's wall clock per phase, in points. Estimated
-    # from the model time per role of a single-repository standard run of
-    # nine components (Juice Shop, 2026-10-13); threat analysis includes the
+    # Expected share of a run's wall clock per phase, in points. Measured as
+    # the mean phase durations of two single-repository standard runs of nine
+    # components (Juice Shop, 2026-10-16); threat analysis includes the
     # source scanners and evidence reviews. Controls and threat analysis scale
     # with the component count, the other phases stay fixed. A display
     # estimate only: the remaining time follows the speed the run measures.
     WEIGHTS = {
-        "Reconnaissance": 5,
-        "Architecture": 5,
-        "Trust boundaries": 6,
-        "Controls": 11,
-        "Threat analysis": 55,
-        "Consolidation": 4,
-        "Abuse cases": 5,
-        "Finalization": 9,
+        "Reconnaissance": 3,
+        "Architecture": 4,
+        "Trust boundaries": 12,
+        "Controls": 6,
+        "Threat analysis": 50,
+        "Consolidation": 6,
+        "Abuse cases": 7,
+        "Finalization": 12,
     }
-    PER_COMPONENT = {"Controls": 11 / 9, "Threat analysis": 55 / 9}
+    PER_COMPONENT = {"Controls": 6 / 9, "Threat analysis": 50 / 9}
     _NAME_WIDTH = max(len(name) for name in WEIGHTS)
     # "n/N " before the phase name, then the event column.
     _PHASE_WIDTH = _NAME_WIDTH + 4
@@ -10016,10 +10017,17 @@ class _AssessmentConsole:
         sys.stderr.write(text + "\n")
         sys.stderr.flush()
 
-    # Grid event -> the progress file's event; a finished component passes its own.
-    EVENTS = {"start": "phase_start", "done": "phase_done", "·": "progress", "⚠": "warning", "↻": "correction"}
+    # Grid event -> the progress file's event.
+    EVENTS = {
+        "start": "phase_start",
+        "done": "phase_done",
+        "✓": "component_done",
+        "·": "progress",
+        "⚠": "warning",
+        "↻": "correction",
+    }
 
-    def record(self, event: str, detail: str = "", now: float | None = None, kind: str | None = None) -> None:
+    def record(self, event: str, detail: str = "", now: float | None = None) -> None:
         """One grid row on the console and, field by field, in the progress file.
 
         A warning never ends the run; what ends it is the progress file's ``end``.
@@ -10029,7 +10037,7 @@ class _AssessmentConsole:
         share, elapsed, left = self._run_fields(now)
         phase = self.phase or ""
         _AssessmentProgress.emit(
-            kind or self.EVENTS[event],
+            self.EVENTS[event],
             time=self._stamp(now),
             phase=phase,
             number=self.plan.index(phase) + 1 if phase in self.plan else None,
@@ -10421,8 +10429,9 @@ class _AssessmentConsole:
                 self.current = f"{self.units_done}/{total} components done"
             if finished is not None:
                 # Counts completions, so it names no start slot such as a start line's "component 4/9".
+                # Its own event, so `done` marks only a phase's end.
                 done = f"{self.units_done}/{total or '?'} components done · {finished}"
-                self.record("done", done, now, kind="component_done")
+                self.record("✓", done, now)
             # A permanent line names the component; the heartbeat need not repeat the count.
             self.shown = (self.current, round(100 * self.done))
 
@@ -11764,7 +11773,8 @@ def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> N
         key=lambda path: not path.endswith(".md"),
     )
     if figures and files:
-        files[-1] += f" (+ {_count_noun(len(figures), 'figure')})"
+        # A row of its own, so a narrow console never splits the count.
+        files.append(f"+ {_count_noun(len(figures), 'figure')}")
     rows = [(key, value, None) for key, value in completion_rows(output)]
     rows += [("Report" if index == 0 else "", path, "accent") for index, path in enumerate(files)]
     if outcome.get("runtime_files"):

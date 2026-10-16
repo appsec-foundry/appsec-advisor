@@ -179,13 +179,13 @@ phase by phase. To cancel, say "stop" or run
 ## Phase tasks
 
 Load `TaskCreate` and `TaskUpdate` with `ToolSearch` before the launch. When
-they exist, create one task per phase once the first `phase_start` event states `N`, in
+they exist, create one task per phase once the first `▶ Phase 1/<N>` line states `N`, in
 phase order, all in one message, subject `Phase <k>/<N> — <phase>`, active form
 the phase name with `-ing` wording (`Running reconnaissance`, `Modeling
 architecture`, `Analyzing trust boundaries`, `Assessing controls`, `Analyzing
 threats`, `Consolidating findings`, `Verifying abuse cases`, `Finalizing the
-report`). Mark phase `k` in progress when its `phase_start` event arrives, and
-completed when its `phase_done` event arrives. Create no other tasks. Without these tools, the banners below are the
+report`). Mark phase `k` in progress at its `▶ Phase <k>/<N>` line, and
+completed at its `✓ Phase <k>/<N>` line. Create no other tasks. Without these tools, the lines below are the
 only progress display; do not mention that.
 
 ## Live progress
@@ -195,28 +195,21 @@ In the same message as the launch, start a `Monitor` (load it with
 description `threat-model progress`, and this command:
 
 ```bash
-tail -n +1 -F "$OUTPUT_DIR/.assessment-progress.jsonl" 2>/dev/null | grep --line-buffered -E \
-  '"event": "(run_start|phase_start|phase_done|warning|end)"'
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/assessment_console.py" follow \
+  --progress-file "$OUTPUT_DIR/.assessment-progress.jsonl"
 ```
 
-Only milestones reach the conversation, since every monitor event costs a
-turn; components, sections and corrections stay in the command's output panel.
-Then end your turn without a summary of the launch. Each line is one complete
-JSON event; read its fields by name, never by position. For each event, print
-one line, in arrival order, in the style of create-threat-model's stage
-banners (`[, left <left>]` only when `left` is not empty):
+It prints finished lines for the run header, each phase's start and end, each
+finished component and each warning; the command's output panel keeps
+everything else. Then end your turn without any text.
 
-- `run_start` (once, before the first phase): its `lines` verbatim in one code
-  block, the run's repository, output, depth, budget, time limit and models
-- `phase_start`: `▶ Phase <number>/<total> — <phase> starting  (<progress>, elapsed <elapsed>[, left <left>])`
-- `phase_done`: `✓ Phase <number>/<total> — <phase>: <detail>`
-- `warning`: `⚠ <detail>` (a warning never ends the assessment)
-- `end`: `■ Assessment <status> (exit <exit_code>)`
+Print every line of each monitor event verbatim, in arrival order, and nothing
+else: no introduction, no interpretation, no findings, no questions. A warning
+never ends the assessment; only the command's task notification does.
 
-Add nothing else: no interpretation, no findings, no questions. Only `end`
-or the command's task notification means the assessment is over. When the
-monitor expires while the command still runs, start it again with `tail -n 0`
-instead of `tail -n +1`.
+The monitor stops after 30 minutes, earlier than most assessments. When it
+expires while the command still runs, start it again without any text, with
+`--from-end` added to the command, so no line is shown twice.
 
 ## Still running?
 
@@ -245,19 +238,15 @@ show.
 ## Completion
 
 When the command's task notification arrives, stop the monitor with
-`TaskStop`. On exit `0` or `20`, print the whole closing block the controller
-kept:
+`TaskStop`, then run, with the notification's exit code and output file:
 
 ```bash
-cat "$OUTPUT_DIR/.assessment-work/summary.txt"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/assessment_console.py" close \
+  --output "$OUTPUT_DIR" --exit-code <exit-code> --log "<output-file>"
 ```
 
-On any other exit, or when that file is missing, print the last 40 lines of
-the output instead. Either way print it verbatim in a code block, without
-summarizing or adding findings. Then state the outcome by the exit
-code: `0` completed; `20` completed, but the `--fail-on` gate failed; `3` paused
-or stopped, and accepted steps stay for `--resume`; `130` interrupted, and
-accepted steps stay for `--resume`; any other code, the assessment failed.
+Print its output verbatim and add nothing: it already states the outcome and,
+after a completed run, the summary the controller kept.
 
 Except after `3` or `130`, check whether the run recorded a possible plugin
 error:
