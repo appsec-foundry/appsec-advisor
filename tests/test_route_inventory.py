@@ -825,3 +825,39 @@ def test_local_scope_rejection_is_distinct_from_object_ownership(tmp_path, resou
     assert row["authn_signal"] == "present"
     assert ("authorization-review-required" in row["notes"]) == (not guarded)
     assert row["missing_authz_suspect"] is True
+
+
+@pytest.mark.parametrize(
+    "server,listed",
+    [
+        ("import { serveFiles } from './routes/files'\napp.use('/files/:name', serveFiles())\n", True),
+        ("const { serveFiles } = require('./routes/files')\napp.use('/files/:name', serveFiles())\n", True),
+        # A prefix mount without a path parameter stays a guard prefix.
+        ("import { serveFiles } from './routes/files'\napp.use('/files', serveFiles())\n", False),
+        # A deeper registration below the mount makes it a prefix, not a terminal handler.
+        (
+            "import { serveFiles } from './routes/files'\napp.use('/files/:name', serveFiles())\n"
+            "app.get('/files/:name/meta', serveFiles())\n",
+            False,
+        ),
+        # Guards and package middleware never become routes.
+        ("import { isAuthorized } from './lib/auth'\napp.use('/files/:name', isAuthorized())\n", False),
+        ("import * as security from './lib/auth'\napp.use('/files/:name', security.isAuthorized())\n", False),
+        ("import express from 'express'\napp.use('/files/:name', express.static('files'))\n", False),
+    ],
+    ids=["import", "require", "prefix", "not-leaf", "named-guard", "member-guard", "package"],
+)
+def test_terminal_use_mount_is_a_route_with_its_handler_module(tmp_path: Path, server: str, listed: bool) -> None:
+    """A `use` mount that ends the request at a repository handler is a route,
+    so the handler module reaches the registering component's analysis."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes" / "files.ts").write_text(
+        "export function serveFiles () { return (req, res) => res.send('x') }\n"
+    )
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "auth.ts").write_text("export function isAuthorized () { return (req, res, next) => next() }\n")
+    (tmp_path / "server.ts").write_text("import express from 'express'\nconst app = express()\n" + server)
+    mounts = [r for r in ri.build_inventory(tmp_path)["routes"] if r["method"] == "ALL" and r["path"] == "/files/:name"]
+    assert bool(mounts) == listed
+    if listed:
+        assert mounts[0]["handler_module"] == "routes/files.ts"

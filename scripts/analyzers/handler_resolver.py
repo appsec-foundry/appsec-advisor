@@ -672,7 +672,9 @@ class HandlerResolver:
         if text is None or not isinstance(line, int):
             return None
         call = re.compile(
-            r"\b(?P<obj>[\w$]+)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|any|route)\s*\(", re.IGNORECASE
+            # `use` covers the terminal mounts route_inventory lists as routes.
+            r"\b(?P<obj>[\w$]+)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|any|route|use)\s*\(",
+            re.IGNORECASE,
         ).search(text, _line_offset(text, line))
         if not call or _line_of(text, call.start()) != line:
             return None
