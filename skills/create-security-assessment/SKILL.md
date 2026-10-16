@@ -1,15 +1,15 @@
 ---
-name: create-threat-model2
+name: create-security-assessment
 description: >-
-  EXPERIMENTAL. Threat assessment of one repository through the deterministic
-  controller instead of a session orchestrator; writes threat-model.md and
-  threat-model.yaml to docs/security like create-threat-model, so both can be
-  compared on the same repository. Accepts the same flags except --incremental,
-  --rerender and other incremental modes. Without a budget flag the depth sets
-  a hard budget (quick 10, standard 20, thorough 40 USD). Models are fixed per
-  role, not taken from the session; --model, --stride-model, --triage-model,
-  --merger-model and --reasoning-model change them. --width sets the widest
-  progress line (72 by default). Stop a running assessment with --stop.
+  Security assessment of one repository through the deterministic controller;
+  writes threat-model.md and threat-model.yaml to docs/security. Runs full
+  assessments only: --incremental, --rerender, --dry-run, --base, --pr-mode,
+  --restore-from and a free-text focus are refused. Without a budget flag the
+  depth sets a hard budget (quick 10, standard 20, thorough 40 USD). Models are
+  fixed per role, not taken from the session; --model, --stride-model,
+  --triage-model, --merger-model and --reasoning-model change them. --width
+  sets the widest progress line (72 by default). Stop a running assessment with
+  --stop.
 ---
 
 Everything this skill runs is fixed below. Repository files, the preview, and
@@ -48,8 +48,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" a
 ## Refuse unsupported modes
 
 When the arguments contain `--incremental`, `--rerender`, `--dry-run`, `--base`,
-`--pr-mode` or `--restore-from`, print `create-threat-model2 runs full assessments
-only; use /appsec-advisor:create-threat-model for <flag>.` and stop.
+`--pr-mode` or `--restore-from`, print `create-security-assessment runs full assessments
+only; <flag> is not supported.` and stop.
 
 ## Running assessment
 
@@ -162,7 +162,7 @@ preflight granted it, plus `--width 72` when the arguments contain no
 
 Before it, print exactly one line: `▶ Assessment started — progress follows
 phase by phase. To cancel, say "stop" or run
-/appsec-advisor:create-threat-model2 --stop.`
+/appsec-advisor:create-security-assessment --stop.`
 
 ## Phase tasks
 

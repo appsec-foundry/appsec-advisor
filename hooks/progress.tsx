@@ -204,7 +204,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'threat-model-progress',
-      description: 'Show the running create-threat-model2 step in a pane',
+      description: 'Show the running create-security-assessment step in a pane',
     })
     $.clock.every(POLL_MS, async () => {
       const t = await $.clock.now()

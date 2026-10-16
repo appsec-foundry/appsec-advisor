@@ -7,7 +7,7 @@ const WARN = '17:56:51  1/8 Reconnaissance    ⚠      planning       3m        
 const DONE = '19:04:40  1/8 Reconnaissance    done   planning       9m          recon complete'
 const NEXT = '19:04:40  2/8 Architecture      start  planning       9m  1h02m'
 
-test('recognizes a create-threat-model2 step command', () => {
+test('recognizes a create-security-assessment step command', () => {
   expect(isStepCommand('APPSEC_SINGLE_REPO_CONTROLLER=1 "/x/scripts/run-headless.sh" --repo r --output o --interactive-launch --pause-after 1')).toBe(true)
   expect(isStepCommand('"/x/scripts/run-headless.sh" --repo r')).toBe(false)
   expect(isStepCommand('npm test')).toBe(false)

@@ -785,10 +785,10 @@ SOURCE_TESTS = {
     "skills/abuse-cases/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} resolve_abuse_cases skill_definitions"),
     "skills/ask-threat-model/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
     "skills/help/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} help_reference skill_definitions"),
-    "skills/create-threat-model2/SKILL.md": _tests(
+    "skills/create-security-assessment/SKILL.md": _tests(
         f"{_SKILL_FILE_TESTS} assessment_console single_repo_controller skill_definitions"
     ),
-    "skills/create-threat-model2/business-context.md": _tests(
+    "skills/create-security-assessment/business-context.md": _tests(
         f"{_SKILL_FILE_TESTS} single_repo_controller skill_definitions"
     ),
     "data/supply-chain-controls.yaml": _tests("""
