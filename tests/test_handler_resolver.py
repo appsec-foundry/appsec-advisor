@@ -400,6 +400,45 @@ def test_a_token_read_from_the_body_or_query_is_a_credential(tmp_path, read, exp
     assert route(ri.build_inventory(tmp_path), "/step")["authn_handler_signal"] == expected
 
 
+@pytest.mark.parametrize(
+    ("helper", "call", "expected"),
+    [
+        (
+            "export const sessions = {\n  size () { return store.size },\n"
+            "  from (req) { return store.get(req.cookies.session) }\n}\n",
+            "access.sessions.from(req)",
+            "unresolved",
+        ),
+        (
+            "export function currentAccount (request) {\n  return lookup(request.headers.authorization)\n}\n",
+            "access.currentAccount(req)",
+            "unresolved",
+        ),
+        ("export function record (req) {\n  log.push(req.path)\n}\n", "access.record(req)", "none"),
+    ],
+    ids=["object-method", "imported-function", "credential-free-helper"],
+)
+def test_an_imported_helper_given_the_request_counts_for_the_handler(tmp_path, helper, call, expected):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("routes/step", "confirm", "/step"),
+            "lib/access.ts": helper,
+            "routes/step.ts": (
+                "import * as access from '../lib/access'\n"
+                "export function confirm () {\n"
+                "  return (req, res) => {\n"
+                f"    const who = {call}\n"
+                "    if (!who) return res.status(401).end()\n"
+                "    res.json({ ok: true })\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert route(ri.build_inventory(tmp_path), "/step")["authn_handler_signal"] == expected
+
+
 LIST_HANDLER = "export function listOrders () {\n  return (req, res) => res.json([])\n}\n"
 
 

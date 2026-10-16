@@ -183,6 +183,9 @@ _JS_REQUIRE_RE = re.compile(
     r"require\(\s*['\"](?P<src>[^'\"]+)['\"]\s*\)"
 )
 _JS_CALLEE_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(")
+_JS_REQUEST_CALL_RE = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(\s*req(?:uest)?\s*[,)]"
+)
 _JS_PATH_RE = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
 _JS_FUNCTION_START_RE = re.compile(r"^(?:async\s+)?(?:function\b|\(|[\w$]+\s*=>)")
 _JS_STRING_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`(?:[^`\\]|\\.)*`")
@@ -617,13 +620,50 @@ class HandlerResolver:
         return True, code
 
     def _js_helpers(self, rel: str, body: str) -> list[Body]:
-        """Same-file functions a body calls, one level deep."""
+        """Repository functions a body calls, one level deep: same-file functions, and
+        imported members the body hands the request to (`auth.users.from(req)`), whose
+        credential reads and rejections count for the caller."""
         out = []
         for name in sorted({m.group(1) for m in _JS_CALLEE_RE.finditer(body) if "." not in m.group(1)}):
             definition = self._js_definition(rel, name)
             if definition and definition[1] not in body:
                 out.append((rel, definition[0], definition[1]))
+        for name in sorted({re.sub(r"\s+", "", m.group(1)) for m in _JS_REQUEST_CALL_RE.finditer(body)}):
+            if "." not in name and self._js_definition(rel, name):
+                continue
+            resolved = self._resolve_js(rel, name)
+            if not isinstance(resolved, list):
+                continue
+            # `ns.users.from(req)` resolves to the object `users`; only its `from` method runs.
+            member = self._object_member(resolved[-1], name.split(".")[-1]) if resolved else None
+            resolved = [*resolved[:-1], member] if member else resolved
+            out.extend(code for code in resolved if code not in out and code[2] not in body)
         return out
+
+    def _object_member(self, definition: Body, member: str) -> Body | None:
+        """The method `member` of an object literal whose definition starts at `definition`."""
+        rel, line, _code = definition
+        text = self._text(rel)
+        if text is None:
+            return None
+        start = _line_offset(text, line)
+        head = re.match(r"[^\n=]*=\s*\{", text[start:])
+        if not head:
+            return None
+        opening = start + head.end() - 1
+        literal = text[opening : _matching(text, opening)]
+        m = re.search(
+            rf"(?:^|[\s,{{])(?:async\s+)?{re.escape(member)}\s*(?P<params>\()"
+            rf"|(?:^|[\s,{{]){re.escape(member)}\s*:\s*(?:async\s+)?(?:function\s*)?(?P<fparams>\()",
+            literal,
+        )
+        if not m:
+            return None
+        params = m.start("params") if m.group("params") is not None else m.start("fparams")
+        brace = literal.find("{", _matching(literal, params))
+        if brace < 0:
+            return None
+        return rel, _line_of(text, opening + m.start()), literal[m.start() : _matching(literal, brace)]
 
     def _js_registration(self, route: dict) -> tuple[str, int, str, re.Match, list[str]] | None:
         """(file, line, text, registration call, its arguments) of a call-registered route."""
