@@ -55,6 +55,14 @@ def test_fresh_repo_ignores_the_output_directory(tmp_path):
         assert _ignored(repo, f"docs/security/{name}"), name
 
 
+@pytest.mark.parametrize("parts", [("docs", "security"), ("reports", "appsec", "latest")])
+def test_an_output_directory_that_does_not_exist_yet_is_ignored(tmp_path, parts):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert ensure(tmp_path.joinpath(*parts))
+    assert "/".join(parts) + "/**" in (tmp_path / ".gitignore").read_text().splitlines()
+    assert not tmp_path.joinpath(*parts).exists()
+
+
 def test_is_idempotent(tmp_path):
     repo, out = _repo(tmp_path)
     ensure(out)

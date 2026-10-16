@@ -365,3 +365,33 @@ def test_a_failed_export_publishes_nothing_and_leaves_the_earlier_report(tmp_pat
     with pytest.raises(controller.ControllerError, match="sarif exporter crashed"):
         _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf", "--sarif"))
     assert not [path.name for path in (tmp_path / "out").iterdir() if path.name.startswith("threat-model")]
+
+
+def _assess_into_checkout(tmp_path, monkeypatch, root):
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    host = FullHost()
+    real_admit = multi_repo_scope.admit
+
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
+        return host.scope
+
+    monkeypatch.setattr(multi_repo_scope, "admit", admit)
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", lambda: "a" * 64)
+    argv = ["--repo", str(root), "--output", str(root / "docs" / "security"), "--hard-budget", "5"]
+    argv += ["--trust-mode", "trusted", "--model", "haiku", "--no-pdf"]
+    return controller.assess_repositories(argv, host_factory=host.factory, progress=lambda text: None)
+
+
+@pytest.mark.parametrize("name", ["solo", "records-service"])
+def test_a_first_report_in_the_checkout_gets_an_ignore_rule(tmp_path, monkeypatch, name):
+    root = tmp_path / name
+    checkout(root)
+    assert _assess_into_checkout(tmp_path, monkeypatch, root)["status"] == "complete"
+    assert "docs/security/**" in (root / ".gitignore").read_text().splitlines()
+
+
+def test_a_report_outside_any_checkout_writes_no_ignore_rule(tmp_path, monkeypatch):
+    outcome, _, _ = _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf",))
+    assert outcome["status"] == "complete"
+    assert not (tmp_path / ".gitignore").exists() and not (tmp_path / "solo" / ".gitignore").exists()
