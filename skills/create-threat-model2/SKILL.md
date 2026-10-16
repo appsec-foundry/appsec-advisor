@@ -243,8 +243,16 @@ show.
 ## Completion
 
 When the command's task notification arrives, stop the monitor with
-`TaskStop`. Print the last 40 lines of the output verbatim in a code block,
-without summarizing or adding findings. Then state the outcome by the exit
+`TaskStop`. On exit `0` or `20`, print the whole closing block the controller
+kept:
+
+```bash
+cat "$OUTPUT_DIR/.assessment-work/summary.txt"
+```
+
+On any other exit, or when that file is missing, print the last 40 lines of
+the output instead. Either way print it verbatim in a code block, without
+summarizing or adding findings. Then state the outcome by the exit
 code: `0` completed; `20` completed, but the `--fail-on` gate failed; `3` paused
 or stopped, and accepted steps stay for `--resume`; `130` interrupted, and
 accepted steps stay for `--resume`; any other code, the assessment failed.

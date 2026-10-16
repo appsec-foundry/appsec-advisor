@@ -9476,6 +9476,8 @@ INTERACTIVE_DEPTH_BUDGET_USD = {"quick": 10.0, "standard": 20.0, "thorough": 40.
 # Exit status of an incomplete run that --resume continues: one that stopped at
 # its --pause-after boundary or on a stop request (REQ-FLW-006).
 ASSESS_PAUSED_EXIT = 3
+# The completed run's closing block as plain text, under the state's work directory.
+ASSESSMENT_SUMMARY_NAME = "summary.txt"
 
 
 def _requested_depth(rest: list[str]) -> str:
@@ -11616,7 +11618,7 @@ def _launch_main(command: str, argv: list[str]) -> int:
     return 0
 
 
-def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
+def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> None:
     """The closing result block: what was assessed, what it found, where it is and what comes next.
 
     Verdict, finding and mitigation rows come from the `show-threat-model`
@@ -11629,9 +11631,9 @@ def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
     head = f"✓ {kind} of {', '.join(outcome['repositories'])} written in {elapsed}"
     cost = f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
     if _AssessmentConsole.max_columns and len(head) + 1 + len(cost) > _AssessmentConsole.columns() - 1:
-        print(out(head, "ok", "bold") + "\n  " + out(cost, "muted"))
+        print(out(head, "ok", "bold") + "\n  " + out(cost, "muted"), file=stream)
     else:
-        print(out(head, "ok", "bold") + " " + out(cost, "muted"))
+        print(out(head, "ok", "bold") + " " + out(cost, "muted"), file=stream)
     output = Path(outcome["output"])
     figures = [name for name in outcome["deliverables"] if name.endswith(".svg")]
     files = sorted(
@@ -11650,9 +11652,55 @@ def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
     for key, value, role in rows:
         pieces = textwrap.wrap(value, width, break_on_hyphens=False) if 20 < width < len(value) else [value]
         roles = (role,) if role else ()
-        print(f"  {out(f'{key:<11}', 'muted')} {out(pieces[0], *roles)}")
+        print(f"  {out(f'{key:<11}', 'muted')} {out(pieces[0], *roles)}", file=stream)
         for piece in pieces[1:]:
-            print(" " * 14 + out(piece, *roles))
+            print(" " * 14 + out(piece, *roles), file=stream)
+
+
+def _print_closing(outcome: dict, elapsed: str, out: Style, err: Style, stdout=None, stderr=None) -> None:
+    """The run's closing block: its result, then its warnings, coverage statements and gate verdict."""
+    stderr = stderr or sys.stderr
+    _print_completion(outcome, elapsed, out, stdout)
+    fit = _AssessmentConsole.fit
+    for warning in outcome.get("warnings") or []:
+        # Wrapped as plain text; only the leading mark is coloured.
+        print(err("⚠", "warn") + fit(f"⚠ {warning}")[1:], file=stderr)
+    if outcome.get("infos"):
+        # Coverage statements, not defects (REQ-FLW-005): one heading, one line each.
+        print(err("ℹ Coverage", "muted"), file=stderr)
+        for info in outcome["infos"]:
+            print(err(fit(f"  · {info}", "    "), "muted"), file=stderr)
+    if outcome.get("gate_violations"):
+        violations = outcome["gate_violations"]
+        print(
+            err(f"✗ PR gate: {len(violations)} new threat(s) at or above '{outcome['fail_on']}': ", "critical")
+            + ", ".join(violations[:10]),
+            file=stderr,
+        )
+
+
+def _save_closing(outcome: dict, elapsed: str) -> None:
+    """Keep the closing block as plain text in the run's work directory.
+
+    A follower such as the skill shows this file whole; a tail of the console
+    log cuts its head off once warnings and coverage lines make it long. It
+    lives in the work directory, which the run owns, so it never blocks a
+    later start the way a foreign file in the output directory does.
+    """
+    import io
+
+    from runtime.assessment_state import WORK_NAME
+    from shared._atomic_io import atomic_write_text
+
+    directory = Path(outcome["output"]) / WORK_NAME
+    if not directory.is_dir():
+        return
+    buffer = io.StringIO()
+    try:
+        _print_closing(outcome, elapsed, Style(False), Style(False), buffer, buffer)
+        atomic_write_text(directory / ASSESSMENT_SUMMARY_NAME, buffer.getvalue())
+    except Exception as exc:
+        print(f"⚠ completion summary not saved: {_cap_reason(str(exc))}", file=sys.stderr)
 
 
 def assess_main(argv: list[str]) -> int:
@@ -11728,26 +11776,17 @@ def _assess_main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
         return 1
-    out, err = Style.for_stream(sys.stdout), Style.for_stream(sys.stderr)
-    _print_completion(outcome, _elapsed(time.monotonic() - started), out)
-    fit = _AssessmentConsole.fit
-    for warning in outcome.get("warnings") or []:
-        # Wrapped as plain text; only the leading mark is coloured.
-        print(err("⚠", "warn") + fit(f"⚠ {warning}")[1:], file=sys.stderr)
-    if outcome.get("infos"):
-        # Coverage statements, not defects (REQ-FLW-005): one heading, one line each.
-        print(err("ℹ Coverage", "muted"), file=sys.stderr)
-        for info in outcome["infos"]:
-            print(err(fit(f"  · {info}", "    "), "muted"), file=sys.stderr)
-    if outcome.get("gate_violations"):
-        violations = outcome["gate_violations"]
+    elapsed = _elapsed(time.monotonic() - started)
+    try:
+        _print_closing(outcome, elapsed, Style.for_stream(sys.stdout), Style.for_stream(sys.stderr))
+    except Exception as exc:
+        # The report is published; a defect in its summary must not turn the run into a failure.
         print(
-            err(f"✗ PR gate: {len(violations)} new threat(s) at or above '{outcome['fail_on']}': ", "critical")
-            + ", ".join(violations[:10]),
+            f"⚠ completion summary unavailable: {_cap_reason(str(exc))}; the report is in {outcome.get('output')}",
             file=sys.stderr,
         )
-        return 20
-    return 0
+    _save_closing(outcome, elapsed)
+    return 20 if outcome.get("gate_violations") else 0
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
