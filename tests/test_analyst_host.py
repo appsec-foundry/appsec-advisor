@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -170,6 +171,60 @@ def test_the_call_limit_and_cancellation_still_stop_a_host_that_never_answers():
                 host._communicate(proc, b"prompt", time.monotonic() + deadline, should_stop)
         finally:
             proc.kill()
+
+
+_STREAMING_HOST = (
+    "import json, sys, time\n"
+    "delta = {'type': 'stream_event', 'event': {'delta': {'text': 'x'}}}\n"
+    "for _ in range({count}):\n"
+    "    print(json.dumps(delta), flush=True)\n"
+    "    time.sleep(0.02)\n"
+    "print(json.dumps({'type': 'result', 'subtype': 'success'}), flush=True)\n"
+)
+
+
+def _streaming_host(count):
+    return subprocess.Popen(
+        [sys.executable, "-c", _STREAMING_HOST.replace("{count}", str(count))],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+@pytest.mark.parametrize("stopped_by", ["request", "time limit"])
+def test_a_stopped_streaming_call_records_its_events_without_a_thread_error(tmp_path, monkeypatch, stopped_by):
+    """Ctrl-C during a streaming call must not leave the event pump writing to a closed file."""
+    errors = []
+    monkeypatch.setattr(threading, "excepthook", errors.append)
+    proc = _streaming_host(10_000)
+    events = tmp_path / "events.jsonl"
+    stop_at = time.monotonic() + 0.5
+    deadline, should_stop = (
+        (30, lambda: time.monotonic() > stop_at) if stopped_by == "request" else (0.5, lambda: False)
+    )
+    try:
+        with pytest.raises(host.HostCancelled):
+            host._communicate_events(proc, b"prompt", time.monotonic() + deadline, should_stop, events)
+    finally:
+        host._stop_group(proc)
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread() and thread.daemon:
+            thread.join(timeout=2)
+    assert errors == []
+    assert '"type": "streamed"' in events.read_text()
+
+
+def test_a_finished_streaming_call_records_its_streamed_summary_and_result(tmp_path):
+    proc = _streaming_host(3)
+    events = tmp_path / "events.jsonl"
+    try:
+        result, error = host._communicate_events(proc, b"prompt", time.monotonic() + 30, lambda: False, events)
+    finally:
+        host._stop_group(proc)
+    assert json.loads(result)["type"] == "result" and error is None
+    assert '"output_chars": 3' in events.read_text()
 
 
 def test_effort_is_passed_only_when_requested(tmp_path):

@@ -68,6 +68,7 @@ import importlib.util
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -187,6 +188,10 @@ def _fast_yaml_load(text: str):
 
 class ContractError(Exception):
     """Raised when the contract file is malformed."""
+
+
+class FigureError(Exception):
+    """Raised when a deterministic figure builder fails or its output fails its self-check."""
 
 
 class FragmentError(Exception):
@@ -5693,7 +5698,7 @@ def _figure_basename_for_md(md_name: str) -> str:
     return f"{Path(md_name).stem}.figure1.svg"
 
 
-def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
+def _figure1_intro(project: str, facts: dict, *, runtime: bool = False, has_boundaries: bool = True) -> str:
     """Introduce Figure 1 with this system's facts; the in-figure legend explains the notation."""
     system = f"{project} has {pluralize(facts['components'], 'component')} in {pluralize(facts['layers'], 'layer')}"
     if runtime:
@@ -5705,7 +5710,10 @@ def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
         shown += " and where the attack scenario below begins"
     elif facts["scenarios"]:
         shown += f" and where each of the {facts['scenarios']} attack scenarios below begins"
-    return f"{system}. {shown}. The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+    intro = f"{system}. {shown}."
+    if has_boundaries:
+        intro += " The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+    return intro
 
 
 def _figure1_display_data(ctx: RenderContext) -> dict:
@@ -5856,18 +5864,15 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     """Build Figure 1 as a deterministic hand-built SVG, write it next to
     threat-model.md, and return the image-reference markdown.
 
-    PRIMARY: ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
+    ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
     boundary crossings with their assumption verdict, STRIDE per element, attack
-    scenarios). FALLBACK: the ``figure1_svg`` tier stack. Both compute their own
-    layout and emit plain primitives (rect/path/text) which GitHub, VS Code and
-    WeasyPrint render natively — so the PDF export needs no Chrome for it. The
-    Mermaid builder below is the last resort: Mermaid/ELK lays each tier out as
-    one horizontal row and grew unboundedly wide on busy models.
+    scenarios) from plain primitives (rect/path/text) which GitHub, VS Code and
+    WeasyPrint render natively — so the PDF export needs no Chrome for it.
 
-    Each SVG builder projects the original actors for display and explains the
-    grouping, so its attribution matches Figure 2. Returns "" when
-    there is nothing to draw or the generator is unavailable — the caller then
-    falls back to the Mermaid builder and finally the LLM fragment.
+    The builder verifies its own output (no edge through a foreign node, no
+    label overlap, every arrow matches its YAML flow). A diagram that fails that
+    check is wrong, so it raises ``FigureError`` like a builder crash does and
+    the report is not published. Returns "" only when there is nothing to draw.
     """
     components = ctx.yaml_data.get("components") or []
     split = _supply_chain_split(ctx) is not None
@@ -5875,20 +5880,10 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     if not components or not (split or attack_paths_data.get("attack_paths") or []):
         return ""
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-    kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
-    # PRIMARY: the data-flow diagram (zones, flows, boundary crossings, STRIDE
-    # per element). FALLBACK: the tier-stack generator, kept for models the DFD
-    # builder cannot draw. The DFD builder verifies its own output (no edge
-    # through a foreign node, no label overlap, every arrow matches its YAML
-    # flow); a diagram that fails that check is wrong, not merely ugly, so it
-    # falls back like a crash does — and both paths leave a RENDER_WARN, so a
-    # silent downgrade cannot hide behind a report that still has a Figure 1.
     # Figure 1 is the overview. Only a model beyond the overview caps also gets
     # a linked paged detail sibling.
-    svg, intro = "", ""
     detail_svg = ""
     detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
-    role_notes = []
     try:
         from renderers.figure1_detail import needs_views
         from renderers.figure1_dfd import check_diagram, legitimate_role_notes, overview_facts
@@ -5906,73 +5901,35 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             actors=actors,
             detail=False,
         )
-        if problems:
-            ctx.warnings.append(
-                f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): "
-                f"{'; '.join(problems[:3])}) — rendered the tier-stack fallback"
-            )
-            svg = ""
-        else:
-            role_notes = legitimate_role_notes(ctx.yaml_data)
-            intro = _figure1_intro(
-                (figure_data.get("project") or {}).get("name") or "The system",
-                overview_facts(
-                    figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios
-                ),
-                runtime=split,
-            )
-            if paged:
-                try:
-                    detail_svg, detail_problems = check_diagram(
-                        figure_data,
-                        attack_paths_data,
-                        attack_taxonomy,
-                        actor_labels=actor_labels,
-                        scenarios=scenarios,
-                        actors=actors,
-                        detail=True,
-                    )
-                except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
-                    detail_svg, detail_problems = "", [str(exc)]
-                if detail_problems:
-                    ctx.warnings.append(
-                        f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}"
-                    )
-                    detail_svg = ""
-    except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
-        ctx.warnings.append(
-            f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"
+    except Exception as exc:  # noqa: BLE001 — any builder failure stops publication with its cause
+        raise FigureError(f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc})") from exc
+    if problems:
+        raise FigureError(
+            f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): {'; '.join(problems[:3])})"
         )
-        svg = ""
-    if not (svg or "").strip():
+    role_notes = legitimate_role_notes(ctx.yaml_data)
+    intro = _figure1_intro(
+        (figure_data.get("project") or {}).get("name") or "The system",
+        overview_facts(figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios),
+        runtime=split,
+        has_boundaries=bool(_ordered_trust_boundaries(ctx)),
+    )
+    if paged:
         try:
-            from renderers.figure1_svg import build_figure1_svg
-        except Exception:  # noqa: BLE001 — missing module must never break the section
-            return ""
-        if split:
-            from renderers.figure1_dfd import runtime_model
-
-            svg = build_figure1_svg(
-                runtime_model(ctx.yaml_data), _runtime_attack_paths(attack_paths_data), attack_taxonomy, **kwargs
+            detail_svg, detail_problems = check_diagram(
+                figure_data,
+                attack_paths_data,
+                attack_taxonomy,
+                actor_labels=actor_labels,
+                scenarios=scenarios,
+                actors=actors,
+                detail=True,
             )
-        else:
-            svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
-        if not (svg or "").strip():
-            return ""
-        intro = (
-            "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
-            "top threats per component. The in-figure legend on the right explains the attack scenarios, "
-            "severity dots and symbols."
-        )
-        # Name the boundary dividers only when the builder actually drew them —
-        # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
-        # caption that promises an element the figure omits is the same defect as the
-        # §2 `==>` legend bullet.
-        if "trust boundary" in (svg or ""):
-            intro += (
-                " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
-                "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
-            )
+        except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
+            detail_svg, detail_problems = "", [str(exc)]
+        if detail_problems:
+            ctx.warnings.append(f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}")
+            detail_svg = ""
     # Always write the file (referenced by the published md / consumed by export).
     _write_figure(ctx, ctx.figure_basename, svg)
     detail_path = ctx.output_dir / detail_basename
@@ -7690,22 +7647,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # Figure 1 is built DETERMINISTICALLY from yaml + the SAME reconciled
     # attack_paths order that drives Figure 2's glyphs, so ①–⑦ agree across
     # both figures and the Top Threats table. Precedence, see
-    # `_render_figure1_svg`: the self-checked data-flow diagram, then the
-    # tier-stack SVG, then the Mermaid builder below, and an LLM/operator-
-    # authored `.fragments/top-threats-architecture.md` ONLY when every
-    # deterministic builder yields nothing (e.g. no attack_paths). The fragment
-    # comes last on purpose: when it was preferred it produced free-form
+    # `_render_figure1_svg`: the self-checked data-flow diagram, whose failure
+    # stops the report; when it has nothing to draw, the Mermaid builder below,
+    # and an LLM/operator-authored `.fragments/top-threats-architecture.md` ONLY
+    # when every deterministic builder yields nothing (e.g. no attack_paths). The
+    # fragment comes last on purpose: when it was preferred it produced free-form
     # diagrams that ignored the prescribed structure and emitted out-of-range
-    # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
-    # a builder failure must never break the section (Figure 2 + table still render).
-    # PRIMARY: deterministic hand-built SVG (written next to threat-model.md).
-    figure1_md = ""
-    try:
-        figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
-    except Exception:  # noqa: BLE001 — Figure 1 is non-essential
-        figure1_md = ""
-    # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
-    # if the SVG generator is unavailable or yields nothing).
+    # `linkStyle` indices that crash Mermaid (2026-05-30 regression).
+    figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
+    # FALLBACK 1: the legacy deterministic Mermaid builder when the SVG builder has nothing to draw.
     split = _supply_chain_split(ctx) is not None
     if not figure1_md:
         try:
@@ -8026,6 +7976,12 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         )
 
     enriched = sorted((enrich(m) for m in mitigations), key=_row_sort_key)
+    # When declared context reaches every measure, the unnamed marker orders
+    # nothing and tells the reader nothing; a named asset still explains a row.
+    if enriched and all(r["business_note"] for r in enriched):
+        for r in enriched:
+            if r["business_note"] == _business_relevance.UNNAMED_CONTEXT_NOTE:
+                r["business_note"] = ""
     eligible = [r for r in enriched if r["priority"] in ("P1", "P2")]
 
     top = _ms_top_weaknesses(ctx)
@@ -8065,14 +8021,8 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     assigned = {r["id"] for rows in groups.values() for r in rows} | {r["id"] for r in orphans}
     shown_groups: list[tuple[dict | None, list[dict[str, Any]]]] = []
     for wid, rows in groups.items():
-        if not rows:
-            # A top root cause without a P1/P2 measure of its own keeps its best
-            # remaining one; with none, its row still names the lasting fix.
-            best = next(
-                (r for r in enriched if r["id"] not in assigned and _cause_of(r, [weakness_by_id[wid]])),
-                None,
-            )
-            rows = [best] if best else []
+        # A top root cause without a P1/P2 measure of its own still names its
+        # lasting fix; a P3/P4 measure is never shown as "do first".
         shown_groups.append((weakness_by_id[wid], _cap(rows)))
     # A model with few or no root causes would leave the table nearly empty:
     # top up with the best P1/P2 measures that have no root cause.
@@ -8086,6 +8036,8 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             shown_count += 1
     if orphans:
         shown_groups.append((None, sorted(orphans, key=_row_sort_key)))
+    if not shown_groups and enriched:
+        shown_groups.append((None, enriched[:_REMEDIATION_MIN_ROWS]))
 
     def _md(text: str) -> str:
         return _render_inline_md_to_html(text)
@@ -8137,14 +8089,18 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     out = ["### Remediation Priorities", ""]
     if not rows_html:
         out.append("No mitigation is recorded. See [§10 Mitigation Register](#10-mitigation-register).")
-        return "\n".join(out) + "\n"
-    out.append(
-        "The root causes behind the findings, ranked by severity, each with the measures to do first. "
-        "The lasting fix under a root cause removes it and every finding it causes. "
-        "Every mitigation that fixes a Critical finding is listed. "
-        "Details in the [§7 Weakness Register](#7-weakness-register) and the "
-        "[§10 Mitigation Register](#10-mitigation-register)."
-    )
+    elif ranked:
+        out.append(
+            "The root causes behind the findings, ranked by severity, each with the measures to do first. "
+            "The lasting fix under a root cause removes it and every finding it causes. "
+            "Every mitigation that fixes a Critical finding is listed. "
+            "Details in the [§7 Weakness Register](#7-weakness-register) and the "
+            "[§10 Mitigation Register](#10-mitigation-register)."
+        )
+    else:
+        out.append(
+            "The highest-priority recorded measures. Details in the [§10 Mitigation Register](#10-mitigation-register)."
+        )
     out.append("")
     out.append('<table style="table-layout:fixed;width:100%">')
     out.append(
@@ -9961,11 +9917,30 @@ def _ranked_weaknesses(ctx: RenderContext) -> list[dict]:
 
 
 def _ms_top_weaknesses(ctx: RenderContext) -> list[dict]:
-    """The root causes the Management Summary leads with: the Critical/High
-    weaknesses, capped at 6, topped up from the ranked list when fewer than 3
-    reach High so the view is never trivially short."""
-    ranked = _ranked_weaknesses(ctx)
-    top = [w for w in ranked if (w.get("severity") or "").strip().lower() in ("critical", "high")]
+    """The root causes the Management Summary leads with: those whose own
+    severity or worst owned finding is Critical/High, capped at 6, topped up
+    from the ranked list when fewer than 3 qualify so the view is never
+    trivially short.
+
+    A weakness's own severity counts confirmed instances only, so a cause whose
+    Critical finding is a practice site can carry a lower heading than that
+    finding. The order therefore takes the worse of both, then the worst owned
+    finding, so a cause behind a Critical finding never trails one that resolves
+    only Medium findings."""
+    severity_of = {
+        _finding_key(t.get("t_id") or t.get("id")): t.get("effective_severity") or t.get("risk") or t.get("severity")
+        for t in ctx.yaml_data.get("threats") or []
+        if isinstance(t, dict) and (t.get("t_id") or t.get("id"))
+    }
+
+    def finding_rank(w: dict) -> int:
+        return min((_severity_rank(severity_of.get(_finding_key(f))) for f in _weakness_finding_ids(w)), default=99)
+
+    def own_rank(w: dict) -> int:
+        return _severity_rank(w.get("severity"))
+
+    ranked = sorted(_ranked_weaknesses(ctx), key=lambda w: (min(own_rank(w), finding_rank(w)), finding_rank(w)))
+    top = [w for w in ranked if min(own_rank(w), finding_rank(w)) <= 1]
     if len(top) < 3:
         top = ranked[: min(5, len(ranked))]
     return top[:6]
@@ -11058,36 +11033,12 @@ def _leg_control_link(leg: str) -> str:
 
 
 def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
-    """Name, under each §6 control domain, the crossings that depend on it.
+    """Keep stable control anchors without deriving dependencies from CWE adjacency.
 
-    Deliberately NOT a second assessment: the line carries the crossing, the
-    leg's derived state and the finding ids, and nothing that grades the
-    control. §6 keeps that authority — the two answer different questions and
-    neither may overrule the other.
+    A shared authentication condition does not make every related finding a
+    session-control dependency. The boundary catalogue retains actual links.
     """
-    rows = _visible_trust_boundaries(ctx)
-    if not rows:
-        return md
-    threats = ctx.yaml_data.get("threats") or []
-    state_text = {"refuted": "assumption broken", "unconfirmed": "assumption not confirmed"}
-    per_leg: dict[str, list[str]] = {}
-    for row in rows:
-        for leg in boundary_leg_states(row, threats):
-            if leg["state"] == "unexamined":
-                continue
-            ids = [_visible_finding_id(fid) for fid in leg["finding_ids"][:3]]
-            crossing, _mechanism = _boundary_crossing_and_mechanism(row, component_names(ctx.yaml_data))
-            entry = [
-                f"- [{row['id']}](#{row['id']})"
-                + (f" — {crossing}" if crossing else "")
-                + f" ({state_text.get(leg['state'], leg['state'])})"
-            ]
-            entry += [f"  - [{fid}](#{fid.lower()})" for fid in ids]
-            extra = len(leg["finding_ids"]) - len(ids)
-            if extra > 0:
-                entry.append(f"  - +{extra} more")
-            per_leg.setdefault(leg["leg"], []).append("\n".join(entry))
-    for domain, leg in _SECTION7_DOMAIN_LEG.items():
+    for domain in _SECTION7_DOMAIN_LEG:
         # `[ \t]*$`, not `\s*$`: the latter backtracks into the heading's own
         # newline, so the injected block would absorb the blank line and the
         # following prose would join it into one paragraph.
@@ -11100,12 +11051,7 @@ def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
         # back-link pointing at two elements.
         if anchor in md:
             continue
-        entries = per_leg.get(leg) or []
-        line = (
-            f"{anchor}\n\n**Dependent crossings:**\n\n" + "\n".join(entries)
-            if entries
-            else f"{anchor}\n\n_No trust boundary in this model depends on this control class._"
-        )
+        line = anchor
         md = re.sub(pattern, r"\1\n\n" + line.replace("\\", "\\\\"), md, count=1, flags=re.MULTILINE)
     return md
 
@@ -11630,6 +11576,7 @@ def _wrap_segment_words(seg: str, width: int) -> str:
 # Keep in sync with qa_checks `_FIXED_LAYOUT_SPECS`.
 _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
+        ("ID", "Crossing", "Required condition", "Findings / open question"),
         ("Method", "Route", "Risk", "Notes"),
         ("Asset", "Classification", "Description", "Linked Threats"),
         # Trust Boundaries (2026-07-31): a column whose every row says the same
@@ -13143,6 +13090,44 @@ def _apply_outside_changelog(md: str, fn) -> str:
 _ROOT_CAUSE_FIX_LINE_RE = re.compile(
     r"^- \*\*(?:\[W-\d{3,4}\]\(#w-\d{3,4}\)\*\* — .*_\(closes |No root cause linked\*\* — )"
 )
+
+
+def _is_inline_finding_citation(line: str, offset: int) -> bool:
+    """A parenthetical citation attached to prose, rather than a standalone finding list."""
+    if line.lstrip().startswith(("|", "#", "<")):
+        return False
+    if any(m.start() <= offset < m.end() for m in re.finditer(r"`+[^`\n]*`+", line)):
+        return False
+    masked = re.sub(r"\[[^\]\n]*\]\([^\)\n]*\)|`[^`\n]*`", lambda m: " " * len(m[0]), line)
+    opening = masked.rfind("(", 0, offset)
+    return opening > masked.rfind(")", 0, offset) and bool(re.search(r"[A-Za-z]", masked[:opening]))
+
+
+def _compact_inline_finding_citations(ctx: RenderContext, md: str) -> str:
+    """Keep known finding titles in lists, but omit them from citations whose sentence explains the issue."""
+
+    def compact(line: str) -> str:
+        pattern = r"\[([FT]-\d{3,4})\]\(#[ft]-\d+\)"
+        for match in reversed(list(re.finditer(pattern, line))):
+            if not _is_inline_finding_citation(line, match.start()):
+                continue
+            title = _title_without_locator(ctx.lookup_label(match[1]) or "")
+            if not title:
+                continue
+            for suffix in (f" — {title}", f" - {title}", f" ({title})"):
+                tail = line[match.end() :]
+                if tail.startswith(suffix) and re.match(r"\s*(?:[,;.)]|$)", tail[len(suffix) :]):
+                    line = line[: match.end()] + line[match.end() + len(suffix) :]
+                    break
+        return line
+
+    fenced = False
+    lines = []
+    for line in md.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        lines.append(line if fenced else compact(line))
+    return "\n".join(lines)
 
 
 def _is_bare_finding_ref_line(line: str) -> bool:
@@ -15749,6 +15734,22 @@ def _render_actor_inventory(ctx: RenderContext, people: list[dict]) -> str:
         )
         where = f" · [Figure 1b](#{_FIGURE1B_ANCHOR})" if person.get("figure") == "1b" else ""
         lines.append(f"| {safe(name)} | {kind} | {safe(access)}{where} | {scenario_text or '—'} | {findings} |")
+    shown_slugs = {person["slug"] for person in attackers}
+    unassigned = [
+        threat
+        for threat in _severity_rollup.register_threats(model)
+        if not (_attacker_groups_of(threat, model, meta) & shown_slugs)
+    ]
+    if unassigned:
+        tally = Counter(_severity_rollup.register_severity(threat) for threat in unassigned)
+        summary = ", ".join(f"{tally[sev]} {sev}" for sev in _severity_rollup.SEVERITY_ORDER if tally[sev])
+        lines.extend(
+            [
+                "",
+                f"{len(unassigned)} findings are not represented in the actor counts ({summary}). "
+                "These counts cover assigned findings only; absence from them does not establish inaccessibility.",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -16457,142 +16458,61 @@ def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
 
 
 def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """A compact inventory of crossings, conditions and evidenced gaps.
+
+    Existence confidence is separate from control effectiveness. Adjacency
+    names an unresolved relationship, never a proved broken control.
+    Source, mechanism and resolution metadata remain in the canonical model.
+    """
     rows = _ordered_trust_boundaries(ctx)
     if not rows:
         return ""
-    linked = _boundary_link_index(ctx)
-    component_ids = _boundary_component_ids(ctx)
     shown = _visible_trust_boundaries(ctx)
+    linked = _boundary_link_index(ctx)
     names = component_names(ctx.yaml_data)
-    # Provenance / confidence / status are collapsed out of the table when every
-    # row agrees on them and the shared value is the unexceptional one; the
-    # footnote then states each collapsed fact once. See `_uniform_boundary_value`.
-    uniform_source = _uniform_boundary_value(
-        shown,
-        lambda row: ", ".join(str(source) for source in row.get("sources") or []),
-        None,
-    )
-    uniform_confidence = _uniform_boundary_value(shown, _boundary_confidence_text, "confirmed")
-    uniform_status = _uniform_boundary_value(shown, lambda row: str(row.get("resolution_status") or ""), "resolved")
-    # The Kind column names `status` only while a status is actually shown there.
-    headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if uniform_status is None else "Kind"]
-    headers.append(_BOUNDARY_ASSUMPTION_HEADER)
-    if uniform_source is None:
-        headers.append("Source")
-    headers.append("Linked findings")
     lines = [
         "### Trust Boundaries",
         "",
-        # Lead states what the table is and what its hardest column answers;
-        # the vocabulary follows the table as a legend, beside the Exposure one.
-        # As one block up front it ran to a screen of definitions the reader had
-        # to hold in memory before seeing a single row (user 2026-08-02).
-        "Canonical boundary crossings. **Assumption & verdict** names the condition that makes "
-        "each crossing safe and whether this report still supports it, judged one condition at a "
-        "time — which conditions apply follows from the direction of the crossing.",
+        "Each row names a crossing and the condition it relies on. A modelled crossing does not prove that its control works.",
         "",
-        f"| {' | '.join(headers)} |",
-        f"|{'---|' * len(headers)}",
+        "| ID | Crossing | Required condition | Findings / open question |",
+        "|---|---|---|---|",
     ]
     for row in shown:
-        boundary_id = row["id"]
-        # The bold crossing owns its line; everything else rides on ONE further
-        # line. Three stacked <br> lines in a ~26% column each wrapped again and
-        # made the cell read as a ragged block (user 2026-07-31), so the folded-in
-        # components ride behind the mechanism instead of claiming a line, and a
-        # fact with no content emits no line at all — never a dangling label.
-        # No emphasis markers around the mechanism / covers text: a later pass
-        # backticks the identifiers in it, and markdown emphasis wrapped around a
-        # code span does not survive the fixed-layout HTML conversion.
         crossing, mechanism = _boundary_crossing_and_mechanism(row, names)
-        boundary = f"**{_safe_boundary_text(crossing, table=True)}**"
-        # "Control:" — the thing that decides whether the crossing is allowed.
-        # The label used to read "enforced by:", which readers could not
-        # interpret without a legend (user 2026-07-31). An absent
-        # `enforcement_point` is a finding about the model, not a gap to paper
-        # over: say that no single control was identified rather than
-        # reconstructing one from the boundary name.
-        detail = f"Control: {_safe_boundary_text(mechanism, table=True)}" if mechanism else "Control: none identified"
-        covers = [
-            endpoint_label(names, cid) for cid in _boundary_covered_components(row) if cid != str(row.get("to") or "")
-        ]
+        crossing = _safe_boundary_text(crossing, table=True)
+        if row.get("resolution_status") != "resolved":
+            crossing += "<br>Endpoints: " + _safe_boundary_text(
+                row.get("resolution_status") or "unresolved", table=True
+            )
+        if _boundary_confidence_text(row) != "confirmed":
+            crossing += "<br>Crossing: " + _safe_boundary_text(_boundary_confidence_text(row), table=True)
+        covers = [endpoint_label(names, cid) for cid in _boundary_covered_components(row) if cid != row.get("to")]
         if covers:
-            detail += f" · Also covers: {_safe_boundary_text(', '.join(covers), table=True)}"
-        boundary += f"<br>{detail}"
-        # Exposure gets its own column; the kind cell carries the crossing
-        # mechanism and nothing else, so no row states its exposure twice. A
-        # resolution_status that is NOT the collapsed-away `resolved` is an
-        # exceptional state and stays visible — bold, on its own line — however
-        # uniform the rest of the table is.
-        exposure = _boundary_exposure_rating(row, component_ids)
-        kind = _safe_boundary_text(_boundary_kind_label(row), table=True)
-        if uniform_status is None:
-            kind += f"<br>**{_safe_boundary_text(row.get('resolution_status'), table=True)}**"
-        assumption = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
-        if uniform_confidence is None:
-            assumption += f"<br>_{_safe_boundary_text(_boundary_confidence_text(row), table=True)}_"
-        # Legs REPLACE the one-line row verdict rather than stacking beneath it:
-        # they answer the same question per condition, and a six-line cell in a
-        # ~26% column reads as a ragged block. The row verdict comes back only
-        # when it would otherwise be lost — a link the leg view could not
-        # attribute (no `leg`, no CWE match) still refutes the row, and a cell
-        # showing three "not examined" legs under a refuted row would be a lie.
-        threats_for_legs = ctx.yaml_data.get("threats") or []
-        leg_states = boundary_leg_states(row, threats_for_legs)
-        # Legs are shown only once at least one of them carries a state — a row
-        # nothing bears on would otherwise trade its one-line verdict for three
-        # lines of "not examined", which is longer and says less.
-        informative = [leg for leg in leg_states if leg["state"] != "unexamined"]
-        row_state, _row_ids = boundary_assumption_state(row, threats_for_legs)
-        # The row verdict comes back when the leg view would lose it: a link the
-        # legs could not attribute (no `leg` field, no CWE match) still refutes
-        # the row, and legs reading "not examined" beneath it would be a lie.
-        if not informative or (
-            row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}
-        ):
-            assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
-        if informative:
-            for line in _boundary_leg_lines(leg_states, ctx):
-                assumption += f"<br>{line}"
-        sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
-        finding_links = _boundary_finding_links(linked.get(boundary_id, []), leg_states, ctx)
-        cells = [f'<a id="{boundary_id}"></a>{boundary_id}', boundary, exposure, kind, assumption]
-        if uniform_source is None:
-            cells.append(sources)
-        cells.append(finding_links)
-        lines.append(f"| {' | '.join(cells)} |")
+            crossing += "<br>Also covers: " + _safe_boundary_text(", ".join(covers), table=True)
+        condition = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
+        condition += "<br>Control: " + (_safe_boundary_text(mechanism, table=True) if mechanism else "not identified")
+        legs = boundary_leg_states(row, ctx.yaml_data.get("threats") or [])
+        links = _boundary_finding_links(linked.get(row["id"], []), legs, ctx)
+        state, ids = boundary_assumption_state(row, ctx.yaml_data.get("threats") or [])
+        if state == "refuted":
+            answer = "Gap evidenced: " + links
+        elif state == "unconfirmed":
+            noun = "finding" if len(ids) == 1 else "findings"
+            answer = f"{len(ids)} related {noun}; relevance to this crossing remains unverified."
+            if links != "—":
+                answer += "<br>" + links
+        else:
+            answer = "No linked finding establishes a gap; control effectiveness is not established."
+            if links != "—":
+                answer += "<br>" + links
+        lines.append(f'| <a id="{row["id"]}"></a>{row["id"]} | {crossing} | {condition} | {answer} |')
     if len(rows) > len(shown):
         lines.extend(
-            [
-                "",
-                f"_{len(rows) - len(shown)} additional trust boundary row(s) are available in "
-                "`threat-model.yaml` and `model/query_threat_model.py`._",
-            ]
+            ["", f"{len(rows) - len(shown)} additional trust boundary row(s) are recorded in `threat-model.yaml`."]
         )
-    lines.extend(["", _boundary_exposure_legend()])
-    lines.extend(["", _boundary_kind_legend()])
-    lines.extend(["", _boundary_condition_legend()])
-    lines.extend(["", _boundary_verdict_legend()])
-    if uniform_source is None:
-        lines.extend(
-            [
-                "",
-                "_Source: `detected` = derived from inspected repository evidence; "
-                "`repo-declared` = supplied by `.appsec/trust-boundaries.yaml`; "
-                "`legacy` = migrated from an earlier boundary format._",
-            ]
-        )
-    collapsed: list[str] = []
-    if uniform_source is not None:
-        gloss = _BOUNDARY_SOURCE_GLOSS.get(uniform_source)
-        collapsed.append(f"source: {gloss or uniform_source}")
-    if uniform_confidence is not None:
-        collapsed.append(f"confidence: {uniform_confidence}")
-    if uniform_status is not None:
-        collapsed.append(f"status: {uniform_status}")
-    if collapsed:
-        lines.extend(["", f"_All boundaries share {'; '.join(collapsed)}._"])
-    return "\n".join(lines).rstrip() + "\n"
+    lines.extend(["", "Crossing types, source evidence and provenance are retained in `threat-model.yaml`."])
+    return "\n".join(lines) + "\n"
 
 
 _POSTURE_VERDICT_EMOJI = {"VIOLATED": "🔴", "WEAK": "🟠", "ADEQUATE": "🟢"}
@@ -19018,6 +18938,7 @@ def render(
     # normal `[ID](#id) — label` tail.
     rendered = _apply_outside_changelog(rendered, _delink_id_in_link_text)
     rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
+    rendered = _apply_outside_changelog(rendered, lambda text: _compact_inline_finding_citations(ctx, text))
     rendered = restore_figures(rendered)
 
     # Report-integrity manifest: certify which sections rendered and which
@@ -20070,6 +19991,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 4
+        return 1
+    except FigureError as e:
+        print(f"RENDER_FAILED: {e}", file=sys.stderr)
         return 1
     except ContractError as e:
         print(f"CONTRACT_ERROR: {e}", file=sys.stderr)

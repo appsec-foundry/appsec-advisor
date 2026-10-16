@@ -108,5 +108,6 @@
         ]
       }
     ]
-  }
+  },
+  "modules": ["./progress.tsx"]
 }

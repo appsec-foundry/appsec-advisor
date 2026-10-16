@@ -65,6 +65,7 @@ _LEX = re.compile(
 _CALL = re.compile(
     r"\b(?:[\w.]+\.)?(?:fetch|get|post|request|replace|assign|open|urlopen|discover|fromIssuerLocation|UserManager|PublicClientApplication|ConfidentialClientApplication|OAuth2Session|OAuth2|OpenIDConnect|Saml2Client|SAMLStrategy|Strategy|register)\s*\("
 )
+_NAVIGATION = re.compile(r"(?<![\w$.])(?:(?:window|document)\.location(?:\.href)?|location\.href)\s*=(?!=)")
 # The client-library constructors among those calls; their keyword names (issuer, tokenURL, ...) state the role.
 _CLIENT = re.compile(
     r"(?:UserManager|ClientApplication|OAuth2?(?:Session)?|OpenIDConnect|Saml2Client|SAMLStrategy|Strategy|register)\s*\("
@@ -377,6 +378,19 @@ def _source_integrations(text: str, rel: str) -> list[Integration]:
         end = _call_end(masked, call)
         if end is not None:
             calls.append((call, end))
+    # Assigning the browser location navigates just like assign()/replace().
+    # Bound the expression and reuse literal binding, URL and ownership guards.
+    for navigation in _NAVIGATION.finditer(masked):
+        start = navigation.end()
+        while start < len(text) and text[start].isspace():
+            start += 1
+        limit = min(len(masked), navigation.end() + _MAX_CALL_CHARS)
+        if start >= limit:
+            continue
+        end = _statement_end(masked[:limit], start)
+        if end < limit or limit == len(masked):
+            calls.append((navigation, end))
+    calls.sort(key=lambda entry: entry[0].start())
     result = []
     for literal in strings:
         start, _end, value = literal
@@ -389,6 +403,8 @@ def _source_integrations(text: str, rel: str) -> list[Integration]:
             if not _call_uses_literal(masked, strings, call, call_end, literal, name):
                 continue
             role = _call_role(call.group(), value, name)
+            if _NAVIGATION.fullmatch(call.group()) and role not in _REDIRECT_ROLES:
+                continue
             if not role:
                 continue
             address = _address(value, issuer=role == "OIDC discovery")
@@ -401,7 +417,10 @@ def _source_integrations(text: str, rel: str) -> list[Integration]:
                     text.count("\n", 0, call.start()) + 1,
                     *address,
                     role,
-                    browser=bool(re.search(r"\blocation\.(?:assign|replace)|(?:window|Window)\.open", call.group())),
+                    browser=bool(
+                        _NAVIGATION.fullmatch(call.group())
+                        or re.search(r"\blocation\.(?:assign|replace)|(?:window|Window)\.open", call.group())
+                    ),
                     window=value + "\n" + text[call.start() : call_end],
                 )
             )

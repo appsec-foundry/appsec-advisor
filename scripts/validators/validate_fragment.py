@@ -417,6 +417,21 @@ def _nameable_role_access() -> frozenset[str]:
     return frozenset(slug for slug, entry in actors.items() if (entry or {}).get("legitimate_role_noun"))
 
 
+def interaction_shape_holds(flow: dict, entity_kinds: dict) -> bool:
+    """An interaction flow is a human legitimate role using a client, with no server authentication claim."""
+    return (
+        flow.get("from") == "external"
+        and entity_kinds.get(flow.get("from_entity")) == "legitimate-role"
+        and flow.get("to") != "external"
+        and not flow.get("authentication")
+    )
+
+
+def interaction_targets_client(flow: dict, tiers: dict) -> bool:
+    """An interaction flow ends at a client-tier component."""
+    return tiers.get(flow.get("to")) == "client"
+
+
 def architecture_reference_errors(data: dict) -> list[str]:
     """Validate optional identities; schema-invalid shapes remain validation errors."""
     from renderers.figure1_security import access_groups
@@ -440,12 +455,7 @@ def architecture_reference_errors(data: dict) -> list[str]:
                 "its authored name instead of the project-qualified one"
             )
     for flow in rows(data.get("data_flows")):
-        if flow.get("interaction") and (
-            flow.get("from") != "external"
-            or entity_kinds.get(flow.get("from_entity")) != "legitimate-role"
-            or flow.get("to") == "external"
-            or flow.get("authentication")
-        ):
+        if flow.get("interaction") and not interaction_shape_holds(flow, entity_kinds):
             errors.append(
                 f"{flow.get('id')}: interaction must be a human-to-client access without a server authentication claim"
             )
@@ -460,7 +470,7 @@ def architecture_reference_errors(data: dict) -> list[str]:
             errors.append("external entity IDs must not collide with component IDs")
         tiers = {c["id"]: c.get("tier") for c in components}
         for flow in rows(data.get("data_flows")):
-            if flow.get("interaction") and tiers.get(flow.get("to")) != "client":
+            if flow.get("interaction") and not interaction_targets_client(flow, tiers):
                 errors.append(f"{flow.get('id')}: human interaction must target a client component")
         for threat in rows(data.get("threats")):
             if (

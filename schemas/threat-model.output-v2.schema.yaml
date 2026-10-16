@@ -36,6 +36,12 @@ properties:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/generated
       analysis_duration_seconds:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/analysis_duration_seconds
+      unexamined_source:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/unexamined_source
+      undecided_targets:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/undecided_targets
+      unowned_source:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/unowned_source
       mode:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/mode
       open_user_registration:
@@ -455,6 +461,8 @@ properties:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/status
       reason:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/reason
+      not_performed:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/not_performed
       cases:
         type: array
         items:

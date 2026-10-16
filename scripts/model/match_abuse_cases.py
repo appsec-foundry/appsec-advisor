@@ -988,7 +988,11 @@ def _effective_registration_signal(signals: set[str] | None, output_dir: Path) -
     matching runs after that tail, so the later boolean is authoritative when
     present. Missing YAML/meta leaves the earlier signal unchanged; an explicit
     false removes a stale recon true as well as true adding a missed signal.
+    Without a recon sidecar matching is ungated; the overlay must not turn that
+    unknown into a set where every other required signal reads as absent.
     """
+    if signals is None:
+        return None
     path = output_dir / "threat-model.yaml"
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))

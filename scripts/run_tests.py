@@ -134,7 +134,9 @@ GROUPS = {
         authnz_report
         authz_confirm
         backfill_scanner_remediation
+        capability_signals
         check_target_specificity
+        client_api_flows
         config_iac_checks
         config_iac_scanner
         config_scanner_wireup
@@ -211,9 +213,13 @@ GROUPS = {
         multi_repo_boundaries
         multi_repo_controller
         multi_repo_assessment
+        single_repo_controller
+        controller_fixture
+        controller_e2e
         multi_repo_config
         multi_repo_discovery
         multi_repo_scope
+        serving_units
         portable_model_readers
         reconcile_multi_repo_architecture
         review_multi_repo_connections
@@ -255,6 +261,7 @@ GROUPS = {
         event_log
         gate_preconditions
         headless_usage
+        remote_repositories
         hook_payload
         hook_payload_contract
         hooks_schema
@@ -305,6 +312,7 @@ GROUPS = {
         stride_quick_profile
         stride_serial_dispatch_detection
         telemetry_consistency
+        term_style
         terminate_run
         thin_runtime_regressions_2026_07_20
         validate_analyst
@@ -528,6 +536,7 @@ GROUPS = {
         postscan_secret_check
         preflight_untrusted
         redact_known_secrets
+        remote_url
         run_path_guard
         url_guard
     """),
@@ -573,6 +582,7 @@ GROUPS = {
 
 MANUAL_TESTS = {
     "tests/test_full_run_e2e.py": "Assertions on live-run artifacts; only enabled by the manual E2E driver.",
+    "tests/test_host_isolation_live.py": "Calls the real claude host and spends money; enabled by APPSEC_LIVE_HOST=1.",
 }
 
 # These sources retain the full suite until their behavior has measured coverage.
@@ -606,12 +616,13 @@ _AGENT_FILE_TESTS = (
 _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
 
 SOURCE_TESTS = {
+    "scripts/runtime/remote_repositories.py": _tests("remote_repositories"),
     ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
     "specs/README.md": _tests("requirements_verification"),
     "specs/changes/root-requirements-catalog/proposal.md": _tests("requirements_verification"),
     "scripts/orchestrator/assessment_context.py": _tests("assessment_context check_target_specificity"),
     "scripts/orchestrator/assessment_workspace.py": _tests(
-        "multi_repo_assessment assessment_context assessment_review assessment_posture check_target_specificity"
+        "multi_repo_assessment single_repo_controller assessment_context assessment_review assessment_posture check_target_specificity"
     ),
     "scripts/orchestrator/assessment_stage2.py": _tests("assessment_stage2 check_target_specificity"),
     "scripts/orchestrator/assessment_review.py": _tests("assessment_review check_target_specificity"),
@@ -633,6 +644,7 @@ SOURCE_TESTS = {
     "schemas/multi-repo-state.schema.json": _tests(
         "assessment_state multi_repo_controller schemas check_target_specificity"
     ),
+    "tests/e2e/fake_claude.py": _tests("controller_e2e"),
     "scripts/runtime/assessment_jobs.py": _tests(
         "assessment_jobs multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
     ),
@@ -646,7 +658,7 @@ SOURCE_TESTS = {
         "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_figures multi_repo_exports"
     ),
     "scripts/contexts/multi_repo_analysis.py": _tests(
-        "multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports threat_fixture"
+        "multi_repo_analysis serving_units multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports threat_fixture"
     ),
     "schemas/multi-repo-architecture.schema.json": _tests(
         "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
@@ -682,6 +694,7 @@ SOURCE_TESTS = {
         check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
         multi_repo_builder
         multi_repo_exports
+        multi_repo_assessment
     """
     ),
     "schemas/multi-repo-connection-review.schema.json": _tests("""
@@ -710,8 +723,14 @@ SOURCE_TESTS = {
         multi_repo_exports
     """
     ),
+    "scripts/analyzers/serving_units.py": _tests("""
+        serving_units multi_repo_controller
+    """),
+    "schemas/architecture-serving-units.schema.json": _tests("""
+        serving_units schemas
+    """),
     "scripts/runtime/multi_repo_discovery.py": _tests("""
-        review_multi_repo_connections
+        review_multi_repo_connections serving_units assessment_jobs controller_e2e
         multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
     """),
     "scripts/runtime/assessment_host.py": _tests("""
@@ -764,6 +783,7 @@ SOURCE_TESTS = {
     "skills/abuse-cases/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} resolve_abuse_cases skill_definitions"),
     "skills/ask-threat-model/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
     "skills/help/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} help_reference skill_definitions"),
+    "skills/create-threat-model2/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} single_repo_controller skill_definitions"),
     "data/supply-chain-controls.yaml": _tests("""
         emit_sca_practice
         scanner_review_regressions
@@ -1229,7 +1249,9 @@ SOURCE_TESTS = {
         validate_fragment
     """),
     "scripts/run-headless.sh": _tests("""
+        remote_repositories
         acceptance_invocation
+        controller_e2e
         agent_logger
         budget_watchdog
         check_target_specificity
@@ -1878,7 +1900,7 @@ SOURCE_TESTS = {
     """),
     "scripts/model/finalize_component_inventory.py": _tests(
         """
-        validate_assessment_architecture review_multi_repo_connections
+        validate_assessment_architecture review_multi_repo_connections serving_units
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -2168,6 +2190,15 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
+    "scripts/analyzers/capability_signals.py": _tests("""
+        capability_signals
+        multi_repo_assessment
+    """),
+    "scripts/analyzers/client_api_flows.py": _tests("""
+        client_api_flows
+        controller_fixture
+        multi_repo_assessment
+    """),
     "scripts/analyzers/flow_route_auth.py": _tests("""
         architect_review_runtime
         check_target_specificity
@@ -2365,6 +2396,35 @@ SOURCE_TESTS = {
         terminate_run
         verify_run_costs
     """),
+    "scripts/renderers/term_style.py": _tests("""
+        aggregate_run_issues
+        architect_review_runtime
+        check_target_specificity
+        completion_relay
+        controller_e2e
+        cost_running_total
+        finding_state
+        gate_preconditions
+        headless_usage
+        measure_run
+        model_release_pricing
+        multi_repo_assessment
+        p1_renderer_correctness
+        persist_run_baseline
+        render_completion_summary
+        render_completion_summary_config
+        render_completion_summary_verdict
+        render_integrity
+        render_progress
+        report_plugin_issue
+        requirements_verification
+        run_headless_completion
+        shared_paths
+        skill_watchdog
+        stride_outputs
+        team_questions
+        term_style
+    """),
     "scripts/renderers/render_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -2491,6 +2551,8 @@ SOURCE_TESTS = {
     "scripts/orchestrator/orchestration_controller.py": _tests("""
         multi_repo_controller
         multi_repo_assessment
+        single_repo_controller
+        controller_fixture
         script_layout
         business_impact_scope
         architect_review_runtime
@@ -2859,6 +2921,7 @@ SOURCE_TESTS = {
         figure1b_svg
     """),
     "scripts/renderers/compose_threat_model.py": _tests("""
+        multi_repo_assessment
         report_anatomy
         figure1b_compose
         script_layout
@@ -3685,6 +3748,11 @@ SOURCE_TESTS = {
         threat_model_fields
         threat_model_fields_evidence
         multi_repo_exports
+    """),
+    "scripts/shared/_remote_url.py": _tests("""
+        build_threat_model_yaml
+        multi_repo_assessment
+        remote_url
     """),
     "scripts/shared/_url_guard.py": _tests("""
         appsec_status
@@ -4541,6 +4609,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/embedded_store_access.py": _tests("""
+        multi_repo_assessment
+        multi_repo_controller
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -5477,7 +5547,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reclassify_components.py": _tests("""
-        validate_assessment_architecture review_multi_repo_connections
+        validate_assessment_architecture review_multi_repo_connections serving_units
         run_invariants
         topology_workloads
         architect_review_runtime
@@ -5944,6 +6014,17 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/scan_excludes.py": _tests("""
+        multi_repo_scope multi_repo_assessment assessment_host multi_repo_discovery
+        reconcile_multi_repo_architecture finding_state shared_paths multi_repo_builder
+        multi_repo_figures multi_repo_exports
+        abuse_case_hypothesis abuse_case_verdicts actor_attribution agent_config_checks analyst_cli
+        assessment_context assessment_declarations assessment_jobs assessment_posture assessment_review
+        assessment_scanner_findings assessment_sources assessment_stage2 assessment_state authnz_review_skill
+        build_architecture_analysis_context build_threat_model_yaml build_trust_boundary_assessment_input
+        business_abuse_cases carry_plan compose_threat_model_cov2 config_iac_scanner config_scanner_wireup
+        derive_abuse_cases egress_clients emit_sca_practice emit_threat_vektors enrichment_pass iac_resource_checks
+        multi_repo_analysis multi_repo_boundaries multi_repo_controller portable_model_readers supply_chain_facts
+        validate_evidence_lines
         validate_assessment_architecture review_multi_repo_connections
         arch_coverage_bridge
         architecture_coverage_checks
@@ -6337,6 +6418,7 @@ SOURCE_TESTS = {
     "scripts/runtime/analyst_host.py": _tests("""
         multi_repo_discovery
         assessment_host
+        controller_e2e
         analyst_controller
         analyst_host
         analyst_skill

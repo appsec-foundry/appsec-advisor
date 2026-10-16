@@ -61,13 +61,22 @@ def _load(label: str, repo, path: str):
 
 
 def _slugs(names: Namespaces) -> dict[str, str]:
-    """A key-safe prefix per repository, unique even when labels slug alike."""
+    """A key-safe prefix per repository, unique even when labels slug alike.
+
+    A sole repository gets no prefix: its declared keys cannot collide.
+    """
+    if names.single:
+        return {names.single: ""}
     base = {
         rid: re.sub(r"[^a-z0-9]+", "-", label.casefold()).strip("-")[:32].strip("-") or "repo"
         for rid, label in names.prefix.items()
     }
     counts = Counter(base.values())
     return {rid: slug if counts[slug] == 1 else f"{slug}-{rid[-6:]}" for rid, slug in base.items()}
+
+
+def _key(prefix: str, key: str) -> str:
+    return f"{prefix}-{key}" if prefix else key
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +98,7 @@ def _boundary_documents(scope, names: Namespaces) -> list[tuple[str, object, dic
             raise DeclarationError(f"{label}/{BOUNDARY_FILE} declares a boundary key twice")
         prefix = slugs[repo.repository_id]
         for key in own:
-            qualified = f"{prefix}-{key}"
+            qualified = _key(prefix, key)
             if len(qualified) > 80 or qualified in keys:
                 raise DeclarationError(
                     f"{label}/{BOUNDARY_FILE} key {key!r} has no unique repository-namespaced form of 80 characters"
@@ -106,7 +115,7 @@ def declaration_summary(scope) -> dict:
         return {"status": "missing", "fingerprint": None, "keys": []}
     owned = [[repo.repository_id, hashlib.sha256(repo.files[BOUNDARY_FILE]).hexdigest()] for _, repo, _, _ in documents]
     digest = hashlib.sha256(json.dumps(sorted(owned), separators=(",", ":")).encode()).hexdigest()
-    keys = [f"{prefix}-{row['key']}" for _, _, data, prefix in documents for row in data["boundaries"]]
+    keys = [_key(prefix, row["key"]) for _, _, data, prefix in documents for row in data["boundaries"]]
     return {"status": "present", "fingerprint": "sha256:" + digest, "keys": keys[:200]}
 
 
@@ -165,7 +174,7 @@ def boundary_declarations(scope, components: dict) -> list[dict]:
         for raw in data["boundaries"]:
             key = raw["key"]
             row = {
-                "key": f"{prefix}-{key}",
+                "key": _key(prefix, key),
                 "name": raw["name"],
                 "from": _boundary_endpoint(label, key, raw["from"], own, foreign),
                 "to": _boundary_endpoint(label, key, raw["to"], own, foreign),
@@ -195,14 +204,14 @@ def _free_actor_id(actor_id: str, taken: set[str]) -> str:
     return f"ACT-{kind}-{number:03d}"
 
 
-def _actor_evidence(label: str, evidence: dict) -> dict:
+def _actor_evidence(label: str, evidence: dict, names: Namespaces, rid: str) -> dict:
     files = []
     for value in evidence.get("files") or []:
         try:
             _relative(value)
         except ScopeError:
             raise DeclarationError(f"{label}/{ACTOR_FILE} cites an actor evidence path outside {label}") from None
-        files.append(f"{label}/{value}")
+        files.append(names.qualify(rid, value))
     return {**evidence, "files": files} if "files" in evidence else dict(evidence)
 
 
@@ -255,7 +264,7 @@ def actor_declarations(scope, names: Namespaces) -> dict | None:
         for raw in data.get("actors") or []:
             actor = copy.deepcopy(raw)
             if "evidence" in actor:
-                actor["evidence"] = _actor_evidence(label, actor["evidence"])
+                actor["evidence"] = _actor_evidence(label, actor["evidence"], names, rid)
             actor_id = raw["id"]
             if actor_id in defaults:
                 plain = {k: v for k, v in raw.items() if k != "evidence"}
@@ -356,8 +365,11 @@ def install_actor_config(scope, names: Namespaces, root: Path) -> dict:
     return {"owners": declared["owners"], "receipts": declared["receipts"]}
 
 
-def attribute_actor_owners(workspace: Path, owners: dict[str, list[str]]) -> None:
-    """Name each declared actor's owning repository file in the resolver outputs."""
+def attribute_actor_owners(workspace: Path, owners: dict[str, list[str]], *, single: bool = False) -> None:
+    """Name each declared actor's owning repository file in the resolver outputs.
+
+    A sole repository's file is named by its plain path, as in a single scan.
+    """
     if not owners:
         return
     for name, validate in (
@@ -370,7 +382,9 @@ def attribute_actor_owners(workspace: Path, owners: dict[str, list[str]]) -> Non
             for actor in document.get(key) or []:
                 labels = owners.get(actor.get("id"))
                 if labels:
-                    actor["_provenance"]["source_file"] = ", ".join(f"{label}/{ACTOR_FILE}" for label in labels)
+                    actor["_provenance"]["source_file"] = (
+                        ACTOR_FILE if single else ", ".join(f"{label}/{ACTOR_FILE}" for label in labels)
+                    )
         if not validate(document)[0]:
             raise DeclarationError(f"attributed {name} violates its schema")
         atomic_write_json(path, document, sort_keys=False)
@@ -449,15 +463,14 @@ def _unread_local(entry: dict, kind: str) -> dict:
     }
 
 
-def related_register(scope, names: Namespaces, workspace: Path, cfg: dict) -> list[str]:
+def related_register(scope, names: Namespaces, workspace: Path) -> list[str]:
     """Write one ``.cross-repo-register.json`` of qualified imported context.
 
     An import naming a selected repository is dropped: the current source
     assessment of that repository is authoritative. Remote imports keep the
-    URL guard; they require the allow-list unless the run is explicitly
-    trusted. Local imports outside the selected roots are named, never read.
+    URL guard and always require the allow-list, whatever the trust mode.
+    Local imports outside the selected roots are named, never read.
     """
-    strict = cfg.get("trust_mode") != "trusted"
     schema = load_related_repos._load_schema()  # noqa: SLF001
     now = datetime.now(timezone.utc)
     cache: dict[str, set] = {}
@@ -489,17 +502,18 @@ def related_register(scope, names: Namespaces, workspace: Path, cfg: dict) -> li
                         http_timeout=load_related_repos._DEFAULT_TIMEOUT,  # noqa: SLF001
                         outdated_days=load_related_repos._DEFAULT_OUTDATED_DAYS,  # noqa: SLF001
                         now=now,
-                        strict_urls=strict,
+                        strict_urls=True,
                     )
                 )
             else:
                 records.append(_unread_local(entry, kind))
         for row in build_cross_repo_register._normalise_declared({"related": records}):  # noqa: SLF001
-            row["discovery_hint"] = f"{label}/{RELATED_FILE}"
+            row["discovery_hint"] = names.qualify(repo.repository_id, RELATED_FILE)
             entries.append(row)
     counts = Counter(row["name"] for row in entries)
     for row in entries:
-        if counts[row["name"]] > 1:
+        # The declaring repository tells equal names apart; one repository has nothing to tell apart.
+        if counts[row["name"]] > 1 and not names.single:
             row["name"] = f"{row['name']} ({row['discovery_hint'].split('/', 1)[0]})"
     if not entries and not authoritative:
         return []

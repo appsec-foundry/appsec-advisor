@@ -44,6 +44,7 @@ import os
 import sys
 from pathlib import Path
 
+from renderers.term_style import COLOR_MODES, Style
 from shared._atomic_io import atomic_write_text
 
 from runtime.acquire_lock import lock_is_owned_by_this_run, read_run_id, run_id_matches
@@ -104,9 +105,16 @@ def hook_notice(output_dir: Path | str, session_id: str, agent_id: str = "") -> 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print this run's completion summary once.")
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--color", choices=COLOR_MODES, default="auto")
     args = parser.parse_args(argv)
     summary = take(args.output_dir)
     if summary.strip():
+        st = Style.for_stream(sys.stdout, args.color)
+        if st.enabled:
+            # Colour is added at print time only; the record stays plain for hooks.
+            from renderers.render_completion_summary import style_summary
+
+            summary = style_summary(summary, st)
         sys.stdout.write(summary if summary.endswith("\n") else summary + "\n")
     return 0
 

@@ -99,6 +99,56 @@
         }
       }
     },
+    "surface_coverage": {
+      "description": "Decisions for controller-selected source targets; current jobs require every supplied target. MR-11: a decision that links a finding needs no reason unless its target carries a review_question; every other decision states one. The controller inserts the target anchor into evidence.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "disposition",
+          "finding_ids"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "pattern": "^surface-[a-f0-9]{16}$"
+          },
+          "disposition": {
+            "enum": [
+              "examined",
+              "not-applicable",
+              "unresolved"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 160
+          },
+          "finding_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "$ref": "https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/evidence"
+            }
+          }
+        }
+      }
+    },
     "threats": {
       "type": "array",
       "maxItems": 100,
@@ -181,6 +231,11 @@
           "scenario": {
             "type": "string",
             "minLength": 10
+          },
+          "mitigation_title": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 80
           },
           "attack_steps": {
             "type": [

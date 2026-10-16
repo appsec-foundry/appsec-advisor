@@ -47,6 +47,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from renderers.term_style import COLOR_MODES, Style
+
 # modelUsage field name → our short column key.
 _USAGE_FIELDS = {
     "inputTokens": "input",
@@ -162,7 +164,7 @@ def _as_float(value: Any) -> float:
         return 0.0
 
 
-def format_table(usage: dict[str, Any]) -> str:
+def format_table(usage: dict[str, Any], st: Style | None = None) -> str:
     """Render the per-model breakdown as an indented console table.
 
     Indentation matches the surrounding run-headless summary blocks (two spaces
@@ -173,6 +175,7 @@ def format_table(usage: dict[str, Any]) -> str:
     that reads as "only the orchestrator was counted". Saying what the numbers
     span is the difference between a complete figure and one that looks partial.
     """
+    st = st or Style(False)
     models = usage["models"]
     headers = ["model"] + [label for _, label in _COLUMNS] + ["cost"]
     rows: list[list[str]] = []
@@ -191,15 +194,16 @@ def format_table(usage: dict[str, Any]) -> str:
         return "    " + out.rstrip()
 
     lines = [
-        "  Token usage & cost — the whole run incl. sub-agents; Claude Code accounting, same source as /cost",
-        _line(headers),
+        st("  Token usage & cost", "bold")
+        + st(" — the whole run incl. sub-agents; Claude Code accounting, same source as /cost", "muted"),
+        st(_line(headers), "muted"),
     ]
     lines.extend(_line(r) for r in rows)
     if len(rows) != 1:
         # A single-model run needs no separator: its row and the total are equal.
-        lines.append("    " + "─" * (sum(widths) + 2 * (len(widths) - 1)))
-        lines.append(_line(total_row))
-    lines.append("    API-equivalent list price; on a subscription the marginal cost is $0.")
+        lines.append(st("    " + "─" * (sum(widths) + 2 * (len(widths) - 1)), "muted"))
+        lines.append(st(_line(total_row), "bold"))
+    lines.append(st("    API-equivalent list price; on a subscription the marginal cost is $0.", "muted"))
     return "\n".join(lines)
 
 
@@ -219,6 +223,7 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="print the run's final assistant text instead of the usage table",
     )
+    parser.add_argument("--color", choices=COLOR_MODES, default="auto")
     args = parser.parse_args(argv)
 
     result = load_result(Path(args.capture))
@@ -238,7 +243,7 @@ def main(argv: list[str]) -> int:
 
     if not usage["models"] and not usage["total_cost_usd"]:
         return 1
-    print(format_table(usage))
+    print(format_table(usage, Style.for_stream(sys.stdout, args.color)))
     return 0
 
 

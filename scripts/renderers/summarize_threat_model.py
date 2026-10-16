@@ -436,6 +436,24 @@ def _wrap(text: str, indent: str = _INDENT, width: int = _WRAP_WIDTH) -> list[st
     return lines
 
 
+def verdict_headline(verdict: dict) -> str:
+    """The verdict's icon and posture label, e.g. ``🔴 critical security concerns``."""
+    sev = (verdict.get("severity") or "").strip().lower()
+    icon = _POSTURE_ICON.get(sev, "•")
+    label = _POSTURE_LABEL.get(sev, "")
+    return f"{icon} {label}" if label else icon
+
+
+def mitigation_line(total: int, backlog: dict) -> str:
+    """Mitigation count and its priority bands, e.g. ``87 · 4 fix first (P1) · 29 P2 · 54 P3``.
+
+    The bands count mitigations, not findings; naming the unit keeps them from
+    being read as a second finding tally next to the severity counts.
+    """
+    labels = {"P1": "fix first (P1)", "P2": "P2", "P3": "P3"}
+    return " · ".join([str(total), *(f"{backlog[p]} {labels[p]}" for p in ("P1", "P2", "P3") if backlog.get(p))])
+
+
 def _render_verdict_block(verdict: dict | None) -> list[str]:
     """The report's own conclusion, printed verbatim.
 
@@ -444,11 +462,7 @@ def _render_verdict_block(verdict: dict | None) -> list[str]:
     model carries no verdict (composed before the field existed)."""
     if not verdict:
         return []
-    sev = (verdict.get("severity") or "").strip().lower()
-    icon = _POSTURE_ICON.get(sev, "•")
-    label = _POSTURE_LABEL.get(sev, "")
-    head = f"Verdict    {icon} {label}" if label else f"Verdict    {icon}"
-    out = [head]
+    out = [f"Verdict    {verdict_headline(verdict)}"]
     out.extend(_wrap(verdict["opening"]))
     if verdict.get("closing"):
         out.append("")
@@ -646,11 +660,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
                 buf.append(_threat_row(t))
             buf.append("")
 
-    buf.append(f"Mitigations {totals['mitigations']} defined · Controls {totals['controls']} in place")
-    backlog = summary.get("backlog") or {}
-    if sum(backlog.values()):
-        bands = " · ".join(f"{backlog[p]}× {p}" for p in ("P1", "P2", "P3") if backlog.get(p))
-        buf.append(f"Backlog    {bands}")
+    buf.append(f"Mitigations {mitigation_line(totals['mitigations'], summary.get('backlog') or {})}")
     cov = summary.get("coverage") or {}
     if totals["threats"]:
         buf.append(
@@ -666,6 +676,8 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         weak = posture.get("weak_domains") or []
         if weak:
             buf.append(f"Weakest    {' · '.join(weak[:4])}")
+    elif totals["controls"]:
+        buf.append(f"Controls   {totals['controls']} in place")
     buf.append(f"Report     {summary['report']}")
     return "\n".join(buf) + "\n"
 
@@ -702,6 +714,35 @@ def load_health_freshness(arg: str | None) -> dict | None:
         return None
     fresh = payload.get("freshness")
     return fresh if isinstance(fresh, dict) else None
+
+
+def completion_rows(output_dir: Path) -> list[tuple[str, str]]:
+    """Verdict, finding and mitigation rows for a run's closing console summary.
+
+    The same summary and wording as this overview, so the console and
+    ``show-threat-model`` cannot disagree. Empty when the model is missing or
+    unreadable: the closing lines then name only the delivered files.
+    """
+    import yaml as _yaml
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    try:
+        data = _yaml.safe_load((Path(output_dir) / "threat-model.yaml").read_text(encoding="utf-8"))
+        if is_portable_model(data):
+            data = labelled_model(data)
+    except (OSError, ValueError, _yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    summary = build_summary(data, Path(output_dir))
+    counts = summary["severity_counts"]
+    rows = [("Verdict", verdict_headline(summary["verdict"]))] if summary.get("verdict") else []
+    rows.append(
+        ("Findings", " · ".join([str(sum(counts.values())), *(f"{sev} {n}" for sev, n in counts.items() if n)]))
+    )
+    if summary["totals"]["mitigations"]:
+        rows.append(("Mitigations", mitigation_line(summary["totals"]["mitigations"], summary["backlog"])))
+    return rows
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

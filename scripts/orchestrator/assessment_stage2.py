@@ -291,7 +291,15 @@ def _management_summary(jobs, workspace: Path, override) -> str:
         schema=ms_schema(),
         allowed_sources=frozenset(),
         validate=validate,
+        on_failure=lambda reason: None,
     )
+    if artifact is None:
+        # OR-39: the deterministic verdict floor stands in; the optional MS
+        # fragments keep their deterministic state.
+        _run_gate("renderers/pregenerate_fragments.py", str(workspace), "--only", "ms-verdict.json")
+        if not (workspace / ".fragments" / MS_FRAGMENTS["verdict"][1]).is_file():
+            raise ExchangeError("Management Summary has neither an authored nor a deterministic verdict")
+        return "stage2: management summary unavailable; deterministic verdict kept"
     texts = _check_ms(workspace, artifact)
     names = {key: name for key, (_kind, name) in MS_FRAGMENTS.items()}
     remove = tuple(names[key] for key in MS_FRAGMENTS if artifact.get(key) is None)
@@ -308,8 +316,9 @@ def _plain_text(text: str, where: str, limit: int) -> None:
         or "|" in text
         or _CONTROL_RE.search(text)
         or _HTML_RE.search(_CODE_SPAN_RE.sub("", text))
-        or "://" in text
-        or "www." in text.lower()
+        # MR-14: a URL renders as literal text only inside inline code.
+        or "://" in _CODE_SPAN_RE.sub("", text)
+        or "www." in _CODE_SPAN_RE.sub("", text).lower()
         or "](" in text
         or text.lstrip().startswith("#")
     ):
@@ -480,10 +489,29 @@ def _requirements_compliance(jobs, workspace: Path, override) -> str:
         schema=requirements_schema(catalog),
         allowed_sources=frozenset(),
         validate=validate,
+        # OR-39: after STRIDE a failed model job is replaced, not fatal.
+        on_failure=lambda reason: _unassessed_requirements(catalog),
     )
     fragment = _check_requirements(workspace, catalog, findings, artifact)
     _publish(workspace, {"requirements-compliance.md": fragment}, (), {})
     return f"stage2: requirements compliance assessed {len(catalog)} requirement(s)"
+
+
+def _unassessed_requirements(catalog: dict) -> dict:
+    """The deterministic replacement: every requirement stays unverifiable, citing no finding."""
+    return {
+        "summary": "Requirements compliance was not assessed in this run; the requirements job failed.",
+        "rows": [
+            {
+                "id": key,
+                "title": str(row.get("title") or key)[:120],
+                "status": "UNVERIFIABLE",
+                "evidence": "Not assessed: the requirements job failed in this run.",
+                "finding_ids": [],
+            }
+            for key, row in catalog.items()
+        ],
+    }
 
 
 def placeholders(scaffold: str) -> list[dict]:
@@ -519,8 +547,10 @@ def _check_fill(row: dict, text: str) -> None:
     # Inline code renders literally, so it may name markup such as `<img onerror>`.
     if "NARRATIVE_PLACEHOLDER" in text or "<!--" in text or _HTML_RE.search(_CODE_SPAN_RE.sub("", text)):
         raise ExchangeError(f"{where} contains HTML or a placeholder marker")
-    if "://" in text or "www." in text.lower() or "![" in text:
-        raise ExchangeError(f"{where} contains a URL or image")
+    # MR-14: a URL renders as literal text only inside inline code, never as a link.
+    prose = _CODE_SPAN_RE.sub("", text)
+    if "://" in prose or "www." in prose.lower() or "![" in text:
+        raise ExchangeError(f"{where} contains a URL or image outside inline code")
     if any(not _ANCHOR_RE.fullmatch(target.strip()) for target in _LINK_RE.findall(text)):
         raise ExchangeError(f"{where} links outside the document")
     lines = text.strip().split("\n")
@@ -779,7 +809,8 @@ def _security_architecture(jobs, workspace: Path, override) -> str:
         validate=validate,
     )
     filled = apply_fills(scaffold, rows, copy.deepcopy(artifact))
-    _check_section6(workspace, filled)
+    # The same check the job's review applied; links the scaffold itself carries are not the model's.
+    _check_section6(workspace, filled, scaffold)
     if _bounded_text(path) != scaffold:
         raise ExchangeError("Security-architecture scaffold changed while it was being filled")
     atomic_write_text(path, filled)

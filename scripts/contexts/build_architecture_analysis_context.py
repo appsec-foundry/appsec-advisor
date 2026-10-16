@@ -372,12 +372,12 @@ def build_role_units(output_dir: Path, repo_root: Path) -> Path:
     return target
 
 
-def project_egress(repo_root: Path) -> dict[str, Any]:
+def project_egress(repo_root: Path, *, sources: list[dict] | None = None) -> dict[str, Any]:
     """Bound the outbound destinations the data flows must account for."""
     from analyzers.egress_clients import scan  # noqa: PLC0415
 
     found = []
-    for row in scan(repo_root):
+    for row in scan(repo_root) if sources is None else sources:
         # Keep the projection total: a path the schema rejects is dropped, never passed on.
         evidence = [e for e in row["evidence"] if _valid_egress_file(e["file"])]
         if evidence:

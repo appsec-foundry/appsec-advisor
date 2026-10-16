@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from orchestrator import orchestration_controller as controller
 from runtime.analyst_host import HostReply
-from runtime.assessment_host import MARKER
+from runtime.assessment_host import MARKER, ExchangeError
 from runtime.assessment_jobs import AssessmentBudget, AssessmentJobs
 from runtime.multi_repo_scope import admit
 
@@ -46,12 +46,16 @@ class Host:
     def __init__(self, scope):
         self.scope = scope
         self.calls = []
+        # The (repository_id, path, start, end) slices each call's packet carried.
+        self.packets = []
+        self.systems = []
 
     def factory(self, role, ceiling):
         owner = self
 
         class Transport:
             def invoke(self, system, prompt, schema, timeout_s, should_stop):
+                owner.systems.append(system)
                 return owner.invoke(role, prompt)
 
         return Transport()
@@ -60,9 +64,15 @@ class Host:
         packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
         ctx, slices = packet["context"], packet["source_slices"]
         self.calls.append((role, copy.deepcopy(ctx)))
+        self.packets.append([(s["repository_id"], s["path"], s["start_line"], s["end_line"]) for s in slices])
         rid = ctx.get("repository_id")
+        # Discovery carries each serving unit by listing its first entry file.
+        carried = [
+            unit["entry_files"][0]
+            for unit in ctx.get("deterministic_inventory", {}).get("serving_units", {}).get("units", [])
+        ]
         if role == "recon_scanner":
-            allowed = [(rid, "app.py")]
+            allowed = [(rid, "app.py"), *((rid, path) for path in carried)]
         elif "candidate" in ctx:
             allowed = [(p["repository_id"], p["path"]) for c in ctx["components"] for p in c["paths"]]
         else:
@@ -70,6 +80,19 @@ class Host:
             allowed = [(p["repository_id"], p["path"]) for c in components if c for p in c["paths"]]
             allowed += [(f["evidence"]["repository_id"], f["evidence"]["file"]) for f in ctx.get("findings", [])]
         if not slices:
+            targets = ctx.get("investigation_targets", ctx.get("findings", []))
+            target_reads = {}
+            for target in targets:
+                anchor = target["evidence"]
+                r, p = anchor["repository_id"], anchor["file"]
+                start = max(1, ((anchor.get("line") or 1) // 400) * 400)
+                repo = next(repo for repo in self.scope.repositories if repo.repository_id == r)
+                target_reads[r, p, start] = dict(
+                    repository_id=r,
+                    path=p,
+                    start_line=start,
+                    end_line=min(start + 399, len(repo.files[p].splitlines())),
+                )
             return HostReply(
                 dict(
                     action="read",
@@ -77,11 +100,21 @@ class Host:
                     reads=[
                         dict(repository_id=r, path=p, start_line=1, end_line=20 if "findings" in ctx else 2)
                         for r, p in sorted(set(allowed))
-                    ],
+                    ]
+                    if not targets
+                    else list(target_reads.values()),
                 ),
                 0.01,
             )
-        evidence = [dict(repository_id=s["repository_id"], file=s["path"], line=2, sha256=s["sha256"]) for s in slices]
+        evidence = [
+            dict(
+                repository_id=s["repository_id"],
+                file=s["path"],
+                line=min(s["start_line"] + 1, s["end_line"]),
+                sha256=s["sha256"],
+            )
+            for s in slices
+        ]
         if role == "recon_scanner":
             artifact = dict(
                 schema_version=1,
@@ -92,7 +125,7 @@ class Host:
                         name="Service",
                         description="Application service.",
                         tier="application",
-                        paths=["app.py"],
+                        paths=["app.py", *carried],
                     )
                 ],
                 interfaces=[
@@ -104,7 +137,7 @@ class Host:
                         address="https://api.example.invalid",
                         deployment="neutral-a",
                         operation="GET /records",
-                        evidence=[dict(file="app.py", line=1, quote=slices[0]["lines"][0])],
+                        evidence=[dict(file="app.py", line=1, quote=slices[0]["lines"][0].split(": ", 1)[1])],
                     )
                 ],
             )
@@ -120,7 +153,12 @@ class Host:
                         disposition="resolved",
                         reason="Both implementation endpoints and their deployment binding establish this communication.",
                         evidence=[
-                            dict(repository_id=s["repository_id"], file=s["path"], line=1, quote=s["lines"][0])
+                            dict(
+                                repository_id=s["repository_id"],
+                                file=s["path"],
+                                line=1,
+                                quote=s["lines"][0].split(": ", 1)[1],
+                            )
                             for s in slices
                         ],
                     )
@@ -139,7 +177,7 @@ class Host:
                     **identity,
                     security_controls=[
                         dict(
-                            domain="Input Validation",
+                            domain="Input Boundary Validation Controls",
                             control="Request Validation",
                             effectiveness="Partial",
                             assessment="The handler reads a request parameter directly.",
@@ -180,6 +218,16 @@ class Host:
                     partial=False,
                     skipped_categories=[],
                     threats=[finding],
+                    surface_coverage=[
+                        dict(
+                            target_id=t["local_id"],
+                            disposition="examined",
+                            reason="The target implementation was read and investigated.",
+                            finding_ids=["issue-1"],
+                            evidence=[t["evidence"]],
+                        )
+                        for t in ctx.get("investigation_targets", [])
+                    ],
                     coverage=[
                         dict(
                             category=category,
@@ -244,6 +292,353 @@ def test_controller_fresh_architecture_controls_and_stride_keep_equal_paths_dist
     ]
 
 
+def _inventory_checkouts(tmp_path):
+    roots = [tmp_path / "edge", tmp_path / "pay"]
+    for root in roots:
+        checkout(root)
+    (roots[0] / "package.json").write_text(json.dumps({"name": "edge", "dependencies": {"express": "4.18.0"}}))
+    (roots[0] / "server.js").write_text(
+        "const express = require('express')\nconst app = express()\n"
+        "app.get('/records/:id', (req, res) => res.json({}))\napp.listen(8080)\n"
+    )
+    (roots[1] / "package.json").write_text(json.dumps({"name": "pay", "dependencies": {"axios": "1.6.0"}}))
+    (roots[1] / "client.js").write_text(
+        "const axios = require('axios')\n"
+        "export async function charge(order) { return axios.post('https://api.payments-provider.net/charge', order) }\n"
+    )
+    return roots
+
+
+def test_stride_splits_surface_work_without_losing_findings_or_reading_foreign_sources(tmp_path):
+    root = tmp_path / "service"
+    checkout(root)
+    path = root / "app.py"
+    # Long lines make seven 400-line target windows exceed one job's preload room.
+    path.write_text(path.read_text() + ("value = request.args['input'] + '" + "x" * 60 + "'\n") * 2400)
+    peer = tmp_path / "peer"
+    checkout(peer)
+    scope = admit([str(root), str(peer)], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == root)
+    architecture["route_inventories"] = {
+        rid: {"routes": [dict(handler_file="app.py", handler_line=line) for line in range(1, 2402, 400)]}
+    }
+    documents, reviews, merged = controller._assessment_stride(
+        scope,
+        jobs,
+        architecture,
+        [],
+        [],
+        progress=lambda _: None,
+        depth="thorough",
+    )
+    contexts = [
+        ctx for role, ctx in host.calls if role == "stride_analyzer" and ctx["component"]["repository_ids"] == [rid]
+    ]
+    # The controller preloads every target window, so each job completes in one exchange;
+    # the job count follows source size, and every target is decided exactly once.
+    supplied = [t["local_id"] for ctx in contexts for t in ctx["investigation_targets"]]
+    assert len(contexts) > 1 and len(supplied) == len(set(supplied)) == 7
+    assert all(ctx["assessment_depth"] == "thorough" for ctx in contexts)
+    assert len(documents) == len(reviews) == 2
+    document = next(d for d in documents if d["threats"][0]["evidence"]["repository_id"] == rid)
+    # Every job's finding survives the combination, anchored in that job's first window.
+    first_windows = {
+        max(1, min(t["evidence"]["line"] for t in ctx["investigation_targets"]) // 400 * 400) + 1 for ctx in contexts
+    }
+    assert len(document["threats"]) == len(contexts)
+    assert {t["evidence"]["line"] for t in document["threats"]} == first_windows
+    # Every finding is reviewed: one per job of this component plus the peer's single finding.
+    peer = next(d for d in documents if d is not document)
+    assert sum(len(r["decisions"]) for r in reviews) == len(contexts) + len(peer["threats"]) == len(contexts) + 1
+    assert all(t["evidence"]["repository_id"] == rid for t in document["threats"])
+    assert merged["threats"]
+
+
+@pytest.mark.parametrize("line", [900, 1500])
+def test_only_the_first_job_of_a_split_component_carries_its_context_lines(tmp_path, line):
+    """Context-only weaknesses are one job's duty, so later jobs keep their room and do not repeat them."""
+    root = tmp_path / "service"
+    checkout(root)
+    path = root / "app.py"
+    path.write_text(path.read_text() + ("value = request.args['input'] + '" + "x" * 60 + "'\n") * 2400)
+    peer = tmp_path / "peer"
+    checkout(peer)
+    scope = admit([str(root), str(peer)], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == root)
+    architecture["route_inventories"] = {
+        rid: {"routes": [dict(handler_file="app.py", handler_line=n) for n in range(1, 2402, 400)]}
+    }
+    component = next(c for c in architecture["components"]["components"] if c["repository_ids"] == [rid])
+    controls = [
+        dict(
+            domain="Input Boundary Validation Controls",
+            control="Request Validation",
+            effectiveness="Partial",
+            assessment="The handler reads a request parameter directly.",
+            component_ids=[component["id"]],
+            evidence=[
+                dict(repository_id=rid, file="app.py", line=line, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            ],
+        )
+    ]
+    calls = len(host.calls)
+    steps = []
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=steps.append)
+    stride = [
+        (system, slices)
+        for (role, ctx), slices, system in zip(host.calls[calls:], host.packets[calls:], host.systems[calls:])
+        if role == "stride_analyzer" and ctx["component"]["id"] == component["id"]
+    ]
+    context_window = (rid, "app.py", line - 10)
+    carriers = [index for index, (_, slices) in enumerate(stride) if any(key[:3] == context_window for key in slices)]
+    assert len(stride) > 1 and carriers == [0]
+    assert f"job 1 of {len(stride)}" in stride[0][0]
+    assert all(f"job {n} of {len(stride)}" in system for n, (system, _) in enumerate(stride[1:], 2))
+    # A component analyzed in one job is not told about other jobs.
+    single = [
+        system
+        for (role, ctx), system in zip(host.calls[calls:], host.systems[calls:])
+        if role == "stride_analyzer" and ctx["component"]["id"] != component["id"]
+    ]
+    assert single and not any("job 1 of" in system for system in single)
+    # MR-16 console: each finished job and each finished component is reported, in completion order.
+    # Both repositories name their component "Service": the label tells them apart.
+    name = f"{component['name']} [{component['id'][-6:]}]"
+    assert [s for s in steps if s.startswith(f"Finished STRIDE job: {name} ")] == [
+        f"Finished STRIDE job: {name} ({n}/{len(stride)})" for n in range(1, len(stride) + 1)
+    ]
+    finished = [s for s in steps if s.startswith("Analyzed component: ")]
+    count = len(architecture["components"]["components"])
+    assert len(finished) == count and [s.rsplit("(", 1)[1] for s in finished] == [
+        f"{n}/{count})" for n in range(1, count + 1)
+    ]
+
+
+def test_a_job_with_more_preloaded_windows_than_reads_passes_its_receipt(tmp_path):
+    """Preloaded windows join the receipt; its contract must admit more ranges than MAX_READS."""
+    from runtime.assessment_host import MAX_READS
+
+    root = tmp_path / "service"
+    checkout(root)
+    path = root / "app.py"
+    # Short lines keep twenty-one 400-line windows within one job's preload room.
+    path.write_text(path.read_text() + "v = 1\n" * 8000)
+    peer = tmp_path / "peer"
+    checkout(peer)
+    scope = admit([str(root), str(peer)], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == root)
+    architecture["route_inventories"] = {
+        rid: {"routes": [dict(handler_file="app.py", handler_line=line) for line in range(1, 8002, 400)]}
+    }
+    controller._assessment_stride(scope, jobs, architecture, [], [], progress=lambda _: None)
+    receipts = [json.loads(p.read_text()) for p in (scope.output / ".assessment/jobs").glob("*.receipt.json")]
+    stride = [r for r in receipts if r["role"] == "stride_analyzer" and r["source_ranges"][0]["repository_id"] == rid]
+    assert max(len(r["source_ranges"]) for r in stride) > MAX_READS
+
+
+def test_toolless_architect_receives_the_shared_remediation_policy():
+    policy = (controller.PLUGIN_ROOT / "agents/shared/architect-semantic-review.md").read_text()
+    instructions = controller._assessment_role_instructions("architect_reviewer", "Review the supplied findings.")
+    assert policy in instructions
+    assert "fix.effect: prevents-mechanism" in instructions
+
+
+def test_coverage_statements_collapse_to_one_line_unless_verbose():
+    entries = [
+        {
+            "component": "Order store",
+            "files": 11,
+            "text": "Order store: 11 source files were not individually examined",
+        },
+        {
+            "component": "Build pipeline",
+            "files": 4,
+            "text": "Build pipeline: 4 source files were not individually examined",
+        },
+    ]
+    assert controller._coverage_infos(entries, verbose=True) == [entry["text"] for entry in entries]
+    assert controller._coverage_infos(entries, verbose=False) == [
+        "15 source files without a route, lead or security signal in 2 components were not individually "
+        "examined; --verbose lists them"
+    ]
+    assert controller._coverage_infos(entries[:1], verbose=False) == [entries[0]["text"]]
+    assert controller._coverage_infos([], verbose=False) == []
+    undecided = [
+        {
+            "undecided": {"component": "Web", "target": f"lib/{n}.ts: helper not read"},
+            "text": f"Web: STRIDE could not decide {n}",
+        }
+        for n in ("a", "b")
+    ]
+    # Undecided targets are coverage statements: one line unless verbose, each line with --verbose.
+    assert controller._coverage_infos(undecided, verbose=False) == [
+        "2 security-relevant code locations stayed open: the model read them but could not judge them; "
+        "threat-model.yaml and --verbose list them"
+    ]
+    assert controller._coverage_infos(undecided, verbose=True) == [row["text"] for row in undecided]
+    assert controller._coverage_infos(undecided[:1], verbose=False) == [undecided[0]["text"]]
+    unowned = {
+        "unowned": {"files": 3, "by_directory": []},
+        "files": 3,
+        "text": "3 program files belong to no component",
+    }
+    # Files outside every component stay their own line and never join the per-component count.
+    assert controller._coverage_infos([unowned, *entries], verbose=False) == [
+        unowned["text"],
+        "15 source files without a route, lead or security signal in 2 components were not individually "
+        "examined; --verbose lists them",
+    ]
+
+
+@pytest.mark.parametrize("role", ["stride_analyzer", "evidence_verifier"])
+def test_source_reading_roles_learn_that_a_mask_marker_is_a_real_secret(role):
+    """A masked literal must stay reportable: the model sees only the marker."""
+    from validators.secret_scan import mask_text
+
+    instructions = controller._assessment_role_instructions(role, "Analyze the supplied source.")
+    pem = mask_text(
+        "const signingKey = '-----BEGIN RSA PRIVATE KEY-----\\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf\\n-----END RSA PRIVATE KEY-----'"
+    )[0]
+    assignment = mask_text('password = "S3cr3tP4ssw0rd!x"')[0]
+    assert "[PEM PRIVATE KEY — REDACTED]" in pem and "[PEM PRIVATE KEY — REDACTED]" in instructions
+    assert "**** (16 chars)" in assignment and "**** (N chars)" in instructions
+
+
+def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp_path):
+    roots = _inventory_checkouts(tmp_path)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    rid = {repo.root.name: repo.repository_id for repo in scope.repositories}
+    discovery = {
+        ctx["repository_id"]: ctx["deterministic_inventory"] for role, ctx in host.calls if role == "recon_scanner"
+    }
+    local = {
+        ctx["repository_id"]: ctx["deterministic_inventory"]
+        for role, ctx in host.calls
+        if role == "architecture_analyst" and "deterministic_inventory" in ctx
+    }
+    # Discovery lists every file already; it gets only the small inventories.
+    assert all(set(rows) == {"role_units", "egress", "topology", "serving_units"} for rows in discovery.values())
+    assert [u["id"] for u in discovery[rid["edge"]]["serving_units"]["units"]] == ["http-api:."]
+    assert discovery[rid["pay"]]["serving_units"]["units"] == []
+    assert [d["host"] for d in discovery[rid["pay"]]["egress"]["destinations"]] == ["api.payments-provider.net"]
+    assert discovery[rid["edge"]]["egress"]["destinations"] == []
+    # Each repository's job sees its own routes, repository-relative, never the other's.
+    edge_routes = local[rid["edge"]]["route_projection"]["routes"]
+    assert [(r["path"], r["handler_file"]) for r in edge_routes] == [("/records/:id", "server.js")]
+    assert local[rid["pay"]]["route_projection"]["routes"] == []
+    sent = json.dumps([ctx for _, ctx in host.calls])
+    assert str(tmp_path) not in sent and '"match"' not in sent and "generated_at" not in sent
+    assert set(architecture["route_inventories"]) == set(rid.values())
+
+
+def test_architecture_receives_model_integration_leads_and_reports_unmodelled_ones(tmp_path):
+    roots = _inventory_checkouts(tmp_path)
+    with (roots[1] / "app.py").open("a") as handle:
+        handle.write("from anthropic import Anthropic\nclient = Anthropic()\n")
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    rid = {repo.root.name: repo.repository_id for repo in scope.repositories}
+    leads = {
+        ctx["repository_id"]: ctx["deterministic_inventory"]["model_integrations"]
+        for role, ctx in host.calls
+        if role == "architecture_analyst" and "deterministic_inventory" in ctx
+    }
+    assert leads[rid["edge"]] == []
+    # The lead names the call (line 4), never the import the evidence rule rejects (line 3).
+    assert [row["evidence"] for row in leads[rid["pay"]]] == [[{"file": "app.py", "line": 4}]]
+    # The test host models no inference service, so the lead stays a reported gap.
+    assert architecture["model_integration_gaps"] == ["Service"]
+
+
+def test_inventories_at_their_bounds_leave_most_of_the_context_for_source(tmp_path):
+    from runtime.assessment_host import MAX_CONTEXT_BYTES
+
+    roots = _inventory_checkouts(tmp_path)
+    segment = "/".join(f"segment{j:02d}" for j in range(60))
+    (roots[0] / "server.js").write_text(
+        "const express = require('express')\nconst app = express()\n"
+        + "".join(f"app.post('/{segment}/{i}/:id', (req, res) => res.json({{}}))\n" for i in range(400))
+    )
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    inventories = controller._assessment_inventories(scope)
+    edge = inventories[next(repo.repository_id for repo in scope.repositories if repo.root.name == "edge")]
+    sent = {key: edge[key] for key in ("route_projection", "role_units", "egress", "topology")}
+    assert all(len(r["path"]) <= 180 for r in edge["route_projection"]["routes"])
+    assert len(json.dumps(sent).encode()) <= MAX_CONTEXT_BYTES // 4
+
+
+def test_render_tail_gives_actor_resolution_the_source_auth_evidence(tmp_path, monkeypatch):
+    """Registration evidence must exist before posture and actor resolution read it."""
+    from orchestrator import assessment_declarations
+
+    calls = []
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **_: calls.append((name, list(args))))
+
+    class Stop(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise Stop
+
+    monkeypatch.setattr(assessment_declarations, "related_register", stop)
+    workspace, root = tmp_path / "workspace", tmp_path / "root"
+    with pytest.raises(Stop):
+        controller._assessment_render(None, None, None, {}, workspace, root, captured=None, progress=lambda text: None)
+    names = [name for name, _ in calls]
+    assert names.index("analyzers/route_inventory.py") < names.index("analyzers/source_auth_scanner.py")
+    args = dict(zip(*[iter(calls[names.index("analyzers/source_auth_scanner.py")][1][:4])] * 2))
+    assert args == {"--repo-root": str(root), "--output-dir": str(workspace)}
+
+
 def test_scanner_findings_reach_the_merge_through_independent_review(tmp_path):
     roots = [tmp_path / name for name in ("caller", "receiver")]
     for root in roots:
@@ -299,7 +694,7 @@ def test_controller_analysis_sessions_hold_owned_state_and_resume_without_new_ca
         with controller._assessment_session(
             scope,
             ["--no-requirements"],
-            budget=AssessmentBudget(2, 0.05, 60, 120),
+            budget=AssessmentBudget(2, 0.05, 60, 3600),
             host_factory=factory,
             resume=resume,
             model="haiku",
@@ -339,6 +734,36 @@ def test_a_runtime_change_during_the_session_is_disclosed_not_fatal(tmp_path, mo
     ) as (_, state, _):
         assert controller._assessment_runtime_warning(state) is None
         current[0] = "b" * 64
+        assert "--rebuild" in controller._assessment_runtime_warning(state)
+        # Mid-run it says the run goes on, so it never reads as the run's end.
+        assert "continues" not in controller._assessment_runtime_warning(state)
+        assert "The assessment continues" in controller._assessment_runtime_warning(state, running=True)
+    assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] != "failed"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError("replaced by an editor"),
+        controller.ControllerError("runtime must not contain directory links"),
+    ],
+)
+def test_a_runtime_that_cannot_be_fingerprinted_mid_run_is_disclosed_not_fatal(tmp_path, monkeypatch, error):
+    for name in ("caller", "receiver"):
+        checkout(tmp_path / name)
+    scope = admit([str(tmp_path / name) for name in ("caller", "receiver")], str(tmp_path / "out"))
+    calls = []
+
+    def fingerprint():
+        calls.append(1)
+        if len(calls) > 1:
+            raise error
+        return "a" * 64
+
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", fingerprint)
+    with controller._assessment_session(
+        scope, ["--no-requirements"], budget=AssessmentBudget(1, 0.05, 10, 60), host_factory=lambda *args: None
+    ) as (_, state, _):
         assert "--rebuild" in controller._assessment_runtime_warning(state)
     assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] != "failed"
 
@@ -570,8 +995,11 @@ def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch
             HostTimeout("host call exceeded its time limit"),
         ]
     )
-    transport = _ReportedTransport(inner, lines.append, {"repo-1": "user-service"})
+    running = {}
+    transport = _ReportedTransport(inner, lines.append, {"repo-1": "user-service"}, running, "STRIDE")
     transport.invoke("s", "p", {}, 30, lambda: False)
+    # A finished call leaves the console's registry of calls in flight.
+    assert running == {}
     transport.invoke("s", "p", {}, 30, lambda: False)
     with pytest.raises(HostTimeout):
         transport.invoke("s", "p", {}, 30, lambda: False)
@@ -616,3 +1044,461 @@ def test_each_cli_host_call_records_its_events_in_its_own_file(tmp_path):
     assert first.max_thinking_tokens == 20_000
     unrecorded = _assessment_cli_host_factory(tmp_path / "hosts")("x", "sonnet", 1.0)
     assert unrecorded.events_path is None and unrecorded.max_thinking_tokens is None
+
+
+def test_controller_host_calls_write_the_short_lived_prompt_cache(tmp_path, monkeypatch):
+    """MD-11: a unique exchange prompt is not paid at the one-hour cache-write rate."""
+    from orchestrator.orchestration_controller import _assessment_cli_host_factory
+    from runtime.analyst_host import ClaudeCliTransport
+
+    monkeypatch.delenv("FORCE_PROMPT_CACHING_5M", raising=False)
+    (tmp_path / "hosts").mkdir()
+    for events in (tmp_path / "events", None):
+        transport = _assessment_cli_host_factory(tmp_path / "hosts", events)("stride_analyzer", "sonnet", 1.0)
+        assert transport.environment()["FORCE_PROMPT_CACHING_5M"] == "1"
+    # Other hosts keep the login's default TTL.
+    assert "FORCE_PROMPT_CACHING_5M" not in ClaudeCliTransport(tmp_path / "work").environment()
+
+
+class _MergerJobs:
+    """Answers each merger exchange with one decision per supplied group, as the merger would."""
+
+    def __init__(self, action="keep", reply=None):
+        self.action, self.reply, self.requests = action, reply, []
+
+    def execute(self, **request):
+        self.requests.append(request)
+        groups = request["context"]["candidate_groups"]
+        decisions = [
+            {"group_id": group["group_id"], "action": self.action, "member_indices": [0, 1], "rationale": "Same sink."}
+            | ({"merge_target_index": 0} if self.action == "merge" else {})
+            for group in groups
+        ]
+        artifact = self.reply or {"version": 2, "generated_at": "now", "model": "test", "decisions": decisions}
+        request["validate"](artifact, [])
+        return artifact
+
+
+def _merge_groups(count):
+    member = {"component_id": "edge", "title": "Unvalidated input"}
+    return [
+        {"group_id": f"G-{index:08x}", "member_count": 2, "members": [member, dict(member)]} for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize("count, exchanges", [(1, 1), (controller.MERGE_REVIEW_GROUPS + 1, 2)])
+def test_merge_review_decides_every_group_in_bounded_tool_less_exchanges(count, exchanges):
+    jobs = _MergerJobs(action="merge")
+    progress = []
+    decisions = controller._assessment_merge_review(jobs, "verified", _merge_groups(count), progress=progress.append)
+    assert len(jobs.requests) == exchanges
+    assert all(r["role"] == "threat_merger" and r["allowed_sources"] == frozenset() for r in jobs.requests)
+    assert sorted(d["group_id"] for d in decisions) == [g["group_id"] for g in _merge_groups(count)]
+    assert all(line.startswith("Reviewing merge candidates (verified,") for line in progress)
+
+
+def test_merge_review_rejects_a_decision_set_that_omits_a_group():
+    """The rejection is a correction the exchange returns to the merger, not the end of the run."""
+    from runtime.assessment_host import Rejection
+
+    reply = {"version": 2, "generated_at": "now", "model": "test", "decisions": []}
+    with pytest.raises(Rejection, match="omits candidate groups") as raised:
+        controller._assessment_merge_review(_MergerJobs(reply=reply), "verified", _merge_groups(2), progress=print)
+    assert isinstance(raised.value, ValueError)
+
+
+@pytest.mark.parametrize(
+    "asset, name, description",
+    [
+        ({"name": "Customer order history", "description": None}, "Customer order history", "Customer order history."),
+        ({"name": "Signing keys", "description": "  "}, "Signing keys", "Signing keys."),
+        (
+            {"name": "Payment " + "authorization records of every merchant account " * 3, "description": "Kept."},
+            None,
+            "Kept.",
+        ),
+        ({"name": "Session tokens", "description": "Bearer tokens."}, "Session tokens", "Bearer tokens."),
+    ],
+)
+def test_architecture_assets_fit_the_legacy_asset_fragment(asset, name, description):
+    fitted = controller._assessment_asset_fields(dict(asset, id="asset-a", classification="Internal"))
+    assert len(fitted["name"]) <= controller.ASSET_NAME_CHARS
+    assert fitted["name"] == (name or fitted["name"]) and not fitted["name"].endswith(" of")
+    assert fitted["description"] == description
+
+
+@pytest.mark.parametrize("repositories, keep, kept", [(1, False, True), (2, False, False), (2, True, True)])
+def test_a_sole_repository_keeps_its_run_files(tmp_path, repositories, keep, kept):
+    workspace = tmp_path / "render"
+    workspace.mkdir()
+    (workspace / ".threats-merged.json").write_text("{}", encoding="utf-8")
+    controller._assessment_discard_workspace(workspace, repositories, {"keep_runtime_files": keep})
+    assert workspace.is_dir() is kept
+
+
+def test_an_interrupted_assessment_exits_without_a_traceback(monkeypatch, capsys):
+    def interrupted(argv):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(controller, "assess_repositories", interrupted)
+    assert controller.assess_main(["--repo", "x", "--output", "y"]) == 130
+    captured = capsys.readouterr()
+    assert "✗ assessment interrupted" in captured.err and "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("west", "east")])
+def test_boundary_jobs_answer_from_their_preloaded_cited_source(tmp_path, names):
+    """A crossing's cited source reaches the first packet, so no call only requests it."""
+    from tests.test_multi_repo_boundaries import crossing_input
+
+    scope, components, receipt, flows, context = crossing_input(tmp_path, names=names)
+    architecture = dict(components=components, finalization=receipt, data_flows=flows)
+    host = BoundaryHost()
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(1, 0.05, 20, 60),
+        lambda role, ceiling: host,
+        lambda: False,
+        lambda: None,
+    )
+    assessment, candidates = controller._assessment_boundary_candidates(
+        scope, jobs, architecture, context, "standard", progress=lambda text: None
+    )
+    assert assessment["signals"] and host.calls == len(assessment["signals"])
+    assert len(candidates["dispositions"]) == len(assessment["signals"])
+
+
+@pytest.mark.parametrize("line", [900, 1500])
+def test_stride_and_review_jobs_receive_the_source_their_context_cites(tmp_path, line):
+    """A cited control line and every finding anchor arrive with the first packet, never through a read-only call."""
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    path = roots[1] / "app.py"
+    path.write_text(path.read_text() + "value = request.args['input']\n" * 1600)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == roots[1])
+    component = next(c for c in architecture["components"]["components"] if c["repository_ids"] == [rid])
+    # A control cites a line far from every investigation target window.
+    controls = [
+        dict(
+            domain="Input Boundary Validation Controls",
+            control="Request Validation",
+            effectiveness="Partial",
+            assessment="The handler reads a request parameter directly.",
+            component_ids=[component["id"]],
+            evidence=[
+                dict(repository_id=rid, file="app.py", line=line, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            ],
+        )
+    ]
+    calls = len(host.calls)
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=lambda text: None)
+    packets = list(zip(host.calls[calls:], host.packets[calls:]))
+    stride = [
+        slices
+        for (role, ctx), slices in packets
+        if role == "stride_analyzer" and ctx["component"]["id"] == component["id"]
+    ]
+    assert stride and all(any(key[:2] == (rid, "app.py") and key[2] <= line <= key[3] for key in s) for s in stride)
+    reviews = [slices for (role, _), slices in packets if role == "evidence_verifier"]
+    assert reviews and all(reviews)
+
+
+def _control_scope(tmp_path, names, count=6):
+    roots = [tmp_path / name for name in names[:2]]
+    for root in roots:
+        checkout(root)
+    for index in range(count):
+        (roots[index % 2] / f"{names[2]}_{index}.py").write_text("value = 1\nassert value > 0\n")
+    scope = admit([str(root) for root in roots], str(tmp_path / "out"))
+    components = []
+    for index in range(count):
+        repo = next(repo for repo in scope.repositories if repo.root == roots[index % 2])
+        path = f"{names[2]}_{index}.py"
+        components.append(
+            dict(
+                id="component-" + hashlib.sha256(path.encode()).hexdigest()[:16],
+                name=f"Service {index}",
+                description="A service with its own source file.",
+                tier="application",
+                repository_ids=[repo.repository_id],
+                paths=[
+                    dict(
+                        repository_id=repo.repository_id, path=path, sha256=hashlib.sha256(repo.files[path]).hexdigest()
+                    )
+                ],
+            )
+        )
+    return scope, dict(
+        components=dict(components=components),
+        finalization=dict(
+            component_inventory_fingerprint="sha256:" + hashlib.sha256(json.dumps(components).encode()).hexdigest()
+        ),
+        data_flows=dict(data_flows=[]),
+    )
+
+
+@pytest.mark.parametrize("names", [("edge", "service", "unit"), ("gateway", "worker", "handler")])
+def test_controls_overlap_within_the_limit_keep_order_and_reuse_receipts(tmp_path, names):
+    import threading
+
+    scope, architecture = _control_scope(tmp_path, names)
+    components = architecture["components"]["components"]
+    positions = {component["id"]: index for index, component in enumerate(components)}
+    barrier = threading.Barrier(4)
+    second_finished = threading.Event()
+    lock = threading.Lock()
+    started, finished = set(), []
+    running, peak = [0], [0]
+
+    class ParallelHost(Host):
+        def invoke(self, role, prompt):
+            packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
+            component = packet["context"]["component"]
+            index = positions[component["id"]]
+            with lock:
+                first = index not in started
+                started.add(index)
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            try:
+                if first and index < 4:
+                    barrier.wait(5)
+                if index == 0:
+                    assert second_finished.wait(5), "Control jobs must overlap"
+                with lock:
+                    reply = super().invoke(role, prompt)
+                    if reply.payload["action"] == "complete":
+                        finished.append(index)
+                        if index == 1:
+                            second_finished.set()
+                    # Every supplied slice stays inside this component's source selection.
+                    allowed = {(p["repository_id"], p["path"]) for p in component["paths"]}
+                    assert all((s["repository_id"], s["path"]) in allowed for s in packet["source_slices"])
+                    return reply
+            finally:
+                with lock:
+                    running[0] -= 1
+
+    host = ParallelHost(scope)
+    budget = AssessmentBudget(2, 0.05, 60, 6000)
+    budget.plan_completion()
+    jobs = AssessmentJobs(scope, scope.output / ".assessment/jobs", budget, host.factory, lambda: False, lambda: None)
+    controls = controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    assert peak[0] == 4 and finished.index(1) < finished.index(0)
+    assert [row["component_ids"] for row in controls] == [[component["id"]] for component in components]
+    assert len(list(jobs.directory.glob("*.receipt.json"))) == len(components)
+    assert budget.calls == len(host.calls) == 2 * len(components)
+    assert budget.spent_usd == pytest.approx(0.01 * budget.calls) and not budget.failed
+
+    def no_new_host(role, ceiling):
+        pytest.fail("Accepted control jobs must be reused")
+
+    resumed = AssessmentJobs(scope, jobs.directory, budget, no_new_host, lambda: False, lambda: None)
+    assert controller._assessment_controls(scope, resumed, architecture, progress=lambda text: None) == controls
+    assert resumed.timing["control_analyst"]["reused"] == len(components)
+    assert budget.calls == len(host.calls)
+
+
+@pytest.mark.parametrize("outcome", ["empty", "foreign_evidence", "cancelled", "budget"])
+def test_parallel_controls_preserve_empty_results_and_fail_closed(tmp_path, outcome):
+    from runtime.analyst_host import HostCancelled
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    scope, architecture = _control_scope(tmp_path, ("front", "back", "check"))
+    components = architecture["components"]["components"]
+
+    class ControlledHost(Host):
+        def invoke(self, role, prompt):
+            reply = super().invoke(role, prompt)
+            if reply.payload["action"] == "complete":
+                if outcome == "empty":
+                    reply.payload["artifact"]["security_controls"] = []
+                elif outcome == "foreign_evidence":
+                    control = reply.payload["artifact"]["security_controls"][0]
+                    other = next(c for c in components if c["id"] not in control["component_ids"])
+                    row = other["paths"][0]
+                    control["evidence"] = [
+                        dict(repository_id=row["repository_id"], file=row["path"], line=2, sha256=row["sha256"])
+                    ]
+            return reply
+
+    host = ControlledHost(scope)
+    budget = AssessmentBudget(2, 0.05, 60, 6000)
+    budget.plan_completion()
+    if outcome == "budget":
+        budget.spent_usd = budget.max_usd
+    jobs = AssessmentJobs(
+        scope, scope.output / ".assessment/jobs", budget, host.factory, lambda: outcome == "cancelled", lambda: None
+    )
+    if outcome == "empty":
+        assert controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None) == []
+        assert len(list(jobs.directory.glob("*.receipt.json"))) == len(components)
+    else:
+        error = {"foreign_evidence": ExchangeError, "cancelled": HostCancelled, "budget": BudgetExhausted}[outcome]
+        with pytest.raises(error):
+            controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+        assert not list(jobs.directory.glob("*.receipt.json"))
+        if outcome != "foreign_evidence":
+            assert host.calls == []
+    assert not budget.failed and jobs.gaps == []
+
+
+def test_interrupted_parallel_controls_reuse_accepted_jobs(tmp_path):
+    import threading
+
+    from runtime.analyst_host import HostCancelled
+
+    scope, architecture = _control_scope(tmp_path, ("public", "internal", "route"))
+    interrupted = architecture["components"]["components"][1]["id"]
+    accepted = threading.Event()
+    directory = scope.output / ".assessment/jobs"
+
+    def checkpoint():
+        if any(directory.glob("*.receipt.json")):
+            accepted.set()
+
+    class InterruptedHost(Host):
+        def invoke(self, role, prompt):
+            packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
+            if packet["context"]["component"]["id"] == interrupted:
+                assert accepted.wait(5), "Another control job must finish before the interruption"
+                raise HostCancelled("Control assessment interrupted")
+            return super().invoke(role, prompt)
+
+    budget = AssessmentBudget(2, 0.05, 60, 6000)
+    budget.plan_completion()
+    jobs = AssessmentJobs(scope, directory, budget, InterruptedHost(scope).factory, lambda: False, checkpoint)
+    with pytest.raises(HostCancelled):
+        controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    receipts = {path.name: path.read_bytes() for path in directory.glob("*.receipt.json")}
+    assert 0 < len(receipts) < 6 and not budget.failed
+    calls = budget.calls
+    host = Host(scope)
+    resumed = AssessmentJobs(scope, directory, budget, host.factory, lambda: False, checkpoint)
+    controls = controller._assessment_controls(scope, resumed, architecture, progress=lambda text: None)
+    assert [row["component_ids"] for row in controls] == [[c["id"]] for c in architecture["components"]["components"]]
+    assert budget.calls - calls == len(host.calls) == 2 * (6 - len(receipts))
+    assert all((directory / name).read_bytes() == content for name, content in receipts.items())
+    assert resumed.timing["control_analyst"]["reused"] == len(receipts)
+
+
+def test_control_and_stride_contexts_omit_path_hashes_and_controls_answer_in_one_call(tmp_path):
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    controls = controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=lambda text: None)
+    roles = [role for role, _ in host.calls]
+    assert roles.count("control_analyst") == len(architecture["components"]["components"])
+    model_components = [
+        component
+        for role, ctx in host.calls
+        if role in ("control_analyst", "stride_analyzer", "evidence_verifier")
+        for component in [ctx["component"], *ctx.get("incident_components", [])]
+    ]
+    assert model_components and all("sha256" not in row for c in model_components for row in c["paths"])
+    # Acceptance still sees the full inventory: the controller's own components keep their hashes.
+    assert all(row["sha256"] for c in architecture["components"]["components"] for row in c["paths"])
+
+
+@pytest.mark.parametrize("count", [6, 9])
+def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, count):
+    """MR-16: up to four components at a time; results and warnings keep component order."""
+    import threading
+    import time
+
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        Host(scope).factory,
+        lambda: False,
+        lambda: None,
+    )
+    lock = threading.Lock()
+    running, peak = [0], [0]
+
+    def analyze(position, component, view):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        # Later components finish first.
+        time.sleep(0.02 * (count - position))
+        view.notes.append(f"note {component}")
+        with lock:
+            running[0] -= 1
+        return f"document {component}", f"review {component}"
+
+    names = [f"c{n}" for n in range(count)]
+    results = controller._assessment_components_concurrently(jobs, names, analyze)
+    assert 1 < peak[0] <= controller.ASSESSMENT_COMPONENT_WORKERS
+    assert results == [(f"document {n}", f"review {n}") for n in names]
+    assert jobs.notes == [f"note {n}" for n in names]
+
+
+def test_a_failed_component_admits_no_further_job_and_is_raised(tmp_path):
+    import threading
+
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        Host(scope).factory,
+        lambda: False,
+        lambda: None,
+    )
+    failed = threading.Event()
+    started = []
+
+    def analyze(position, component, view):
+        if position == 1:
+            failed.set()
+            raise ExchangeError("first component failed")
+        failed.wait(5)
+        # A job requested after the failure never starts.
+        view.execute(
+            role="r",
+            selector=component,
+            instructions="",
+            context={},
+            schema={},
+            allowed_sources=frozenset(),
+            validate=None,
+        )
+        started.append(component)
+
+    with pytest.raises(ExchangeError, match="first component failed"):
+        controller._assessment_components_concurrently(jobs, ["a", "b", "c", "d", "e"], analyze)
+    assert started == []

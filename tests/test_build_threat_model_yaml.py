@@ -29,6 +29,64 @@ b = _load()
 import model.emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
 from shared._finding_state import is_confirmed  # noqa: E402
 
+_FUNCTION_WORDS = {"a", "an", "the", "of", "to", "in", "on", "at", "by", "for", "from", "with", "and", "or", "without"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "evidence", "instances", "expected"),
+    [
+        # Long class and qualifier plus a deep locator: the class survives whole.
+        (
+            "Broken authorization — attacker-controlled owner ID in resource query — "
+            "service/routes/admin/dataExport.ts:26",
+            {"file": "service/routes/admin/dataExport.ts", "line": 26},
+            None,
+            "Broken authorization — dataExport.ts:26",
+        ),
+        # A long title without a class separator is shortened on a whole phrase.
+        (
+            "Sensitive REST route registered without authentication middleware on the public "
+            "application router — server.ts:310",
+            {"file": "server.ts", "line": 310},
+            None,
+            None,
+        ),
+        # An ASCII " - " separator splits class and qualifier like the em-dash.
+        (
+            "Path traversal - user-controlled file name joined to the upload directory - routes/upload.ts:9",
+            {"file": "routes/upload.ts", "line": 9},
+            None,
+            "Path traversal — routes/upload.ts:9",
+        ),
+        # A consolidated survivor carries no representative locator.
+        (
+            "Insecure Direct Object Reference — owner ID taken from the request body — routes/order.ts:148",
+            {"file": "routes/order.ts", "line": 148},
+            [{"file": "routes/order.ts", "line": 148}, {"file": "routes/wallet.ts", "line": 27}],
+            "Insecure Direct Object Reference",
+        ),
+        # An already short, conforming title is unchanged.
+        ("SQL injection — routes/login.ts:34", {"file": "routes/login.ts", "line": 34}, None, None),
+    ],
+)
+def test_finding_title_keeps_its_class_through_builder_and_emitter(raw, evidence, instances, expected):
+    """The builder conforms a title, the emitter re-derives it; neither may cut
+    a weakness class mid-phrase. The builder used to drop the class separator
+    and truncate, then the emitter re-derived from that mangled string."""
+    threat = {"id": "T-001", "title": raw, "evidence": [evidence]}
+    if instances:
+        threat["instances"] = instances
+    b._conform_title(threat)
+    ecf.apply({"threats": [threat]})
+    title = threat["title"]
+    assert ecf._schema_ok(title), title
+    assert "…" not in title
+    assert title.split(" — ")[0].split()[-1].lower() not in _FUNCTION_WORDS, title
+    if expected is not None:
+        assert title == expected
+    if raw == "SQL injection — routes/login.ts:34":
+        assert title == raw
+
 
 def test_clamp_title_short_passthrough():
     t = "SQL Injection — routes/login.ts:34"
@@ -512,6 +570,44 @@ def _meta(repo_root, **cfg):
         repo_root=repo_root,
         prior_yaml=None,
     )
+
+
+@pytest.mark.parametrize(
+    ("manifest", "description", "runtime"),
+    [
+        (
+            {"name": "order-portal", "description": "Order intake for retail stores.", "engines": {"node": "20"}},
+            "Order intake for retail stores.",
+            "Node.js 20",
+        ),
+        ({"name": "ledger"}, None, None),
+    ],
+)
+def test_build_meta_describes_the_project_from_its_own_manifest(tmp_path, monkeypatch, manifest, description, runtime):
+    """§1 reads description and runtime from meta, never from the renderer's working directory."""
+    (tmp_path / "package.json").write_text(json.dumps(manifest))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "package.json").write_text(json.dumps({"name": "foreign", "description": "Not this project."}))
+    monkeypatch.chdir(elsewhere)
+    meta = _meta(tmp_path)
+    assert meta.get("project_description") == description
+    assert meta.get("runtime") == runtime
+
+
+def test_build_meta_masks_a_secret_in_the_manifest_description(tmp_path):
+    secret = "AKIA" + "ABCDEFGHIJKLMNOP"
+    (tmp_path / "package.json").write_text(json.dumps({"name": "api", "description": f"Deploy key {secret} here."}))
+    assert secret not in _meta(tmp_path)["project_description"]
+
+
+def test_build_meta_publishes_the_remote_without_credentials(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    remote = "https://deploy:t0ken@example.invalid/org/api.git"
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", remote], check=True)
+    assert _meta(tmp_path)["repo_url"] == "https://example.invalid/org/api.git"
 
 
 def test_build_meta_propagates_check_requirements_true(tmp_path):

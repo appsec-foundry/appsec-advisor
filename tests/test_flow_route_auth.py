@@ -101,6 +101,16 @@ def test_nothing_unproven_or_authored_is_filled(flow):
     assert mixed_route_auth_errors(result["data_flows"], [VERIFIED, UNRESOLVED]) == []
 
 
+@pytest.mark.parametrize("seen", ["middleware_present", "decorator_present"])
+def test_a_registration_guard_the_resolver_verifies_fills_the_flow(seen):
+    guarded = _route(14, "verified", "bearer", seen, "/e")
+    result, filled, _mixed = reconcile(_doc(_flow("df-001", 14, authentication=UNKNOWN)), [guarded])
+    assert filled == ["df-001"] and result["data_flows"][0]["authentication"]["scheme"] == "bearer"
+    # Seen at registration but not verified by the chain fills nothing.
+    unproven = _route(14, "unresolved", None, seen, "/e")
+    assert reconcile(_doc(_flow("df-001", 14, authentication=UNKNOWN)), [unproven])[1] == []
+
+
 def test_self_check_reports_a_flow_whose_routes_differ(tmp_path):
     (tmp_path / ".route-inventory.json").write_text(json.dumps({"routes": [VERIFIED, NONE]}))
     flows = {"data_flows": [_flow("df-004", 10, 11, authentication=UNKNOWN)]}

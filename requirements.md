@@ -10,7 +10,7 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 
 ## Analysis scope
 
-- **REQ-PUR-003:** Users must be able to select input repositories and a separate output location, including combined assessments of multiple repositories.
+- **REQ-PUR-003:** Users must be able to select local repositories or Git URLs and a separate output location, including combined assessments of multiple repositories.
 - **REQ-FLW-005:** Each assessment must identify its source revisions, analysis scope, context sources, exclusions, and coverage gaps.
 - **REQ-FLW-009:** Users must be able to select analysis depth and focus on specific components or directories.
 - **REQ-FLW-002:** Every analyzed component must receive all six STRIDE checks at every analysis depth.
@@ -120,4 +120,4 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 - **REQ-FLW-003:** Required inputs and outputs must be validated before use; missing or invalid required data must stop publication of an apparently complete result.
 - **REQ-FLW-006:** Headless execution must require no interactive responses and must distinguish completion, incomplete execution, and failure.
 - **REQ-FLW-007:** Runs must expose progress, actionable diagnostics, and recovery options; external issue publication must require approval of the prepared content.
-- **REQ-FLW-008:** Budget behavior must be explicit for each execution mode, and interrupted or incomplete work must never be reported as successfully completed.
+- **REQ-FLW-008:** Budget behavior must be explicit for each execution mode, and interrupted or incomplete work must never be reported as successfully completed. Deterministic controller runs must reserve resources for required completion work, omit optional model work when necessary, and provide a clearly marked incomplete report of validated results when the budget cannot cover required analysis.

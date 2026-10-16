@@ -87,6 +87,7 @@ import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup  # See extract_metrics().
 import renderers.summarize_threat_model as summarize_threat_model  # Shares the worst-case table with the model summary.
 import renderers.team_questions as _team_questions
+from renderers.term_style import Style
 
 BANNER_WIDTH = 62
 RULE = "═" * BANNER_WIDTH
@@ -2190,6 +2191,8 @@ def render_run_overview(
         scope = "security-relevant delta from previous threat-model.yaml"
     elif mode == "rebuild":
         scope = "fresh full repository assessment"
+    elif mode == "rerender":
+        scope = "report re-rendered from the existing assessment, no re-analysis"
     if change:
         mode = f"{mode} (delta: +{change['added_n']} / ~{change['changed_n']} / -{change['resolved_n']})"
 
@@ -2288,6 +2291,80 @@ def render_summary(
     lines.extend(render_log_files(output_dir))
 
     return "\n".join(lines) + "\n"
+
+
+_SEVERITY_ROLE = {"Critical": "critical", "High": "high", "Medium": "medium", "Low": "low"}
+_SEVERITY_COUNT_RE = re.compile(r"\b(\d+) (Critical|High|Medium|Low)\b")
+_FIELD_RE = re.compile(r"^(  \S[^:]{0,20}?\s*:)( .*)?$")
+_FINDING_ID_RE = re.compile(r"\b[FTW]-\d{3}\b")
+_FIELD_INDENT = " " * len(f"  {'':<12}: ")
+
+
+def _style_inline(text: str, st: Style) -> str:
+    text = _SEVERITY_COUNT_RE.sub(
+        lambda m: st(m.group(0), _SEVERITY_ROLE[m.group(2)], *(("bold",) if m.group(2) == "Critical" else ())), text
+    )
+    text = text.replace("(unproven)", st("(unproven)", "warn"))
+    return _FINDING_ID_RE.sub(lambda m: st(m.group(0), "bold"), text)
+
+
+def _severity_bars(field_lines: list[str], st: Style) -> list[str]:
+    """One bar per reported severity under the ``Threats`` field."""
+    counts = [(sev, int(n)) for n, sev in _SEVERITY_COUNT_RE.findall(" ".join(field_lines))]
+    top = max((n for _, n in counts), default=0)
+    if not top:
+        return []
+    return [
+        f"{_FIELD_INDENT}{st(f'{sev.lower():<9}', _SEVERITY_ROLE[sev])}{n:>3}  "
+        f"{st('▪' * max(1, round(16 * n / top)) if n else '', _SEVERITY_ROLE[sev])}"
+        for sev, n in counts
+    ]
+
+
+def style_summary(text: str, st: Style) -> str:
+    """The completion summary in terminal colour, for the headless console.
+
+    Applied when the summary is printed, never to the recorded text: the same
+    record reaches interactive sessions as a hook message, which shows escape
+    sequences literally. Works on the line shapes this module produces —
+    section headings at column 0, ``_summary_field`` rows, ``Warning:`` and
+    ``Note:`` lines — and adds severity bars under ``Threats``. Every word of
+    the plain text stays, including ``(unproven)`` (REQ-MOD-009).
+    """
+    if not st.enabled:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() and set(line.strip()) <= {"═", "-", "─"}:
+            out.append(st(line, "muted"))
+        elif i == 0 and line.strip():
+            out.append(st(f"✓ {line}", "ok", "bold"))
+        elif line and not line.startswith(" "):
+            out.append(st(line, "accent", "bold"))
+        elif line.lstrip().startswith("Warning:"):
+            out.append(st(line, "warn"))
+        elif line.lstrip().startswith("Note:"):
+            out.append(st(line, "muted"))
+        elif m := _FIELD_RE.match(line):
+            if m.group(1).strip().startswith("Threats"):
+                field = [line]
+                while i + 1 < len(lines) and lines[i + 1].startswith(_FIELD_INDENT) and lines[i + 1].strip():
+                    i += 1
+                    field.append(lines[i])
+                out.append(st(m.group(1), "muted") + _style_inline(m.group(2) or "", st))
+                out.extend(_style_inline(f, st) for f in field[1:])
+                out.extend(_severity_bars(field, st))
+            else:
+                out.append(st(m.group(1), "muted") + _style_inline(m.group(2) or "", st))
+        elif line.startswith("  - "):
+            out.append(f"  {st('-', 'muted')} {_style_inline(line[4:], st)}")
+        else:
+            out.append(_style_inline(line, st))
+        i += 1
+    return "\n".join(out)
 
 
 def render_dry_run(output_dir: Path, repo_root: Path) -> str:
@@ -2738,7 +2815,7 @@ def _bool_pair(
 
 
 _RUN_CHOICES = {
-    "mode": ("full", "incremental", "rebuild", "dry-run"),
+    "mode": ("full", "incremental", "rebuild", "rerender", "dry-run"),
     "reasoning_model": ("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
     "assessment_depth": ("quick", "standard", "thorough"),
 }

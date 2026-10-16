@@ -17,16 +17,15 @@ A sentence belongs in `requirements.md` when a person using the plugin would
 recognize it as a promise and would be let down if it broke. The requirement
 states the outcome, not the mechanism used to produce it.
 
-Roles, step order, retries, model names, budgets, paths, test names, internal
-limits, and fallback algorithms do not belong there. Non-obvious architectural
-choices belong in `docs/internal/decisions.md`; shapes and vocabularies belong in
-schemas and data files; implementation details belong in code and contracts.
+Roles, step order, retries, model names, budgets, paths, test names, internal limits, and fallback algorithms do not belong there. Shapes and vocabularies belong in schemas and data files; implementation details belong in code and contracts. Derive these technical obligations and their tests from the requirements through the bindings.
+
+The [decision register](../docs/internal/decisions.md) records only long-lived, cross-cutting technical choices that requirements leave open and whose reversal would have significant consequences. Its admission rule requires the chosen approach, alternative, reason and consequences. Bug fixes, scanner rules, algorithms, local implementation details and invariants already explained by contracts or tests do not need entries. A code change or a new test alone never requires a decision. Retiring duplicate entries does not move their details into requirements.
 
 ## Who approves what
 
 The operator approves a requirement's ID and normative text. Creating a proposal or changing a technical binding uses the normal code-review process and does not require a separate specification permission prompt.
 
-The decision register is held for a different change. Its rule asks the operator before an entry is loosened, widened or retired, so recording a new decision is reviewed work like any other, while changing an existing one, removing one, or changing the register's own rules needs approval and a proposal.
+Before adding or changing a requirement or decision, show the operator its exact wording and a plain-language summary and obtain confirmation of both, as required by `AGENTS.md`. Retiring a decision also needs approval. Changes to existing decision entries or the register's rules require a proposal; the structural checker permitting an additive row without one does not replace operator confirmation.
 
 An incompatible implementation change updates and receives approval for the
 requirement before the implementation lands. Requirement IDs are never reused;

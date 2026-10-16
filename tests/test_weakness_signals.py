@@ -112,6 +112,41 @@ def test_safe_source_does_not_establish_claimed_mechanism(tmp_path, cwe, body):
 
 
 @pytest.mark.parametrize(
+    ("path", "body", "present"),
+    [
+        (
+            "api/records.ts",
+            "const resource = factory.resource({\n  model: Record,\n  endpoints: ['/records']\n})",
+            True,
+        ),
+        ("service/catalog.ts", "registry.resource(\n  { model: Entry, endpoints: ['/entries'] }\n)", True),
+        ("api/records.ts", "const unrelated = 1;\nrecord.update(request.body)", False),
+        ("api/records.ts", "function unrelated() {\n  record.update(request.body)\n}", False),
+        ("api/records.ts", "const value = factory.resource({\n  label: 'model update(request.body)'\n})", False),
+        ("api/records.ts", "factory.resource({\n  label: 'ordinary'\n});\nrecord.update(request.body)", False),
+    ],
+)
+def test_multiline_mechanism_stays_in_the_cited_expression(tmp_path, path, body, present):
+    source = tmp_path / path
+    source.parent.mkdir(parents=True)
+    source.write_text(body + "\n")
+    threat = {
+        "t_id": "T-001",
+        "source": "stride",
+        "cwe": "CWE-915",
+        "risk": "High",
+        "component_id": "service",
+        "evidence_check": "verified",
+        "evidence": {"file": path, "line": 1},
+    }
+    signals = finding_signals([threat], tmp_path)
+    assert bool(signals) is present
+    if present:
+        assert signals[0]["mechanism_id"] == "unrestricted-attribute-binding"
+        assert merger.build_weakness_register([threat], signals)[0]["instances"][0]["id"] == "T-001"
+
+
+@pytest.mark.parametrize(
     ("cwe", "body"),
     [
         ("CWE-78", "const match = pattern.exec(text);"),

@@ -9,7 +9,7 @@ into the workspace. Every workspace location is ``<label>/<relative path>``;
 a model sees and cites qualified ``(repository_id, path)`` pairs instead.
 
 This module sequences no other stage and publishes nothing. The controller
-supplies the job runner, role instructions, script runner and enrichment.
+supplies the job runner, role instructions, script runner and model rebuild.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import json
 import re
 from pathlib import Path
 
-import yaml
 from runtime.assessment_host import ExchangeError
 
 from orchestrator.assessment_workspace import WorkspaceError, read_json, write_json
@@ -104,15 +103,44 @@ def _verdict_schema(candidate: str, steps: list[int]) -> dict:
     }
 
 
+def scan_case_files(scope, names, files) -> list[str]:
+    """Per-scan case files as paths below the assessment root, or a refusal.
+
+    The matcher reads these files below the root it is given, which is the
+    controller's copy of the admitted files, never the checkout. A sole
+    repository's files sit at that root itself, so a file of that repository
+    keeps its repository-relative path. Several repositories share one root
+    without origin attribution, so the files are refused there.
+    """
+    if not files:
+        return []
+    if not names.single:
+        raise AssessmentReviewError("per-scan abuse-case files are not supported for a multi-repository assessment yet")
+    repo = scope.repositories[0]
+    relative = []
+    for raw in files:
+        path = Path(raw)
+        try:
+            rel = path.resolve().relative_to(repo.root.resolve()) if path.is_absolute() else Path(raw)
+        except ValueError:
+            raise AssessmentReviewError(f"abuse-case file {raw} is outside the selected repository") from None
+        if rel.as_posix() not in repo.files:
+            raise AssessmentReviewError(f"abuse-case file {raw} is not an admitted file of the selected repository")
+        relative.append(rel.as_posix())
+    return relative
+
+
 def reject_repository_case_files(scope, names, cfg: dict) -> None:
     """Refuse per-repository and per-scan case files the combined root cannot attribute.
 
     The resolver loads repository-local cases relative to one root and records
     no origin repository, so in the combined root they would be dropped or
-    attributed to the wrong checkout.
+    attributed to the wrong checkout. A sole repository's files sit at the
+    combined root itself, so the resolver attributes them as a single scan does.
     """
-    if cfg.get("abuse_case_files"):
-        raise AssessmentReviewError("per-scan abuse-case files are not supported for a multi-repository assessment yet")
+    scan_case_files(scope, names, cfg.get("abuse_case_files"))
+    if names.single:
+        return
     found = []
     for repo in scope.repositories:
         label = names.prefix[repo.repository_id]
@@ -171,7 +199,23 @@ def _validate_retrieved(artifact: dict, ranges: list[dict], allowed: frozenset) 
             raise ExchangeError("Abuse-case evidence was not retrieved by its authorized job")
 
 
-def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructions) -> None:
+def _candidate_titles(workspace: Path) -> dict[str, str]:
+    """``{AC-ID: title}`` from the matcher sidecar, for the console's progress lines.
+
+    Best-effort: without a readable sidecar a case is shown by its ID alone.
+    """
+    try:
+        matches = json.loads((workspace / ".abuse-case-matches.json").read_text(encoding="utf-8")).get("matches")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {
+        str(match["abuse_case_id"]): str(match.get("title") or "").strip()
+        for match in matches or []
+        if isinstance(match, dict) and match.get("abuse_case_id")
+    }
+
+
+def _verify_candidate(scope, jobs, names, workspace: Path, candidate: str, *, instructions) -> None:
     context = read_json(workspace / ".dispatch-context/abuse-cases" / f"{candidate}.json")
     body = context["candidate"]
     steps = [row["step"] for row in body.get("chain") or body.get("steps") or []]
@@ -188,6 +232,9 @@ def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructi
             raise ExchangeError("Abuse-case verdict does not answer every step exactly once")
         if any(row["matched_finding_id"] not in finding_ids | {None} for row in artifact["step_verdicts"]):
             raise ExchangeError("Abuse-case verdict binds a finding outside its candidate")
+        from contexts.multi_repo_analysis import validate_executable_evidence
+
+        validate_executable_evidence(scope, artifact, "Abuse-case evidence does not cite an executable implementation")
 
     artifact = jobs.execute(
         role="abuse_case_verifier",
@@ -211,7 +258,11 @@ def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructi
         schema=_verdict_schema(candidate, steps),
         allowed_sources=allowed,
         validate=validate,
+        # Without a verdict file the merge records the case as not checked (OR-39).
+        on_failure=lambda reason: None,
     )
+    if artifact is None:
+        return
     verdict = {"abuse_case_id": candidate, "step_verdicts": []}
     for row in artifact["step_verdicts"]:
         evidence = row["evidence"]
@@ -248,6 +299,8 @@ def _derive(jobs, workspace: Path, *, instructions) -> list[str]:
         schema=schema,
         allowed_sources=frozenset(),
         validate=validate,
+        # A failed derivation proposes no case; the catalog cases still run (OR-39).
+        on_failure=lambda reason: {"cases": []},
     )
     write_json(workspace / derive_abuse_cases.OUTPUT_FILE, artifact)
     result = derive_abuse_cases.admit(workspace)
@@ -255,43 +308,20 @@ def _derive(jobs, workspace: Path, *, instructions) -> list[str]:
     return [f"derived business cases admitted: {len(result['admitted'])}, dropped: {len(result['dropped'])}"]
 
 
-def _rebuild_model(workspace: Path, root: Path, run_script, enrich) -> None:
-    """Rebuild the model with verified chains; keep the controller-owned source rows."""
-    from shared._atomic_io import atomic_write_text
-
-    model_path = workspace / "threat-model.yaml"
-    before = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
-    owned = {
-        k: v
-        for k, v in (before.get("meta") or {}).items()
-        if k in ("source_repositories", "project_name", "business_context_source")
-    }
-    trace = before.get("business_context_trace") or {}
-    attribution = {k: trace[k] for k in ("source", "source_kind") if trace.get("status") == "applied" and k in trace}
-    run_script(
-        "model/build_threat_model_yaml.py",
-        [str(workspace), "--repo-root", str(root), "--plugin-root", str(PLUGIN_ROOT)],
-    )
-    if owned or attribution:
-        # Repository ownership is controller-applied; a rebuild must not drop it.
-        model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
-        model["meta"].update(owned)
-        if attribution and (model.get("business_context_trace") or {}).get("status") == "applied":
-            model["business_context_trace"].update(attribution)
-        atomic_write_text(model_path, yaml.safe_dump(model, sort_keys=False, allow_unicode=True))
-    run_script("validators/validate_intermediate.py", ["threat_model_output", str(model_path)])
-    enrich()
-
-
 def run_abuse_cases(
-    scope, jobs, names, workspace, root, cfg, *, instructions, run_script, enrich, progress
+    scope, jobs, names, workspace, root, cfg, *, instructions, run_script, rebuild, progress
 ) -> list[str]:
-    """Stage 1d on the workspace: match, verify per candidate, finalize, render and gate."""
+    """Stage 1d on the workspace: match, verify per candidate, finalize, render and gate.
+
+    ``rebuild()`` is the controller's own model build, so a rebuild with the
+    verified chains keeps every field the controller adds to the model.
+    """
     if cfg.get("skip_abuse_case_verification"):
         return ["Abuse verification disabled"]
     reject_repository_case_files(scope, names, cfg)
     workspace, root = Path(workspace), Path(root)
     receipts: list[str] = []
+    progress("Matching abuse cases")
     if cfg.get("assessment_depth") == "thorough" and not cfg.get("only_abuse_case_ids"):
         progress("Deriving application-specific business abuse cases")
         receipts += _derive(jobs, workspace, instructions=instructions)
@@ -312,9 +342,11 @@ def run_abuse_cases(
         ],
         acceptable=(0, 1, 2),
     )
-    if match.returncode != 0 and cfg.get("only_abuse_case_ids"):
+    # A catalog, org-profile or selection error writes no matches at all; read
+    # as "none matched" it would skip every configured case and release gate.
+    if match.returncode != 0:
         detail = (match.stderr or match.stdout or "").strip()
-        raise AssessmentReviewError(f"the abuse-case matcher rejected the selected case IDs: {detail[-500:]}")
+        raise AssessmentReviewError(f"the abuse-case matcher rejected its case sources: {detail[-500:]}")
     listed = run_script("model/match_abuse_cases.py", ["list-candidates", "--output-dir", str(workspace)])
     candidates = [item for item in (listed.stdout or "").split() if _ABUSE_ID_RE.fullmatch(item)]
     if len(candidates) > MAX_CANDIDATES:
@@ -322,24 +354,39 @@ def run_abuse_cases(
             f"abuse verifier fan-out has {len(candidates)} candidates; maximum is {MAX_CANDIDATES}"
         )
     receipts.append(f"abuse candidates: {len(candidates)}")
-    if match.returncode != 0:
-        receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
+    if not candidates:
+        # The controller console's phase result step (`_phase_result`); the
+        # numbered verification steps below count the checked cases.
+        progress("Phase result: Abuse cases: none matched")
     if candidates:
         run_script(
             "contexts/build_abuse_case_contexts.py",
             ["--output-dir", str(workspace), "--repo-root", str(root)]
             + [arg for candidate in candidates for arg in ("--candidate", candidate)],
         )
-        for candidate in candidates:
-            progress("Verifying abuse case: " + candidate)
-            _verify_candidate(jobs, names, workspace, candidate, instructions=instructions)
+        titles = _candidate_titles(workspace)
+        for position, candidate in enumerate(candidates, 1):
+            title = f" — {titles[candidate]}" if titles.get(candidate) else ""
+            progress(f"Verifying abuse case: {candidate}{title} ({position}/{len(candidates)})")
+            _verify_candidate(scope, jobs, names, workspace, candidate, instructions=instructions)
     run_script("validators/verify_abuse_cases.py", ["merge", "--output-dir", str(workspace)])
     run_script("model/match_abuse_cases.py", ["finalize", "--output-dir", str(workspace)])
     run_script("model/promote_verified_abuse_cases.py", ["--output-dir", str(workspace)])
+    receipts += run_architect_review(
+        scope,
+        jobs,
+        names,
+        workspace,
+        cfg,
+        instructions=instructions,
+        run_script=run_script,
+        progress=progress,
+        post_abuse=True,
+    )
     if (workspace / ".abuse-case-verdicts.json").is_file():
-        _rebuild_model(workspace, root, run_script, enrich)
+        rebuild()
         run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
-    run_script("renderers/render_abuse_cases.py", ["--output-dir", str(workspace), "--repo-root", str(root), *org])
+    persist_abuse_cases(workspace, root, cfg, run_script)
     receipts.append("Canonical abuse-case analysis persisted")
     gate = run_script(
         "validators/abuse_case_gate.py", ["--output-dir", str(workspace)], acceptable=(0, _ABUSE_GATE_EXIT)
@@ -347,6 +394,17 @@ def run_abuse_cases(
     if gate.returncode == _ABUSE_GATE_EXIT:
         raise AssessmentReviewError("abuse-case release gate failed: " + (gate.stderr or gate.stdout).strip()[-500:])
     return receipts
+
+
+def persist_abuse_cases(workspace, root, cfg, run_script) -> None:
+    """Render the abuse-case section and write its canonical analysis into threat-model.yaml.
+
+    Every model build starts the analysis at ``not_run``; a build after Stage 1d
+    must call this again, or the published model loses the verified cases the
+    report still shows.
+    """
+    org = ["--org-profile", str(cfg["org_profile_path"])] if cfg.get("org_profile_path") else []
+    run_script("renderers/render_abuse_cases.py", ["--output-dir", str(workspace), "--repo-root", str(root), *org])
 
 
 def _component_sources(components: dict, component_id: str, names) -> frozenset:
@@ -411,12 +469,16 @@ def _review_job(jobs, workspace: Path, job: dict, allowed: frozenset, *, instruc
             schema=schema,
             allowed_sources=allowed,
             validate=validate,
+            # Packets without a proposal stay unreviewed, which OR-33 reports (OR-39).
+            on_failure=lambda reason: {"proposals": {}},
         )
         proposals.update(artifact["proposals"])
     return {"schema_version": 1, "job_id": job["job_id"], "proposals": proposals}
 
 
-def run_architect_review(scope, jobs, names, workspace, cfg, *, instructions, run_script, progress) -> list[str]:
+def run_architect_review(
+    scope, jobs, names, workspace, cfg, *, instructions, run_script, progress, post_abuse=False
+) -> list[str]:
     """Review every evidenced finding per component before triage; apply corrections deterministically."""
     from analyzers.architect_review import ReviewError
     from analyzers.architect_review_runtime import advance_review, load_review, review_coverage
@@ -433,7 +495,7 @@ def run_architect_review(scope, jobs, names, workspace, cfg, *, instructions, ru
     components = {row["id"]: row for row in read_json(workspace / ".components.json")["components"]}
     try:
         for _ in range(_MAX_ARCHITECT_WAVES):
-            wave = advance_review(workspace, review_cfg)
+            wave = advance_review(workspace, review_cfg, post_abuse=post_abuse)
             if wave is None:
                 break
             for job in wave:
@@ -443,7 +505,12 @@ def run_architect_review(scope, jobs, names, workspace, cfg, *, instructions, ru
                 write_json(workspace / job["output_artifact"], proposals)
         else:
             raise AssessmentReviewError("architect review exceeded its wave bound")
-        coverage = review_coverage(load_review(workspace))
+        from model.build_threat_model_yaml import build_threats
+
+        threats, _ = build_threats(
+            read_json(workspace / ".threats-merged.json"), cfg.get("register_severity_floor", "medium")
+        )
+        coverage = review_coverage(load_review(workspace), finding_ids={row["id"] for row in threats})
     except (OSError, ReviewError) as exc:
         raise AssessmentReviewError("architect review transaction failed") from exc
     run_script("validators/validate_intermediate.py", ["threats_merged", str(workspace / ".threats-merged.json")])

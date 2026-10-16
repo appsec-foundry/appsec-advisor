@@ -39,6 +39,117 @@
         "unavailable": {"type": "boolean"}
       }
     },
+    "partial_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason",
+        "accepted_jobs",
+        "omitted_jobs",
+        "findings",
+        "omitted_findings",
+        "remaining_jobs"
+      ],
+      "properties": {
+        "status": {
+          "const": "incomplete"
+        },
+        "reason": {
+          "const": "budget"
+        },
+        "accepted_jobs": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "selector"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "selector": {
+                "type": "string",
+                "maxLength": 8192
+              }
+            }
+          }
+        },
+        "omitted_jobs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "findings": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "title",
+              "repository_id",
+              "file",
+              "line"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "repository_id": {
+                "type": "string",
+                "pattern": "^repo-[0-9a-f]{16}$"
+              },
+              "file": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "omitted_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_jobs": {
+          "type": "array",
+          "maxItems": 1601,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "selector",
+              "role",
+              "jobs"
+            ],
+            "properties": {
+              "selector": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "role": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "jobs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1600
+              }
+            }
+          }
+        }
+      }
+    },
     "deliverables": {
       "type": "object", "maxProperties": 64,
       "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from contexts.multi_repo_analysis import contract
 from model.build_threat_model_yaml import build_assessment_model
 from model.merge_threats import merge_assessment
 from shared.assessment_sources import presentation_model
@@ -188,6 +189,49 @@ def _duplicated(tmp_path, other_verdict, names=("edge", "service")):
     return merge_assessment(scope, components, documents, reviews, boundaries=[])
 
 
+def _reviewed_in_parts(tmp_path, findings, names=("edge", "service"), verdict="verified"):
+    """Each component holds `findings` findings, all decided by one joined multi-job review."""
+    scope, components, receipt, flows, _ = crossing_input(tmp_path, names=names)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=components["source_scope_sha256"],
+        component_inventory_fingerprint=receipt["component_inventory_fingerprint"],
+    )
+    documents, reviews = [], []
+    for component, evidence in zip(components["components"], flows["data_flows"][0]["evidence"], strict=True):
+        document = stride(component, evidence, identity)
+        first = document["threats"][0]
+        document["threats"] = [dict(copy.deepcopy(first), local_id=f"issue-{n}") for n in range(1, findings + 1)]
+        tampering = next(row for row in document["coverage"] if row["category"] == first["stride"])
+        tampering["finding_ids"] = [t["local_id"] for t in document["threats"]]
+        documents.append(document)
+        reviews.append(
+            dict(
+                **identity,
+                decisions=[
+                    dict(local_id=t["local_id"], verdict=verdict, reason="Source review decision.", evidence=[evidence])
+                    for t in document["threats"]
+                ],
+            )
+        )
+    return merge_assessment(scope, components, documents, reviews, boundaries=[])
+
+
+@pytest.mark.parametrize("findings", [101, 160])
+@pytest.mark.parametrize("names", [("edge", "service"), ("gateway", "processor")])
+def test_a_component_reviewed_in_several_jobs_keeps_every_paid_decision(tmp_path, findings, names):
+    """One review job decides at most its own limit; the joined review of a component may hold more."""
+    per_job = contract("multi-repo-evidence-review.schema.json")["properties"]["decisions"]["maxItems"]
+    assert findings > per_job
+    merged = _reviewed_in_parts(tmp_path, findings, names)
+    assert merged["threats"]
+
+
+def test_a_joined_review_still_rejects_an_invalid_decision(tmp_path):
+    with pytest.raises(ValueError, match="invalid evidence review"):
+        _reviewed_in_parts(tmp_path, 101, verdict="plausible")
+
+
 @pytest.mark.parametrize("other_verdict", ["refuted", "ambiguous"])
 @pytest.mark.parametrize("names", [("edge", "service"), ("gateway", "processor")])
 def test_differently_reviewed_duplicate_cannot_absorb_a_verified_finding(tmp_path, other_verdict, names):
@@ -203,6 +247,38 @@ def test_equally_reviewed_duplicates_still_merge(tmp_path):
     merged = _duplicated(tmp_path, "verified")
     assert len(merged["threats"]) == 2
     assert all(t["evidence_check"] == "verified" for t in merged["threats"])
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("gateway", "processor")])
+def test_a_merge_candidate_spanning_repositories_never_reaches_the_merger(tmp_path, names):
+    from model.merge_threats import _group_candidates
+
+    scope, components, receipt, flows, _ = crossing_input(tmp_path, names=names)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=components["source_scope_sha256"],
+        component_inventory_fingerprint=receipt["component_inventory_fingerprint"],
+    )
+    documents, reviews = [], []
+    for component, evidence in zip(components["components"], flows["data_flows"][0]["evidence"], strict=True):
+        document = stride(component, evidence, identity)
+        document["threats"][0]["cwe"] = "CWE-20"
+        documents.append(document)
+        decision = dict(local_id="issue-1", verdict="verified", reason="Source confirms it.", evidence=[evidence])
+        reviews.append(dict(**identity, decisions=[decision]))
+    offered = []
+    merged = merge_assessment(
+        scope,
+        components,
+        documents,
+        reviews,
+        boundaries=[],
+        review_groups=lambda verdict, groups: offered.append((verdict, groups)) or [],
+    )
+    # The two findings form a candidate group, but one per repository.
+    assert _group_candidates(copy.deepcopy(merged["threats"]))
+    assert offered == []
+    assert len(merged["threats"]) == 2
 
 
 def test_stride_finding_without_cwe_is_rejected_at_its_contract(tmp_path):

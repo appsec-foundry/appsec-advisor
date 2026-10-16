@@ -99,7 +99,7 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 ### Remediation Priorities
 
-The root causes behind the findings, ranked by severity, each with the measures to do first. The lasting fix under a root cause removes it and every finding it causes. Every mitigation that fixes a Critical finding is listed. Details in the [§7 Weakness Register](#7-weakness-register) and the [§10 Mitigation Register](#10-mitigation-register).
+The highest-priority recorded measures. Details in the [§10 Mitigation Register](#10-mitigation-register).
 
 <table style="table-layout:fixed;width:100%">
 <colgroup><col width="34%" style="width:34%"><col width="46%" style="width:46%"><col width="12%" style="width:12%"><col width="8%" style="width:8%"></colgroup>
