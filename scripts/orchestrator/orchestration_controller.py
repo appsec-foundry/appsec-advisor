@@ -8170,7 +8170,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
     a cached artifact cannot choose either of them.
     """
     from runtime.assessment_jobs import AssessmentJobs
-    from runtime.assessment_state import AssessmentState
+    from runtime.assessment_state import CACHE_NAME, AssessmentState
 
     cfg = resolve_config.resolve_assessment(scope, arguments, PLUGIN_ROOT, model=model)
     # The resolver leaves this role to the dispatch default, as the single-repository run does.
@@ -8200,7 +8200,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
 
     with _stop_on_terminate(state), state.hold():
         budget.plan_completion()
-        # A fresh session may reuse the accepted jobs of an unfinished earlier run.
+        # Any session may adopt the cached accepted jobs of an unfinished earlier run.
         jobs = AssessmentJobs(
             scope,
             state.directory / "jobs",
@@ -8208,8 +8208,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             factory,
             state.should_stop,
             state.checkpoint,
-            inherited=not state.resume,
-            reuse_inherited=not rebuild,
+            cache=state.directory / CACHE_NAME,
         )
         from runtime.multi_repo_discovery import BudgetExhausted
 
@@ -8220,7 +8219,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             raise
 
 
-def _assessment_runtime_warning(state) -> str | None:
+def _assessment_runtime_warning(state, *, running: bool = False) -> str | None:
     """Disclose a plugin change during the run instead of discarding its report.
 
     Every artifact was validated by the code that consumed it, so the report
@@ -8228,6 +8227,8 @@ def _assessment_runtime_warning(state) -> str | None:
     bound to the starting runtime through the state identity. A plugin tree
     that cannot be fingerprinted mid-run, such as a file an editor replaces,
     is disclosed the same way instead of ending a run that may have published.
+    Shown mid-run (``running``), it says the run goes on, so it never reads as
+    the run's end.
     """
     try:
         current = _assessment_runtime_fingerprint()
@@ -8235,10 +8236,14 @@ def _assessment_runtime_warning(state) -> str | None:
         current = None
     if current == state.identity["runtime_sha256"]:
         return None
-    return (
-        "The plugin changed while this assessment ran, so parts of the report may come from different "
-        "plugin versions. Run again with --rebuild for a result from one version."
+    changed = (
+        "The plugin changed while this assessment ran, so parts of the report may come from different plugin versions."
     )
+    if running:
+        return (
+            f"{changed} The assessment continues; afterwards, run again with --rebuild for a result from one version."
+        )
+    return f"{changed} Run again with --rebuild for a result from one version."
 
 
 # MR-18: the evidence tier is the STRIDE job's judgement, never derived from the
@@ -9447,6 +9452,11 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
         help=f"Wrap console output at most at COLUMNS columns (at least {MIN_CONSOLE_WIDTH}), "
         "also when it is not a terminal.",
     )
+    parser.add_argument(
+        "--progress-file",
+        metavar="PATH",
+        help="Also write each progress event and the run's end as one JSON line to PATH (replaced at start).",
+    )
     return parser
 
 
@@ -9605,6 +9615,49 @@ def _phase_result(progress, phase: str, text: str) -> None:
     progress(f"{_AssessmentConsole.RESULT}{phase}: {text}")
 
 
+class _AssessmentProgress:
+    """The run's progress as JSON lines (``--progress-file``), for a follower such as a skill's monitor.
+
+    The console grid is for people: padded columns and wrapped details. A
+    follower reads named fields instead, one record per append, so it never
+    parses columns or joins continuation lines. ``end`` is the last record of
+    every run that opened the file, whatever ended it.
+    """
+
+    path: Path | None = None
+    # Exit code -> the end record's status; any other code failed.
+    STATUS = {0: "complete", 20: "complete", ASSESS_PAUSED_EXIT: "paused", 130: "interrupted"}
+
+    @classmethod
+    def open(cls, path: str | None) -> None:
+        cls.path = Path(path) if path else None
+        if cls.path:
+            # Replaced, so a follower never reads an earlier run's events as this run's.
+            cls._append("", mode="w")
+
+    @classmethod
+    def emit(cls, event: str, **fields) -> None:
+        if cls.path:
+            fields.setdefault("time", time.strftime("%H:%M:%S"))
+            cls._append(json.dumps({"event": event, **fields}, ensure_ascii=False) + "\n")
+
+    @classmethod
+    def end(cls, code: int) -> None:
+        resumable = code in (ASSESS_PAUSED_EXIT, 130)
+        cls.emit("end", status=cls.STATUS.get(code, "failed"), exit_code=code, resumable=resumable)
+        cls.path = None
+
+    @classmethod
+    def _append(cls, text: str, mode: str = "a") -> None:
+        try:
+            with cls.path.open(mode, encoding="utf-8") as stream:
+                stream.write(text)
+        except OSError as exc:
+            # A follower losing its feed must not end the assessment; the console still reports.
+            cls.path = None
+            print(f"⚠ progress file disabled: {exc.strerror or exc}", file=sys.stderr, flush=True)
+
+
 class _AssessmentConsole:
     """The run's console view: every line in one fixed column grid.
 
@@ -9750,7 +9803,7 @@ class _AssessmentConsole:
 
     def __init__(self, verbose: bool, write=None, live: bool | None = None, clock=time.time):
         self.verbose = verbose
-        self._out = write or (lambda text: print(text, file=sys.stderr, flush=True))
+        self._out = write or self._line
         # The in-place status line needs a terminal; an injected writer is a log.
         self.live = (write is None and sys.stderr.isatty()) if live is None else live
         self.st = Style.for_stream(sys.stderr) if write is None else Style(False)
@@ -9862,9 +9915,40 @@ class _AssessmentConsole:
             self.clear_status()
             self._out(f"{self.st(self._stamp(now), 'muted')}  {text}" if text else "")
 
+    @staticmethod
+    def _line(text: str) -> None:
+        # One write per line: with the newline written apart, a follower such as
+        # `tail -F` can see a row while its wrapped detail line is still open.
+        sys.stderr.write(text + "\n")
+        sys.stderr.flush()
+
+    # Grid event -> the progress file's event; a finished component passes its own.
+    EVENTS = {"start": "phase_start", "done": "phase_done", "·": "progress", "⚠": "warning", "↻": "correction"}
+
+    def record(self, event: str, detail: str = "", now: float | None = None, kind: str | None = None) -> None:
+        """One grid row on the console and, field by field, in the progress file.
+
+        A warning never ends the run; what ends it is the progress file's ``end``.
+        """
+        now = self.clock() if now is None else now
+        self.write(self._row(event, detail, now), now)
+        share, elapsed, left = self._run_fields(now)
+        phase = self.phase or ""
+        _AssessmentProgress.emit(
+            kind or self.EVENTS[event],
+            time=self._stamp(now),
+            phase=phase,
+            number=self.plan.index(phase) + 1 if phase in self.plan else None,
+            total=len(self.plan),
+            progress=share,
+            elapsed=elapsed,
+            left=left,
+            detail=detail,
+        )
+
     def notice(self, text: str) -> None:
         """A line that needs attention, in the grid of the current phase."""
-        self.write(self._row("⚠", text))
+        self.record("⚠", text)
 
     @staticmethod
     def clear_status() -> None:
@@ -9972,6 +10056,10 @@ class _AssessmentConsole:
 
     def _run(self, now: float) -> str:
         """The run columns: finished share, elapsed time, and the remaining time at the measured speed."""
+        share, elapsed, left = self._run_fields(now)
+        return f"{share:>8}  {elapsed:>7}  {left:>6}"
+
+    def _run_fields(self, now: float) -> tuple[str, str, str]:
         elapsed, left = now - self.run_started, ""
         if self.done >= 1:
             share = "100%"
@@ -9981,7 +10069,7 @@ class _AssessmentConsole:
             share = f"~{min(99, round(100 * self.done))}%"
             if self.done > 0 and self._measured():
                 left = "~" + _elapsed(elapsed * (1 - self.done) / self.done)
-        return f"{share:>8}  {_elapsed(elapsed):>7}  {left:>6}"
+        return share, _elapsed(elapsed), left
 
     def _row(self, event: str, detail: str = "", now: float | None = None, live: bool = False) -> str:
         """One grid row; ``live`` marks the terminal's status line (spinner and bar)."""
@@ -10061,7 +10149,7 @@ class _AssessmentConsole:
         quiet = now - self.last
         if quiet >= self.HEARTBEAT_SECONDS or (quiet >= self.PROGRESS_SECONDS and key != self.shown):
             self.shown = key
-            self.write(self._row("·", " · ".join(part for part in (self.current, extra) if part), now), now)
+            self.record("·", " · ".join(part for part in (self.current, extra) if part), now)
 
     def facts(self, title: str | None, rows: list[tuple[str, str]]) -> None:
         """Run facts as ``Key : value`` rows, the single-repository wrapper's header format."""
@@ -10144,7 +10232,10 @@ class _AssessmentConsole:
         prefix, phase = next(((p, name) for p, name in self.PHASES if text.startswith(p)), (None, None))
         if phase is None:
             # Before the first phase a plain line; inside a phase a progress line of it.
-            self.write(self._row("·", text) if self.phase else text)
+            if self.phase:
+                self.record("·", text)
+            else:
+                self.write(text)
             return
         now = self.clock()
         position = self._POSITION.search(text)
@@ -10158,7 +10249,7 @@ class _AssessmentConsole:
             self._advance(0.0)
             scope = _count_noun(int(position[2]), self.NOUNS[prefix]) if position and prefix in self.NOUNS else ""
             self._header()
-            self.write(self._row("start", scope, now), now)
+            self.record("start", scope, now)
             self.shown = (self.current, round(100 * self.done))
             if self.on_phase:
                 self.on_phase()
@@ -10173,7 +10264,7 @@ class _AssessmentConsole:
                 self.count = (max(int(position[2]), self.count[0] if self.count else 0), self.NOUNS[prefix])
         if prefix not in self.SUBJECTS:
             if self.verbose:
-                self.write(self._row("·", text, now), now)
+                self.record("·", text, now)
             return
         # A crossing's ID is a signal hash, not a name a reader recognizes.
         name = "" if prefix == "Reviewing trust crossing" else self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
@@ -10186,7 +10277,7 @@ class _AssessmentConsole:
         self.parts = {}
         self.current = " · ".join(part for part in (counter, name) if part)
         if self.verbose or prefix in self.LISTED:
-            self.write(self._row("·", self.current, now), now)
+            self.record("·", self.current, now)
             self.shown = (self.current, round(100 * self.done))
         elif self.live:
             self._status(self._row("·", self.current, now, live=True))
@@ -10215,7 +10306,7 @@ class _AssessmentConsole:
                 self.units[name] = {"done": 0, "total": None, "stage": "STRIDE", "started": now}
                 line = f"component {position[1]}/{position[2]} · {name}" if position else name
                 if not self.live:
-                    self.write(self._row("·", line, now), now)
+                    self.record("·", line, now)
             elif prefix == "Finished STRIDE job":
                 unit = self.units.get(name)
                 if unit is not None and position:
@@ -10235,7 +10326,9 @@ class _AssessmentConsole:
                 # Under concurrency no single component is current; the bars name the running ones.
                 self.current = f"{self.units_done}/{total} components done"
             if finished is not None:
-                self.write(self._row("done", f"component {self.units_done}/{total or '?'} · {finished}", now), now)
+                # Counts completions, so it names no start slot such as a start line's "component 4/9".
+                done = f"{self.units_done}/{total or '?'} components done · {finished}"
+                self.record("done", done, now, kind="component_done")
             # A permanent line names the component; the heartbeat need not repeat the count.
             self.shown = (self.current, round(100 * self.done))
 
@@ -10261,7 +10354,7 @@ class _AssessmentConsole:
         label = self.ROLE_LABELS.get(role, (role or "").replace("_", " "))
         who = f"{label} [{model}]: " if role and model else (f"{label}: " if role else "")
         if "no model activity" in text or text.startswith("model call stopped"):
-            self.write(self._row("⚠", f"{who}{text}"))
+            self.record("⚠", f"{who}{text}")
             return
         if text.startswith("answer rejected"):
             # MR-17: a correction repairs itself; the phase's done line counts it,
@@ -10269,7 +10362,7 @@ class _AssessmentConsole:
             with _AssessmentConsole._lock:
                 self.corrections[label or "model"] += 1
             if self.verbose:
-                self.write(self._row("↻", f"{who}{text}"))
+                self.record("↻", f"{who}{text}")
             return
         now = self.clock()
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
@@ -10284,9 +10377,9 @@ class _AssessmentConsole:
                 self.parts[role] = self.parts.get(role, 0) + 1
                 part = f" (part {self.parts[role]})" if self.parts[role] > 1 else ""
                 answered = f"{who.rstrip(': ') or 'model call'}{part} answered — {_duration(int(finished[1]))}"
-                self.write(self._row("·", answered, now), now)
+                self.record("·", answered, now)
             else:
-                self.write(self._row("·", f"{who}{text}", now), now)
+                self.record("·", f"{who}{text}", now)
             return
         status = re.sub(r"^\d+ min: ", "", text) if re.match(r"\d+ min: ", text) else ""
         # The phase column already names a role of the same name.
@@ -10312,7 +10405,7 @@ class _AssessmentConsole:
             self._advance(1.0)
             if self.phase == self.plan[-1]:
                 self.done = 1.0
-            self.write(self._row("done", " · ".join(produced), now), now)
+            self.record("done", " · ".join(produced), now)
         self.phase = None
 
 
@@ -11043,6 +11136,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
 
     parser = _assessment_argument_parser()
     ns, rest = parser.parse_known_args(argv)
+    # Opened first, so every refusal after this still ends the file with its `end` record.
+    _AssessmentProgress.open(ns.progress_file)
     unsupported = sorted({arg.split("=", 1)[0] for arg in rest} & set(_ASSESSMENT_UNSUPPORTED))
     if unsupported:
         raise CallError(f"{', '.join(unsupported)} is not supported for a multi-repository assessment")
@@ -11135,7 +11230,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
 
                     def report_plugin_change():
                         # Shown when a phase starts after the change, not only in the closing summary.
-                        warning = None if noticed else _assessment_runtime_warning(state)
+                        warning = None if noticed else _assessment_runtime_warning(state, running=True)
                         if warning:
                             noticed.append(warning)
                             console.notice(warning)
@@ -11451,10 +11546,14 @@ def assess_stop(output_dir: Path) -> dict[str, Any]:
 
     Only a running state whose run ID matches a fresh lock qualifies, so a
     stale or planted lock file never directs the signal at another process.
+    The request file reaches the run at its next checkpoint even where the
+    signal cannot: a sandboxed command sees no process outside its own PID
+    namespace, so a live run looked dead to it.
     """
     import signal
 
-    from runtime.assessment_state import STATE_NAME
+    from runtime.assessment_state import STATE_NAME, STOP_NAME, AssessmentState
+    from shared._atomic_io import atomic_write_text
 
     lock = output_dir / ".appsec-lock"
     try:
@@ -11465,15 +11564,21 @@ def assess_stop(output_dir: Path) -> dict[str, Any]:
     fresh, _ = acquire_lock._classify_lock(lock)
     if state.get("status") != "running" or not run_id or acquire_lock.read_run_id(lock) != run_id or fresh != "fresh":
         raise CallError("no running controller assessment holds this output directory")
+    atomic_write_text(output_dir / STOP_NAME, run_id + "\n")
     pid, _ = acquire_lock._parse_lock(lock)
-    if not pid or pid == os.getpid() or not acquire_lock._pid_alive(pid):
-        raise CallError("the assessment process is no longer alive")
-    os.kill(pid, signal.SIGTERM)
+    signalled = False
+    if pid and pid != os.getpid() and acquire_lock._pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            signalled = True
+        except OSError:
+            pass
+    when = "" if signalled else f" at its next checkpoint, within {AssessmentState.HEARTBEAT_SECONDS} s,"
     return {
         "schema_version": 1,
         "action": "stopping",
         "run_id": run_id,
-        "reason": "The assessment stops after its current model calls end; accepted steps stay for --resume.",
+        "reason": f"The assessment stops{when} after its current model calls end; accepted steps stay for --resume.",
     }
 
 
@@ -11552,6 +11657,16 @@ def _print_completion(outcome: dict, elapsed: str, out: Style) -> None:
 
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
+    code = 1
+    try:
+        code = _assess_main(argv)
+        return code
+    finally:
+        # Also after an unexpected exception, which counts as failed.
+        _AssessmentProgress.end(code)
+
+
+def _assess_main(argv: list[str]) -> int:
     from jsonschema import SchemaError, ValidationError
     from runtime.analyst_host import HostCancelled, HostTimeout, TransportError
     from runtime.assessment_host import ExchangeError

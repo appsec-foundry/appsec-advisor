@@ -145,8 +145,17 @@ The whole assessment runs as one background command, so its output panel
 scrolls on from the first phase to the last instead of starting over at each
 phase. The phases are Reconnaissance, Architecture, Trust boundaries,
 Controls, Threat analysis, Consolidation, Abuse cases and Finalization; `N` is
-8, or 7 when the run skips abuse cases. The first `start` row
-(`1/<N> Reconnaissance`) states `N`.
+8, or 7 when the run skips abuse cases. The first `phase_start` event states
+`N` as `total`.
+
+The controller also writes every progress event as one JSON line to
+`$OUTPUT_DIR/.assessment-progress.jsonl`; **Live progress** follows that file,
+never the console grid. Remove the previous run's file first, as its own
+foreground command, so the monitor cannot replay an earlier run's events:
+
+```bash
+rm -f "$OUTPUT_DIR/.assessment-progress.jsonl"
+```
 
 Start this command as a background Bash command (`run_in_background: true`; an
 assessment outlasts the foreground limit) with
@@ -159,7 +168,8 @@ preflight granted it, plus `--width 72` when the arguments contain no
 
 ```bash
 APPSEC_SINGLE_REPO_CONTROLLER=1 "$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
-  --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch [--rebuild] <remaining-arguments>
+  --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch [--rebuild] \
+  --progress-file "$OUTPUT_DIR/.assessment-progress.jsonl" <remaining-arguments>
 ```
 
 Before it, print exactly one line: `▶ Assessment started — progress follows
@@ -169,43 +179,57 @@ phase by phase. To cancel, say "stop" or run
 ## Phase tasks
 
 Load `TaskCreate` and `TaskUpdate` with `ToolSearch` before the launch. When
-they exist, create one task per phase once the first `start` row states `N`, in
+they exist, create one task per phase once the first `phase_start` event states `N`, in
 phase order, all in one message, subject `Phase <k>/<N> — <phase>`, active form
 the phase name with `-ing` wording (`Running reconnaissance`, `Modeling
 architecture`, `Analyzing trust boundaries`, `Assessing controls`, `Analyzing
 threats`, `Consolidating findings`, `Verifying abuse cases`, `Finalizing the
-report`). Mark phase `k` in progress when its `start` row arrives, and
-completed when the next phase's `start` row arrives or the command ends with
-exit 0. Create no other tasks. Without these tools, the banners below are the
+report`). Mark phase `k` in progress when its `phase_start` event arrives, and
+completed when its `phase_done` event arrives. Create no other tasks. Without these tools, the banners below are the
 only progress display; do not mention that.
 
 ## Live progress
 
 In the same message as the launch, start a `Monitor` (load it with
 `ToolSearch` first when it is deferred) with `timeout_ms: 1800000`, the
-description `threat-model progress`, and this command, `<output-file>` being
-the launch's output file:
+description `threat-model progress`, and this command:
 
 ```bash
-tail -n +1 -F "<output-file>" 2>/dev/null | grep --line-buffered -E \
-  '^[0-9:]{8}  [0-9]+/[0-9]+ |^ {10}[^ ]|^✗|Traceback|interrupted'
+tail -n +1 -F "$OUTPUT_DIR/.assessment-progress.jsonl" 2>/dev/null | grep --line-buffered -E \
+  '"event": "(phase_start|phase_done|warning|end)"'
 ```
 
-Then end your turn without a summary of the launch. A line that starts with
-ten spaces continues the detail of the row before it (`--width` wraps a long
-detail onto its own lines); join it to that row's detail. For each event,
-print each row once, in arrival order, in the style of create-threat-model's
-stage banners:
+Only milestones reach the conversation, since every monitor event costs a
+turn; components, sections and corrections stay in the command's output panel.
+Then end your turn without a summary of the launch. Each line is one complete
+JSON event; read its fields by name, never by position. For each event, print
+one line, in arrival order, in the style of create-threat-model's stage
+banners (`[, left <left>]` only when `left` is not empty):
 
-- `start` row: `▶ Phase <k>/<N> — <phase> starting  (elapsed <ELAPSED>, left <LEFT>)`
-- `done` row: `✓ Phase <k>/<N> — <phase>: <DETAIL>`
-- `·` row (a STRIDE component, an abuse case, a section): `  · <DETAIL>`
-- `⚠` or `↻` row, or any other line: the row verbatim in a code block
+- `phase_start`: `▶ Phase <number>/<total> — <phase> starting  (<progress>, elapsed <elapsed>[, left <left>])`
+- `phase_done`: `✓ Phase <number>/<total> — <phase>: <detail>`
+- `warning`: `⚠ <detail>` (a warning never ends the assessment)
+- `end`: `■ Assessment <status> (exit <exit_code>)`
 
-Add nothing else: no interpretation, no findings, no questions. When the
+Add nothing else: no interpretation, no findings, no questions. Only `end`
+or the command's task notification means the assessment is over. When the
 monitor expires while the command still runs, start it again with `tail -n 0`
-instead of `tail -n +1`. When asked for progress, show the last 15 lines of the
-output file verbatim.
+instead of `tail -n +1`.
+
+## Still running?
+
+When asked for progress, or whether the assessment still runs or was
+aborted, run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/live_run_holder.py" --output "$OUTPUT_DIR"
+```
+
+On `live …`, say that it is running, with its heartbeat age, and show the
+last 15 lines of the output file verbatim. On `free` while no task
+notification has arrived, say that it is finishing or has ended and that the
+task notification follows. Never infer either from a warning or from a quiet
+monitor.
 
 ## Cancel
 
@@ -220,6 +244,7 @@ show.
 
 When the command's task notification arrives, stop the monitor with
 `TaskStop`. Print the last 40 lines of the output verbatim in a code block,
-without summarizing or adding findings. On a non-zero exit, say that the
-assessment did not complete; after a cancel, say that it was stopped and that
-accepted steps stay for `--resume`.
+without summarizing or adding findings. Then state the outcome by the exit
+code: `0` completed; `20` completed, but the `--fail-on` gate failed; `3` paused
+or stopped, and accepted steps stay for `--resume`; `130` interrupted, and
+accepted steps stay for `--resume`; any other code, the assessment failed.

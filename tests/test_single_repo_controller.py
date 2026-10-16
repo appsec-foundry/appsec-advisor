@@ -219,8 +219,20 @@ def test_stop_signals_only_the_running_controller_assessment(tmp_path):
         _running(reports, target.pid)
         assert controller.assess_stop(reports)["action"] == "stopping"
         assert target.wait(timeout=10) == -signal.SIGTERM
+        assert (reports / ".assessment-stop").read_text() == "assessment-0123\n"
     finally:
         target.kill()
+
+
+def test_stop_reaches_a_run_whose_process_it_cannot_see(tmp_path):
+    """A sandboxed command sees no process outside its PID namespace; the run still gets the request."""
+    reports = tmp_path / "solo" / "docs" / "security"
+    gone = subprocess.Popen(["true"])
+    gone.wait()
+    _running(reports, gone.pid)
+    action = controller.assess_stop(reports)
+    assert action["action"] == "stopping" and "next checkpoint" in action["reason"]
+    assert (reports / ".assessment-stop").read_text() == "assessment-0123\n"
 
 
 @pytest.mark.parametrize("planted", ["stale", "foreign-run", "finished"])
@@ -238,6 +250,7 @@ def test_stop_never_signals_through_a_stale_or_planted_lock(tmp_path, planted):
         with pytest.raises(controller.CallError):
             controller.assess_stop(reports)
         assert target.poll() is None
+        assert not (reports / ".assessment-stop").exists()
     finally:
         target.kill()
 

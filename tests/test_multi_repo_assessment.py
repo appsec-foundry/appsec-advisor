@@ -417,7 +417,7 @@ def test_default_console_writes_every_line_in_one_column_grid():
         ("5/8 Threat analysis", "·", "~38%", "2m", "", "component 1/2 · API"),
         ("5/8 Threat analysis", "⚠", "~38%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
         # A finished component gets its line; the share follows completions, not starts.
-        ("5/8 Threat analysis", "done", "~50%", "4m", "~4m", "component 1/2 · API · 2m00s"),
+        ("5/8 Threat analysis", "done", "~50%", "4m", "~4m", "1/2 components done · API · 2m00s"),
         ("5/8 Threat analysis", "·", "~50%", "4m", "~4m", "component 2/2 · Store"),
         # MR-17: a successful correction is counted on the done line, its reason only under --verbose.
         ("5/8 Threat analysis", "done", "~63%", "7m", "~4m", "4m30s · 2 components · 1 answer corrected (STRIDE 1)"),
@@ -426,6 +426,118 @@ def test_default_console_writes_every_line_in_one_column_grid():
     ]
     # No model-call detail or crossing hash in the default view.
     assert not any("reads " in line or "signal-" in line or "answered" in line for line in lines)
+
+
+def test_the_progress_file_names_every_row_field_by_field(tmp_path):
+    """A follower reads named fields, one record per line, never the padded grid."""
+    path = tmp_path / "progress.jsonl"
+    path.write_text('{"event": "end", "status": "complete"}\n')
+    lines, clock = [], _Clock()
+    controller._AssessmentProgress.open(str(path))
+    try:
+        console = controller._AssessmentConsole(False, lines.append, clock=clock)
+        _console_run(console, clock)
+        controller._AssessmentProgress.end(0)
+    finally:
+        controller._AssessmentProgress.path = None
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    # create-threat-model2's monitor greps this exact spelling for its milestones.
+    assert path.read_text().startswith('{"event": "phase_start", ')
+
+    # The earlier run's records are gone; every grid row has its record, in order.
+    def kind(event, detail):
+        return "component_done" if "components done ·" in detail else controller._AssessmentConsole.EVENTS[event]
+
+    assert [(r["event"], r["detail"]) for r in records[:-1]] == [
+        (kind(event, detail), detail) for _, event, _, _, _, detail in _rows(lines)
+    ]
+    finished = next(r for r in records if r["event"] == "component_done")
+    assert finished == {
+        "event": "component_done",
+        "time": finished["time"],
+        "phase": "Threat analysis",
+        "number": 5,
+        "total": 8,
+        "progress": "~50%",
+        "elapsed": "4m",
+        "left": "~4m",
+        "detail": "1/2 components done · API · 2m00s",
+    }
+    assert [r["detail"] for r in records if r["event"] == "warning"] == [
+        "1 min: no model activity for 95 s (waiting for the API)"
+    ]
+    assert records[-2]["event"] == "phase_done" and records[-2]["phase"] == "Finalization"
+    assert records[-1] == {
+        "event": "end",
+        "time": records[-1]["time"],
+        "status": "complete",
+        "exit_code": 0,
+        "resumable": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "resumable"),
+    [
+        (0, "complete", False),
+        (20, "complete", False),
+        (3, "paused", True),
+        (130, "interrupted", True),
+        (1, "failed", False),
+        (2, "failed", False),
+    ],
+)
+def test_the_progress_file_ends_with_the_runs_status(tmp_path, code, status, resumable):
+    path = tmp_path / "progress.jsonl"
+    controller._AssessmentProgress.open(str(path))
+    controller._AssessmentProgress.end(code)
+    # Closed with its end: a later record of another run cannot land in it.
+    controller._AssessmentProgress.emit("progress", detail="late")
+    (record,) = [json.loads(line) for line in path.read_text().splitlines()]
+    assert (record["event"], record["status"], record["exit_code"], record["resumable"]) == (
+        "end",
+        status,
+        code,
+        resumable,
+    )
+
+
+def test_a_refused_assessment_still_ends_its_progress_file(tmp_path, capsys):
+    path = tmp_path / "progress.jsonl"
+    argv = ["--repo", str(tmp_path), "--output", str(tmp_path / "out"), "--rebuild", "--resume"]
+    assert controller.assess_main([*argv, "--progress-file", str(path)]) == 2
+    assert "cannot be combined with --resume" in capsys.readouterr().err
+    (record,) = [json.loads(line) for line in path.read_text().splitlines()]
+    assert (record["event"], record["status"], record["exit_code"]) == ("end", "failed", 2)
+
+
+def test_an_unwritable_progress_file_never_ends_the_assessment(tmp_path, capsys):
+    controller._AssessmentProgress.open(str(tmp_path / "missing" / "progress.jsonl"))
+    controller._AssessmentProgress.emit("progress", detail="x")
+    controller._AssessmentProgress.end(0)
+    assert controller._AssessmentProgress.path is None
+    assert capsys.readouterr().err.count("progress file disabled") == 1
+
+
+def test_a_wrapped_row_reaches_the_console_in_one_write(monkeypatch):
+    """With the newline written apart, `tail -F` can deliver a row without its wrapped detail."""
+    writes = []
+
+    class Stream(io.StringIO):
+        def write(self, text):
+            writes.append(text)
+            return len(text)
+
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr(sys, "stderr", Stream())
+    monkeypatch.setattr(controller._AssessmentConsole, "max_columns", 72)
+    console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
+    console.step("Assessing controls: Gateway (1/2)")
+    console.notice("controls [sonnet]: 2 min: no model activity for 125 s (waiting for the API)")
+    (row,) = [text for text in writes if "⚠" in text]
+    assert row.endswith("\n") and row.count("\n") >= 2
 
 
 def test_time_stamps_and_durations_read_one_clock():
@@ -1718,9 +1830,10 @@ def test_every_stride_component_and_abuse_case_gets_its_own_line(capsys, live):
         "abuse case 1/2 · AC-901 — Replay a signed callback",
         "abuse case 2/2 · AC-902",
     ]
-    assert [row[5] for row in rows if row[1] == "done" and row[5].startswith("component")] == [
-        "component 1/2 · Ledger ?[2J? · 0s",
-        "component 2/2 · Gateway · 10s",
+    # A finish counts completions, never a start slot: Ledger started second but finished first.
+    assert [row[5] for row in rows if row[1] == "done" and "components done" in row[5]] == [
+        "1/2 components done · Ledger ?[2J? · 0s",
+        "2/2 components done · Gateway · 10s",
     ]
     assert [(row[0], row[5]) for row in _rows(lines) if row[1] == "done"][-1] == (
         "7/8 Abuse cases",
