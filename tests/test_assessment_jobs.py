@@ -241,9 +241,11 @@ def test_time_asleep_counts_against_the_deadline(monkeypatch):
 
 
 def test_aggregate_deadline_and_unknown_cost_close_dispatch(tmp_path):
+    from runtime.multi_repo_discovery import BudgetExhausted
+
     jobs, host, kwargs, _ = setup(tmp_path)
     jobs.budget.deadline = 0
-    with pytest.raises(HostCancelled):
+    with pytest.raises(BudgetExhausted):
         jobs.execute(**kwargs)
     assert host.calls == 0
     jobs.budget.deadline = time.monotonic() + 60

@@ -694,7 +694,7 @@ def test_controller_analysis_sessions_hold_owned_state_and_resume_without_new_ca
         with controller._assessment_session(
             scope,
             ["--no-requirements"],
-            budget=AssessmentBudget(2, 0.05, 60, 120),
+            budget=AssessmentBudget(2, 0.05, 60, 3600),
             host_factory=factory,
             resume=resume,
             model="haiku",
