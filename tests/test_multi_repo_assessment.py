@@ -1896,6 +1896,18 @@ def test_a_delivered_sarif_file_is_named_as_an_additional_step(tmp_path, monkeyp
     assert not any(line.startswith("  Also") for line in out)
 
 
+def test_a_recorded_error_closes_with_the_report_error_pointer(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("APPSEC_PLUGIN_DEV", raising=False)
+    issue = ("agent_error", "error", "STRIDE job Gateway was replaced after a model failure (timeout)")
+    controller._write_run_issues(tmp_path, {}, [issue])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert any("Top issue" in line and "STRIDE job Gateway" in line for line in out)
+    assert any("/appsec-advisor:report-error" in line for line in out)
+    controller._write_run_issues(tmp_path, {}, [])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    assert not any("Run Issues" in line for line in out)
+
+
 def test_a_report_git_would_commit_closes_with_the_security_notice(tmp_path, monkeypatch, capsys):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
@@ -2143,6 +2155,13 @@ def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_
     replaced = " ".join(w for w in outcome["warnings"] if "replaced after a model failure" in w)
     for role in failed:
         assert controller._AssessmentConsole.ROLE_LABELS[role] in replaced
+    # Each replacement reached the report, so it is an error report-error offers to diagnose.
+    from renderers.render_completion_summary import extract_run_issues, user_visible_issues
+
+    issues = extract_run_issues(out)
+    errors = [i["title"] for i in issues["issues"] if i["category"] == "agent_error"]
+    assert errors and all("replaced after a model failure" in title for title in errors)
+    assert issues["summary"]["errors"] == len(errors) and user_visible_issues(issues["issues"])
     # Findings no independent review read stay unproven.
     model = yaml.safe_load((out / "threat-model.yaml").read_text())
     assert model["threats"] and all(t.get("evidence_check") != "verified" for t in model["threats"])
@@ -2195,6 +2214,22 @@ def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role)
     with pytest.raises(Exception, match="no_result"):
         _assess(tmp_path, monkeypatch, ("edge", "service"), host=_FailingHost([role]))
     assert not (tmp_path / "out" / "threat-model.md").exists()
+    # The failed run leaves its reason where report-error and diagnose-run read it.
+    issues = json.loads((tmp_path / "out" / ".run-issues.json").read_text())
+    assert [(i["category"], i["severity"]) for i in issues["issues"]] == [("run_incomplete", "error")]
+    assert "no_result" in issues["issues"][0]["title"]
+
+
+def test_a_run_replaces_an_earlier_scans_run_diagnostics(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".run-issues.json").write_text('{"schema_version": 1, "generated": "2020-01-01T00:00:00Z", "issues": []}')
+    (out / ".run-bugs.json").write_text("{}")
+    outcome, _, _ = _assess(tmp_path, monkeypatch, ("edge", "service"))
+    assert outcome["status"] == "complete" and not (out / ".run-bugs.json").exists()
+    issues = json.loads((out / ".run-issues.json").read_text())
+    assert issues["generated"] != "2020-01-01T00:00:00Z"
+    assert [i["title"] for i in issues["issues"]] == outcome["warnings"]
 
 
 @pytest.mark.parametrize("verbose", [False, True])
