@@ -4,7 +4,7 @@ Status: concept draft, 2026-10-13; revised 2026-10-16. This proposal describes a
 
 The skill helps teams understand what they need to protect, how their system could be misused, and which design choices address those threats. Requirements and specifications establish intended behavior and the proposed system. Architecture descriptions, team knowledge, and optional bounded code exploration provide further context. The workflow works before implementation exists.
 
-The main deliverable is a human-maintained `threatmodel.md` at the repository root, linked from the repository's `security.md` or `SECURITY.md`. Teams can edit, review, and commit it alongside requirements and design changes. Its central relationship is: security objective, affected interaction, threat scenario, control, remaining risk, and treatment decision.
+The main deliverable is a human-maintained `threat-model.md` at the target repository root, linked from the repository's `SECURITY.md` or `security.md`. Teams can edit, review, and commit it alongside requirements and design changes. Its central relationship is: security objective, affected interaction, threat scenario, control, remaining risk, and treatment decision.
 
 ## Purpose and scope
 
@@ -148,7 +148,7 @@ Use qualitative, explained risk prioritization that considers plausible harm, pr
 
 ## Maintained model and repository integration
 
-Use `threatmodel.md` as the leading, directly editable artifact. Markdown and text-based diagrams allow the team to review changes through ordinary pull requests. A separate canonical YAML or JSON model is not needed for the initial workflow; add structured interchange only when a concrete consumer justifies it and its schema and synchronization rules are defined.
+Use `<repo>/threat-model.md` as the leading, directly editable artifact, where `<repo>` is the target repository root. Markdown and text-based diagrams allow the team to review changes through ordinary pull requests. A separate canonical YAML or JSON model is not needed for the initial workflow; add structured interchange only when a concrete consumer justifies it and its schema and synchronization rules are defined.
 
 The proposed document structure is:
 
@@ -165,12 +165,12 @@ The proposed document structure is:
 
 Keep each scenario readable as a short record. Link to detailed requirements, ADRs, issues, or tests instead of duplicating their contents. Use stable identifiers for scenarios and referenced model elements. A diagram summarizes the model; supporting text retains details that cannot be shown clearly. Mermaid is a proposed default for diagrams when the repository renderer supports it.
 
-Add a relative link to the existing `security.md` or `SECURITY.md`, preserving its naming and security reporting instructions. If neither exists, the proposed default is `SECURITY.md` with a short model reference; do not invent a vulnerability reporting address or disclosure policy. An illustrative link section is:
+Add a relative link from the existing `SECURITY.md` or `security.md` to the model, preserving the document's location, naming, and security reporting instructions. Reuse an existing model link rather than adding a duplicate. If neither document exists, create `<repo>/SECURITY.md` with a short security heading and model reference; do not invent a vulnerability reporting address or disclosure policy. Create the link only when the model exists, and resolve its relative path from the security document's location. For a security document at the repository root, the link section is:
 
 ```markdown
 ## Threat model
 
-See [the threat model](threatmodel.md) for security objectives, threat scenarios, design decisions, and review responsibilities.
+See [the threat model](threat-model.md) for security objectives, threat scenarios, design decisions, and review responsibilities.
 ```
 
 The model is suitable for the repository's intended audience. Keep credentials, personal data, and restricted incident details out of a shared artifact; use approved references or bounded summaries where necessary. Do not make a private document public merely by linking it. Writing the model and its repository link does not authorize committing, pushing, or publishing them.
