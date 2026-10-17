@@ -14,7 +14,7 @@ description: >-
   cites F-ids; never analyzes code, re-scores, spawns agents, or writes files.
   Prefer this over show-security-assessment for anything phrased as a question — show
   only prints a fixed summary block on explicit request. To act on findings use
-  triage-security-assessment; to (re)generate use create-threat-model.
+  triage-security-assessment; to (re)generate use appsec-analyzer.
 ---
 
 You answer a user's **concrete question about the threat model** in their
@@ -44,7 +44,7 @@ This is the "just ask" surface. It is distinct from its siblings:
 - **triage-security-assessment** is an interactive triage console that can *apply
   fixes* or build a remediation plan. Route the user there when they want to
   **act** ("fix these", "accept this risk", "build a remediation plan").
-- **create-threat-model** *generates or updates* the model (analyzes code).
+- **appsec-analyzer** *generates or updates* the model (analyzes code).
 - **analyze-threats** advises on a *planned* feature or a change ("how should
   we build X securely?", "is this plan safe?", "can my change leak data?").
   Answer what the model already says, then name
@@ -72,7 +72,7 @@ in a turn if they asked more than one.
 
 **Presence** ("is there a threat model?", "gibt es hier ein bedrohungsmodell?")
 is a data question and belongs here — answer it **tersely** from the loader's
-exit code: exit `1` means no (surface the tool's create-threat-model hint),
+exit code: exit `1` means no (surface the tool's appsec-analyzer hint),
 otherwise yes plus where it lives. Do **not** dump the overview at someone who
 asked a yes/no question; offer it instead ("want the full summary?").
 
@@ -188,7 +188,7 @@ EXIT=$?
 
 Exit-code reference:
 - `0` — model present, facts emitted
-- `1` — no model found (the tool prints the create-threat-model hint; surface it)
+- `1` — no model found (the tool prints the appsec-analyzer hint; surface it)
 - `2` — error (unreadable, unparseable, or contract-invalid model)
 
 If `--json` was requested, print the tool's output as the deliverable and stop.
@@ -207,7 +207,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
 
 Report `freshness.verdict` + `freshness.reason` + `freshness.recommend` in plain
 language (e.g. "Stale — 194 security-relevant files changed since the scan;
-recommend re-running create-threat-model"). This is the same change-detection
+recommend re-running appsec-analyzer"). This is the same change-detection
 that drives the incremental-scan decision — do not re-implement or second-guess it.
 
 ## Step 4 — Answer the question
@@ -247,7 +247,7 @@ answer "how do I read/act on this" questions and to route actions.
 
 **Presence & metadata.** "Is there a threat model?" is answered by the loader
 itself: exit `1` + "No threat model found" means **no** (surface the tool's
-create-threat-model hint and stop, whatever the question was); a rendered digest
+appsec-analyzer hint and stop, whatever the question was); a rendered digest
 means **yes**. Answer that tersely — see Step 0. The digest header + the
 `META` block carry the model's own metadata — when it was generated
 (`generated`), the plugin version, scan mode (full/incremental), assessment
@@ -285,7 +285,7 @@ verified (`verified` / `verified-prior` / `ambiguous` / `unchecked` / …). Repo
 it honestly; do not upgrade an `unchecked` finding to "confirmed".
 
 **Custom requirements.** When the team integrated their **own** requirement
-catalog at scan time (`create-threat-model --requirements <url>`), the digest
+catalog at scan time (`appsec-analyzer --requirements <url>`), the digest
 carries a `REQUIREMENTS` block: how many were checked and which are violated,
 by which findings. Individual findings show `violates: REQ-…`, and `--grep
 REQ-AUTH-01` finds the findings that break that id. Answer compliance questions
@@ -324,7 +324,7 @@ present the remediation backlog along the P1→P2→P3 spine. When asked "what
 should we fix first?", lead with **P1 mitigations** and **Critical findings**,
 and say plainly when a finding has no proposed fix.
 
-**Options (what the plugin can do).** create-threat-model runs at three depths —
+**Options (what the plugin can do).** appsec-analyzer runs at three depths —
 `quick` / `standard` / `thorough` (more STRIDE turns, diagrams, QA the deeper you
 go); reassesses a changed repository with `--full`, and supports custom
 **requirements** compliance and CI **presets**. Siblings export/publish (PDF/
@@ -344,8 +344,8 @@ in the semantic model. Freshness needs git and is only checked on request
   question there; if the user wants that block, emit it yourself via Step 3a.
 - `triage-security-assessment` — triage console: **apply a fix**, **accept a risk**, or
   **build a remediation plan**. This is where "fix these" / "accept" go.
-- `create-threat-model` — **generate or update** the model (analyzes code).
-- `create-threat-model --full` — refresh an existing model.
+- `appsec-analyzer` — **generate or update** the model (analyzes code).
+- `appsec-analyzer --full` — refresh an existing model.
 - `export-security-assessment` — render/share (PDF/HTML).
 - `security-assessment-health` — freshness / CI probe.
 - `eval-security-assessment` — artifact-quality evaluation of the model itself.

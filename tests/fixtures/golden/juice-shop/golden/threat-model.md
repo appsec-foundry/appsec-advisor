@@ -6266,7 +6266,7 @@ The following items are **explicitly excluded** from this threat model. Findings
 
 | Field | Value |
 |----------------------|----------------------|
-| Invocation | `/appsec-advisor:create-threat-model --assessment-depth standard --soft-budget 20 --rebuild` |
+| Invocation | `/appsec-advisor:appsec-analyzer --assessment-depth standard --soft-budget 20 --rebuild` |
 | Generated | 2000-01-01 00:00 UTC |
 | Mode | full |
 | Assessment depth | standard |

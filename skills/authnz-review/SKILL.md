@@ -93,7 +93,7 @@ Parse the user's message or slash-command arguments:
 - `--gate` → `GATE_MODE=true`
 
 Then resolve the organization defaults for the three pentest values — the
-same `outputs` block `create-threat-model` honours, so both skills answer to
+same `outputs` block `appsec-analyzer` honours, so both skills answer to
 one profile:
 
 ```bash

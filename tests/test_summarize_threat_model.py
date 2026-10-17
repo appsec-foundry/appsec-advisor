@@ -501,7 +501,7 @@ def test_render_zero_findings_points_to_create(tmp_path):
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
     assert "Findings   0 findings" in out
-    assert "create-threat-model to (re)scan" in out
+    assert "appsec-analyzer to (re)scan" in out
     # no noise blocks when there is nothing to summarize
     assert "Critical" not in out and "Backlog" not in out
 

@@ -365,7 +365,7 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
     verdict via dirty-set when the fast-path classified files as
     security-relevant.
 
-    The two-step sequence mirrors the create-threat-model skill so the
+    The two-step sequence mirrors the appsec-analyzer skill so the
     /appsec-advisor:status fast-path-preview prediction is exactly what
     the next run would do — no separate "would it short-circuit?"
     heuristic that drifts away from the actual decision tree.
@@ -764,7 +764,7 @@ def render_text(data: dict) -> str:
             rows.append(("Files (filtered)", f"{sec_count} relevant, {noise_count} noise"))
 
         # Decision text: factor in the dirty-set refinement when present
-        # (matches the create-threat-model SKILL decision tree exactly).
+        # (matches the appsec-analyzer SKILL decision tree exactly).
         cc_exit = fp.get("exit")
         ds_exit = fp.get("dirty_set_exit")
         ds = fp.get("dirty_set") or {}

@@ -297,7 +297,7 @@ def test_a_finding_that_only_shares_a_cwe_adds_no_ci_file(repo):
 
 def test_a_threat_model_is_recommended_only_where_it_sharpens_the_check(repo):
     _, _, chain = ach.build(repo, "HEAD", ["AC-T-003"], [], False, no_org_profile=True)
-    assert "  Recommendation: create a threat model first with /appsec-advisor:create-threat-model" in chain
+    assert "  Recommendation: create a threat model first with /appsec-advisor:appsec-analyzer" in chain
     assert "    AC-T-003 has 2 steps; a threat model links the findings across them" in chain.splitlines()
     _, _, path_only = ach.build(repo, "HEAD", ["REPO-AC-031"], [], False, no_org_profile=True)
     assert "Recommendation" not in path_only

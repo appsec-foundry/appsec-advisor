@@ -179,7 +179,7 @@ def resolve(
     profile_rs = (effective or {}).get("requirements_source") or {}
     if profile_rs.get("requirements_yaml_url"):
         ctm = profile_rs.get("create_threat_model") or {}
-        if caller == "create-threat-model":
+        if caller == "appsec-analyzer":
             enabled = bool(ctm.get("default_active", True))
             if base_mode == "quick":
                 enabled = bool(ctm.get("quick_default_active", enabled))
@@ -214,7 +214,7 @@ def resolve(
 
     if remembered and remembered.get("url"):
         # The catalog was fetched before; reuse the remembered URL. Treated as an
-        # active source only for the explicit audit action — create-threat-model
+        # active source only for the explicit audit action — appsec-analyzer
         # must not be silently switched on by a leftover sidecar.
         return {
             **base,
@@ -259,8 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--caller",
-        default="create-threat-model",
-        choices=["create-threat-model", "audit-security-requirements"],
+        default="appsec-analyzer",
+        choices=["appsec-analyzer", "audit-security-requirements"],
     )
     parser.add_argument("--demo", action="store_true", help="resolve to the packaged example catalog (DEMO)")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"))

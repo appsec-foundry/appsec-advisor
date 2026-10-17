@@ -332,7 +332,7 @@ def test_cli_json_is_valid(tmp_path):
 def test_cli_no_model_exit_1(tmp_path):
     r = _run(["--output-dir", str(tmp_path)])
     assert r.returncode == 1
-    assert "create-threat-model" in r.stdout
+    assert "appsec-analyzer" in r.stdout
 
 
 def test_cli_empty_model_exit_1(tmp_path):
@@ -366,7 +366,7 @@ def test_cli_grep_and_id_mutually_exclusive(tmp_path):
 # Custom requirements — the compliance lane
 #
 # When a team wires up their own requirement catalog at scan time
-# (create-threat-model --requirements), asking "which requirements do we
+# (appsec-analyzer --requirements), asking "which requirements do we
 # break?" must be answerable here. Before this, the facts index carried only
 # meta's "Requirements checked: yes" — and `--grep REQ-AUTH-01` returned ZERO
 # findings even when one violated exactly that id, which reads as a truthful

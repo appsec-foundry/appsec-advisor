@@ -1,6 +1,6 @@
 ---
 name: appsec-threat-renderer
-description: INTERNAL renderer for Stage 2 of create-threat-model. Invoke only from the skill after Stage 1 has produced validated intermediate artifacts.
+description: INTERNAL renderer for Stage 2 of appsec-analyzer. Invoke only from the skill after Stage 1 has produced validated intermediate artifacts.
 tools: Read, Bash, Write
 model: sonnet
 maxTurns: 80

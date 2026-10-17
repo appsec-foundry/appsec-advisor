@@ -11,7 +11,7 @@ produces:
   prompt-only skill, but deterministic).
 
 The aggregator does **not** perform threat analysis or recon — it consumes
-artifacts that ``/appsec-advisor:create-threat-model`` has already produced.
+artifacts that ``/appsec-advisor:appsec-analyzer`` has already produced.
 
 CLI usage::
 
@@ -24,7 +24,7 @@ CLI usage::
         [--dry-run]
 
 Cross-repo attack-chain candidates are heuristic by definition — the
-authoritative chain analysis happens during ``create-threat-model`` itself.
+authoritative chain analysis happens during ``appsec-analyzer`` itself.
 Heuristic matches in this script use the upstream repo's ``related-repos.yaml``
 when present, plus a substring match between upstream component names and
 downstream trust-boundary text.

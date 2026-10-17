@@ -14,12 +14,12 @@ labels: enhancement
 
 **Which part of the plugin is affected?**
 
-- [ ] `create-threat-model` runtime/controller
+- [ ] `appsec-analyzer` runtime/controller
 - [ ] `appsec-context-resolver` (sub-agent)
 - [ ] `appsec-dep-scanner` (sub-agent)
 - [ ] `appsec-stride-analyzer-v2` (sub-agent)
 - [ ] `appsec-qa-reviewer` (sub-agent)
-- [ ] `create-threat-model` skill
+- [ ] `appsec-analyzer` skill
 - [ ] `check-appsec-requirements` skill
 - [ ] MCP context server
 - [ ] Documentation

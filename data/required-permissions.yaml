@@ -1,4 +1,4 @@
-# Permissions required for /appsec-advisor:create-threat-model to run without
+# Permissions required for /appsec-advisor:appsec-analyzer to run without
 # prompts in an INTERACTIVE Claude Code session. Consumed by
 # /appsec-advisor:check-permissions (scripts/check_permissions.py).
 #
@@ -35,7 +35,7 @@
 # Bash(*) is the only way to keep an interactive run prompt-free. It is wide
 # open by design; the guards above are what bound the blast radius.
 # A configured permissions.defaultMode of auto or bypassPermissions already
-# keeps the run prompt-free, so the create-threat-model preflight does not
+# keeps the run prompt-free, so the appsec-analyzer preflight does not
 # require this list then (check_permissions.PROMPT_FREE_MODES).
 # model/authnz_report.py finalize --require-inputs and gate use the existing
 # Bash(*) and OUTPUT_DIR dotfile rules; reconciliation writes only .authnz-report.json.
@@ -68,7 +68,7 @@
 # ──────────────────────
 # For additional isolation, run the scan against a git worktree copy of the repo:
 #   git worktree add /tmp/scan-<repo> HEAD
-#   /appsec-advisor:create-threat-model --repo /tmp/scan-<repo>
+#   /appsec-advisor:appsec-analyzer --repo /tmp/scan-<repo>
 # This limits any unexpected writes to the temporary worktree.
 
 version: 1
@@ -133,7 +133,7 @@ required:
     category: file
 
   - entry: "Write(${REPO_ROOT}/docs/known-threats.yaml)"
-    reason: "triage-security-assessment skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `validators/review_threat_model.py promote-accepted`. This is a create-threat-model INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
+    reason: "triage-security-assessment skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `validators/review_threat_model.py promote-accepted`. This is a appsec-analyzer INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
     category: file
 
   - entry: "Edit(${REPO_ROOT}/**)"

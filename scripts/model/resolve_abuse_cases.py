@@ -606,7 +606,7 @@ def render_case_list(
         "Add your own:  YAML file in docs/security/abuse-cases/ (format: docs/threat-modeler.md)",
     ]
     if recorded is None:
-        lines.append("Results per case:  create a threat model with /appsec-advisor:create-threat-model")
+        lines.append("Results per case:  create a threat model with /appsec-advisor:appsec-analyzer")
     return "\n".join(lines)
 
 
@@ -762,7 +762,7 @@ def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: st
         out.append(f"  Finding:        /appsec-advisor:ask-security-assessment --id {found[0]}")
         out.append(f"  Fix or accept:  /appsec-advisor:triage-security-assessment, then pick {', '.join(found)}")
     if data is None:
-        out.append("  Threat model:   /appsec-advisor:create-threat-model")
+        out.append("  Threat model:   /appsec-advisor:appsec-analyzer")
     out.append(_check_hint(cid, case, data))
     return "\n".join(out)
 

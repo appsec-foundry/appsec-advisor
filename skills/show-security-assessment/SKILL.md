@@ -79,7 +79,7 @@ WHAT IT SHOWS
 RELATED
   /appsec-advisor:ask-security-assessment      Ask anything about the model (any question)
   /appsec-advisor:security-assessment-health   Ops/CI probe: freshness + cleanup + run state
-  /appsec-advisor:create-threat-model   Generate or update the threat model
+  /appsec-advisor:appsec-analyzer   Generate or update the threat model
 ```
 
 After printing the help block, exit. Do not proceed.
@@ -162,7 +162,7 @@ line. The `Ask` / `Act` lane pointers near the top are part of the block: they
 are how a reader whose actual question this block cannot answer finds
 `ask-security-assessment`, so trimming them turns a misroute into a dead end. If the
 renderer exits `1` (no model found), it already prints the hint to run
-`/appsec-advisor:create-threat-model`; surface that as-is.
+`/appsec-advisor:appsec-analyzer`; surface that as-is.
 
 Exit-code reference (for shell callers):
 - `0` — threat model present, overview rendered

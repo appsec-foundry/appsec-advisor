@@ -75,7 +75,7 @@ Options:
 Exit codes:
   0  pipeline and oracle verification passed
   1  pre-flight failed
-  2  create-threat-model pipeline failed
+  2  appsec-analyzer pipeline failed
   3  expected report artifacts are missing
   4  oracle verification failed
 HELP

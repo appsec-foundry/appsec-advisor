@@ -21,7 +21,7 @@ The policy is read from two places, in this order:
    packaged with.
 
 The second source is what makes the gate work at all for the skills people
-reach first. The effective file is written by a create-threat-model run into
+reach first. The effective file is written by a appsec-analyzer run into
 its output directory, so before any scan has happened there was no policy to
 find and every skill fell through to enabled — a control that reported itself
 as active in ``status`` output while enforcing nothing. Packaging now resolves

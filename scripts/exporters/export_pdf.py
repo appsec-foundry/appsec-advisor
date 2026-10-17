@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """exporters/export_pdf.py — convert threat-model.md to threat-model.pdf.
 
-Standalone tool. Independent of the create-threat-model rendering pipeline:
+Standalone tool. Independent of the appsec-analyzer rendering pipeline:
 takes a finished Markdown file as input, produces a PDF as output.
 
 Pipeline:
@@ -1106,7 +1106,7 @@ def main(argv: list[str] | None = None) -> int:
     if not input_md.is_file():
         sys.stderr.write(
             f"[export_pdf] input file not found: {input_md}\n"
-            f"             run /appsec-advisor:create-threat-model first, or pass --input.\n"
+            f"             run /appsec-advisor:appsec-analyzer first, or pass --input.\n"
         )
         return 2
 

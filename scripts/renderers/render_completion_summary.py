@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Render the Completion Summary block for create-threat-model.
+"""Render the Completion Summary block for appsec-analyzer.
 
-Replaces ~350 lines of Bash-heredoc prose in ``skills/create-threat-model/
-SKILL.md``. The skill now calls this script instead of walking the LLM
-through each extraction step, which:
+The controller calls this script instead of having a model walk through each
+extraction step, which:
 
   1. removes ~7 k tokens from the skill's inlined context on every run,
   2. makes the summary rendering unit-testable,

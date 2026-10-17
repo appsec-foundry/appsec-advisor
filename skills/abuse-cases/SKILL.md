@@ -52,7 +52,7 @@ ADD YOUR OWN
 
 RELATED
   /appsec-advisor:analyze-threats --abuse-case <ID>            Check one case without a full run
-  /appsec-advisor:create-threat-model --only-abuse-case <ID>   New full run that checks only this case;
+  /appsec-advisor:appsec-analyzer --only-abuse-case <ID>   New full run that checks only this case;
                                                                it replaces the existing threat model
   /appsec-advisor:ask-security-assessment                             Outcomes the last run recorded
 ```

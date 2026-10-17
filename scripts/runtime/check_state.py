@@ -561,7 +561,7 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
         lines.append("")
         lines.append("⚠ Stage 1 is complete (phase=10b need_render=true) but threat-model.md is missing.")
         lines.append("  Stage 2 (composition) was never dispatched — Phase 1–10b work is still on disk.")
-        lines.append("  → Run  /appsec-advisor:create-threat-model --rerender to validate and render it.")
+        lines.append("  → Run  /appsec-advisor:appsec-analyzer --resume to continue the run.")
         lines.append("  → Running --rebuild will discard all Phase 1–10b results. Use --rebuild --force to confirm.")
     for r in report["reasons"]:
         lines.append(f"    • {r}")

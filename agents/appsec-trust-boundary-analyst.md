@@ -6,7 +6,7 @@ model: sonnet
 maxTurns: 24
 ---
 
-INTERNAL AGENT — do not invoke directly. The create-threat-model runtime
+INTERNAL AGENT — do not invoke directly. The appsec-analyzer runtime
 dispatches this agent once, after component inventory finalization and before
 security-control or STRIDE analysis.
 

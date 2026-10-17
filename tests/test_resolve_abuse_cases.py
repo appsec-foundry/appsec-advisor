@@ -787,7 +787,7 @@ def test_list_without_a_threat_model_has_no_outcome_column(tmp_path, capsys):
     assert rac.main(["--list", "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert out.splitlines()[0].endswith("· no threat model in docs/security/") and "not checked" not in out
-    assert out.splitlines()[-1] == "Results per case:  create a threat model with /appsec-advisor:create-threat-model"
+    assert out.splitlines()[-1] == "Results per case:  create a threat model with /appsec-advisor:appsec-analyzer"
 
 
 def _write_model(repo: Path, analysis: dict, **extra) -> None:
@@ -894,7 +894,7 @@ def test_show_says_when_a_case_has_no_recorded_result(tmp_path, capsys):
     lines = _show(tmp_path, "AC-B-001", capsys)
     assert lines[1] == "Business abuse case · plugin"
     assert any(line.startswith("RESULT: NOT CHECKED — no threat model in") for line in lines)
-    assert "  Threat model:   /appsec-advisor:create-threat-model" in lines
+    assert "  Threat model:   /appsec-advisor:appsec-analyzer" in lines
     _write_model(
         tmp_path,
         {"status": "completed", "cases": [], "catalog_evaluated": [{"id": "AC-B-001", "reason": "no tenants"}]},

@@ -290,7 +290,7 @@ def render(result: dict) -> str:
         for cid in cases:
             nxt.append(f"- Result of a full run: {code('/appsec-advisor:abuse-cases ' + cid)}")
         if _source(result, "threat_model") != "delivered":
-            nxt.append(f"- Use earlier findings as context: {code('/appsec-advisor:create-threat-model')}")
+            nxt.append(f"- Use earlier findings as context: {code('/appsec-advisor:appsec-analyzer')}")
         out += ["## Next", ""] + nxt + [""]
 
     background = [

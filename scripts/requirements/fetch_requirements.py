@@ -413,8 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--base-mode", default=None, choices=[None, "quick", "standard", "thorough"])
     p.add_argument(
         "--caller",
-        default="create-threat-model",
-        choices=["create-threat-model", "audit-security-requirements", "verify-requirements"],
+        default="appsec-analyzer",
+        choices=["appsec-analyzer", "audit-security-requirements", "verify-requirements"],
     )
     p.add_argument(
         "--fallback-baseline",

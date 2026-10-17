@@ -54,8 +54,8 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Threat model · none yet
 
-- `/appsec-advisor:create-threat-model` — full scan, writes the model to `docs/security/`
-- `/appsec-advisor:create-threat-model --quick` — faster first look, less depth
+- `/appsec-advisor:appsec-analyzer` — full scan, writes the model to `docs/security/`
+- `/appsec-advisor:appsec-analyzer --quick` — faster first look, less depth
 - `/appsec-advisor:security-score` — 0–100 score in seconds, no model needed
 
 [model present]
@@ -122,7 +122,7 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Create a threat model
 
-- `/appsec-advisor:create-threat-model` — full scan, writes the model to `docs/security/`
+- `/appsec-advisor:appsec-analyzer` — full scan, writes the model to `docs/security/`
   - `--quick` — faster first look, less depth
   - `--thorough` — deeper, for a release review or audit
   - `--full` — reassess everything, keep the report history

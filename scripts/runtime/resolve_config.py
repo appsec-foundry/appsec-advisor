@@ -268,8 +268,8 @@ BOUNDARY_CANDIDATE_LIMITS = {"quick": 2, "standard": 4, "thorough": 6}
 # Re-Render Loop. At quick/standard the loop is a SINGLE quick-fix pass (one
 # repair attempt, then fail-closed `exit 2` if the contract still does not hold —
 # never ship an invalid report). thorough keeps the historical budget of 3.
-# Consumed by skills/create-threat-model/SKILL-thin-stage3.md (the loop reads
-# $MAX_REPAIR_ITERATIONS). NOTE: this key is intentionally NOT mirrored into
+# The legacy re-render loop that read it is gone; no current producer reads
+# the key. NOTE: this key is intentionally NOT mirrored into
 # build_stride_dispatch_manifest._FALLBACK_DEPTH_PARAMS — that fallback only
 # tracks the per-complexity STRIDE turn budgets (simple/moderate/complex).
 
@@ -1261,7 +1261,7 @@ class _SingleRepository(argparse.Action):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="resolve_config.py",
-        description="Resolve create-threat-model flags into a structured JSON.",
+        description="Resolve appsec-analyzer flags into a structured JSON.",
         add_help=False,  # the skill handles --help itself
     )
     # YAML
@@ -1621,7 +1621,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Skill-layer flags. The resolver itself does not act on them but
     # accepts them so ``--validate-only`` does not reject documented
-    # create-threat-model invocations. The skill layer reads these
+    # appsec-analyzer invocations. The skill layer reads these
     # directly from argv.
     p.add_argument("--pdf", action="store_true", help="Skill-layer flag — exports threat-model.pdf after Stage 4.")
     p.add_argument("--html", action="store_true", help="Skill-layer flag — exports threat-model.html after Stage 4.")

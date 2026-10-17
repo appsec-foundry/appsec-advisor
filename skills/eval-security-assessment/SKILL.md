@@ -82,6 +82,6 @@ Relay **only**: the harness headline (confirmed counts + dropped-by-verify count
 
 ## Notes
 
-- This is a **test/dev** skill — never auto-triggered, not part of `create-threat-model`. Run it manually after a pipeline change to catch quality regressions a frozen fixture would otherwise hide.
+- This is a **test/dev** skill — never auto-triggered, not part of `appsec-analyzer`. Run it manually after a pipeline change to catch quality regressions a frozen fixture would otherwise hide.
 - Cost is bounded: 10 sub-agents over a compact brief, no STRIDE/recon re-run.
 - The judges are skeptics; an empty `EVAL-REVIEW.md` ("no confirmed defects") is a real, valid result, not a failure.

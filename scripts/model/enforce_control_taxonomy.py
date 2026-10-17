@@ -24,7 +24,7 @@ Two related Stage-1 drift modes addressed:
 
 Idempotent. Empty changes set when yaml is already canonical.
 
-Hooked into the create-threat-model skill's auto-emitter pass between
+Hooked into the appsec-analyzer skill's auto-emitter pass between
 ``model/enforce_yaml_invariants.py`` (stride/cwe drift) and ``model/emit_meta_findings.py``,
 i.e. after Stage 1's yaml write and before any fragment pre-generation —
 the renderer must see a taxonomy-clean yaml on its first read.

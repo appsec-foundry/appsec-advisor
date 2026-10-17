@@ -44,7 +44,7 @@ WHEN TO USE
   * Quick check before opening a PR: is the threat model up to date?
   * CI/CD gate: enforce that security-relevant changes trigger a new assessment.
   * After a session crash: verify what state the output directory is in.
-  * Before running /appsec-advisor:create-threat-model: understand what
+  * Before running /appsec-advisor:appsec-analyzer: understand what
     intermediate artifacts are already on disk.
 ```
 

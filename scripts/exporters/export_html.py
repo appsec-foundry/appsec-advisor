@@ -301,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     if not input_md.is_file():
         sys.stderr.write(
             f"[export_html] input file not found: {input_md}\n"
-            f"             run /appsec-advisor:create-threat-model first, or pass --input.\n"
+            f"             run /appsec-advisor:appsec-analyzer first, or pass --input.\n"
         )
         return 2
 

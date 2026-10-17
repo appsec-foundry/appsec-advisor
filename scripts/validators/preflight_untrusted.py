@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """validators/preflight_untrusted.py — pre-scan safety checks for the target repo.
 
-Run BEFORE ``create-threat-model`` against a repo whose authorship is
+Run BEFORE ``appsec-analyzer`` against a repo whose authorship is
 not fully trusted. Detects repository-resident Claude Code hooks /
 settings (which would be loaded by Claude Code before the plugin runs
 and can therefore execute arbitrary code), symlinks pointing outside

@@ -19,7 +19,7 @@ FLAGS
   --repo <path>            Repository to operate on (default: current working dir)
   --output <path>          Threat-model source directory — must contain
                            threat-model.md and/or threat-model.yaml from a
-                           prior create-threat-model run
+                           prior appsec-analyzer run
                            (default: <repo>/docs/security)
   --exports-dir <path>     Directory where the NEW export files are written
                            (default: same as --output — exports land next to
@@ -36,7 +36,7 @@ FLAGS
   --pentest-target <url>   Optional base URL for the pentest target
   --slug <value>           Insert -<value> into every export filename
                            (threat-model-<value>.pdf, pentest-tasks-<value>.yaml,
-                           …), matching create-threat-model --slug.
+                           …), matching appsec-analyzer --slug.
                            1-64 characters from [A-Za-z0-9._-].
   --no-mermaid             Skip Mermaid SVG pre-rendering for PDF/HTML
   --require-mermaid        Fail preflight if mmdc is not installed

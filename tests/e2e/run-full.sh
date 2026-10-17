@@ -125,7 +125,7 @@ mkdir -p "$OUTPUT_DIR"
 
 # ── Stage 1: run the threat-model pipeline ──────────────────────────────────
 echo ""
-echo "[1/2] running create-threat-model pipeline ..."
+echo "[1/2] running appsec-analyzer pipeline ..."
 START_TS=$(date +%s)
 
 # Wall-clock cap. A flat 1800s ceiling SIGTERM'd runs mid-pipeline when recon
