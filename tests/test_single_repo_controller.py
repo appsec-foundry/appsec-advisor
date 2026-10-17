@@ -340,6 +340,25 @@ def test_a_failed_best_effort_scanner_is_a_run_warning(tmp_path, monkeypatch):
     assert any("analyzers/source_auth_scanner.py failed" in warning for warning in outcome["warnings"])
 
 
+def test_weaknesses_are_regrouped_after_ranking_and_before_the_model_is_built(tmp_path, monkeypatch):
+    """REQ-MOD-002: ranking can merge or refute findings, so weakness groups follow it into the model."""
+    real = controller._run_script
+    steps = []
+
+    def run_script(name, args, *rest, **kwargs):
+        steps.append(" ".join([name, *args[:1]]))
+        return real(name, args, *rest, **kwargs)
+
+    monkeypatch.setattr(controller, "_run_script", run_script)
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    outcome, _, _ = _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf",))
+    assert outcome["status"] == "complete"
+    ranking = next(i for i, step in enumerate(steps) if step.startswith("model/triage_compute_ranking.py"))
+    refresh = steps.index("model/merge_threats.py refresh-weaknesses")
+    build = next(i for i, step in enumerate(steps) if step.startswith("model/build_threat_model_yaml.py"))
+    assert ranking < refresh < build
+
+
 def test_requested_exports_and_slug_are_published(tmp_path, monkeypatch):
     """Every export flag the session runtime accepted still produces its deliverable, stamped copies included."""
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
