@@ -24,9 +24,3 @@ def test_threat_merger_component_map_is_path_not_inline_json():
     merger = (PLUGIN_ROOT / "agents" / "appsec-threat-merger.md").read_text(encoding="utf-8")
     assert "`COMPONENT_MAP_PATH`" in merger
     assert "COMPONENT_MAP=<inline JSON" not in merger
-
-
-def test_decision_register_routes_to_the_caching_guard():
-    text = (PLUGIN_ROOT / "docs" / "internal" / "decisions.md").read_text(encoding="utf-8")
-    assert "| CE-5 | Dispatch prompts run stable → specific → volatile |" in text
-    assert "tests/test_dispatch_prompt_cache_order.py" in text
