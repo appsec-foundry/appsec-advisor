@@ -262,35 +262,6 @@ def test_rejects_malformed_optional_route_inventory(tmp_path: Path):
         builder.build(repo, output, "standard")
 
 
-def test_incremental_build_preserves_prior_flow_id_by_semantic_identity(tmp_path: Path):
-    repo, output, receipt = _setup(tmp_path)
-    _write_flows(output, receipt)
-    current = json.loads((output / ".data-flows.json").read_text(encoding="utf-8"))
-    prior_rows = [dict(row, id=f"df-{777 + index}") for index, row in enumerate(current["data_flows"])]
-    (output / "threat-model.yaml").write_text(
-        "data_flows:\n"
-        + "\n".join(
-            [
-                f"  - id: {row['id']}\n"
-                f"    from: {row['from']}\n"
-                f"    to: {row['to']}\n"
-                f"    label: {row['label']}\n"
-                f"    protocol: {row['protocol']}"
-                for row in prior_rows
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (output / ".skill-config.json").write_text(json.dumps({"incremental": True}), encoding="utf-8")
-
-    result = builder.build(repo, output, "standard")
-
-    assert [row["id"] for row in result["data_flows"]] == ["df-777", "df-778"]
-    persisted = json.loads((output / ".data-flows.json").read_text(encoding="utf-8"))
-    assert [row["id"] for row in persisted["data_flows"]] == ["df-777", "df-778"]
-
-
 def test_rejects_stale_flow_fingerprint(tmp_path: Path):
     repo, output, receipt = _setup(tmp_path)
     _write_flows(output, receipt, "sha256:" + "0" * 64)

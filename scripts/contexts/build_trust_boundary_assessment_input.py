@@ -720,38 +720,6 @@ def _flow_identity(row: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
-def _preserve_incremental_flow_ids(output_dir: Path, flow_doc: dict[str, Any]) -> dict[str, Any]:
-    config = _read_json(output_dir / ".skill-config.json", {}) or {}
-    if not config.get("incremental"):
-        return flow_doc
-    prior_path = output_dir / "threat-model.yaml"
-    if not prior_path.is_file():
-        return flow_doc
-    try:
-        prior = yaml.safe_load(prior_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return flow_doc
-    prior_rows = prior.get("data_flows") if isinstance(prior, dict) else None
-    if not isinstance(prior_rows, list):
-        return flow_doc
-    prior_by_identity = {
-        _flow_identity(row): row["id"]
-        for row in prior_rows
-        if isinstance(row, dict) and re.fullmatch(r"df-[0-9]{3,}", str(row.get("id", "")))
-    }
-    current_rows = flow_doc["data_flows"]
-    desired = [prior_by_identity.get(_flow_identity(row), row["id"]) for row in current_rows]
-    if len(desired) != len(set(desired)):
-        return flow_doc
-    if desired == [row["id"] for row in current_rows]:
-        return flow_doc
-    stabilized = dict(flow_doc)
-    stabilized["data_flows"] = [dict(row, id=flow_id) for row, flow_id in zip(current_rows, desired, strict=True)]
-    _validate(stabilized, FLOW_SCHEMA)
-    atomic_write_json(output_dir / ".data-flows.json", stabilized, sort_keys=False)
-    return stabilized
-
-
 def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
     receipt = validate_receipt(output_dir, repo_root)
@@ -759,7 +727,6 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     flow_doc = _read_json(output_dir / ".data-flows.json")
     if not isinstance(flow_doc, dict):
         raise ValueError("missing required Stage-1a artifact .data-flows.json")
-    flow_doc = _preserve_incremental_flow_ids(output_dir, flow_doc)
     _semantic_flow_validation(flow_doc, receipt)
     evidence_errors = repository_path_errors("data-flows", flow_doc, repo_root)
     if evidence_errors:
