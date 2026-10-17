@@ -39,6 +39,7 @@ requirements:
       - tests/test_build_architecture_analysis_context.py::test_role_units_name_exactly_what_finalization_would_add
       - tests/test_aggregate_run_issues.py::test_injected_component_without_flows_is_surfaced_once_per_component
       - tests/test_finalize_component_inventory.py::test_embedded_store_owned_by_a_modelled_data_component_is_not_duplicated
+      - tests/test_multi_repo_controller.py::test_discovery_and_architecture_receive_their_own_repository_inventories
 
   REQ-PUR-002:
     applies_to:
@@ -131,6 +132,7 @@ requirements:
       - tests/test_weakness_class_config_consistency.py::test_schema_enums_match_cluster_ids
       - tests/test_detect_impl_strategy.py::test_vetted_lib_no_bespoke_is_standard_vetted
       - tests/test_detect_impl_strategy.py::test_bespoke_no_lib_is_home_grown
+      - tests/test_single_repo_controller.py::test_weaknesses_are_regrouped_after_ranking_and_before_the_model_is_built
       - tests/test_arch_coverage_bridge.py::test_specific_cwe_preserves_mechanism_instances
       - tests/test_arch_coverage_bridge.py::test_build_design_signals_recognizes_weak_or_missing_controls
 
@@ -174,6 +176,8 @@ requirements:
       - tests/test_resolve_abuse_cases.py::test_repo_local_honours_disable
       - tests/test_resolve_abuse_cases.py::test_explicit_case_file_cannot_escape_repo
       - tests/test_business_abuse_cases.py::test_business_catalog_is_loaded_with_the_technical_library_unless_defaults_are_off
+      - tests/test_assessment_review.py::test_a_sole_repository_selects_shipped_business_and_per_scan_cases_with_the_real_matcher
+      - tests/test_assessment_review.py::test_thorough_depth_derives_cases_once_without_source_access
       - tests/test_match_abuse_cases.py::test_descriptive_limits_follow_depth_and_record_omissions
       - tests/test_promote_verified_abuse_cases.py::test_confirmed_business_case_becomes_a_confirmed_finding
       - tests/test_promote_verified_abuse_cases.py::test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severity
@@ -1226,6 +1230,8 @@ requirements:
     coverage: partial
     guards:
       - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
+      - tests/test_assessment_context.py::test_skip_context_excludes_every_business_document_but_keeps_known_threats
+      - tests/test_multi_repo_assessment.py::test_declared_context_and_a_run_wide_catalog_reach_the_combined_model
 
   REQ-MOD-012:
     applies_to:
@@ -1450,6 +1456,8 @@ requirements:
       - tests/test_remote_repositories.py::test_missing_credentials_fail_without_prompting
       - tests/test_remote_repositories.py::test_sigterm_stops_runner_and_removes_checkouts
       - tests/test_run_headless_completion.py::test_headless_has_no_generation_escape_hatch
+      - tests/test_multi_repo_assessment.py::test_budget_stop_uses_incomplete_exit_status
+      - tests/test_multi_repo_assessment.py::test_a_failure_up_to_stride_still_stops_the_run
 
   REQ-FLW-007:
     applies_to:
