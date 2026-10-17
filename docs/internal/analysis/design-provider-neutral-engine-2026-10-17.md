@@ -1,175 +1,196 @@
 # Design proposal: provider-neutral assessment engine
 
-**Status:** proposal, not implemented. No requirement or decision has been written for it; steps that change the product promise need operator confirmation first (see [Decisions to confirm](#decisions-to-confirm)).
+**Status:** concept only, not implemented. This revision changes no requirements or registered decisions. Formal wording and its plain-language summary need operator confirmation before changes to those sources.
 
 **Scope:** the deterministic controller path (`orchestration_controller.py assess`), not the legacy skill/agent path selected with `APPSEC_SINGLE_REPO_CONTROLLER=0`.
 
-**Goal:** run the security assessment with model hosts other than `claude -p` (for example Bedrock, the Anthropic API, or OpenAI models), let users configure hosts and models in one place, and make the assessment installable as a Python package that the Claude Code plugin integrates instead of containing.
+**Goal:** run assessments through Claude CLI, direct model APIs, or an operator-selected AI gateway such as LiteLLM. Configure hosts and models in one place while preserving deterministic validation, budget accounting, and source authorization. Extract an installable Python engine only after a second provider works through the complete pipeline.
 
 ## Current state
 
-The facts in this section were checked against the code on 2026-10-17. Line numbers refer to that state.
+The implementation references below were checked on 2026-10-17. They describe the controller path, not every plugin entry point.
 
-### Model calls already pass through one seam
+### Transport and schema boundaries
 
-- `run-headless.sh:285` hands repository assessments to `orchestration_controller.py assess`; Claude Code is involved only as the `claude -p` model transport.
-- Every model exchange goes through the `Transport` protocol (`scripts/runtime/analyst_host.py:142`): `invoke(system, prompt, schema, timeout_s, should_stop) -> HostReply(payload, usd)`.
-- `claude -p` is constructed in exactly one place on this path: `_assessment_cli_host_factory` (`orchestration_controller.py:3520`) builds `ClaudeCliTransport`. No other module under `scripts/orchestrator`, `scripts/runtime`, or `scripts/contexts` starts `claude`.
-- All roles obtain their transport through that factory (`orchestration_controller.py:915`, `:1353`, `:1378`), and `assess_repositories(argv, *, host_factory=None, …)` (`:4046`) already accepts an injected factory; tests use fake hosts through it.
-- `ClaudeCliTransport` runs without tools, project configuration, or session persistence and enforces `--json-schema` and `--max-budget-usd`.
+- [The headless launcher](../../../scripts/run-headless.sh) hands controller assessments to `orchestration_controller.py assess`, but still checks Claude availability and, in subscription mode, Claude authentication before that handoff.
+- [The transport protocol](../../../scripts/runtime/analyst_host.py) exposes `invoke(system, prompt, schema, timeout_s, should_stop) -> HostReply(payload, usd)`.
+- [The controller](../../../scripts/orchestrator/orchestration_controller.py) constructs `ClaudeCliTransport` in `_assessment_cli_host_factory`; `assess_repositories` also accepts an injected host factory. Semantic roles and renderers obtain their transports through this seam.
+- This factory configures tool-less calls in private work directories. Claude-specific options include effort, thinking limits, prompt caching, environment handling, and diagnostic events. Authentication hints also name Claude.
+- [The assessment exchange](../../../scripts/runtime/assessment_host.py) already separates the complete artifact contract from a projected host schema through `response_schema()` and `host_schema()`. It validates the complete contract outside the model and distinguishes correctable model answers from transport contract failures.
+- The projection is currently tailored to the Claude host. A second provider needs an explicit projection and decoding contract; passing existing JSON Schemas unchanged is insufficient.
 
-### Claude-specific parts on this path
+### Model selection and depth
 
-- Error vocabulary and hints: `API_ERROR_CODES` (`analyst_host.py:78`) is generic, but `_FAILURE_HINTS` (`:96`) names the Claude login and account.
-- Cost: `_reported_usd` (`analyst_host.py:123`) reads `total_cost_usd` from the CLI result object. The CLI reports a list-price estimate.
-- Host options: `effort`, `max_thinking_tokens`, and `short_cache` (`FORCE_PROMPT_CACHING_5M`) are Claude CLI options.
-- Authentication preflight: `run-headless.sh:277` checks `claude auth status` in subscription mode before the controller starts.
-- Environment: the transport drops only `GIT_`, `APPSEC_`, `OUTPUT_DIR`, `CLAUDE_CODE_SESSION`, and `CLAUDE_SESSION` variables (`analyst_host.py:59`), so `CLAUDE_CODE_USE_BEDROCK` and `AWS_*` reach the child process.
+The controller selects models through [the resolver](../../../scripts/runtime/resolve_config.py), `SEMANTIC_ROLE_MODEL_KEYS`, and `RENDERER_MODEL_KEYS`. Agent frontmatter does not select models on this path. The controller still supplies an `actor_discovery_model` fallback outside the resolver.
 
-### Where models are chosen
+Depth controls both model defaults and the amount of work, including evidence-verifier limits, abuse-case verification, and cheap STRIDE. These concerns can be separated without changing either behavior.
 
-- Agent frontmatter (`model: sonnet` in every `agents/*.md`) does not apply on this path. The controller strips the frontmatter and uses the body as the prompt (`assessment_stage2.py:144`, `_agent_body`). Stage 2 was checked directly; Stage 1 roles take their model from the resolved configuration in the same way.
-- Role to configuration key: `SEMANTIC_ROLE_MODEL_KEYS` (`orchestration_controller.py:193`) and `RENDERER_MODEL_KEYS` (`assessment_stage2.py:50`).
-- Configuration key to model ID: `resolve_config.py` resolves depth defaults with concrete Claude IDs in code (`resolve_reasoning_model`, `:772`), the `--reasoning-model` tier switch, and about 13 `APPSEC_*_MODEL` environment overrides (`:833`, `:912`, `:1150`).
-- `actor_discovery_model` falls back to `"sonnet"` inside the controller (`orchestration_controller.py:893`), outside the resolver.
+The effective defaults include controller-specific corrections in `resolve_assessment()`: the default STRIDE selection moves from Sonnet 4.6 to Sonnet 5, and default Recon moves from Haiku to Sonnet 5. Explicit overrides remain subject to the current precedence. The source comments record unsuccessful runs behind those corrections. Migration must preserve the fully resolved role matrix for each depth, including these corrections, rather than copy only `resolve_reasoning_model()` defaults.
 
-### Depth controls two different things
+### Budget accounting
 
-- Model selection: `quick` and `standard` use `sonnet-economy`, `thorough` uses `opus` for STRIDE, triage, and merger; renderer and abuse verifier get Sonnet 4.6 at `quick` and Sonnet 5 otherwise.
-- Amount of work: evidence-verifier cap (`resolve_evidence_verifier_cap`, `:524`), abuse-case verification (`:546`), and cheap STRIDE (`:573`).
+[AssessmentBudget](../../../scripts/runtime/assessment_jobs.py) reserves resources for required completion work under REQ-FLW-008 and learns estimates from accepted jobs. Its [DiscoveryBudget base](../../../scripts/runtime/multi_repo_discovery.py) reserves each call before creating the transport.
 
-### Budget is denominated in USD
+A successful reply requires finite, nonnegative numeric cost accounting. A transport failure, timeout, or cancellation without a cost report is charged the full reservation. Invalid accounting blocks further calls. The fallback depends on the backend enforcing a known spending bound; actual billed cost and conservative budget charge are different quantities.
 
-`AssessmentBudget` (`scripts/runtime/assessment_jobs.py:46`) requires `max_usd` and `call_usd`, and `accepted()` (`:90`) computes `max(cost, usd)`. A transport that cannot report a numeric cost breaks the completion reserve required by REQ-FLW-008.
+### Packaging dependencies
 
-## Proposed design
+The controller is executable on its own inside the plugin checkout, but is not yet an independent package. It starts scripts by filesystem path, fingerprints runtime files plus `.claude-plugin/plugin.json`, and uses plugin-relative resource paths. The resolver reads functional configuration under `skills/audit-security-requirements/`. Moving data to `importlib.resources` alone does not remove these dependencies.
 
-### Host profiles
+## Proposed architecture
 
-A host profile bundles everything provider-specific: transport class, tier-to-model-ID mapping, price table, authentication preflight, supported features (schema dialect, effort, caching), and failure hints. Profiles ship in a data file such as `data/model-hosts.yaml`.
+The provider-neutral core owns orchestration, source grants, canonical artifact schemas, validation, budgets, retries, and run state. Provider adapters own protocol encoding, provider settings, credentials, authentication preflight, schema projection, usage decoding, and failure hints. Only an adapter handles its provider-specific environment variables, including `CLAUDE_*` where required.
 
-| Profile | Transport | Notes |
+### Host profiles and protocols
+
+A host profile selects a registered adapter and supplies validated data: endpoint, credential reference, model mappings, capabilities, and pricing policy. Configuration cannot name arbitrary Python classes, import paths, shell commands, or authentication executables.
+
+| Host profile | Adapter or protocol | Intended role |
 |---|---|---|
-| `claude-cli` | `ClaudeCliTransport` | Current default. |
-| `claude-cli/bedrock` | `ClaudeCliTransport` | Same transport with `CLAUDE_CODE_USE_BEDROCK=1`, Bedrock inference-profile IDs, and an AWS credential preflight. Cost stays the CLI list-price estimate. |
-| `anthropic-api`, `openai-api` | new API transports | Tool-less by construction; cost from tokens and the price table. |
+| `claude-cli` | Existing Claude CLI transport | Default; preserve current behavior. |
+| `openai-api` | Direct OpenAI API adapter | First independent provider to validate the abstraction. |
+| `organization-gateway` | Explicit OpenAI-compatible API dialect | Gateway access, including LiteLLM; qualify the configured route separately. |
+| `anthropic-api` | Direct Anthropic API adapter | Additional adapter after the first complete API path. |
+| `claude-cli/bedrock` | Claude CLI with Bedrock configuration | Additional profile with its own authentication and capability checks. |
 
-The Codex CLI is not a suitable transport unless its tools can be proven disabled. It runs as an agent with a shell tool, and `--sandbox read-only` still permits reading outside the working directory, which conflicts with REQ-TRU-004. A direct OpenAI API transport covers OpenAI models without that exposure. Codex details are from documentation knowledge and were not verified against a current Codex release.
+One assessment selects one host. Roles may use different models on that host. Mixing direct providers and gateways within one run is outside the first delivery. A host name identifies a configured service, not necessarily the company that operates the underlying model.
 
-### Transport contract
+Use direct, tool-less APIs for the initial alternative provider. A different agent CLI would need independent evidence that it satisfies the same isolation contract; no claim about current Codex CLI restrictions is needed for this design.
 
-Every transport satisfies the same contract, verified by one parametrized contract test suite against a faked endpoint without network access:
+### Gateway access, including LiteLLM
 
-- Returns a schema-valid payload or raises `TransportError`; the controller validates the payload itself.
-- Maps provider errors to `API_ERROR_CODES`; failure hints come from the profile.
-- Sets `usd` on every call, including failed calls that consumed tokens.
-- Enforces the call ceiling before the call. API transports derive `max_tokens` from `ceiling` and price and refuse a call whose minimum cost exceeds the ceiling.
-- Has no tools, file access, or network access beyond the model endpoint.
-- Honors `timeout_s` and `should_stop` with `HostTimeout` and `HostCancelled`.
+The intended data flow is `controller -> API adapter -> authorized gateway -> authorized model backend`. Source excerpts and business context cross both service boundaries. The client authenticates to the gateway; the gateway manages upstream provider credentials. LiteLLM documents this separation and configuration by gateway base URL and model name in its [client setup guide](https://docs.litellm.ai/docs/proxy/client_setup/overview).
 
-A profile whose schema dialect cannot express a response schema (for example the OpenAI strict subset) stops the run before the first model call.
+The engine connects to an existing gateway. Installing, deploying, or administering LiteLLM is outside this proposal, and using its HTTP API does not require embedding its Python SDK.
 
-### Unified model configuration
+Gateway compatibility is qualified per protocol, gateway version, route, and model. An OpenAI-compatible label does not establish support for structured output, token limits, cancellation, or accurate usage. Profiles explicitly select an API dialect, such as Responses or Chat Completions; the adapter does not silently switch protocols after sending repository data.
 
-One schema-validated file, for example `~/.config/appsec-advisor/models.yaml`, selects the host and maps roles to tiers per depth:
+The first gateway integration uses fixed, versioned model aliases backed by approved model deployments, including Claude. Gateway-side retries, fallbacks, and dynamic model routing are disabled for those routes unless their complete spending bound and destination policy can be established. A gateway budget dashboard does not replace per-call admission in the controller. Supporting dynamic routing is a later extension, not an implicit benefit of compatibility.
+
+The gateway operator owns upstream access, retention, logging, and route configuration. Before qualification, record the approved upstream destination set and a route revision supplied by that operator. A client cannot infer those properties from an alias or prove them from a successful response. If routing identity cannot be established, the profile cannot promise stable resume behavior or a fixed backend. A changed route revision requires a new run identity.
+
+### Transport and schema contract
+
+The core sends only bounded text and an adapter-neutral response contract. Adapters expose no model-executable tools. Trusted adapters may read credential configuration and maintain private transport files; this does not grant the model filesystem access.
+
+Keep three distinct representations:
+
+1. The canonical artifact schema and exchange envelope, owned and validated by the controller.
+2. A provider-compatible wire schema, derived by the adapter without changing the canonical contract.
+3. A deterministic decoder that maps wire output back to the canonical representation before controller validation.
+
+For example, optional properties may need an explicit nullable wire representation and schema-aware decoding. Do not drop arbitrary nulls or unknown fields to make an answer validate. Preserve canonical meanings for absent and null values. Full-schema rejection remains eligible for the existing bounded correction path when it is a model answer error; a broken wire contract is a transport failure.
+
+OpenAI Strict Structured Outputs requires all properties to be required and supports only a JSON Schema subset. Existing merger and renderer schemas therefore need deliberate adaptation. The current host projection is a starting point, not proof of compatibility. See the [official structured-output documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Before spending on a run, qualify the schemas for all selected roles and exchanges, including retrieval envelopes, correction calls, and optional synthesis. Reject only where no supported projection and decoder preserve the canonical contract. Do not require the provider to enforce every semantic constraint that the controller already validates.
+
+Each adapter also:
+
+- Maps provider failures to the controller's error categories, preserving authentication failures, refusals, truncated output, timeouts, and malformed responses as distinguishable outcomes.
+- Honors the call deadline and cancellation without assuming a client disconnect stops remote billing.
+- Enforces response-size limits during receipt, before parsing an unbounded response.
+- Supplies validated usage and cost metadata on successful calls; preserves unknown usage on failures rather than inventing zero cost.
+- Leaves retry admission to the controller. SDK retries are disabled; any gateway-internal attempts need the qualification described above.
+
+### Unified configuration
+
+One schema-validated user file, for example `~/.config/appsec-advisor/models.yaml`, selects the host and model overrides. Built-in profiles provide complete role mappings for every supported depth. The first migration preserves Claude's effective defaults and current explicit overrides exactly.
+
+The following is an illustrative configuration overlay, not an implemented format or complete gateway setup. The reserved example domain and model aliases must be replaced with an operator-approved service. `pricing_policy` references a separately validated policy with real bounds; it is not a price value or a bundled free model. A configured gateway needs its complete qualified host/depth defaults in addition to this overlay.
 
 ```yaml
-host: claude-cli
-tiers:
-  reasoning: claude-opus-5-5
-  standard:  claude-sonnet-5-5
-  economy:   claude-haiku-5-5
+host: organization-gateway
+hosts:
+  organization-gateway:
+    adapter: openai-compatible
+    protocol: chat-completions
+    base_url: https://models.example.org/v1
+    credential_env: APPSEC_GATEWAY_API_KEY
+    route_revision: assessment-route-v1
+    pricing_policy: organization-assessment-v1
+    tiers:
+      standard: assessment-standard-v1
+      reasoning: assessment-reasoning-v1
 profiles:
-  quick:
-    stride_analyzer: standard
-    renderer: economy
-    recon_scanner: economy
-  standard:
-    stride_analyzer: standard
-    renderer: standard
-    recon_scanner: economy
   thorough:
-    stride_analyzer: reasoning
-    triage_validator: reasoning
-    threat_merger: reasoning
-    renderer: standard
-roles:
-  evidence_verifier: claude-sonnet-4-6
-prices:
-  claude-opus-5-5: {input: 0.0, output: 0.0}
+    stride_analyzer: {tier: reasoning}
+role_overrides:
+  evidence_verifier: {model: assessment-verifier-v1}
 ```
 
-The `prices` values are placeholders.
+Role settings use a discriminated choice: either a tier or an explicit model ID/alias, never both. A tier resolves through the selected host. Existing model environment variables and CLI options are explicit model overrides. Unspecified roles inherit the complete qualified host/depth profile; unresolved roles, tiers, prices, or capabilities fail before model calls.
 
-Resolution order: depth selects the profile, the profile maps each role to a tier, and the host maps the tier to a model ID. Each level accepts overrides with the precedence CLI flag, environment variable, user configuration, host default, depth default. Existing `APPSEC_*_MODEL` variables and `--reasoning-model` remain as overrides.
+Resolution happens once in `resolve_assessment()`, including actor discovery. Preserve existing precedence among CLI options and environment variables, then apply user configuration over host/depth defaults. Organization restrictions constrain the final selection and cannot be overridden by a higher-precedence model choice. Depth continues to control work volume independently of the model mapping.
 
-Rules:
+The selected endpoint, API dialect, role-to-model mapping, adapter capabilities, schema adapter version, pricing policy revision, and gateway route revision enter the non-secret run identity. Resume compares that identity before reusing work. Reports name the selected host and requested model alias; a validated resolved backend may also be shown, but an unknown backend is not presented as known. Credentials never enter identity, reports, or logs.
 
-- Roles name tiers, not model IDs. The current depth matrix with Claude IDs moves out of `resolve_config.py` into the default profiles.
-- `resolve_assessment` is the only resolution point, including `actor_discovery_model`.
-- Unknown roles, tiers, unavailable IDs, or an API host model without a price stop the run before the first model call.
-- Depth keeps controlling the amount of work in the resolver; the model configuration controls only which model does it.
-- Resolved host, role, tier, and model ID enter the `AssessmentState` identity (`orchestration_controller.py:897`), so `--resume` never mixes hosts, and appear in the report's run statistics.
-- Repository content is untrusted. A configuration file in the target repository must not select a host, because that would let the analyzed repository decide where its code and the operator's context are sent. `host` comes only from user configuration, the organization profile, or the CLI, and the organization profile can restrict hosts and models with an allow-list.
+### Configuration trust and destinations
 
-### Prices and cost reporting
+Host selection, endpoint URLs, credential references, and routing policies come only from explicit operator configuration or a trusted organization profile. Target repositories and model output cannot set or override them, including through repository-local configuration discovery. A profile path supplied by the operator does not make repository-controlled contents authoritative automatically.
 
-- `claude-cli` profiles need no price table; the CLI reports cost.
-- API profiles use the bundled price table with a stated date; user `prices` only override it.
-- A model without a price on an API host is refused (fail closed), because the budget cannot be enforced without it.
-- Console and run statistics label cost as an estimate and name its source (host-reported or price table with date).
-- A token-denominated budget would avoid prices but changes the budget logic, `--max-budget-usd`, cost display, and the wording of REQ-FLW-008. It is out of scope for the first step.
+Validate destination scheme, host, port, and allowed network ranges before connection and at connection time. Remote endpoints use verified TLS. Disable redirects so credentials and source excerpts cannot move to another origin. Private gateways are supported through explicit operator-approved destination ranges; metadata endpoints and unrelated internal destinations remain denied. No arbitrary header map or repository-supplied credential forwarding is part of the initial configuration.
 
-### Engine and plugin separation
+Use a gateway credential restricted to the required model aliases, not an administration key. Credentials are supplied externally, with only their configured reference in the file. Missing or invalid authentication fails before source transmission. Authentication preflight belongs to the selected adapter; API and gateway runs must not require a Claude executable or Claude login.
 
-The controller is already a standalone Python program inside the plugin: it locates its files relative to itself (`PLUGIN_ROOT = SCRIPT_DIR.parent`, `orchestration_controller.py:71`) and reads agent prompts as plain files.
+### Prices, reservations, and unknown costs
 
-Target shape:
+Keep USD-denominated budgets for this phase. Token-only budgets and changes to the product promise of REQ-FLW-008 are outside this revision.
 
-```text
-pip install appsec-advisor
-appsec-assess --repo . --host claude-cli/bedrock --depth thorough
-```
+Admission requires a conservative cost bound before transmission. An API adapter accounts for the complete input, all billable output including reasoning, and applicable cache charges or gateway markups. It derives the provider's output limit from the remaining allowance and rejects calls whose input plus minimum output cannot fit. Missing or invalid pricing, or a backend that cannot enforce the required bound, stops the call.
 
-- Engine (Python package): controller, scanners, validators, renderers, exports, schemas, data, templates, role prompts, host profiles, and model configuration.
-- Claude Code plugin: skills, hooks, and interactive parts (business-context dialog, `review-threat-model`, `ask-threat-model`, coach). It calls the engine instead of containing it.
-- Other integrations (CI action, editor extensions) can use the same engine later.
+Successful calls provide known or explicitly estimated cost using validated usage and the selected dated pricing policy. Failed calls with unknown usage retain the entire reservation, following existing behavior. If the reservation no longer bounds the possible charge, accounting becomes unsettled and further calls stop. Do not label a reservation retained after timeout as measured spend.
 
-Constraints:
+Claude CLI retains its host-reported accounting. API and gateway profiles require a validated price policy for admission even when a response supplies cost. LiteLLM documents [spend tracking](https://docs.litellm.ai/docs/proxy/cost_tracking) and an `x-litellm-response-cost` header in its [logging reference](https://docs.litellm.ai/docs/proxy/logging); those are post-call observations, not proof of a pre-call ceiling. A gateway alias with unknown underlying tariffs cannot silently use a zero price.
 
-- A marketplace plugin install does not run `pip install`. Default: the plugin vendors the engine at the same version. Alternative: the plugin requires an installed engine and checks a compatibility range fail closed at start.
-- Package data (`data/`, `schemas/`, `templates/`, prompts) must load through `importlib.resources` instead of `SCRIPT_DIR.parent`.
-- Role prompts become plain prompt files; Claude Code agent definitions reference or are generated from them, so no frontmatter is maintained that has no effect on the engine path.
-- Interactive questions need an engine-level interface (answers file or CLI prompts); headless already accepts context without questions (REQ-BIZ-010).
-- PyPI publication requires trusted publishing, signed builds or attestations, pinned dependencies, and a release process aligned with [the release runbook](../../releasing.md).
-- pandoc, weasyprint, and mmdc remain optional external tools with explicit errors.
-- The legacy skill/agent path stays in the plugin until it is removed. Other skills (for example `authnz-review`, `verify-requirements`) need an individual decision whether they are engine or plugin functions.
+Run statistics distinguish reported or estimated cost from conservative budget charges and identify the pricing source and revision. Aggregate gateway budgets may add a limit, but never replace the controller's completion reserve.
 
-A separate repository is not recommended until the engine has a different release cadence or owners; contracts, schemas, requirement bindings, and tests would otherwise have to stay synchronized across repositories.
+## Delivery order and acceptance
 
-## Implementation order
+Provider neutrality is the first project. Package extraction follows only after the complete API path works.
 
-1. Confirm the requirement and decision wording with the operator.
-2. Draw the engine boundary in this repository: a boundary test that the engine path reads no `CLAUDE_*` variables and no files under `skills/` or `hooks/`, and resources loaded through `importlib.resources`.
-3. Introduce host profiles, the unified model configuration, and the transport contract suite with `claude-cli` as the only profile. No behavior change.
-4. Add `claude-cli/bedrock` as a profile: environment, ID mapping, and preflight.
-5. Add `pyproject.toml` entry point `appsec-assess`, locally installable; the plugin calls the engine and vendors it.
-6. Add an API transport (for example `openai-api`) with fixture replay and an `eval-threat-model` run per depth as acceptance.
-7. Publish to PyPI with a signed release.
+1. Finalize the concept and prepare any necessary product requirement or long-lived decision proposals separately. Obtain confirmation of their exact wording and summaries before editing their authoritative sources.
+2. Define the core/adapter boundary around the existing Claude transport. Capture the effective role matrix, explicit overrides, schema correction behavior, accounting, and resume semantics as compatibility expectations. Keep the existing resource layout.
+3. Introduce host profiles and unified resolution with Claude CLI as the default. Move provider preflight behind host selection. Establish contract tests for schema projection/decoding, error mapping, deadline/cancellation, response bounds, credentials, and cost admission.
+4. Add a direct OpenAI API path and prove the complete assessment pipeline before packaging. Use the independent provider to expose assumptions hidden by Claude CLI.
+5. Qualify an OpenAI-compatible gateway path, with LiteLLM as a concrete target, including a fixed alias serving Claude. Verify the selected dialect and backend separately from direct OpenAI. Gateway delivery remains part of the provider-neutral project; it does not wait for PyPI packaging.
+6. Add further profiles such as direct Anthropic or Claude CLI on Bedrock as needed, each with its own evidence. Bedrock through Claude CLI alone does not establish protocol independence.
+7. Extract and publish the Python package as the follow-up project described below.
 
-Steps 2–5 keep current behavior for Claude Code users. Each additional host profile needs its own quality evidence per depth before the depth levels are promised on it.
+Acceptance for implementation is scoped to changed boundaries and consumers:
 
-## Open questions
+- Neutral reproductions, a variant with different incidental names, and negative cases for each producer change; existing fixture runs provide additional replay evidence.
+- Offline adapter contract tests with fake endpoints and fake CLI processes. Cover malformed output, canonical-schema rejection, refusal, authentication errors, unknown failure costs, hidden-retry prevention, cancellation, and concurrent completion reservations.
+- Destination tests for repository-controlled host attempts, redirects, credential forwarding, disallowed networks, and connection-time DNS changes. Explicit private-gateway access remains a positive case.
+- Gateway contract cases for missing usage, alias revisions, unexpected routing metadata, unsupported structured output, and absent price policies. Client tests do not establish server-side retention or routing policy.
+- Complete pipeline replay including discovery, STRIDE, correction, synthesis, rendering, interruption, resume, and affected exports. Follow the existing golden-fixture runbook when deterministic-tail behavior changes.
+- A real qualified provider/gateway run and `eval-threat-model` evidence for each promised depth. Record versions, model identities, costs, and quality results. Passing protocol tests alone does not qualify arbitrary models behind a gateway.
 
-- 29 Python files under `scripts/` read `CLAUDE_PLUGIN_ROOT` or `CLAUDE_PROJECT_DIR`. Which of them lie on the controller path has not been checked; this is the first task of step 2.
-- Whether other entry points (for example the threat-analyst CLI) construct their own transports has not been traced.
-- A Bedrock run through `run-headless.sh` probably fails at the `claude auth status` preflight (`run-headless.sh:277`); this has not been tested.
-- Prompt caching and `effort` support on Bedrock vary by model and need measurement.
+These are future implementation acceptance criteria. No runtime checks or provider calls are performed by this concept revision.
 
-## Decisions to confirm
+## Follow-up: engine and plugin separation
 
-These change the product promise and need confirmed wording before implementation:
+Keep the engine and plugin in this repository while they share releases and ownership. The engine contains orchestration, scanners, validators, renderers, exports, schemas, data, templates, role prompts, and provider adapters. The Claude Code plugin retains skills, hooks, and interactive integration and calls the same engine as the standalone CLI.
 
-- Requirement: assessments can run on configured model hosts other than Claude Code, with Claude Code as default and the isolation obligations of the transport contract.
-- Requirement or decision: the target repository cannot select the model host; organization profiles can restrict hosts and models.
-- Decision: the assessment engine is a separately installable Python package that the Claude Code plugin integrates, kept in this repository.
+The intended entry point is `appsec-assess`; its installation and invocation remain proposed. A marketplace install cannot assume that it runs `pip install`. Prefer a plugin artifact that vendors the engine at the same version; define its dependency bootstrap and version check before changing distribution.
+
+Package extraction includes:
+
+- Loading packaged data through `importlib.resources` and replacing checkout-relative script execution with package module entry points or explicit APIs.
+- Moving runtime metadata and fingerprinting away from `.claude-plugin/plugin.json`, while binding resumed work to engine code, resources, adapters, and resolved configuration.
+- Moving engine-owned functional configuration out of `skills/`, including requirements-source settings, without changing enablement behavior.
+- Maintaining one source for role prompts while retaining valid Claude agent definitions for the legacy path. Preserve existing slicing and prompt contracts until their consumers migrate.
+- Defining the business-context input interface consistently with REQ-BIZ-010 and preserving optional external export tools with explicit unavailable-tool errors.
+- Testing an installed wheel outside the source checkout through assessment, resume, rendering, and affected exports; repeat the relevant integration checks for the plugin's vendored artifact.
+- Preparing dependency locking, trusted publication and release provenance under the [release runbook](../../releasing.md), with compatibility and rollback behavior defined before publication.
+
+Other skills need an individual ownership assessment before moving into the engine. Removing the legacy path and splitting repositories are outside this proposal.
+
+## Open work before implementation
+
+- Specify the exact configuration schema, preserving existing CLI/environment precedence and separating organization restrictions from defaults.
+- Inventory selected-role schemas and prove each required projection/decoder preserves canonical semantics, especially absent versus null fields.
+- Select and qualify the first direct API and gateway dialects, models, pricing policies, gateway route revision mechanism, and quality thresholds per depth.
+- Establish how an operator supplies trustworthy gateway routing and retention evidence without giving the engine gateway administration access.
+- Trace remaining plugin resource, subprocess, metadata, and environment dependencies before starting the packaging follow-up.
+- Prepare formal product and architectural proposals only after those boundaries are clear; this document does not register new requirements or decisions.
