@@ -27,6 +27,7 @@ Status: open, 2026-10-17. Working record for the transition described in [the se
 | `c8b8a0ec` | B: consumer skills renamed to `ask-`, `show-`, `export-`, `eval-security-assessment`, `triage-security-assessment` and `security-assessment-health`, without aliases; internal script, schema and storage names unchanged |
 | `1875cc34`, `ad5b7913` | B: `update-threat-model` and `publish-threat-model` removed with the publish helper, its tests, route and `.gitignore` edit permission; the completion notice points at the export skill; `REQ-USE-007` is bound as an advisory to the export skill |
 | `b072dc57` | B: every remaining `create-threat-model` mention in code, prompts, schemas and the requirements caller ID names `appsec-analyzer`; `--rerender` hints point at `--resume` or a new run; the golden report's invocation row was re-blessed after a replay showed it as the only markdown drift |
+| `09a63952` | `REQ-PUR-004` names the assessment report; new `REQ-TRU-005` (results outside the repository by default, readable only by the current user) and decision `AS-1` (per-application destination `<repo-name>-<hash8>` under the user data directory, `--output` overrides), both advisory until C lands (operator-approved, `specs/changes/store-assessments-outside-the-repository/`) |
 
 Operator decisions taken in this work: incremental updates dropped for now; free-text focus refused; rerender and the QA reviewer not rebuilt; legacy agents removed and `config_scanner_model` / `context_resolver_model` accepted without effect; main skill named `appsec-analyzer`; consumer skills keep the `*-security-assessment` names from the concept.
 
@@ -34,7 +35,7 @@ Decisions taken without asking, following the concept and the code: old skill na
 
 ## Open, in order
 
-1. **C: artifacts and storage** — `security-assessment.*` basenames, external default destination, permissions, migration with `--migrate-legacy` / `--ignore-legacy`.
+1. **C: artifacts and storage** — `security-assessment.*` basenames, external default destination, permissions, migration with `--migrate-legacy` / `--ignore-legacy`. Remote URL normalization for the `AS-1` hash, decided without asking: strip user information, lowercase the host, drop a trailing `.git` and `/`, and treat `git@host:path` like `https://host/path`, so clones over SSH and HTTPS share one assessment. When C lands, bind guards to `REQ-TRU-005` and `AS-1` and lift their coverage from advisory.
 2. **Documentation.** `docs/headless-mode.md`, `docs/threat-modeler.md`, `docs/model-selection.md`, `README.md` and `docs/internal/contracts/context-routing.md` still describe the legacy skill, its modes and flags; skill names are already current. Rewrite them after C so paths change once. `APPSEC_TELEMETRY_STRICT` is read by no script any more but still appears in `agents/shared/logging-standard.md`, `docs/internal/runbooks/acceptance-cohort.md` and `scripts/live_canary.py`.
 3. **Changelog** for the user-visible changes, after C.
 4. **Legacy remnants** (found on the way; none blocks C).
