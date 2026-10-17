@@ -131,9 +131,10 @@ def test_controller_command_and_paths_are_covered_by_existing_rules():
     assert "Read(${PLUGIN_ROOT}/**)" in rules
     assert "Write(${OUTPUT_DIR}/**)" in rules
     for command in (
-        "prepare --interactive-context",
-        "review-business-impact",
-        "complete-preflight --context-answer answered",
+        "assess --repo r --output o",
+        "assess-context-preview --repo r",
+        "assess-context-save --repo r --context-answer answered",
+        "assess-stop --output o",
     ):
         assert any(
             cp._rule_covers(rule, f"Bash(python3 orchestrator/orchestration_controller.py {command})") for rule in rules

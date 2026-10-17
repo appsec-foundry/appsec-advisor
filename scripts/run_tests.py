@@ -258,7 +258,6 @@ GROUPS = {
         dispatch_manifest
         dispatch_model_and_diagnostics
         dispatch_prompt_cache_order
-        dispatch_values_stage
         event_log
         gate_preconditions
         headless_usage
@@ -2572,7 +2571,6 @@ SOURCE_TESTS = {
         discover_identity_providers
         dispatch_manifest
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         embedded_store_access
         flow_route_auth
         fragment_invariant_parity
@@ -3070,7 +3068,6 @@ SOURCE_TESTS = {
     "skills/create-threat-model/SKILL-full-runtime.md": _tests("""
         check_target_specificity
         context_prompt_budgets
-        dispatch_values_stage
         integration
         lazy_phase_group_loading
         orchestration_controller
@@ -3605,7 +3602,6 @@ SOURCE_TESTS = {
         detect_public_repo
         discover_identity_providers
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         e2e_pipeline
         embedded_store_access
         emit_review_mitigations
@@ -4865,7 +4861,6 @@ SOURCE_TESTS = {
     "scripts/runtime/estimate_duration.py": _tests("""
         check_target_specificity
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         estimate_duration
         gate_preconditions
         orchestration_controller
@@ -5322,7 +5317,6 @@ SOURCE_TESTS = {
         context_routing
         discover_identity_providers
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         embedded_store_access
         flow_route_auth
         fragment_invariant_parity
@@ -6731,7 +6725,6 @@ SOURCE_TESTS = {
         context_routing
         discover_identity_providers
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         embedded_store_access
         flow_route_auth
         fragment_invariant_parity

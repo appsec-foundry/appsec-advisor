@@ -15,7 +15,6 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import orchestrator.orchestration_controller as controller  # noqa: E402
 import runtime.agent_lifecycle as lifecycle  # noqa: E402
 import runtime.budget_watchdog as budget  # noqa: E402
 import runtime.telemetry_consistency as telemetry  # noqa: E402
@@ -238,54 +237,6 @@ def test_only_the_latest_action_is_checked(tmp_path: Path) -> None:
     )
     lifecycle.finish_call(tmp_path, "toolu_recon_retry")
     assert telemetry.check_returned_calls(tmp_path) == []
-
-
-def test_boundary_reports_by_default_and_aborts_only_under_strict(tmp_path: Path, monkeypatch) -> None:
-    _seed(tmp_path, state="failed", usage=False)
-    monkeypatch.delenv("APPSEC_TELEMETRY_STRICT", raising=False)
-    controller._check_returned_call_telemetry(tmp_path)
-    log = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
-    assert "TELEMETRY_MISMATCH" in log
-    assert "code=lifecycle_failed_after_accepted_output" in log
-    assert "job_id=phase2-recon" in log
-
-    monkeypatch.setenv("APPSEC_TELEMETRY_STRICT", "1")
-    try:
-        controller._check_returned_call_telemetry(tmp_path)
-    except controller.ControllerError as exc:
-        assert "lifecycle_failed_after_accepted_output on phase2-recon" in str(exc)
-    else:
-        raise AssertionError("strict mode must abort on a telemetry mismatch")
-
-
-def test_a_broken_check_fails_open_but_not_under_strict(tmp_path: Path, monkeypatch) -> None:
-    def explode(_output_dir):
-        raise RuntimeError("state reader broke")
-
-    monkeypatch.setattr(telemetry, "check_returned_calls", explode)
-    monkeypatch.delenv("APPSEC_TELEMETRY_STRICT", raising=False)
-    controller._check_returned_call_telemetry(tmp_path)
-
-    monkeypatch.setenv("APPSEC_TELEMETRY_STRICT", "1")
-    try:
-        controller._check_returned_call_telemetry(tmp_path)
-    except controller.ControllerError as exc:
-        assert "state reader broke" in str(exc)
-    else:
-        raise AssertionError("strict mode must surface a broken check")
-
-
-def test_every_semantic_return_command_is_gated() -> None:
-    """Every boundary that runs after a producer returned goes through the
-    check — a new one must be added deliberately, not forgotten."""
-    assert "context-v2-begin" not in controller._SEMANTIC_RETURN_COMMANDS
-    source = (SCRIPTS / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
-    commands = {
-        line.split('sub.add_parser("')[1].split('"')[0]
-        for line in source.splitlines()
-        if 'sub.add_parser("context-v2-post' in line or 'sub.add_parser("context-v2-finalize' in line
-    }
-    assert commands <= controller._SEMANTIC_RETURN_COMMANDS
 
 
 def test_a_dispatched_job_without_a_lifecycle_call_is_named(tmp_path: Path) -> None:

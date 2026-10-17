@@ -37,8 +37,12 @@ sys.path.insert(0, str(SCRIPTS))
 import contexts.build_trust_boundary_assessment_input as boundary_input  # noqa: E402
 import contexts.prepare_trust_boundary_context as prep  # noqa: E402
 import model.finalize_component_inventory as finalizer  # noqa: E402
-import orchestrator.orchestration_controller as controller  # noqa: E402
-from validators.validate_fragment import fragment_invariant_errors  # noqa: E402
+from analyzers.discover_identity_providers import reconcile as reconcile_identity
+from validators.validate_fragment import (  # noqa: E402
+    architecture_reference_errors,
+    fragment_invariant_errors,
+    interaction_evidence_errors,
+)
 from validators.validate_intermediate import _check_export_trace_invariants  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "fragment_invariants"
@@ -268,9 +272,20 @@ def _gate_rejects_data_flows(doc: dict, context: dict, tmp_path: Path) -> bool:
     (out / ".data-flows.json").write_text(json.dumps(doc), encoding="utf-8")
     try:
         finalizer.finalize(repo, out)
-        controller._bind_finalized_component_fingerprint(out, repo)
+        # Like the controller: bind the finalized inventory, run the identity handoff,
+        # and check references and interaction evidence before the boundary input.
+        receipt = json.loads((out / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+        flows = json.loads((out / ".data-flows.json").read_text(encoding="utf-8"))
+        flows["component_inventory_fingerprint"] = receipt["component_inventory_fingerprint"]
+        flows = reconcile_identity(repo, context["components"], flows)
+        components = context["components"]
+        if architecture_reference_errors({**flows, "components": components}) or interaction_evidence_errors(
+            flows.get("data_flows"), components
+        ):
+            return True
+        (out / ".data-flows.json").write_text(json.dumps(flows), encoding="utf-8")
         boundary_input.build(repo, out, "standard")
-    except (ValueError, controller.ControllerError):
+    except ValueError:
         return True
     return False
 

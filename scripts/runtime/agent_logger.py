@@ -2381,31 +2381,6 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
     return None
 
 
-def _context_v2_receipt_reason(event: hook_payload.HookEvent) -> str | None:
-    """Re-hash the dispatch's admitted inputs as the Agent call spawns (TOCTOU guard).
-
-    Deny only on a proven change. A hook that cannot run the check leaves the
-    verification record unwritten, and the next boundary refuses without it.
-    """
-    if not event.is_agent_call:
-        return None
-    action_id = _extract_param(str(event.tool_input.get("prompt") or ""), "ACTION_ID")
-    output_root = Path(_output_dir())
-    if not action_id or not (output_root / ".pending-dispatch.json").is_file():
-        return None
-    try:
-        import orchestrator.orchestration_controller as controller
-    except Exception:
-        return None
-    try:
-        controller.verify_spawn_receipts(output_root, action_id)
-    except (controller.ControllerError, controller.CallError) as exc:
-        return f"Receipt verification failed for {action_id}: {exc}"
-    except Exception:
-        return None
-    return None
-
-
 # Agents that cannot advance the pipeline: they only read a finished run and
 # write their own sidecar. The abort latch must let these through, or its own
 # advice — preserve the artifacts and diagnose — is impossible to follow, which
@@ -2564,7 +2539,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # is still enforced where the evidence exists: orchestrator/check_stride_dispatch.py
     # fails the run on an inline-shortcut bypass and reports a serial wave as
     # DEGRADED.
-    identity_reason = _context_v2_agent_identity_reason(event) or _context_v2_receipt_reason(event)
+    identity_reason = _context_v2_agent_identity_reason(event)
     if identity_reason is not None:
         _emit_pretool_denial(identity_reason)
         return

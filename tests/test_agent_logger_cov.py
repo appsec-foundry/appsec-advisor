@@ -22,7 +22,6 @@ import threading
 import time
 from pathlib import Path
 
-import orchestrator.orchestration_controller as orchestration_controller
 import pytest
 import runtime.budget_watchdog as budget_watchdog
 
@@ -624,41 +623,6 @@ class TestModeDetection:
         (tmp_path / "tmp" / ".appsec-tracing").write_text("")
         monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
         assert al._is_tracing() is False
-
-
-class TestRunModeMarkersAcrossProcesses:
-    """The controller writes the markers from its Bash shell and the hooks read
-    them in the Claude Code process; under the sandbox their TMPDIRs differ."""
-
-    @staticmethod
-    def _hook():
-        spec = importlib.util.spec_from_file_location("agent_logger_marker_probe", SCRIPT_PATH)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["agent_logger_marker_probe"] = module
-        assert spec.loader is not None
-        with contextlib.redirect_stderr(io.StringIO()):
-            spec.loader.exec_module(module)
-        return module
-
-    @pytest.mark.parametrize("hook_tmpdir", [None, "claude-sandbox-tmp", "output"])
-    def test_hook_reads_the_markers_the_controller_writes(self, tmp_path, monkeypatch, hook_tmpdir):
-        output = tmp_path / "output"
-        output.mkdir()
-        monkeypatch.delenv("APPSEC_TRACING", raising=False)
-        monkeypatch.setenv("OUTPUT_DIR", str(output))
-        monkeypatch.setenv("TMPDIR", str(tmp_path / "controller-tmp"))
-        orchestration_controller._activate_markers({"tracing": True, "verbose": True}, output)
-
-        if hook_tmpdir is None:
-            monkeypatch.delenv("TMPDIR")
-        else:
-            monkeypatch.setenv("TMPDIR", str(tmp_path / hook_tmpdir))
-        hook = self._hook()
-        assert hook._TRACING is True
-        assert hook._VERBOSE is True
-
-        orchestration_controller._activate_markers({"tracing": False, "verbose": False}, output)
-        assert self._hook()._TRACING is False
 
 
 # ---------------------------------------------------------------------------
