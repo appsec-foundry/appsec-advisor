@@ -495,6 +495,7 @@ GROUPS = {
         artifact_names
         assessment_location
         ensure_output_gitignore
+        legacy_import
         path_guard
         plugin_read_gate
         plugin_write_gate
@@ -603,7 +604,7 @@ SOURCE_TESTS = {
         "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
     ),
     "scripts/runtime/assessment_state.py": _tests(
-        "assessment_state multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
+        "assessment_state legacy_import multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
     ),
     "schemas/multi-repo-state.schema.json": _tests(
         "assessment_state multi_repo_controller schemas check_target_specificity"
@@ -3591,6 +3592,10 @@ SOURCE_TESTS = {
     """),
     "scripts/shared/assessment_location.py": _tests("""
         assessment_location
+    """),
+    "scripts/runtime/legacy_import.py": _tests("""
+        legacy_import
+        single_repo_controller
     """),
     "scripts/shared/_remote_url.py": _tests("""
         build_threat_model_yaml
