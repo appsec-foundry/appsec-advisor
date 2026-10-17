@@ -2,9 +2,9 @@
 
 Status: discussion draft, 2026-10-16; target release 0.6.0-beta.5, released only after the operator approves the completed work. This proposal does not change approved requirements, record an accepted technical decision, or authorize implementation.
 
-The subsequent [AppSec product architecture](appsec-product-architecture-concept.md) names the independent assessment product, repository, CLI, and skill `appsec-analyzer`, integrated through `/appsec-advisor:appsec-analyzer`. This document retains the earlier `create-security-assessment` transition terminology and its report and storage scope. Reconcile release timing and command replacement before implementation; the later architecture does not silently add aliases or change this proposal's artifact semantics.
+The subsequent [AppSec product architecture](appsec-product-architecture-concept.md) names the independent assessment product, repository, CLI, and skill `appsec-analyzer`, integrated through `/appsec-advisor:appsec-analyzer`. This document retains the earlier `appsec-analyzer` transition terminology and its report and storage scope. Reconcile release timing and command replacement before implementation; the later architecture does not silently add aliases or change this proposal's artifact semantics.
 
-The proposed main workflow is **Application Security Assessment**, invoked through `/appsec-advisor:create-security-assessment`. Its result is a **Security Assessment Report**, saved as `security-assessment.md` with canonical data in `security-assessment.yaml`. The report subtitle makes its focus on security architecture, threats, and requirements implementation explicit. Threat modeling remains an analysis method and part of the result. This release changes commands, report titles, file names, and the default storage location together. It preserves the analysis content and removes the repository-publication skill. New project-document analysis and a design-based threat-modeling workflow are outside this proposal's implementation scope.
+The proposed main workflow is **Application Security Assessment**, invoked through `/appsec-advisor:appsec-analyzer`. Its result is a **Security Assessment Report**, saved as `security-assessment.md` with canonical data in `security-assessment.yaml`. The report subtitle makes its focus on security architecture, threats, and requirements implementation explicit. Threat modeling remains an analysis method and part of the result. This release changes commands, report titles, file names, and the default storage location together. It preserves the analysis content and removes the repository-publication skill. New project-document analysis and a design-based threat-modeling workflow are outside this proposal's implementation scope.
 
 ## Purpose and terminology
 
@@ -50,9 +50,9 @@ Use an action for the main skill and a consistent assessment noun for consumers.
 
 | Current skill | Proposed public name | Responsibility |
 |---|---|---|
-| `create-threat-model2` | `create-security-assessment` | Run the assessment and produce the report. The controller-based workflow becomes the only assessment workflow. |
+| `create-threat-model2` | `appsec-analyzer` | Run the assessment and produce the report. The controller-based workflow becomes the only assessment workflow. |
 | `create-threat-model` | Removed; no replacement under this name. | Retire the legacy assessment workflow. The name stays reserved for the deferred design-based workflow. |
-| `update-threat-model` | Removed; no assessment replacement. | Its only behavior is a notice that incremental updates are unavailable; `create-security-assessment` help carries that notice. |
+| `update-threat-model` | Removed; no assessment replacement. | Its only behavior is a notice that incremental updates are unavailable; `appsec-analyzer` help carries that notice. |
 | `show-threat-model` | `show-security-assessment` | Present an existing report. |
 | `ask-threat-model` | `ask-security-assessment` | Answer questions using the assessment. |
 | `review-threat-model` | `triage-security-assessment` | Triage findings: fix, accept risk, or build a remediation plan. “Review” would suggest checking report quality, which is `eval`. |
@@ -63,7 +63,7 @@ Use an action for the main skill and a consistent assessment noun for consumers.
 
 Keep `analyze-threats`, `audit-security-requirements`, `verify-requirements`, `authnz-review`, and `security-score` as distinct specialized workflows. Their scopes do not become full assessments because the main workflow is renamed. Keep `status` and run-diagnostic commands unchanged.
 
-The renamed release does not retain the old assessment commands as aliases or notice stubs; an old command name is simply unknown until a future workflow claims it. Reserve `create-threat-model` for the later design-based workflow. Announce the command changes as an incompatible release boundary and update first-party invocations, headless launchers, packaging policies, and permissions together. Existing automation must explicitly select `create-security-assessment`; it must never silently start a future design-only workflow. Removal of command aliases does not authorize deleting existing reports or their retained state.
+The renamed release does not retain the old assessment commands as aliases or notice stubs; an old command name is simply unknown until a future workflow claims it. Reserve `create-threat-model` for the later design-based workflow. Announce the command changes as an incompatible release boundary and update first-party invocations, headless launchers, packaging policies, and permissions together. Existing automation must explicitly select `appsec-analyzer`; it must never silently start a future design-only workflow. Removal of command aliases does not authorize deleting existing reports or their retained state.
 
 ## Proposed delivered files
 
@@ -142,7 +142,7 @@ The workflow and storage transition preserves these boundaries:
 - Preserve deterministic orchestration, existing scoped analysis roles, context routing, and budgets. This transition adds no analysis agent or model task.
 - Validate legacy artifacts before importing or reusing them. Preserve provenance, finding identity, and retained operator decisions across the move.
 - Retain existing secret exclusion and artifact-selection controls. Moving files outside the checkout does not make private sidecars suitable for sharing.
-- Preserve explicit authorization for publication and other consequential actions. Running `create-security-assessment` does not itself authorize publishing or changing the analyzed project.
+- Preserve explicit authorization for publication and other consequential actions. Running `appsec-analyzer` does not itself authorize publishing or changing the analyzed project.
 
 The external destination itself must not become a weakness:
 
@@ -183,7 +183,7 @@ The following locations establish concrete change surfaces. They are an initial 
 
 | Surface | Current locations | Expected work |
 |---|---|---|
-| Public skills and help | `skills/create-threat-model2/`, related skill directories, `skills/help/`, `README.md` | Move `create-threat-model2` to `create-security-assessment` with `git mv`; replace consumer command names without aliases; remove `update-threat-model`; update descriptions, invocation examples, and completion guidance. |
+| Public skills and help | `skills/create-threat-model2/`, related skill directories, `skills/help/`, `README.md` | Move `create-threat-model2` to `appsec-analyzer` with `git mv`; replace consumer command names without aliases; remove `update-threat-model`; update descriptions, invocation examples, and completion guidance. |
 | Packaging policy | `scripts/runtime/skill_policy_gate.py`, `scripts/package_internal_plugin.py`, `docs/internal-plugin-packaging.md`, decision `EX-3` | Replace the mandatory `create-threat-model` skill (`required={"create-threat-model"}` in the package policy, its tests, and the generated command reference) without permitting policy bypass. Decision `EX-3` is retired, so no decision change gates this; `EX-1` and `EX-2` still apply. |
 | Routing and headless execution | `scripts/orchestrator/orchestration_controller.py`, `scripts/runtime/resolve_config.py`, `scripts/run-headless.sh` | Normalize commands; make output detection, compose recovery, success gates, update, and resume use the selected artifact set. |
 | Canonical result and rendering | `scripts/model/build_threat_model_yaml.py`, `scripts/renderers/compose_threat_model.py`, `data/sections-contract.yaml`, `templates/`, `schemas/threat-model.output*.schema.yaml` | Change visible titles and destinations together; preserve canonical analysis semantics. |
