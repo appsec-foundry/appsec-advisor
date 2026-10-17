@@ -63,6 +63,8 @@ import re
 import sys
 from pathlib import Path
 
+from shared.artifact_names import MODEL, ArtifactSetError, model_path, report_path
+
 import renderers._severity_rollup as _severity_rollup
 
 _SEVERITY_ORDER = _severity_rollup.SEVERITY_ORDER
@@ -380,7 +382,7 @@ def build_summary(data: dict, output_dir: Path) -> dict:
             }
             for t in threats_sorted
         ],
-        "report": str(output_dir / "threat-model.md"),
+        "report": str(report_path(output_dir)),
     }
 
 
@@ -751,10 +753,10 @@ def _completion_summary(output_dir: Path) -> dict | None:
     from shared.assessment_sources import is_portable_model, labelled_model
 
     try:
-        data = _yaml.safe_load((Path(output_dir) / "threat-model.yaml").read_text(encoding="utf-8"))
+        data = _yaml.safe_load(model_path(Path(output_dir)).read_text(encoding="utf-8"))
         if is_portable_model(data):
             data = labelled_model(data)
-    except (OSError, ValueError, _yaml.YAMLError):
+    except (OSError, ValueError, _yaml.YAMLError):  # ArtifactSetError is a ValueError
         return None
     if not isinstance(data, dict):
         return None
@@ -778,14 +780,18 @@ def _emit_no_model(output_dir: Path, as_json: bool) -> None:
     if as_json:
         print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
     else:
-        print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
+        print(f"No threat model found at {output_dir / MODEL}.")
         print("Run /appsec-advisor:appsec-analyzer to generate one.")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     output_dir = Path(args.output_dir).resolve()
-    yaml_path = output_dir / "threat-model.yaml"
+    try:
+        yaml_path = model_path(output_dir)
+    except ArtifactSetError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     if not yaml_path.is_file():
         _emit_no_model(output_dir, args.json)

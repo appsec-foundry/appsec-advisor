@@ -492,6 +492,7 @@ GROUPS = {
         verify_abuse_cases
     """),
     "trust": _tests("""
+        artifact_names
         assessment_location
         ensure_output_gitignore
         path_guard
@@ -3581,6 +3582,12 @@ SOURCE_TESTS = {
         threat_model_fields
         threat_model_fields_evidence
         multi_repo_exports
+    """),
+    "scripts/shared/artifact_names.py": _tests("""
+        artifact_names
+        assessment_location
+        query_threat_model
+        summarize_threat_model
     """),
     "scripts/shared/assessment_location.py": _tests("""
         assessment_location

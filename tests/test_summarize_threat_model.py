@@ -606,3 +606,13 @@ def test_completion_rows_name_the_register_count_when_practice_sites_fold(tmp_pa
     rows = stm.completion_rows(tmp_path)
     assert rows[0] == ("Findings", "1 · High 1")
     assert rows[1] == ("", "§8 register lists 2; practice sites fold into weaknesses")
+
+
+def test_cli_reads_a_published_set_and_refuses_a_mixed_one(tmp_path):
+    legacy = _write_model(tmp_path, SAMPLE)
+    published = legacy.rename(tmp_path / "security-assessment.yaml")
+    res = _run(["--output-dir", str(tmp_path), "--json"])
+    assert res.returncode == 0, res.stderr
+    legacy.write_text(published.read_text(encoding="utf-8"), encoding="utf-8")
+    res = _run(["--output-dir", str(tmp_path)])
+    assert res.returncode == 2 and "both" in res.stderr and not res.stdout

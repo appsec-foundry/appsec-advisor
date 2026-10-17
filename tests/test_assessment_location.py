@@ -137,3 +137,50 @@ def test_a_destination_outside_the_base_is_refused(tmp_path):
         loc.private_directory(tmp_path / "repo" / "docs" / "security", base)
     with pytest.raises(loc.LocationError, match="appsec-advisor/assessments"):
         loc.private_directory(tmp_path / "x" / "y", tmp_path / "x")
+
+
+def _clone(path: Path, origin: str | None) -> Path:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    if origin:
+        subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin], check=True)
+    return path
+
+
+def test_clones_of_one_remote_share_their_directory(tmp_path):
+    base = tmp_path / TAIL
+    a = _clone(tmp_path / "a", "git@github.com:org/app.git")
+    b = _clone(tmp_path / "b", "https://token@github.com/org/app")
+    c = _clone(tmp_path / "c", None)
+    assert loc.application_directory(a, base) == loc.application_directory(b, base)
+    assert loc.application_directory(c, base) != loc.application_directory(a, base)
+
+
+def test_consumers_read_the_external_set_and_fall_back_to_legacy(tmp_path):
+    base = tmp_path / TAIL
+    repo = _clone(tmp_path / "repo", "https://h/org/app.git")
+    external = loc.application_directory(repo, base)
+    assert loc.locate(repo, base) == (external, False)
+    legacy = repo / "docs" / "security"
+    legacy.mkdir(parents=True)
+    (legacy / "threat-model.yaml").write_text("x")
+    assert loc.locate(repo, base) == (legacy, True)
+    external.mkdir(parents=True)
+    (external / "security-assessment.yaml").write_text("x")
+    assert loc.locate(repo, base) == (external, False)
+
+
+def test_cli_refuses_a_mixed_set_without_a_traceback(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(loc.sys, "platform", "linux")
+    repo = _clone(tmp_path / "repo", None)
+    legacy = repo / "docs" / "security"
+    legacy.mkdir(parents=True)
+    (legacy / "threat-model.yaml").write_text("x")
+    (legacy / "security-assessment.yaml").write_text("x")
+    assert loc.main(["locate", "--repo", str(repo)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("Error:") and "Traceback" not in err
+    assert loc.main(["destination", "--repo", str(repo), "--json"]) == 0
+    assert str(tmp_path / "data" / TAIL) in capsys.readouterr().out
