@@ -12,7 +12,7 @@ Bug fixes, scanner rules, algorithms, local implementation details and invariant
 
 **Retirement:** Retiring an entry removes duplicate documentation, not the behavior or controls recorded in its authoritative source. Historical assertion messages may cite retired IDs. Active requirement bindings and retained decisions refer only to active entries. Original entries are available in this file at commit `338e5e7cb41355af963421507ad3c410d53df8b8`; retired IDs are never reused.
 
-**Retired IDs:** `AC-1`, `AC-2`, `AC-3`, `AC-4`, `AC-5`, `AC-6`, `AC-7`, `AC-8`, `AC-9`, `AC-10`, `AC-11`, `AC-12`, `CE-1`, `CE-2`, `CE-3`, `CE-4`, `CE-6`, `CR-2`, `CR-3`, `CR-4`, `CR-5`, `CR-6`, `CR-7`, `CR-8`, `CR-9`, `CR-10`, `DP-1`, `DP-2`, `DP-3`, `DP-4`, `DT-1`, `DT-2`, `DT-3`, `DT-4`, `DT-5`, `DT-6`, `DT-7`, `EX-3`, `EX-4`, `EX-5`, `EX-6`, `EXP-1`, `EXP-2`, `EXP-3`, `EXP-4`, `EXP-5`, `FE-1`, `FE-2`, `FE-3`, `FE-4`, `FE-6`, `FE-7`, `FE-8`, `FE-9`, `FE-10`, `FE-11`, `FE-12`, `FE-13`, `FE-14`, `FE-15`, `FE-16`, `FE-17`, `FE-18`, `FE-19`, `FE-20`, `FE-21`, `FE-22`, `FE-23`, `FE-24`, `FE-25`, `IN-1`, `IN-2`, `IN-4`, `IN-5`, `MD-1`, `MD-2`, `MD-3`, `MD-4`, `MD-5`, `MD-6`, `MD-7`, `MD-8`, `MD-9`, `MD-10`, `MD-11`, `MR-2`, `MR-4`, `MR-5`, `MR-6`, `MR-7`, `MR-9`, `MR-10`, `MR-11`, `MR-12`, `MR-13`, `MR-14`, `MR-15`, `MR-16`, `MR-17`, `MR-18`, `MR-19`, `MR-20`, `MR-21`, `MR-22`, `OR-2`, `OR-3`, `OR-4`, `OR-5`, `OR-6`, `OR-8`, `OR-9`, `OR-10`, `OR-11`, `OR-12`, `OR-13`, `OR-14`, `OR-15`, `OR-16`, `OR-17`, `OR-18`, `OR-19`, `OR-20`, `OR-21`, `OR-22`, `OR-23`, `OR-24`, `OR-25`, `OR-26`, `OR-27`, `OR-28`, `OR-29`, `OR-30`, `OR-31`, `OR-32`, `OR-33`, `OR-34`, `OR-35`, `OR-36`, `OR-37`, `OR-38`, `OR-39`, `OR-40`, `OR-41`, `RA-1`, `RA-2`, `RA-3`, `RA-4`, `RA-5`, `RA-6`, `RA-7`, `RA-8`, `RA-9`, `RA-10`, `RA-11`, `RA-12`, `RA-13`, `RA-14`, `RA-15`, `RA-16`, `RA-17`, `RA-18`, `RA-19`, `RA-20`, `RA-21`, `RA-22`, `RA-23`, `RA-24`, `RA-25`, `RA-26`, `RA-27`, `RA-28`, `RA-29`, `RA-30`, `RA-31`, `RC-1`, `RC-2`, `RC-3`, `RC-4`, `RC-5`, `RC-6`, `RN-1`, `RN-2`, `RN-3`, `RN-4`, `RN-5`, `RP-1`, `RP-2`, `RP-3`, `RQ-1`, `RQ-2`, `RQ-3`, `RQ-4`, `RQ-5`, `RQ-6`, `RQ-7`, `RQ-8`, `RR-1`, `RR-2`, `RR-3`, `SA-1`, `SA-2`, `SA-3`, `SA-5`, `ST-1`, `ST-2`, `ST-3`, `ST-4`, `ST-5`, `ST-6`, `TA-1`, `TA-2`, `TB-1`, `TB-2`, `TB-3`, `TB-4`, `TB-5`, `TB-6`, `TB-7`, `TB-8`, `TB-9`, `TB-10`, `TB-11`, `TB-12`, `TB-13`, `TB-14`, `TR-1`, `TR-2`, `TR-3`, `TR-4`, `TR-5`, `TR-6`, `TR-7`, `TR-8`, `TR-9`, `TR-10`, `WK-1`, `WK-2`, `WK-3`, `WK-4`, `WK-5`, `WK-6`, `WK-7`, `WK-8`.
+**Retired IDs:** `AC-1`, `AC-2`, `AC-3`, `AC-4`, `AC-5`, `AC-6`, `AC-7`, `AC-8`, `AC-9`, `AC-10`, `AC-11`, `AC-12`, `CE-1`, `CE-2`, `CE-3`, `CE-4`, `CE-5`, `CE-6`, `CR-2`, `CR-3`, `CR-4`, `CR-5`, `CR-6`, `CR-7`, `CR-8`, `CR-9`, `CR-10`, `DP-1`, `DP-2`, `DP-3`, `DP-4`, `DT-1`, `DT-2`, `DT-3`, `DT-4`, `DT-5`, `DT-6`, `DT-7`, `EX-3`, `EX-4`, `EX-5`, `EX-6`, `EXP-1`, `EXP-2`, `EXP-3`, `EXP-4`, `EXP-5`, `FE-1`, `FE-2`, `FE-3`, `FE-4`, `FE-6`, `FE-7`, `FE-8`, `FE-9`, `FE-10`, `FE-11`, `FE-12`, `FE-13`, `FE-14`, `FE-15`, `FE-16`, `FE-17`, `FE-18`, `FE-19`, `FE-20`, `FE-21`, `FE-22`, `FE-23`, `FE-24`, `FE-25`, `IN-1`, `IN-2`, `IN-3`, `IN-4`, `IN-5`, `MD-1`, `MD-2`, `MD-3`, `MD-4`, `MD-5`, `MD-6`, `MD-7`, `MD-8`, `MD-9`, `MD-10`, `MD-11`, `MR-2`, `MR-4`, `MR-5`, `MR-6`, `MR-7`, `MR-9`, `MR-10`, `MR-11`, `MR-12`, `MR-13`, `MR-14`, `MR-15`, `MR-16`, `MR-17`, `MR-18`, `MR-19`, `MR-20`, `MR-21`, `MR-22`, `OR-2`, `OR-3`, `OR-4`, `OR-5`, `OR-6`, `OR-7`, `OR-8`, `OR-9`, `OR-10`, `OR-11`, `OR-12`, `OR-13`, `OR-14`, `OR-15`, `OR-16`, `OR-17`, `OR-18`, `OR-19`, `OR-20`, `OR-21`, `OR-22`, `OR-23`, `OR-24`, `OR-25`, `OR-26`, `OR-27`, `OR-28`, `OR-29`, `OR-30`, `OR-31`, `OR-32`, `OR-33`, `OR-34`, `OR-35`, `OR-36`, `OR-37`, `OR-38`, `OR-39`, `OR-40`, `OR-41`, `RA-1`, `RA-2`, `RA-3`, `RA-4`, `RA-5`, `RA-6`, `RA-7`, `RA-8`, `RA-9`, `RA-10`, `RA-11`, `RA-12`, `RA-13`, `RA-14`, `RA-15`, `RA-16`, `RA-17`, `RA-18`, `RA-19`, `RA-20`, `RA-21`, `RA-22`, `RA-23`, `RA-24`, `RA-25`, `RA-26`, `RA-27`, `RA-28`, `RA-29`, `RA-30`, `RA-31`, `RC-1`, `RC-2`, `RC-3`, `RC-4`, `RC-5`, `RC-6`, `RN-1`, `RN-2`, `RN-3`, `RN-4`, `RN-5`, `RP-1`, `RP-2`, `RP-3`, `RQ-1`, `RQ-2`, `RQ-3`, `RQ-4`, `RQ-5`, `RQ-6`, `RQ-7`, `RQ-8`, `RR-1`, `RR-2`, `RR-3`, `SA-1`, `SA-2`, `SA-3`, `SA-5`, `ST-1`, `ST-2`, `ST-3`, `ST-4`, `ST-5`, `ST-6`, `TA-1`, `TA-2`, `TB-1`, `TB-2`, `TB-3`, `TB-4`, `TB-5`, `TB-6`, `TB-7`, `TB-8`, `TB-9`, `TB-10`, `TB-11`, `TB-12`, `TB-13`, `TB-14`, `TR-1`, `TR-2`, `TR-3`, `TR-4`, `TR-5`, `TR-6`, `TR-7`, `TR-8`, `TR-9`, `TR-10`, `WK-1`, `WK-2`, `WK-3`, `WK-4`, `WK-5`, `WK-6`, `WK-7`, `WK-8`.
 
 A guard marked *guard not located* may exist but was not found; *no guard written* records a known gap. Rationale documents explain a choice without governing runtime behavior.
 
@@ -26,14 +26,7 @@ A guard marked *guard not located* may exist but was not found; *no guard writte
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| OR-1 | Level-0 dispatch belongs to the deterministic controller acting through compact runtimes; no agent may recurse through `Agent`, pinned by `AGENT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026-08-19.md` |
-| OR-7 | Call telemetry stays observational: a disagreement between accepted output, lifecycle, budget, and stage stats is reported, and blocks only under `APPSEC_TELEMETRY_STRICT` | `test_boundary_reports_by_default_and_aborts_only_under_strict` | `docs/internal/contracts/orchestration-actions.md` |
-
-## Context economy
-
-| ID | Decision | Guard | Rationale |
-|---|---|---|---|
-| CE-5 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `skills/create-threat-model/SKILL-thin-stage1-v2.md` |
+| OR-1 | Within an assessment, the deterministic controller launches every model role itself; no agent may recurse through `Agent`, pinned by `AGENT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026-08-19.md` |
 
 ## Findings and evidence
 
@@ -46,12 +39,6 @@ A guard marked *guard not located* may exist but was not found; *no guard writte
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | SA-4 | Control domains and weakness classes are separate taxonomies and are never joined at class level; they meet at the finding | — *(no guard written)* | recurring proposal, rejected |
-
-## Incremental runs
-
-| ID | Decision | Guard | Rationale |
-|---|---|---|---|
-| IN-3 | Changed business context recommends a full run, it never forces one — unlike a requirements toggle, because re-rating every finding on every context edit costs more than the drift | `test_changed_context_is_flagged_on_an_incremental_run`, `test_unchanged_context_is_not_flagged` | `scripts/runtime/resolve_config.py::resolve_business_context`; `meta.business_context_sha256` |
 
 ## Combined assessments
 
