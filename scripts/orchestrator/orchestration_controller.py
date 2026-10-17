@@ -4057,10 +4057,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         )
     if ns.rebuild and ns.resume:
         raise CallError("--rebuild starts the assessment again and cannot be combined with --resume")
-    # One repository runs through the same stages unless APPSEC_SINGLE_REPO_CONTROLLER=0.
-    minimum = 2 if os.environ.get("APPSEC_SINGLE_REPO_CONTROLLER") == "0" else 1
-    if len(ns.repo) < minimum:
-        raise CallError("a multi-repository assessment requires at least two --repo selections")
+    if not ns.repo:
+        raise CallError("an assessment requires at least one --repo selection")
     _AssessmentConsole.max_columns = ns.width
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
     if console:
@@ -4077,7 +4075,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     # .gitignore write would make the source look changed at publication.
     ensure_output_gitignore.ensure(Path(ns.output))
     try:
-        scope = admit(ns.repo, ns.output, minimum=minimum)
+        scope = admit(ns.repo, ns.output, minimum=1)
     except ScopeError as exc:
         raise CallError(f"repository selection rejected: {exc}") from exc
     labels = sorted(row["label"] for row in scope.inventory()["repositories"])
