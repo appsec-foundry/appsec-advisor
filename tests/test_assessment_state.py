@@ -403,18 +403,19 @@ def test_an_earlier_scans_run_diagnostics_never_block_a_fresh_assessment(scope):
 
 @pytest.mark.parametrize("earlier", ["none", "completed"])
 def test_session_hook_files_never_block_a_start(scope, earlier):
-    """Hooks log into an existing directory before the run holds it, e.g. right after an import."""
-    from runtime.assessment_state import SESSION_HOOK_NAMES
+    """Hooks log, and the controller opens its progress feed, before the run holds the directory."""
+    from runtime.assessment_state import PROGRESS_NAME, SESSION_HOOK_NAMES
 
+    names = (*SESSION_HOOK_NAMES, PROGRESS_NAME)
     if earlier == "completed":
         _completed(scope)
     scope.output.mkdir(exist_ok=True)
-    for name in SESSION_HOOK_NAMES:
+    for name in names:
         (scope.output / name).write_text("hook\n")
     with lifecycle(scope).hold() as state:
         assert state.state["status"] == "running"
     assert not (scope.output / "threat-model.md").exists()
-    assert all((scope.output / name).exists() for name in SESSION_HOOK_NAMES)
+    assert all((scope.output / name).exists() for name in names)
 
 
 def _fail(state):

@@ -44,6 +44,9 @@ STOP_NAME = ".assessment-stop"
 # diagnose-run read them. Each run replaces them, so they never block a start.
 RUN_ISSUES_NAME = ".run-issues.json"
 RUN_DIAGNOSTIC_NAMES = (RUN_ISSUES_NAME, ".run-issues-fixes.json", ".run-bugs.json")
+# The progress feed the skill passes as --progress-file. The controller replaces
+# it before this check runs, so it never blocks a start.
+PROGRESS_NAME = ".assessment-progress.jsonl"
 # The session hooks log into an existing assessment directory without any run
 # holding it (decision AS-1), for example between an import and the launch, so
 # their files never block a start.
@@ -338,6 +341,7 @@ class AssessmentState:
             ".appsec-lock.guard",
             *RUN_DIAGNOSTIC_NAMES,
             *SESSION_HOOK_NAMES,
+            PROGRESS_NAME,
         }
         if self.scope.output_in_checkout():
             leftovers &= self._own_names()
