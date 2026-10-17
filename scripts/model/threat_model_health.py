@@ -50,6 +50,7 @@ from pathlib import Path
 # import-time side effects.
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
+from shared.artifact_names import ArtifactSetError, model_path, report_path  # noqa: E402
 
 try:
     from runtime.check_state import classify as _classify_run
@@ -107,20 +108,22 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
       dirty_set     : the parsed cmd_dirty_set payload (or None)
       recommend     : "noop" | "incremental" | "full" | "rebuild" | "none"
     """
-    yaml_path = output_dir / "threat-model.yaml"
-    md_path = output_dir / "threat-model.md"
+    try:
+        yaml_path, md_path = model_path(output_dir), report_path(output_dir)
+    except ArtifactSetError as exc:
+        return {"verdict": "UNKNOWN", "reason": str(exc), "check_changes": {}, "dirty_set": None, "recommend": "none"}
     if not yaml_path.is_file():
         if md_path.is_file():
             return {
                 "verdict": "NO_MODEL",
-                "reason": "legacy threat-model.md without yaml — bootstrap full run required",
+                "reason": "report without a model — a full run is required",
                 "check_changes": {},
                 "dirty_set": None,
                 "recommend": "full",
             }
         return {
             "verdict": "NO_MODEL",
-            "reason": "no threat-model.yaml in output dir",
+            "reason": "no assessment model in the output directory",
             "check_changes": {},
             "dirty_set": None,
             "recommend": "full",

@@ -65,6 +65,7 @@ except ImportError:  # pragma: no cover — only fails when baseline_state is ru
 from runtime.stride_outputs import component_id as stride_component_id
 from runtime.stride_outputs import stride_output_files
 from shared._atomic_io import atomic_write_json
+from shared.artifact_names import ArtifactSetError, model_path
 
 SCHEMA_VERSION = 2
 
@@ -303,7 +304,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     existing = _read_existing(cache_path)
     prev_counters = existing.get("id_counters", {}) if existing else {}
 
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = model_path(output_dir)
     yaml_text = yaml_path.read_text(encoding="utf-8") if yaml_path.is_file() else ""
     max_t = _scan_max_id(yaml_text, _T_ID_RE)
     max_m = _scan_max_id(yaml_text, _M_ID_RE)
@@ -529,7 +530,7 @@ def _extract_baseline_analysis_version(output_dir: Path) -> tuple[int | None, st
     how a pre-versioning baseline looks and how the skill distinguishes
     "legacy but present" from "hard-fail incompatible".
     """
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = model_path(output_dir)
     if yaml_path.is_file():
         try:
             text = yaml_path.read_text(encoding="utf-8")
@@ -670,7 +671,7 @@ def cmd_check_fingerprint(args: argparse.Namespace) -> int:
 def _extract_baseline_plugin_version(output_dir: Path) -> str | None:
     """Return the plugin_version recorded in the prior baseline (yaml wins,
     then .appsec-cache/baseline.json)."""
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = model_path(output_dir)
     if yaml_path.is_file():
         try:
             text = yaml_path.read_text(encoding="utf-8")
@@ -694,7 +695,7 @@ def _extract_baseline_plugin_version(output_dir: Path) -> str | None:
 
 def _extract_baseline_commit_sha(output_dir: Path) -> str | None:
     """Return the commit_sha recorded in the prior baseline yaml's meta.git block."""
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = model_path(output_dir)
     if not yaml_path.is_file():
         return None
     try:
@@ -1091,8 +1092,8 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     if not output_dir.is_dir():
         print(json.dumps({"status": "error", "reason": "output_dir missing"}))
         return 3
-    if not (output_dir / "threat-model.yaml").is_file():
-        print(json.dumps({"status": "no_baseline", "reason": "threat-model.yaml not found"}))
+    if not model_path(output_dir).is_file():
+        print(json.dumps({"status": "no_baseline", "reason": "no assessment model found"}))
         return 3
 
     baseline_sha = _extract_baseline_commit_sha(output_dir)
@@ -1389,7 +1390,7 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
       4  the output directory holds a multi-repository model (see main)
     """
     output_dir = Path(args.output_dir).resolve()
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = model_path(output_dir)
     components = _parse_components_from_yaml(yaml_path)
 
     # Pre-compile path globs once per component.
@@ -1508,6 +1509,10 @@ def cmd_filter_diff_paths(args: argparse.Namespace) -> int:
 # intermediate artifact is added to the pipeline, append its filename pattern
 # to the matching tuple here (and to the drift test in tests/test_cleanup.py).
 _PRODUCT_FILES: tuple[str, ...] = (
+    "security-assessment.md",
+    "security-assessment.yaml",
+    "security-assessment.sarif.json",
+    "security-assessment.threatdragon.json",
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
@@ -1712,7 +1717,7 @@ def cmd_last_run_info(args: argparse.Namespace) -> int:
     """
     output_dir = Path(args.output_dir).resolve()
     cache_path = output_dir / ".appsec-cache" / "baseline.json"
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = model_path(output_dir)
 
     info = {
         "has_baseline": False,
@@ -1849,7 +1854,12 @@ def main(argv: list[str] | None = None) -> int:
     # A multi-repository model is not the baseline of one checkout: its paths
     # are relative to separate repositories. Each command keeps its error code.
     error_code = {"update": 1, "check-fingerprint": 2, "check-changes": 3, "dirty-set": 4}.get(args.cmd)
-    yaml_path = Path(args.output_dir).resolve() / "threat-model.yaml" if error_code else None
+    try:
+        yaml_path = model_path(Path(args.output_dir).resolve()) if error_code else None
+    except ArtifactSetError as exc:
+        print(json.dumps({"status": "error", "reason": str(exc)}))
+        print(f"baseline_state: {exc}", file=sys.stderr)
+        return error_code
     if yaml_path is not None and yaml_path.is_file():
         from shared.assessment_sources import model_file_is_portable, single_repository_only
 

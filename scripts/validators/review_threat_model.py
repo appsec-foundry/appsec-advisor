@@ -68,6 +68,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import shared.artifact_names as artifact_names  # noqa: E402
 from renderers.summarize_threat_model import (  # noqa: E402
     RECOMMEND_TEXT,
     VERDICT_ICON,
@@ -215,7 +216,11 @@ def _load_category_names(path: Path | None = None) -> dict[str, str]:
 
 
 def _load_model(output_dir: Path) -> dict:
-    model_path = output_dir / "threat-model.yaml"
+    try:
+        model_path = artifact_names.model_path(output_dir)
+    except artifact_names.ArtifactSetError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     if not model_path.is_file():
         print(f"No threat model found at {model_path}", file=sys.stderr)
         raise SystemExit(1)
@@ -225,7 +230,7 @@ def _load_model(output_dir: Path) -> dict:
         print(f"Could not parse {model_path}: {e}", file=sys.stderr)
         raise SystemExit(2)
     if not isinstance(data, dict):
-        print(f"Unexpected threat-model.yaml shape in {model_path}", file=sys.stderr)
+        print(f"Unexpected model shape in {model_path}", file=sys.stderr)
         raise SystemExit(2)
     from shared.assessment_sources import is_portable_model, single_repository_only
 

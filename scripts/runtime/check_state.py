@@ -96,7 +96,7 @@ from pathlib import Path
 # or the YAML is missing — preserves pre-M3.6 behaviour for callers
 # without a checkpoint on disk.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from shared.artifact_names import report_path  # noqa: E402
 
 try:
     import runtime.phase_budgets as phase_budgets  # type: ignore  # noqa: E402
@@ -333,7 +333,7 @@ def classify(output_dir: Path) -> dict:
             cp_phase == "10b"
             and cp_status == "completed"
             and cp_render == "true"
-            and not (output_dir / "threat-model.md").exists()
+            and not report_path(output_dir).exists()
         ):
             needs_stage2 = True
 
