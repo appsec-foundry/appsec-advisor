@@ -24,59 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-headless.sh"
 
 
-@pytest.fixture(autouse=True)
-def _single_repository_scan(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests pin the single-repository scan's wiring, which a single --repo reaches only when the controller is switched off."""
-    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "0")
-
-
 def _body() -> str:
     return SCRIPT.read_text(encoding="utf-8")
-
-
-def test_shell_invokes_compose_backstop_when_md_missing() -> None:
-    """A yaml-present / md-absent run must invoke the controller `next`
-    backstop from the shell, not depend on an LLM finalize turn."""
-    body = _body()
-    assert 'orchestrator/orchestration_controller.py" \\\n        next --output-dir "$RESULT_DIR"' in body
-    # The backstop must be gated on yaml-present AND md-absent so it is a no-op
-    # for a normally-composed run.
-    assert '[ -s "$RESULT_DIR/threat-model.yaml" ] \\' in body
-    assert '[ ! -s "$RESULT_DIR/threat-model.md" ]' in body
-
-
-def test_artifact_gate_is_fail_closed_on_missing_md() -> None:
-    """The artifact gate must fail closed when threat-model.md is absent.
-
-    The old gate only failed when BOTH md and yaml were missing, so a
-    yaml-without-md run (the process-kill gap) was reported as success.
-    """
-    body = _body()
-    assert 'err "No threat-model.md in $RESULT_DIR — treating as failure (fail-closed)."' in body
-    # Guard against a regression back to the md-OR-yaml (fail-open) condition.
-    assert '[ ! -s "$RESULT_DIR/threat-model.md" ] && [ ! -s "$RESULT_DIR/threat-model.yaml" ]' not in body
-
-
-def test_failure_branch_surfaces_run_issues() -> None:
-    """On a non-zero exit the rich Run Issues block is normally rendered by the
-    LLM Completion turn, which never runs on an abort/kill. The shell must
-    regenerate .run-issues.json from the logs and render it deterministically so
-    the operator sees WHAT failed, not just `exited with code N`.
-
-    The refresh is now one step of ``runtime/terminate_run.py``, which also closes the
-    lock and checkpoint the failed run left open. The invariant is unchanged:
-    the file is regenerated before it is rendered.
-    """
-    body = _body()
-    assert "--issues-only" in body, "failure branch must render the Run Issues block"
-    assert "runtime/terminate_run.py" in body, (
-        "failure branch must refresh .run-issues.json from the logs before rendering"
-    )
-    assert body.index("runtime/terminate_run.py") < body.index("--issues-only"), (
-        "the run issues must be regenerated before they are rendered"
-    )
-    # Gated on the log existing so it is a no-op for pre-dispatch failures.
-    assert '[ -f "$RESULT_DIR/.agent-run.log" ]' in body
 
 
 def test_progress_monitor_never_replays_a_previous_runs_log() -> None:
@@ -88,128 +37,11 @@ def test_progress_monitor_never_replays_a_previous_runs_log() -> None:
     assert 'tail -F "$1"' not in body
 
 
-def test_every_non_clean_exit_class_reaches_the_terminator() -> None:
-    """An interrupt and a failed exit both have to leave one terminal state.
-    Without this the lock stays held and live status reports an unknown phase
-    until the heartbeat ages out."""
-    body = _body()
-    assert "--outcome interrupt" in body
-    assert "--outcome failure" in body
-    interrupt_branch = body.index('if [ "$SIGINT_COUNT" -gt 0 ]; then')
-    assert interrupt_branch < body.index("--outcome interrupt") < body.index('exit "$EXIT_CODE"')
-
-
-def test_failure_branch_prints_full_recovery_command() -> None:
-    """The failure hint must print a paste-ready fresh-run command."""
-    body = _body()
-    # Raw invocation is preserved before the parser consumes it.
-    assert 'ORIG_ARGS=""' in body, "must capture the original invocation for the hint"
-    # The re-run command is reconstructed (mode flags stripped, one appended).
-    assert "_rerun_cmd" in body
-    assert "_rerun_cmd --resume" not in body
-    assert "_rerun_cmd --rebuild" in body
-
-
-def test_unsupported_modes_fail_before_output_path_mutation() -> None:
-    body = _body()
-    guard = '[ "$RESUME_REQUESTED" = "1" ] && die "--resume is not supported by the compact runtime.'
-    assert guard in body
-    assert body.index(guard) < body.index("# ── Resolve paths")
-    for state in ("INCREMENTAL_REQUESTED", "DRY_RUN_REQUESTED", "UNSUPPORTED_RUNTIME_OPTION"):
-        assert state in body
-
-
-def test_effective_mode_is_admitted_before_output_creation_and_dispatch() -> None:
-    body = _body()
-    admission = 'ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py"'
-    assert admission in body
-    assert body.index(admission) < body.index('mkdir -p "$OUTPUT_PATH"')
-    assert body.index(admission) < body.index('"$@" < /dev/null')
-
-
 def test_headless_has_no_generation_escape_hatch() -> None:
     body = _body()
     assert "APPSEC_CONTEXT_V2" not in body
     assert "CONTEXT_V2_SELECTED" not in body
     assert "PERSISTED_RUNTIME_GENERATION" not in body
-
-
-@pytest.mark.parametrize(
-    ("extra_args", "live_phase", "error_text"),
-    [
-        (["--incremental"], False, "--incremental is not supported"),
-        (["--resume"], False, "--resume is not supported"),
-        (["--full", "--resume"], False, "--resume is not supported"),
-        (["--dry-run"], False, "--dry-run is not supported"),
-        (["--max-wall-time", "1"], False, "--max-wall-time is not supported"),
-        ([], True, "APPSEC_LIVE_PHASE=1 is not supported"),
-    ],
-)
-def test_unsupported_mode_exits_before_output_creation_or_claude(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    extra_args: list[str],
-    live_phase: bool,
-    error_text: str,
-) -> None:
-    repo = tmp_path / "repo"
-    output = tmp_path / "not-created"
-    repo.mkdir()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    marker = tmp_path / "claude-invoked"
-    claude = bin_dir / "claude"
-    claude.write_text('#!/bin/sh\nprintf invoked > "$CLAUDE_MARKER"\nexit 42\n', encoding="utf-8")
-    claude.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    monkeypatch.setenv("CLAUDE_MARKER", str(marker))
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    if live_phase:
-        monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
-
-    result = subprocess.run(
-        [str(SCRIPT), "--repo", str(repo), "--output", str(output), *extra_args],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert error_text in result.stderr
-    assert not output.exists(), "unsupported mode mutated the requested output path"
-    assert not marker.exists(), "unsupported mode reached Claude dispatch"
-
-
-def test_a_budget_that_cannot_hold_the_run_stops_it_before_output_or_claude(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The refusal has to happen in the wrapper's admission call, which means
-    the budget and the depth must reach it. Refusing one step later would leave
-    the output directory behind and charge for the attempt."""
-    repo = tmp_path / "repo"
-    output = tmp_path / "not-created"
-    repo.mkdir()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    marker = tmp_path / "claude-invoked"
-    claude = bin_dir / "claude"
-    claude.write_text('#!/bin/sh\nprintf invoked > "$CLAUDE_MARKER"\nexit 42\n', encoding="utf-8")
-    claude.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    monkeypatch.setenv("CLAUDE_MARKER", str(marker))
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-
-    result = subprocess.run(
-        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--full", "--soft-budget", "3"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "declared budget cannot hold this run" in result.stderr
-    assert not output.exists(), "a refused budget mutated the requested output path"
-    assert not marker.exists(), "a refused budget reached Claude dispatch"
 
 
 def test_headless_parser_retains_no_yaml() -> None:
@@ -252,7 +84,7 @@ def test_default_progress_monitor_is_reaped_after_claude_exit(tmp_path: Path, mo
     monkeypatch.setenv("TAIL_STOPPED", str(tail_stopped))
 
     result = subprocess.run(
-        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--no-qa"],
+        [str(SCRIPT), "--audit-requirements", "--repo", str(repo), "--output", str(output), "--no-qa"],
         capture_output=True,
         text=True,
         timeout=15,
@@ -320,6 +152,7 @@ def test_configured_claude_executable_is_used_for_auth_and_dispatch(
     result = subprocess.run(
         [
             str(SCRIPT),
+            "--audit-requirements",
             "--repo",
             str(repo),
             "--output",
@@ -497,6 +330,7 @@ def test_an_interrupt_without_a_controlling_terminal_tears_the_run_down(tmp_path
     proc = subprocess.Popen(
         [
             str(SCRIPT),
+            "--audit-requirements",
             "--repo",
             str(repo),
             "--output",
@@ -540,79 +374,6 @@ def test_an_interrupt_without_a_controlling_terminal_tears_the_run_down(tmp_path
     assert not lock.exists(), "the interrupted run left its lock behind"
 
 
-def test_the_wrapper_mints_the_run_id_the_lock_release_needs() -> None:
-    """A killed run's last heartbeat is always fresh, so the terminator can
-    only release the lock if it can name the run that holds it. The wrapper
-    mints that id itself — the Claude session that would otherwise own it is
-    already gone when the lock has to go."""
-    body = _body()
-    assert 'export APPSEC_RUN_ID="run-$(date +%s)-$$"' in body
-    launch = body.index("SESSION_LAUNCHER=")
-    assert body.index("export APPSEC_RUN_ID") < launch, "the id must exist before the run takes the lock"
-    # Both non-clean exit classes hand it to the terminator.
-    assert body.count('--run-id "$APPSEC_RUN_ID"') == 2
-
-
-def test_the_skill_force_flag_reaches_the_prompt(tmp_path: Path) -> None:
-    """`--force` is the override the controller demands before a completed
-    Stage 1 is discarded. The parser used to swallow it for --clean-all only,
-    so the abort recommended a flag that never left this wrapper."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    marker = tmp_path / "launcher-args"
-    launcher = tmp_path / "claude-arg-dump"
-    launcher.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then\n'
-        "  printf '{\"loggedIn\": true}\\n'\n"
-        "  exit 0\n"
-        "fi\n"
-        'printf "%s\\n" "$@" > "$CLAUDE_LAUNCH_MARKER"\n'
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    launcher.chmod(0o755)
-    env = _headless_env(launcher)
-    env["CLAUDE_LAUNCH_MARKER"] = str(marker)
-
-    subprocess.run(
-        [
-            str(SCRIPT),
-            "--repo",
-            str(repo),
-            "--output",
-            str(tmp_path / "out"),
-            "--rebuild",
-            "--force",
-            "--trust-mode",
-            "trusted",
-            "--quiet",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=env,
-    )
-
-    prompt = marker.read_text(encoding="utf-8").splitlines()[1]
-    assert "--rebuild" in prompt
-    assert "--force" in prompt, "the skill-only override never reached the skill"
-
-
-def test_the_recovery_hint_offers_rerender_after_a_completed_stage_one() -> None:
-    """Stage 1 is the expensive part. A run killed between the Stage-1 gate and
-    the report leaves it validated on disk, and --rerender turns it into a
-    report without re-analyzing anything — while --rebuild is refused by the
-    controller on exactly that checkpoint."""
-    body = _body()
-    hint = body[body.index("print_recovery_hint() {") : body.index("# Every mode, including --quiet")]
-    for token in ("phase=10b", "status=completed", "need_render=true"):
-        assert token in hint, "the hint must read the same checkpoint tokens as the controller"
-    assert "--rerender" in hint
-    assert "--rebuild --force" in hint, "the discard path must carry the override the controller requires"
-    assert "--resume" not in hint.replace("--resume|--full", ""), "--resume is rejected by this wrapper"
-
-
 def test_a_blocked_run_touches_nothing_in_the_holders_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -643,7 +404,7 @@ def test_a_blocked_run_touches_nothing_in_the_holders_directory(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     result = subprocess.run(
-        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--rebuild"],
+        [str(SCRIPT), "--audit-requirements", "--repo", str(repo), "--output", str(output), "--rebuild"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -674,7 +435,17 @@ def test_the_hard_cut_is_derived_from_the_soft_budget(tmp_path: Path, monkeypatc
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     result = subprocess.run(
-        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--full", "--soft-budget", "30"],
+        [
+            str(SCRIPT),
+            "--audit-requirements",
+            "--repo",
+            str(repo),
+            "--output",
+            str(output),
+            "--full",
+            "--soft-budget",
+            "30",
+        ],
         capture_output=True,
         text=True,
         timeout=120,
@@ -703,6 +474,7 @@ def test_an_explicit_hard_budget_wins_over_the_derived_one(tmp_path: Path, monke
     result = subprocess.run(
         [
             str(SCRIPT),
+            "--audit-requirements",
             "--repo",
             str(repo),
             "--output",
@@ -778,7 +550,17 @@ def _run_banner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **env: str) -> 
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return subprocess.run(
-        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--trust-mode", "trusted", "--quiet"],
+        [
+            str(SCRIPT),
+            "--audit-requirements",
+            "--repo",
+            str(repo),
+            "--output",
+            str(output),
+            "--trust-mode",
+            "trusted",
+            "--quiet",
+        ],
         capture_output=True,
         text=True,
         timeout=15,
@@ -791,7 +573,7 @@ def test_output_off_a_terminal_carries_no_escape_sequences(tmp_path: Path, monke
     assert result.returncode == 42, result.stdout + result.stderr
     assert "\x1b" not in result.stdout + result.stderr
     assert "▶ AppSec Plugin — Headless Mode" in result.stdout
-    assert "\n  Skill      : create-threat-model\n" in result.stdout
+    assert "\n  Skill      : audit-security-requirements\n" in result.stdout
 
 
 def test_forced_colour_styles_the_banner_without_changing_its_fields(
@@ -804,14 +586,11 @@ def test_forced_colour_styles_the_banner_without_changing_its_fields(
     # The logo glyphs belong to tests/test_term_style.py; only the fields beside them are checked here.
     assert "  appsec-advisor\n" in plain
     assert "  code-derived STRIDE threat modeling\n" in plain
-    assert "\n  Skill      : create-threat-model\n" in plain
+    assert "\n  Skill      : audit-security-requirements\n" in plain
 
 
 @pytest.mark.parametrize("flag", ["--audit-requirements", "--check-requirements"])
-@pytest.mark.parametrize("controller", ["1", "0"])
-def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(
-    tmp_path: Path, flag: str, controller: str
-) -> None:
+def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(tmp_path: Path, flag: str) -> None:
     """A single --repo reaches the controller only for an assessment; the audit skill inspects its working directory."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -829,7 +608,6 @@ def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(
     )
     stub.chmod(0o755)
     env = _headless_env(stub)
-    env["APPSEC_SINGLE_REPO_CONTROLLER"] = controller
 
     subprocess.run(
         [str(SCRIPT), flag, "--repo", str(repo), "--trust-mode", "trusted", "--quiet"],
