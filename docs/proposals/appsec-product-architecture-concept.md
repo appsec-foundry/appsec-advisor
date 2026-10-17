@@ -10,14 +10,14 @@ Use three product repositories plus the existing baseline project. Keep each cap
 
 | Product or component | Repository | Public interface | Responsibility |
 |---|---|---|---|
-| AppSec Advisor | `appsec-advisor-plugin` | Claude Code plugin named `appsec-advisor` | Common installation, skill discovery, Claude integration, help, and release composition. |
+| AppSec Advisor | `appsec-advisor` | Claude Code plugin named `appsec-advisor` | Common installation, skill discovery, Claude integration, help, and release composition. |
 | AppSec skills | `appsec-skills` | Individually distributed skill directories | Focused workflows, starting with design threat modeling. |
 | AppSec Analyzer | `appsec-analyzer` | Package, CLI, and skill named `appsec-analyzer` | Code-derived security assessment, including scanners, model analysis, validation, and reports. |
 | AI Secure Coding Baseline | Existing `aiscb` project | Versioned rules, modules, loader, and supported lifecycle tooling | Secure-coding guidance and its verified distribution. |
 
 The Analyzer's plugin command is `/appsec-advisor:appsec-analyzer`. The design workflow uses `/appsec-advisor:create-threat-model`. The existing `analyze-threats` name continues to identify focused analysis of a question, change, or hypothesis; it does not become another name for the full Analyzer.
 
-The repository name `appsec-advisor-plugin` does not change the plugin namespace. Product names do not require renaming every internal module or artifact. The Analyzer still produces a Security Assessment Report; its target artifact names and storage transition are described in the [assessment concept](application-security-assessment-concept.md).
+AppSec Advisor names the combined product and its Claude Code plugin. Keep the existing `appsec-advisor` repository, local directory name, and plugin namespace. Extract the Analyzer into a new repository; do not rename the existing repository or add a `-plugin` suffix. Product names do not require renaming every internal module or artifact. The Analyzer still produces a Security Assessment Report; its target artifact names and storage transition are described in the [assessment concept](application-security-assessment-concept.md).
 
 These are target interfaces. The current controller skill is still [create-security-assessment](../../skills/create-security-assessment/SKILL.md), and legacy threat-model commands still exist. Changing those interfaces requires the compatibility work below.
 
@@ -142,10 +142,10 @@ Only build-time adaptation of host-specific paths and metadata is allowed in cop
 
 ### Build outputs
 
-Provide `make package` in `appsec-advisor-plugin` as the entry point to a testable packaging script. The same script runs locally and in CI. It reads the pinned component manifest, obtains and verifies the selected artifacts, assembles the plugin, validates the package, and produces these local outputs:
+Provide `make package` in `appsec-advisor` as the entry point to a testable packaging script. The same script runs locally and in CI. It reads the pinned component manifest, obtains and verifies the selected artifacts, assembles the plugin, validates the package, and produces these local outputs:
 
 ```text
-appsec-advisor-plugin/
+appsec-advisor/
   .claude-plugin/marketplace.json
   Makefile
   scripts/
@@ -159,19 +159,19 @@ Ignore `build/` and `dist/` in source control. The plugin directory contains its
 
 ### GitHub releases and marketplace installation
 
-Publish the assembled ZIP as a GitHub Release asset in `appsec-foundry/appsec-advisor-plugin`. Keep the marketplace catalog at `.claude-plugin/marketplace.json` in that repository. GitHub hosts the artifact; the catalog tells Claude Code where to retrieve it. The marketplace name remains `appsec-foundry`, the plugin manifest and catalog entry both use `appsec-advisor`, and the installation identifier remains `appsec-advisor@appsec-foundry`.
+Publish the assembled ZIP as a GitHub Release asset in `appsec-foundry/appsec-advisor`. Keep the marketplace catalog at `.claude-plugin/marketplace.json` in that repository. GitHub hosts the artifact; the catalog tells Claude Code where to retrieve it. The marketplace name remains `appsec-foundry`, the plugin manifest and catalog entry both use `appsec-advisor`, and the installation identifier remains `appsec-advisor@appsec-foundry`.
 
 For illustration, a future `1.0.0` release would use:
 
 ```text
 Release:
-https://github.com/appsec-foundry/appsec-advisor-plugin/releases/tag/v1.0.0
+https://github.com/appsec-foundry/appsec-advisor/releases/tag/v1.0.0
 
 Plugin asset:
-https://github.com/appsec-foundry/appsec-advisor-plugin/releases/download/v1.0.0/appsec-advisor-1.0.0.zip
+https://github.com/appsec-foundry/appsec-advisor/releases/download/v1.0.0/appsec-advisor-1.0.0.zip
 ```
 
-The example specifies the intended destination, not an existing repository or published release. The marketplace entry uses the `archive` source type with that version-specific HTTPS URL and the actual ZIP's `sha256`. Claude Code supports ZIP sources and rejects a download whose supplied digest does not match; see the [archive source reference](https://code.claude.com/docs/en/plugins/marketplace-reference#archive-plugin-source). Establish and test a minimum supported Claude Code version for this source type before cutover.
+The example uses the retained repository address and illustrates a future release; it does not claim that this release is published. The marketplace entry uses the `archive` source type with that version-specific HTTPS URL and the actual ZIP's `sha256`. Claude Code supports ZIP sources and rejects a download whose supplied digest does not match; see the [archive source reference](https://code.claude.com/docs/en/plugins/marketplace-reference#archive-plugin-source). Establish and test a minimum supported Claude Code version for this source type before cutover.
 
 The release workflow is:
 
@@ -182,11 +182,11 @@ The release workflow is:
 
 The maintained catalog advances to new releases while each listed archive remains pinned. Keep previous assets available for compatible rollback. The catalog source is part of the distribution trust boundary; a digest mismatch stops installation rather than triggering a checksum-free retry. Plugin installation and marketplace update behavior need an end-to-end check, not only JSON validation.
 
-### Marketplace address migration
+### Stable marketplace address
 
-The [current marketplace catalog](../../.claude-plugin/marketplace.json) resides in `appsec-foundry/appsec-advisor` and points at that repository's `main` branch. Moving implementation repositories therefore also requires a catalog-source migration. Keeping the marketplace name alone does not move an existing user's registered source.
+Keep the [current marketplace catalog](../../.claude-plugin/marketplace.json) in `appsec-foundry/appsec-advisor`. The repository split does not relocate the registered marketplace source. Preserve the marketplace name, plugin namespace, and `appsec-advisor@appsec-foundry` installation identifier; existing users should not need to register a different marketplace.
 
-Before retiring or repurposing the old endpoint, establish and test its transition to `appsec-foundry/appsec-advisor-plugin`. Document how existing users update their marketplace source while preserving the `appsec-advisor@appsec-foundry` installation, settings, and retained data. Keep the old catalog endpoint serving compatible release references until the supported transition is complete, or provide a verified redirect strategy. Do not replace it with an Analyzer-only tree and assume existing plugin installations will continue to update. Coordinate this transition with command migration and release cutover.
+The distribution change happens inside the catalog: replace the plugin source that currently selects the repository's `main` branch with a versioned release archive and its digest. Before public cutover, test an upgrade from the existing installation through the unchanged marketplace address, preserving settings and retained data. Coordinate this source-type transition with command migration and release cutover. Retaining the address does not replace upgrade testing.
 
 ## Organization packaging
 
@@ -210,11 +210,11 @@ Release assembly verifies immutable component provenance and dependency integrit
 
 Use independently reviewable milestones. Product naming is settled here; command replacement, authoritative requirement wording, and long-lived technical decisions still follow the repository's confirmation workflow.
 
-1. Inventory current commands, hooks, scripts, resources, configuration, and artifact consumers. Assign each an owner and record the interfaces and compatibility expectations it relies on. Preserve relevant history when extracting code; do not perform a cosmetic repository rename before the responsibility split is clear.
-2. Start `appsec-skills` with the new threat-modeler and test it without the plugin or Analyzer. Its development does not depend on completing provider neutrality. Avoid installing it under the legacy assessment's `create-threat-model` name in the same plugin release.
-3. Complete the provider-neutral milestones in the current checkout, including configuration resolution, a complete direct API assessment, and gateway qualification. Preserve Claude behavior and the deterministic pipeline. Keep package and repository extraction out of those changes.
-4. Extract the installable `appsec-analyzer` package, including all required resources, semantic roles, public consumer operations, and dependency declarations. Verify installed operation outside the source checkout. Then establish its independent repository and release process, retaining history where practical.
-5. Assemble `appsec-advisor-plugin` from pinned Analyzer, skill, and baseline components. Move Claude integration and organization packaging there. Verify both the plugin distribution and standalone Analyzer against the same public contracts. Prepare the GitHub ZIP release, staging marketplace installation, and catalog-source transition before switching the public marketplace.
+1. Inventory current commands, hooks, scripts, resources, configuration, and artifact consumers. Assign each an owner and record the interfaces and compatibility expectations it relies on. Keep the existing `appsec-advisor` repository and its history as the plugin home; plan extraction of relevant history into the new component repositories.
+2. Complete the provider-neutral engine design in the current checkout, including configuration resolution, a complete direct API assessment, gateway qualification, and installed-package verification. Preserve Claude behavior and the deterministic pipeline. Complete this groundwork before repository separation or extraction of the new threat-modeler.
+3. Establish the independent `appsec-analyzer` repository and release process from the verified package, retaining relevant history where practical. Include all required resources, semantic roles, public consumer operations, and dependency declarations. Verify installed operation outside both source repositories.
+4. Establish `appsec-skills` with the new threat-modeler and test its bundle without the plugin or Analyzer. Its runtime remains independent of the Analyzer, while its extraction follows the completed provider-neutral groundwork. Avoid installing it under the legacy assessment's `create-threat-model` name in the same plugin release.
+5. Assemble the plugin in the existing `appsec-advisor` repository from pinned Analyzer, skill, and baseline components. Retain Claude integration and distribution there; keep company-specific configuration in organization-owned packaging repositories. Verify both the plugin distribution and standalone Analyzer against the same public contracts. Prepare the GitHub ZIP release, staging marketplace installation, and archive-source transition before updating the public catalog at its unchanged address.
 6. Ship an explicit command and artifact migration. The assessment entry becomes `appsec-analyzer`; do not route an old assessment invocation into design threat modeling. Coordinate the retirement of `create-security-assessment` and legacy commands with existing launchers, CI, permissions, help, and org packages. Resolve the earlier proposal's release timing before reusing `create-threat-model`; add no unreviewed aliases or notice stubs.
 7. Extract additional skills only after standalone dependency and output-consumer checks pass. Retire migrated implementations from their old source to prevent parallel maintenance. Keep specialized workflows available throughout their supported transition.
 
@@ -229,7 +229,7 @@ For implementation, verify the changed component and its affected consumers rath
 - A standalone threat-modeler bundle works from requirements and design alone. Its dialogue, review-only behavior, focused updates, ambiguous-file handling, and missing-context outcomes meet its concept's evaluation cases.
 - The assembled plugin discovers each command once, invokes the pinned component, reports missing or incompatible dependencies, and does not bypass source or output controls. Component version mismatches and command collisions fail before execution.
 - `make package` produces the intended directory and ZIP without publishing. The release asset contains the tested composition and no target data or credentials. A staging marketplace installs the published ZIP; a wrong digest rejects it. Updates and compatible rollback preserve the installation identity and use the selected component versions.
-- Existing users can transition from the old marketplace source to the new catalog without losing plugin settings or retained data. The old source remains functional for the supported transition; a valid local build alone does not satisfy this case.
+- Existing users can upgrade from the repository-based plugin source to the release archive through the unchanged marketplace address without registering a new marketplace or losing plugin settings or retained data. A valid local build alone does not satisfy this case.
 - Selected organization context reaches the intended consumer; malformed policy, forged authority, confidential-context leakage, and conflicting mandatory settings fail at the affected boundary. Standalone invocation retains the same restrictions.
 - Baseline lifecycle operations preserve signature verification, explicit installation scope, ownership checks, and accurate installed-versus-loaded reporting.
 - Migration preserves existing models, assessment provenance, finding identities, and retained decisions. Old command invocations cannot silently start a different product, and rollback does not reuse incompatible state.
@@ -238,6 +238,6 @@ These checks establish future delivery evidence. This concept introduces no runt
 
 ## Remaining implementation choices
 
-Specify the public Analyzer command schema and interface versions, skill capability metadata, component build-manifest schema, supported Python/platform matrix, and dependency bootstrap. Select repository history transfer and release cutover procedures, including marketplace-source migration, before creating or renaming repositories. Verify registry availability, the selected GitHub release destination, and archive-source compatibility before publishing the agreed names.
+Specify the public Analyzer command schema and interface versions, skill capability metadata, component build-manifest schema, supported Python/platform matrix, and dependency bootstrap. Select component history extraction and release cutover procedures, including the plugin source-type transition within the existing marketplace catalog, before creating the new component repositories. The existing `appsec-advisor` repository is retained. Verify registry availability, the selected GitHub release destination, and archive-source compatibility before publishing the agreed names.
 
 Keep component-specific algorithms, provider wire formats, and concrete test selection with their owning implementation. No additional shared framework, service, or repository is required for the initial architecture.

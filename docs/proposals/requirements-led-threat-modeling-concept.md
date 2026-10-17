@@ -20,7 +20,7 @@ The workflow is independent of the existing code assessment pipeline. A threat s
 
 Selective reuse of suitable catalogs, source handling, or validation helpers is possible after checking their semantics. Reuse should preserve this workflow's focus on design and team decisions. The separate [application security assessment concept](application-security-assessment-concept.md) describes the assessment naming proposal; implementing either concept does not depend on implementing the other.
 
-The [AppSec product architecture](appsec-product-architecture-concept.md) places this skill in `appsec-skills` and includes its published bundle in `appsec-advisor-plugin`. It remains usable without AppSec Analyzer and owns its modeling behavior; the plugin supplies the Claude integration. The target plugin command is `/appsec-advisor:create-threat-model`, introduced only after resolving the legacy assessment command collision.
+The [AppSec product architecture](appsec-product-architecture-concept.md) places this skill in `appsec-skills` and includes its published bundle in the plugin maintained in the existing `appsec-advisor` repository. Repository separation and extraction of this skill follow completion of the provider-neutral engine groundwork. It remains usable without AppSec Analyzer and owns its modeling behavior; the plugin supplies the Claude integration. The target plugin command is `/appsec-advisor:create-threat-model`, introduced only after resolving the legacy assessment command collision.
 
 ## Methodological basis
 
