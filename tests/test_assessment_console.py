@@ -1,4 +1,4 @@
-"""The conversation lines create-security-assessment relays for a background assessment."""
+"""The conversation lines appsec-analyzer relays for a background assessment."""
 
 from __future__ import annotations
 

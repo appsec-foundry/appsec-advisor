@@ -430,7 +430,7 @@ def test_a_run_opens_its_progress_file_with_what_it_is_about_to_spend(tmp_path, 
         _assess(tmp_path, monkeypatch, ("edge", "service"), ("--progress-file", str(path)))
     finally:
         controller._AssessmentProgress.path = None
-    # create-security-assessment's monitor greps this exact spelling and shows these lines before phase 1.
+    # appsec-analyzer's monitor greps this exact spelling and shows these lines before phase 1.
     assert path.read_text().startswith('{"event": "run_start", ')
     start = json.loads(path.read_text().splitlines()[0])
     keys = ["Repositories", "Output", "Depth", "Budget", "Time", "Models"]
@@ -452,7 +452,7 @@ def test_the_progress_file_names_every_row_field_by_field(tmp_path):
     finally:
         controller._AssessmentProgress.path = None
     records = [json.loads(line) for line in path.read_text().splitlines()]
-    # create-security-assessment's monitor greps this exact spelling for its milestones.
+    # appsec-analyzer's monitor greps this exact spelling for its milestones.
     assert path.read_text().startswith('{"event": "phase_start", ')
 
     # The earlier run's records are gone; every grid row has its record, in order.
