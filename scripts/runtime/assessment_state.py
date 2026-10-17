@@ -44,6 +44,18 @@ STOP_NAME = ".assessment-stop"
 # diagnose-run read them. Each run replaces them, so they never block a start.
 RUN_ISSUES_NAME = ".run-issues.json"
 RUN_DIAGNOSTIC_NAMES = (RUN_ISSUES_NAME, ".run-issues-fixes.json", ".run-bugs.json")
+# The session hooks log into an existing assessment directory without any run
+# holding it (decision AS-1), for example between an import and the launch, so
+# their files never block a start.
+SESSION_HOOK_NAMES = (
+    ".hook-events.log",
+    ".appsec-trace.log",
+    ".active-tool-calls",
+    ".agent-lifecycle.lock",
+    ".activity-throttle",
+    ".session-agent-map",
+    ".assessment-summary-emitted",
+)
 WORK_NAME = ".assessment-work"
 PARTIAL_REPORT = "budget-report.md"
 # What a refused resume names when its recorded identity no longer matches.
@@ -325,6 +337,7 @@ class AssessmentState:
             ".appsec-lock",
             ".appsec-lock.guard",
             *RUN_DIAGNOSTIC_NAMES,
+            *SESSION_HOOK_NAMES,
         }
         if self.scope.output_in_checkout():
             leftovers &= self._own_names()
