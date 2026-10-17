@@ -2,13 +2,9 @@
 """runtime/ensure_output_gitignore.py — establish the secure-by-default ``.gitignore``
 entry for the assessment output directory.
 
-``skills/publish-threat-model`` describes itself as "the deliberate counterpart
-to the secure-by-default ``.gitignore``", and ``publish_threat_model.patch_gitignore``
-looks for a literal ``docs/security/`` line to insert its negation exceptions
-after. Nothing created that line: ``setup-target`` does not, and the only
-``.gitignore`` writer in the plugin is the publish step itself, which runs long
-after a report exists. A first assessment therefore left the whole output
-directory tracked.
+Nothing else creates that rule: ``setup-target`` does not, and a first
+assessment into a checkout would otherwise leave the whole output directory
+tracked.
 
 That matters because the redaction sweep is deliberately narrow.
 ``redact_known_secrets._ARTIFACT_GLOBS`` is an allowlist covering the
@@ -47,7 +43,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MARKER = "# appsec-advisor: assessment output — publish deliberately via /appsec-advisor:publish-threat-model"
+MARKER = "# appsec-advisor: assessment output — share it through an explicit export, not git"
 
 
 def _repo_root(start: Path) -> Path | None:
@@ -127,12 +123,8 @@ def ensure(output_dir: Path) -> str | None:
             return None
 
         # ``<dir>/**``, never ``<dir>/``. Git cannot re-include a file whose
-        # parent directory is excluded, so the plain directory form silently
-        # disables every ``!``-negation publish_threat_model.patch_gitignore
-        # writes — the deliverable stays ignored and publishing becomes a no-op.
-        # Matching the directory's entries instead keeps negation working.
-        # Both forms are anchors patch_gitignore searches for; only this one
-        # functions.
+        # parent directory is excluded, so the plain directory form would
+        # disable a ``!``-negation an earlier publication left for a report.
         block = f"{MARKER}\n{rel}/**\n"
         if text and not text.endswith("\n"):
             text += "\n"

@@ -98,7 +98,6 @@ GROUPS = {
         pentest_tasks
         pregenerate_fragments
         pregenerate_fragments_coverage
-        publish_threat_model
         qa_checks
         qa_checks_cov_band1
         qa_checks_cov_band2
@@ -2038,7 +2037,6 @@ SOURCE_TESTS = {
         figure1b_compose
         figure_details
         figure_theme
-        publish_threat_model
         qa_checks
         threat_fixture
     """),
@@ -5109,17 +5107,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/model/publish_threat_model.py": _tests("""
-        portable_model_readers
-        check_target_specificity
-        ensure_output_gitignore
-        gate_preconditions
-        publish_threat_model
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-    """),
     "scripts/validators/qa_arch_coverage.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5680,7 +5667,6 @@ SOURCE_TESTS = {
         load_business_context
         orchestration_controller
         p1_renderer_correctness
-        publish_threat_model
         qa_checks_cov_band1
         qa_checks_cov_band2
         qa_checks_cov_band4

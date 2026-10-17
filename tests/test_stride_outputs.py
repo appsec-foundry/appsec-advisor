@@ -98,7 +98,6 @@ _BROAD_GLOB_ALLOWED = {
     "runtime/stride_outputs.py",  # defines the pattern
     "orchestrator/orchestration_controller.py",  # full/rebuild cleanup
     "runtime/runtime_cleanup.py",  # cleanup whitelist (docstring)
-    "model/publish_threat_model.py",  # never-publish list
     "validators/validate_cache.py",  # JSON-validity sweep
 }
 

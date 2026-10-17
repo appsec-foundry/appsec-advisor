@@ -1340,16 +1340,12 @@ requirements:
 
   REQ-USE-007:
     applies_to:
-      - scripts/model/publish_threat_model.py
-      - skills/publish-threat-model/**
+      - skills/export-security-assessment/**
     decisions: []
     documents:
       - docs/threat-modeler.md
-    coverage: partial
-    guards:
-      - tests/test_publish_threat_model.py::TestMain::test_secret_in_md_blocks
-      - tests/test_publish_threat_model.py::TestMain::test_check_only_returns_zero_and_lists_files
-      - tests/test_publish_threat_model.py::test_support_drafts_and_reproductions_are_never_published
+    coverage: advisory
+    guards: []
 
   REQ-USE-008:
     applies_to:

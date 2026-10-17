@@ -108,16 +108,6 @@ def test_review_refuses_before_writing(output, tmp_path, command, target):
     assert not (tmp_path / "written.md").exists() and not (tmp_path / "triage.yaml").exists()
 
 
-def test_publish_is_blocked_without_touching_the_repository(output, tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    before = tree(output)
-    result = run("model/publish_threat_model.py", "--output-dir", output, "--repo-root", repo, "--commit", "--json")
-    assert result.returncode == 1
-    assert any(REFUSAL in blocker for blocker in json.loads(result.stdout)["blockers"])
-    assert tree(repo) == [] and tree(output) == before
-
-
 @pytest.mark.parametrize(
     "command, code", [("check-changes", 3), ("dirty-set", 4), ("update", 1), ("check-fingerprint", 2)]
 )

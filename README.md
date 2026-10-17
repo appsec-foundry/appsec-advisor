@@ -118,9 +118,6 @@ what should I fix first?
 
 # Reassess after code changes while preserving history
 /appsec-advisor:create-threat-model --full
-
-# Optionally publish a reviewed model to version control
-/appsec-advisor:publish-threat-model
 ```
 
 Updates preserve finding IDs. Review decisions are stored separately. Run `/appsec-advisor:help` for the complete command list.

@@ -20,7 +20,6 @@ labels: enhancement
 - [ ] `appsec-stride-analyzer-v2` (sub-agent)
 - [ ] `appsec-qa-reviewer` (sub-agent)
 - [ ] `create-threat-model` skill
-- [ ] `update-threat-model` skill
 - [ ] `check-appsec-requirements` skill
 - [ ] MCP context server
 - [ ] Documentation
