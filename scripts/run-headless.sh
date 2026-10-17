@@ -139,6 +139,7 @@ Options:
   --rebuild                  Start the assessment over and reset its history
   --fail-on <level>          Exit 20 when new findings reach critical|high|medium
   --max-duration <seconds>   Cumulative deadline of the run (default 14400)
+  --component-workers <N>    Analyze 1-4 components concurrently (default 3)
   --hard-budget <usd>        Total model-cost limit; required unless the run is
                              launched interactively
   --soft-budget <usd>        Deprecated: a limit of 1.25 x this value

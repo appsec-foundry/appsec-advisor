@@ -542,6 +542,18 @@ def test_optional_work_protects_pending_analysis_and_uses_measured_job_cost(tmp_
     assert host.calls == 1
 
 
+@pytest.mark.parametrize("workers,reserved_seconds", [(2, 40), (3, 27), (4, 20)])
+def test_completion_time_reserve_uses_component_worker_limit(workers, reserved_seconds):
+    from runtime.assessment_jobs import FINALIZATION_SECONDS
+
+    budget = AssessmentBudget(1.0, 0.05, 10, 3600, component_workers=workers)
+    budget.plan_required("stride:remaining", "stride_analyzer", 4)
+    budget.observed["stride_analyzer"] = (0.01, 10)
+
+    with budget.job("review:optional", "review", True):
+        assert budget._reserve()[1] == reserved_seconds + FINALIZATION_SECONDS
+
+
 def test_optional_work_keeps_time_for_the_report_and_local_finalization(tmp_path):
     from runtime.assessment_jobs import FINALIZATION_SECONDS, REPORT_JOB
 

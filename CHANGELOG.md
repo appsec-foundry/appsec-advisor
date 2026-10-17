@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The Management Summary groups remediation priorities by root cause and severity, and Critical Findings by Root Cause replaces the Critical Attack Tree with links to weakness records and structural fixes.
-- Headless controller assessments analyze up to four components concurrently within the same cost budget, reserve resources for required completion, and retain a clearly incomplete snapshot when required work cannot finish.
+- Headless controller assessments analyze up to three components concurrently by default, let operators choose one to four, reserve resources for required completion, and retain a clearly incomplete snapshot when required work cannot finish.
 - Headless findings count as confirmed exploitable when source evidence establishes insecure code, attacker reachability, and no stopping control; reports identify unresolved checks and source coverage gaps.
 - Figure 1 and Figure 1b show network and build trust boundaries more precisely, and Figure 1 distinguishes unauthenticated client requests and maps more client calls to their routes.
 - Threat Analyst design questions, reviews, and hypothesis checks use existing threat-model context unless `--isolated` is passed, and reviews also inspect relevant imports and files cited by earlier findings.

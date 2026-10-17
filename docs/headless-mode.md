@@ -170,6 +170,8 @@ The models have no file, shell or network tools. The controller serves every sou
 
 The controller supplies component-specific analysis guides and requires a source-backed decision for each investigation target: detected handlers, outbound calls, capability and flow evidence, and component files without a detected surface. Large components use several bounded jobs within the existing run budget. An unread target prevents that component's analysis from completing; a target that was read but left unresolved is reported as a warning. This checks the supplied targets; it does not prove that every vulnerability or framework-specific mechanism was found.
 
+`--component-workers N` sets how many components the controller analyzes at once (1–4, default 3). A lower value sends fewer simultaneous model calls and can reduce rate-limit errors, but takes longer. It changes neither the selected components nor accepted job results; you can change it when resuming an interrupted run.
+
 A new run in the same output directory reuses every model step of an unfinished earlier run whose input is unchanged. Over a completed assessment, it replaces the report and continues its history. `--rebuild` redoes every model step and resets the history.
 
 ## Cost and duration limits

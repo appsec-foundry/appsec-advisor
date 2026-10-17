@@ -17,6 +17,7 @@ import stat
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -36,6 +37,10 @@ MAX_ASSESSMENT_SECONDS = 43_200
 # Local composition, validation and publication need time even after the last call.
 FINALIZATION_SECONDS = 120
 REPORT_JOB = "stage2:security-architecture"
+# Component jobs share this limit with the controller's worker pool and the
+# completion-time reserve.
+ASSESSMENT_COMPONENT_WORKERS = 3
+MAX_ASSESSMENT_COMPONENT_WORKERS = 4
 
 
 def digest(value) -> str:
@@ -44,8 +49,11 @@ def digest(value) -> str:
     ).hexdigest()
 
 
+@dataclass
 class AssessmentBudget(DiscoveryBudget):
     """Aggregate the full assessment rather than the discovery phase alone."""
+
+    component_workers: int = ASSESSMENT_COMPONENT_WORKERS
 
     def __post_init__(self):
         if (
@@ -57,6 +65,8 @@ class AssessmentBudget(DiscoveryBudget):
             or not 1 <= self.timeout_s <= MAX_ASSESSMENT_SECONDS
             or self.spent_usd != 0
             or self.calls != 0
+            or type(self.component_workers) is not int
+            or not 1 <= self.component_workers <= MAX_ASSESSMENT_COMPONENT_WORKERS
         ):
             raise ExchangeError("Invalid full-assessment budget")
         self.deadline = time.monotonic() + self.timeout_s
@@ -117,7 +127,7 @@ class AssessmentBudget(DiscoveryBudget):
                 parallel += count * seconds
             else:
                 serial += count * seconds
-        return dollars, math.ceil(serial + parallel / 4) + FINALIZATION_SECONDS
+        return dollars, math.ceil(serial + parallel / self.component_workers) + FINALIZATION_SECONDS
 
     def available_usd(self):
         available = super().available_usd()

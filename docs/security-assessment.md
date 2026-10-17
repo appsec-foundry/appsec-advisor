@@ -235,7 +235,7 @@ The assessment always covers the whole repository. A request to narrow it to a c
 
 ### Large component inventories
 
-Every run keeps every selected component in scope. The controller analyzes up to four components at the same time and records each accepted result, so `--resume` does not repeat it. Publication is blocked if a component still has no valid result after retry.
+Every run keeps every selected component in scope. The controller analyzes up to three components at the same time by default; set `--component-workers 1` through `--component-workers 4` to change this. It records each accepted result, so `--resume` does not repeat it. Publication is blocked if a component still has no valid result after retry.
 
 ### Requirements catalog
 
