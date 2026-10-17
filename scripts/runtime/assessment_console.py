@@ -2,13 +2,14 @@
 """Conversation lines for a controller assessment that runs in the background.
 
 Usage:
-  python3 runtime/assessment_console.py follow --progress-file <FILE> [--from-end]
+  python3 runtime/assessment_console.py follow --progress-file <FILE> [--from-end] [--output <OUTPUT_DIR>]
   python3 runtime/assessment_console.py close --output <OUTPUT_DIR> --exit-code <N> [--log <FILE>]
 
 ``follow`` reads the controller's ``--progress-file`` as it grows and prints
 one finished line per milestone: the run header, each phase's start and end,
 each finished component and each warning. It exits after the run's ``end``
-record. ``--from-end`` skips the records already written, for a watcher that
+record, or with ``--output`` once the run that held that directory released it
+without one. ``--from-end`` skips the records already written, for a watcher that
 resumes an earlier one. ``close`` prints the run's closing block once the
 command has exited: the controller's summary after a completed run, otherwise
 the outcome and the last lines of the command's output.
@@ -92,25 +93,36 @@ def render(record: dict) -> list[str]:
 
 
 def records(
-    path: Path, from_end: bool = False, sleep: Callable[[float], None] = time.sleep, poll: float = 0.5
+    path: Path,
+    from_end: bool = False,
+    sleep: Callable[[float], None] = time.sleep,
+    poll: float = 0.5,
+    running: Callable[[], bool] | None = None,
 ) -> Iterator[dict]:
     """Each complete record of ``path`` as it is appended, until the run's ``end`` record.
 
     The file may not exist yet, may hold a half-written line, and is replaced
-    when a new run starts; a replaced file is read from its beginning.
+    when a new run starts; a replaced file is read from its beginning. With
+    ``running``, reading also stops once a run that was seen live has released
+    its directory and the file has nothing left: a run that died before writing
+    ``end`` must not keep the watcher open until it times out.
     """
-    offset, pending = None, b""
+    offset, pending, seen_live = None, b"", False
     while True:
         try:
             size = path.stat().st_size
         except OSError:
-            sleep(poll)
-            continue
-        if offset is None:
+            size = None
+        if size is not None and offset is None:
             offset = size if from_end else 0
-        if size < offset:
+        if size is not None and size < offset:
             offset, pending = 0, b""
-        if size == offset:
+        if size is None or size == offset:
+            if running is not None:
+                if running():
+                    seen_live = True
+                elif seen_live:
+                    return
             sleep(poll)
             continue
         with path.open("rb") as stream:
@@ -130,9 +142,15 @@ def records(
                 return
 
 
-def follow(path: Path, from_end: bool = False, out=None, sleep: Callable[[float], None] = time.sleep) -> None:
+def follow(
+    path: Path,
+    from_end: bool = False,
+    out=None,
+    sleep: Callable[[float], None] = time.sleep,
+    running: Callable[[], bool] | None = None,
+) -> None:
     out = out or sys.stdout
-    for record in records(path, from_end, sleep):
+    for record in records(path, from_end, sleep, running=running):
         for line in render(record):
             # One flush per line: the watcher turns each written line into an event.
             out.write(line + "\n")
@@ -169,13 +187,20 @@ def main(argv: list[str] | None = None) -> int:
     watch = commands.add_parser("follow")
     watch.add_argument("--progress-file", required=True, type=Path)
     watch.add_argument("--from-end", action="store_true")
+    watch.add_argument("--output", type=Path)
     close = commands.add_parser("close")
     close.add_argument("--output", required=True, type=Path)
     close.add_argument("--exit-code", required=True, type=int)
     close.add_argument("--log", type=Path)
     args = parser.parse_args(argv)
     if args.command == "follow":
-        follow(args.progress_file, args.from_end)
+        running = None
+        if args.output:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from runtime.live_run_holder import holder
+
+            running = lambda: holder(args.output) is not None  # noqa: E731
+        follow(args.progress_file, args.from_end, running=running)
     else:
         print("\n".join(closing(args.output, args.exit_code, args.log)))
     return 0

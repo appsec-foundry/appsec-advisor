@@ -211,12 +211,13 @@ description `assessment progress`, and this command:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/assessment_console.py" follow \
-  --progress-file "$OUTPUT_DIR/.assessment-progress.jsonl"
+  --progress-file "$OUTPUT_DIR/.assessment-progress.jsonl" --output "$OUTPUT_DIR"
 ```
 
-It prints finished lines for the run header, each phase's start and end, each
-finished component and each warning; the command's output panel keeps
-everything else. Then end your turn without any text.
+It ends by itself once the run ends, so it is never stopped. It prints
+finished lines for the run header, each phase's start and end, each finished
+component and each warning; the command's output panel keeps everything else.
+Then end your turn without any text.
 
 Print every line of each monitor event verbatim, in arrival order, and nothing
 else: no introduction, no interpretation, no findings, no questions. A warning
@@ -252,8 +253,8 @@ show.
 
 ## Completion
 
-When the command's task notification arrives, stop the monitor with
-`TaskStop`, then run, with the notification's exit code and output file:
+When the command's task notification arrives, run, with the notification's
+exit code and output file:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/assessment_console.py" close \
