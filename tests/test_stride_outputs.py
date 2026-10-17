@@ -87,33 +87,6 @@ def test_baseline_hashes_only_components(tmp_path):
     assert list(baseline_state._hash_stride_files(out)) == ["auth"]
 
 
-def test_reanalyzed_ids_ignore_legacy_sidecar_keys(tmp_path):
-    """A baseline written before the fix carries sidecar ids. Their content
-    changes nearly every run, so they must not surface as changed components."""
-    import model.build_threat_model_yaml as build_threat_model_yaml
-
-    out = _make_run(tmp_path, ["auth"])
-    cache = out / ".appsec-cache"
-    cache.mkdir()
-    (cache / "baseline.json").write_text(
-        json.dumps(
-            {
-                "stride_files": {
-                    "auth": {"path": ".stride-auth.json", "sha256": "sha256:stale"},
-                    "dispatch-manifest": {"path": ".stride-dispatch-manifest.json", "sha256": "sha256:stale"},
-                    "analyst-context": {"path": ".stride-analyst-context.json", "sha256": "sha256:stale"},
-                    "repository-registry": {
-                        "path": ".stride-repository-registry.json",
-                        "sha256": "sha256:stale",
-                    },
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert build_threat_model_yaml._reanalyzed_component_ids(out) == {"auth"}
-
-
 # ---------------------------------------------------------------------------
 # Drift guard — new consumers must use the helper
 # ---------------------------------------------------------------------------
