@@ -87,9 +87,6 @@ except ImportError:
     )
 
 
-DEFAULT_INPUT_REL = "docs/security/threat-model.md"
-
-
 def _expand_architecture_detail(md_text: str, base_dir: Path | None = None) -> str:
     """Keep the generated detail accessible inside the standalone HTML export.
 
@@ -261,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         "--input",
         type=Path,
         default=None,
-        help=f"Input Markdown file (default: ./{DEFAULT_INPUT_REL})",
+        help="Input Markdown file (default: the report of the current repository's assessment)",
     )
     parser.add_argument(
         "--output",
@@ -297,7 +294,12 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("[export_html] preflight ok (check-only).\n")
         return 0
 
-    input_md = args.input or Path.cwd() / DEFAULT_INPUT_REL
+    if args.input is None:
+        from shared.assessment_location import default_report
+
+        input_md = default_report(Path.cwd())
+    else:
+        input_md = args.input
     if not input_md.is_file():
         sys.stderr.write(
             f"[export_html] input file not found: {input_md}\n"

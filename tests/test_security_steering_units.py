@@ -390,10 +390,22 @@ def test_assemble_requirement_missing_priority_uses_dash():
 # ---------------------------------------------------------------------------
 
 
-def test_log_coach_event_writes_line(tmp_path, monkeypatch):
+def _assessment_checkout(tmp_path, monkeypatch):
+    """A checkout in ``tmp_path`` whose external assessment directory exists; returns that directory."""
+    from shared.assessment_location import application_directory
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
     monkeypatch.chdir(tmp_path)
+    directory = application_directory(tmp_path)
+    directory.mkdir(parents=True)
+    return directory
+
+
+def test_log_coach_event_writes_line(tmp_path, monkeypatch):
+    directory = _assessment_checkout(tmp_path, monkeypatch)
     ss._log_coach_event(["auth", "_legacy"], ["SEC-1"], 42, "the prompt")
-    log = tmp_path / "docs" / "security" / ".hook-events.log"
+    log = directory / ".hook-events.log"
     assert log.is_file()
     content = log.read_text()
     assert "COACH_INJECTED" in content
@@ -401,21 +413,29 @@ def test_log_coach_event_writes_line(tmp_path, monkeypatch):
     assert "req_ids=SEC-1" in content
 
 
+def test_log_coach_event_never_creates_a_directory_in_the_checkout(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    monkeypatch.chdir(tmp_path)
+    ss._log_coach_event(["auth"], [], 0, "p")
+    assert not (tmp_path / "docs").exists() and not (tmp_path / "_data").exists()
+
+
 def test_log_coach_event_swallows_errors(monkeypatch):
-    """A makedirs failure must not raise (lines 410-411)."""
+    """A failing lookup must not raise."""
 
     def boom(*a, **k):
         raise OSError("read-only fs")
 
-    monkeypatch.setattr(ss.os, "makedirs", boom)
+    monkeypatch.setattr(ss, "_assessment_directory", boom)
     # Must not raise.
     ss._log_coach_event(["auth"], [], 0, "p")
 
 
 def test_log_coach_event_empty_topics_and_reqs(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    directory = _assessment_checkout(tmp_path, monkeypatch)
     ss._log_coach_event([], [], 0, "p")
-    content = (tmp_path / "docs" / "security" / ".hook-events.log").read_text()
+    content = (directory / ".hook-events.log").read_text()
     assert "topics=-" in content
     assert "req_ids=-" in content
 

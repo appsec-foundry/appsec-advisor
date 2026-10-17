@@ -26,7 +26,7 @@ Use decision `answered` when the answer file holds either substantive answer, `u
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" assess-context-save \
-  --repo "$REPO" --context-answer <decision> [--impact-choice <choice>] [--use-case-choice <choice>]
+  --repo "$REPO" --output "$OUTPUT_DIR" --context-answer <decision> [--impact-choice <choice>] [--use-case-choice <choice>]
 ```
 
 Add `--impact-choice no-material-harm` when the user selected the no-material-harm option, `--impact-choice declared-harm` when they selected one of your proposed outcomes; omit it for free text, unknown, or skip. Add `--use-case-choice confirmed` for **Yes, assess this use case**, `--use-case-choice corrected` for a different use case described in free text; omit it for a bare “No”, unknown, skip, or a use case taken from existing context.

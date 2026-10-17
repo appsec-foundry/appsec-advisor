@@ -295,3 +295,20 @@ def test_profile_allowlist_read_from_effective_file(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("OUTPUT_DIR", str(out))
     assert guard._allowlist_from_profile() == ["security.acme.example"]
+
+
+def test_profile_allowlist_read_from_the_checkouts_assessment_directory(tmp_path, monkeypatch):
+    from shared.assessment_location import application_directory
+
+    monkeypatch.delenv("APPSEC_URL_ALLOWLIST", raising=False)
+    monkeypatch.delenv("OUTPUT_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    (tmp_path / ".git").mkdir()
+    monkeypatch.chdir(tmp_path)
+    directory = application_directory(tmp_path)
+    directory.mkdir(parents=True)
+    (directory / "security-assessment.yaml").write_text("meta: {}\n")
+    (directory / ".org-profile-effective.json").write_text(
+        json.dumps({"defaults": {"url_allowlist": ["security.acme.example"]}})
+    )
+    assert guard._allowlist_from_profile() == ["security.acme.example"]

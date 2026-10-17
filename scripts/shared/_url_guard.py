@@ -97,7 +97,14 @@ def _allowlist_from_profile() -> list[str] | None:
     output_dir = os.environ.get("OUTPUT_DIR")
     if output_dir:
         candidates.append(os.path.join(output_dir, ".org-profile-effective.json"))
-    candidates.append(os.path.join(os.getcwd(), "docs", "security", ".org-profile-effective.json"))
+    try:
+        from shared.assessment_location import locate_from
+
+        located = locate_from(_Path(os.getcwd()))
+    except Exception:  # noqa: BLE001 — no assessment directory means no profile allowlist
+        located = None
+    if located is not None:
+        candidates.append(os.path.join(located, ".org-profile-effective.json"))
     for path in candidates:
         try:
             with open(path) as fh:

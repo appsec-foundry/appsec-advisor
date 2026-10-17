@@ -183,24 +183,29 @@ def _answer(reports, text="Records of paying customers for invoicing."):
 
 
 @pytest.mark.parametrize("name", ["solo", "records-service"])
-def test_dialog_answers_reach_the_checkout_context_without_a_session_run(tmp_path, name):
+def test_dialog_answers_reach_the_checkout_context_without_a_session_run(tmp_path, monkeypatch, name):
+    from shared.assessment_location import application_directory
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     root = tmp_path / name
     checkout(root)
     action = controller.assess_context_preview(str(root))
+    # The dialog shares the run's private destination; the saved answers stay a repository input.
+    output = application_directory(root)
     reports = root / "docs" / "security"
-    assert Path(action["preview"]).is_file() and Path(action["output_dir"]) == reports
+    assert Path(action["preview"]).is_file() and Path(action["output_dir"]) == output
     # The dialog belongs to this skill and names only the launch helpers' own save command.
     instructions = Path(action["instruction_file"])
     assert instructions.parent == controller.PLUGIN_ROOT / "skills" / "appsec-analyzer"
     commands = set(re.findall(r"orchestration_controller\.py\" ([a-z-]+)", instructions.read_text()))
     assert commands == {"assess-context-save"}
-    _answer(reports)
+    _answer(output)
     saved = controller.assess_context_save(
         str(root), context_answer="answered", impact_choice=None, use_case_choice="confirmed"
     )
     assert saved["action"] == "context_saved"
     assert "paying customers for invoicing" in (reports / "business-context.md").read_text()
-    assert not (reports / ".business-context-raw.md").exists() and not Path(action["preview"]).exists()
+    assert not (output / ".business-context-raw.md").exists() and not Path(action["preview"]).exists()
 
 
 def test_dialog_save_refuses_inconsistent_or_foreign_state(tmp_path):
@@ -209,19 +214,22 @@ def test_dialog_save_refuses_inconsistent_or_foreign_state(tmp_path):
     before = (reports / "business-context.md").read_text()
     with pytest.raises(controller.CallError, match="impact choice requires"):
         controller.assess_context_save(
-            str(root), context_answer="skip", impact_choice="declared-harm", use_case_choice=None
+            str(root), context_answer="skip", impact_choice="declared-harm", use_case_choice=None, output=str(reports)
         )
     _answer(reports, "api_key = 'sk-live-0123456789abcdefghijklmnop'")
     with pytest.raises(controller.CallError, match="rejected"):
-        controller.assess_context_save(str(root), context_answer="answered", impact_choice=None, use_case_choice=None)
+        controller.assess_context_save(
+            str(root), context_answer="answered", impact_choice=None, use_case_choice=None, output=str(reports)
+        )
     assert (reports / "business-context.md").read_text() == before
     # A live run holding the directory keeps it to itself.
     controller.acquire_lock._write_lock(reports / ".appsec-lock", os.getpid(), int(time.time()), "another-run")
     with pytest.raises(controller.CallError, match="another live run"):
-        controller.assess_context_preview(str(root))
+        controller.assess_context_preview(str(root), str(reports))
 
 
-def test_a_linked_report_directory_is_refused_before_any_write(tmp_path):
+def test_a_linked_report_directory_is_refused_before_any_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     root = tmp_path / "solo"
     checkout(root)
     elsewhere = tmp_path / "elsewhere"
@@ -451,3 +459,65 @@ def test_a_one_repository_refusal_does_not_call_itself_multi_repository(tmp_path
         controller.assess_repositories(argv, host_factory=lambda *args: pytest.fail("no model may be called"))
     assert "--incremental is not supported" in str(refused.value)
     assert "multi-repository" not in str(refused.value)
+
+
+def _destination(argv):
+    ns, _rest = controller._assessment_argument_parser().parse_known_args(argv)
+    return controller._assessment_destination(ns)
+
+
+def test_without_output_the_run_writes_to_a_private_application_directory(tmp_path, monkeypatch):
+    """REQ-TRU-005 / AS-1: the default destination lies outside the checkout and only its owner can read it."""
+    from shared.assessment_location import application_directory, assessment_directory, combined_application_name
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(sys, "platform", "linux")
+    for name in ("solo", "other"):
+        checkout(tmp_path / name)
+    output = Path(_destination(["--repo", str(tmp_path / "solo")]))
+    assert output == application_directory(tmp_path / "solo")
+    assert not output.is_relative_to(tmp_path / "solo")
+    for level in (output, output.parent, output.parent.parent):
+        assert level.stat().st_mode & 0o777 == 0o700
+    combined = {
+        _destination(["--repo", str(tmp_path / a), "--repo", str(tmp_path / b)])
+        for a, b in (("solo", "other"), ("other", "solo"))
+    }
+    names = [application_directory(tmp_path / n).name for n in ("solo", "other")]
+    assert combined == {str(assessment_directory(combined_application_name(names)))}
+
+
+def test_an_explicit_output_elsewhere_is_used_as_given(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    checkout(tmp_path / "solo")
+    target = tmp_path / "reports"
+    assert _destination(["--repo", str(tmp_path / "solo"), "--output", str(target)]) == str(target)
+    assert not target.exists() and not (tmp_path / "data").exists()
+
+
+def test_a_destination_another_process_could_redirect_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(sys, "platform", "linux")
+    checkout(tmp_path / "solo")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "data" / "appsec-advisor").symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(controller.CallError, match="not private"):
+        _destination(["--repo", str(tmp_path / "solo")])
+    group = tmp_path / "data2" / "appsec-advisor"
+    group.mkdir(parents=True, mode=0o755)
+    group.chmod(0o755)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data2"))
+    with pytest.raises(controller.CallError, match="not private"):
+        _destination(["--repo", str(tmp_path / "solo")])
+
+
+def test_the_run_creates_files_for_its_owner_only_and_restores_the_umask(monkeypatch):
+    seen = []
+    monkeypatch.setattr(controller, "_assess_main", lambda argv: seen.append(os.umask(0o077)) or 0)
+    before = os.umask(0o022)
+    try:
+        assert controller.assess_main([]) == 0
+        assert seen == [0o077] and os.umask(0o022) == 0o022
+    finally:
+        os.umask(before)

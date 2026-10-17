@@ -326,11 +326,13 @@ def test_write_missing_preserves_unrelated_keys(tmp_path):
 
 
 def test_main_exit_code_when_all_granted(tmp_path, capsys, monkeypatch):
-    # build a project settings.json that grants every required entry
+    # build a project settings.json that grants every required entry; the
+    # default output is the repository's assessment directory under the data directory
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     entries = cp.load_required(cp.DATA_FILE)
-    expanded = [
-        cp.expand_entry(e["entry"], tmp_path, tmp_path / "docs" / "security", plugin_dir=tmp_path) for e in entries
-    ]
+    output = cp._assessment_directory(tmp_path)
+    assert output.is_relative_to(tmp_path / "data" / "appsec-advisor" / "assessments")
+    expanded = [cp.expand_entry(e["entry"], tmp_path, output, plugin_dir=tmp_path) for e in entries]
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir()
     settings.write_text(json.dumps({"permissions": {"allow": expanded}}))

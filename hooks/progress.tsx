@@ -3,19 +3,21 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Band, Live, Progress } from '../types/progress'
 
-const PANE = 'threat-model-progress'
-const TITLE = 'Threat model progress'
+const PANE = 'assessment-progress'
+const TITLE = 'Assessment progress'
 const KEEP = 200
 const POLL_MS = 1000
 // A resumed step replays earlier phases within seconds; no toast for those.
 const REPLAY_S = 10
 // The controller's default heartbeat threshold, for a lock that states no stale_after=.
 const LIVE_STALE_S = 300
-const REPORT_DIR = 'docs/security'
+// Where a run started outside this session reports: the legacy directory in the
+// checkout. A step this session launched names its own --output.
+const LEGACY_REPORT_DIR = 'docs/security'
 
 const progress = atom(
   { plugin: 'appsec-advisor', key: 'progress' } as const,
-  { file: undefined, lines: [] } as Progress,
+  { file: undefined, dir: undefined, lines: [] } as Progress,
 )
 
 const NO_BAND: Band = { file: undefined, phase: undefined, seenAt: 0, runBase: 0, dismissed: false }
@@ -43,6 +45,13 @@ const DURATION = /^(<1m|\d+h(\d\dm)?|\d+m)$/
 
 export const isStepCommand = (command: string): boolean =>
   command.includes('run-headless.sh') && command.includes('--interactive-launch')
+
+// The step command names the run's output directory; the skill passes it literally.
+export const outputDirOf = (command: string): string | undefined => {
+  const match = command.match(/--output\s+(?:"([^"]+)"|'([^']+)'|(\S+))/)
+
+  return match === null ? undefined : (match[1] ?? match[2] ?? match[3])
+}
 
 export const outputFileOf = (text: string | undefined): string | undefined =>
   text?.match(/Output is being written to: (\S+\.output)/)?.[1]
@@ -110,8 +119,8 @@ export const phaseKeyOf = (step: Step): string | undefined =>
 
 export const toastOf = (before: Step, after: Step, phaseSeconds: number, totalSeconds: number): string | undefined => {
   if (before.outcome !== 'running') return undefined
-  if (after.outcome === 'failed') return `✗ Threat model: ${after.message}`
-  if (after.outcome === 'complete') return `✓ Threat model complete (${durationOf(totalSeconds)})`
+  if (after.outcome === 'failed') return `✗ Assessment: ${after.message}`
+  if (after.outcome === 'complete') return `✓ Assessment complete (${durationOf(totalSeconds)})`
   const phase = before.phase
   if (phase === undefined || before.done.includes(phase.k) || !after.done.includes(phase.k)) return undefined
   if (phaseSeconds < REPLAY_S) return undefined
@@ -157,10 +166,10 @@ const shortRun = (runId: string): string => runId.replace(/^assessment-/, '').sl
 // A killed controller never writes its final status; with its lock gone stale a
 // state that still says `running` describes a run that died.
 export const endedOf = (runId: string, status: string): string =>
-  `Threat model run ${shortRun(runId)} ended${status === '' ? '' : `: ${status === 'running' ? 'interrupted (process gone)' : status}`}`
+  `Assessment run ${shortRun(runId)} ended${status === '' ? '' : `: ${status === 'running' ? 'interrupted (process gone)' : status}`}`
 
 const pollLive = async ($: EngineInterface, t: number): Promise<void> => {
-  const dir = `${await $.session.root()}/${REPORT_DIR}`
+  const dir = (await read($, progress)).dir ?? `${await $.session.root()}/${LEGACY_REPORT_DIR}`
   const text = await $.fs.read(`${dir}/.appsec-lock`).catch(() => undefined)
   const lock = text === undefined ? undefined : lockOf(text)
   const before = await read($, live)
@@ -203,7 +212,7 @@ const pollLive = async ($: EngineInterface, t: number): Promise<void> => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'threat-model-progress',
+      name: PANE,
       description: 'Show the running appsec-analyzer step in a pane',
     })
     $.clock.every(POLL_MS, async () => {
@@ -223,7 +232,7 @@ export const register: Register = on => {
       const b = await read($, band)
       const toast = toastOf(before, after, (t - b.seenAt) / 1000, b.runBase + (t - b.seenAt) / 1000)
       if (toast !== undefined) $.ui.toast(toast)
-      await update($, progress, p => (p.file === file ? { file, lines: tail } : p))
+      await update($, progress, p => (p.file === file ? { ...p, lines: tail } : p))
       const phase = phaseKeyOf(after)
       if (phase !== b.phase) {
         await update($, band, x => (x.file === file ? { ...x, phase, seenAt: t, runBase: after.elapsed ?? x.runBase } : x))
@@ -233,7 +242,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'threat-model-progress' }, async $ => {
+  on('command.run', { command: PANE }, async $ => {
     await $.ui.open({ id: PANE, title: TITLE })
     const { file } = await read($, progress)
 
@@ -246,7 +255,7 @@ export const register: Register = on => {
     const file = outputFileOf(ran.text)
     if (file === undefined) return ran
     const t = await $.clock.now()
-    await update($, progress, () => ({ file, lines: [] }))
+    await update($, progress, () => ({ file, dir: outputDirOf(e.command), lines: [] }))
     await update($, band, () => ({ ...NO_BAND, file, seenAt: t }))
     void $.ui.open({ id: PANE, title: TITLE })
 
@@ -270,7 +279,7 @@ export const register: Register = on => {
 
       return (
         <Text wrap="truncate-end">
-          <Text color="blue">▶ Threat model</Text>
+          <Text color="blue">▶ Assessment</Text>
           <Text> · run {shortRun(run.runId)} · {durationOf(t / 1000 - run.startedAt)}</Text>
           {activity !== undefined && <Text color={run.retrying ? 'yellow' : undefined} dimColor={!run.retrying}> · {activity}</Text>}
         </Text>
@@ -285,7 +294,7 @@ export const register: Register = on => {
     if (step.outcome === 'failed') {
       return (
         <Box>
-          <Text color="red" wrap="truncate-end">✗ Threat model · {phase} failed · {step.message} </Text>
+          <Text color="red" wrap="truncate-end">✗ Assessment · {phase} failed · {step.message} </Text>
           {dismiss}
         </Box>
       )
@@ -293,20 +302,20 @@ export const register: Register = on => {
     if (step.outcome === 'complete') {
       return (
         <Box>
-          <Text color="green">✓ Threat model complete · {total} total </Text>
+          <Text color="green">✓ Assessment complete · {total} total </Text>
           {dismiss}
         </Box>
       )
     }
     if (step.outcome === 'paused') {
-      return <Text dimColor>⏸ Threat model · paused after {phase} · {total} total</Text>
+      return <Text dimColor>⏸ Assessment · paused after {phase} · {total} total</Text>
     }
     const warn = run?.retrying === true || (activity === undefined && (step.event === '⚠' || step.event === '↻'))
     const detail = activity ?? step.detail
 
     return (
       <Text wrap="truncate-end">
-        <Text color="blue">▶ Threat model</Text>
+        <Text color="blue">▶ Assessment</Text>
         <Text> · {phase} · {durationOf(phaseS)} in phase · {total} total</Text>
         {detail !== '' && <Text color={warn ? 'yellow' : undefined} dimColor={!warn}> · {detail}</Text>}
       </Text>

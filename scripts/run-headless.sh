@@ -9,7 +9,8 @@
 # Options:
 #   --repo <path|url>       Local repository or HTTPS/SSH Git URL (default: current directory)
 #                           Repeat to assess several checkouts as one system
-#   --output <path>         Output directory (default: <repo>/docs/security)
+#   --output <path>         Output directory (default: the application's private
+#                           directory under the user data directory)
 #   --yaml                  (no-op) yaml is always written by default
 #   --no-yaml               Suppress security-assessment.yaml
 #   --sarif                 Also write security-assessment.sarif.json (SARIF v2.1.0)
@@ -112,7 +113,8 @@ Options:
                              Repeat --repo to assess several repositories as one
                              system; this requires --output outside every checkout
                              and --soft-budget or --hard-budget
-  --output <path>            Output directory (default: <repo>/docs/security)
+  --output <path>            Output directory (default: the application's private
+                             directory under the user data directory)
   --yaml                     (no-op) yaml is always written by default
   --no-yaml                  Suppress security-assessment.yaml output
   --sarif                    Also write security-assessment.sarif.json (SARIF v2.1.0)

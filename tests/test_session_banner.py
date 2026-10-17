@@ -203,6 +203,19 @@ def test_reports_existing_model(tmp_path):
     assert "/appsec-advisor:triage-security-assessment" not in line
 
 
+def test_the_external_assessment_wins_over_a_legacy_docs_security_model(tmp_path, monkeypatch):
+    from shared.assessment_location import application_directory
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    write_model(tmp_path)
+    external = application_directory(tmp_path)
+    external.mkdir(parents=True)
+    legacy = (tmp_path / "docs" / "security" / "threat-model.yaml").read_text()
+    (external / "security-assessment.yaml").write_text(legacy.replace("acme-api", "external-api"))
+    line = tm_line(run_hook(str(tmp_path)))
+    assert "external-api" in line and "acme-api" not in line
+
+
 def test_assessment_depth_is_left_out(tmp_path):
     """How the report was produced is a detail of the report, not of the state."""
     write_model(tmp_path)

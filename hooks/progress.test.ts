@@ -1,6 +1,19 @@
 import { expect, test } from 'claude-code/testing'
 
-import { durationOf, endedOf, eventOf, isStepCommand, lockOf, outputFileOf, roleOf, rowOf, stepOf, tailOf, toastOf } from './progress'
+import {
+  durationOf,
+  endedOf,
+  eventOf,
+  isStepCommand,
+  lockOf,
+  outputDirOf,
+  outputFileOf,
+  roleOf,
+  rowOf,
+  stepOf,
+  tailOf,
+  toastOf,
+} from './progress'
 
 const START = '18:55:27  1/8 Reconnaissance    start  planning      <1m'
 const WARN = '17:56:51  1/8 Reconnaissance    ⚠      planning       3m          model call failed (server_error); repeating it in 15 s (attempt 2)'
@@ -11,6 +24,15 @@ test('recognizes a appsec-analyzer step command', () => {
   expect(isStepCommand('APPSEC_SINGLE_REPO_CONTROLLER=1 "/x/scripts/run-headless.sh" --repo r --output o --interactive-launch --pause-after 1')).toBe(true)
   expect(isStepCommand('"/x/scripts/run-headless.sh" --repo r')).toBe(false)
   expect(isStepCommand('npm test')).toBe(false)
+})
+
+test('takes the run directory from the step command', () => {
+  expect(outputDirOf('"/x/run-headless.sh" --repo r --output "/home/u/.local/share/appsec-advisor/assessments/app-1a2b3c4d" --interactive-launch')).toBe(
+    '/home/u/.local/share/appsec-advisor/assessments/app-1a2b3c4d',
+  )
+  expect(outputDirOf("run-headless.sh --output '/a b/c' --interactive-launch")).toBe('/a b/c')
+  expect(outputDirOf('run-headless.sh --output /plain --interactive-launch')).toBe('/plain')
+  expect(outputDirOf('run-headless.sh --repo r --interactive-launch')).toBe(undefined)
 })
 
 test('takes the output file from the background notice', () => {
@@ -44,7 +66,7 @@ test('toasts a phase end only when the phase was running before', () => {
   expect(toastOf(before, stepOf([START, DONE, NEXT]), 552, 552)).toBe('✓ Phase 1/8 Reconnaissance done (9m12s)')
   expect(toastOf(before, stepOf([START, DONE]), 2, 2)).toBe(undefined)
   expect(toastOf(stepOf([]), stepOf([START, DONE, NEXT]), 600, 600)).toBe(undefined)
-  expect(toastOf(before, stepOf([START, '✗ boom']), 5, 5)).toBe('✗ Threat model: boom')
+  expect(toastOf(before, stepOf([START, '✗ boom']), 5, 5)).toBe('✗ Assessment: boom')
   expect(toastOf(stepOf([START, '✗ boom']), stepOf([START, '✗ boom', '✗ boom']), 5, 5)).toBe(undefined)
 })
 
@@ -62,9 +84,9 @@ test('reads the lock heartbeat and run id', () => {
 })
 
 test('reports a run whose state still says running as interrupted', () => {
-  expect(endedOf('assessment-9cdfe5d0625c', 'running')).toBe('Threat model run 9cdfe5d ended: interrupted (process gone)')
-  expect(endedOf('assessment-9cdfe5d0625c', 'complete')).toBe('Threat model run 9cdfe5d ended: complete')
-  expect(endedOf('assessment-9cdfe5d0625c', '')).toBe('Threat model run 9cdfe5d ended')
+  expect(endedOf('assessment-9cdfe5d0625c', 'running')).toBe('Assessment run 9cdfe5d ended: interrupted (process gone)')
+  expect(endedOf('assessment-9cdfe5d0625c', 'complete')).toBe('Assessment run 9cdfe5d ended: complete')
+  expect(endedOf('assessment-9cdfe5d0625c', '')).toBe('Assessment run 9cdfe5d ended')
 })
 
 test('names the role of a host-events file', () => {

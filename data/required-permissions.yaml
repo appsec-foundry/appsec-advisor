@@ -59,7 +59,8 @@
 # files, and final .architect-status.json gate receipt.
 #
 # Placeholders expanded at check-time:
-#   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security
+#   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / the repository's assessment
+#                     directory under <data dir>/appsec-advisor/assessments (decision AS-1)
 #   ${REPO_ROOT}    — from --repo-root  / $REPO_ROOT  / current working dir
 #   ${PLUGIN_ROOT}  — from --plugin-root / auto-detected plugin directory
 #   ${HOME}         — the user's home dir (Path.home()); session-transcript reads

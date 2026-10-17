@@ -201,6 +201,8 @@ class TestTheHooks:
         }
         env = {key: value for key, value in os.environ.items() if key not in RUN_IDENTITY_VARS}
         env.update({"APPSEC_RUN_ID": run_id, "CLAUDE_PLUGIN_ROOT": str(REPO_ROOT)})
+        # The logger writes only into an output directory it is given or can resolve.
+        env["OUTPUT_DIR"] = str(repo / "docs" / "security")
         if headless:
             env["APPSEC_HEADLESS"] = "1"
         result = subprocess.run(

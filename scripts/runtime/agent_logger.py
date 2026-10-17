@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-appsec-advisor hook logger — writes to docs/security/.hook-events.log
-in the current working directory (the analyzed repo).
+appsec-advisor hook logger — writes to .hook-events.log in the run's output
+directory: OUTPUT_DIR, or the assessment directory of the analyzed checkout
+when that directory exists. Without one it writes nothing.
 
-This is SEPARATE from docs/security/.agent-run.log which is written
+This is SEPARATE from the output directory's .agent-run.log, which is written
 by the agents themselves via bash echo commands. Keeping them apart
 avoids confusing chronological interleaving.
 
@@ -198,60 +199,21 @@ def _clear_run_markers() -> None:
             pass
 
 
-def _existing_output_root(start: str) -> str | None:
-    """Nearest ancestor of ``start`` that is a checkout AND holds ``docs/security``.
-
-    Both signals are required because each alone picks the wrong directory.
-
-    ``.git`` alone walks to the filesystem root, so an unrelated or stray
-    checkout above captures every hook that fires outside a project — an empty
-    ``/tmp/.git``, which is a real thing to find on a shared box, is enough to
-    send events to ``/tmp/docs/security``. Writing outside the tree the run
-    belongs to is worse than the nesting this is here to fix.
-
-    ``docs/security`` alone is captured by the very stray directory this fixes.
-    A hook firing from ``<repo>/docs`` finds ``<repo>/docs/docs/security`` left
-    by an earlier run one candidate before it reaches the real one, so the bug
-    keeps its own artifact alive.
-
-    Together neither misfires: the stray nested directory sits under no
-    checkout of its own, and a checkout with no ``docs/security`` is not an
-    output root. Returns None on a first run, where nothing has been created
-    yet and the caller's cwd default is correct.
-    """
-    try:
-        path = Path(start).resolve()
-    except OSError:
-        return None
-    for candidate in (path, *path.parents):
-        try:
-            # ``.git`` is a FILE in a worktree or submodule checkout, so this
-            # has to be ``exists``, not ``is_dir``.
-            if (candidate / ".git").exists() and (candidate / "docs" / "security").is_dir():
-                return str(candidate)
-        except OSError:
-            return None
-    return None
-
-
 def _output_dir() -> str:
     """Resolve the appsec output directory.
 
     Preference order:
       1. OUTPUT_DIR environment variable (set by the skill dispatch).
       2. cwd itself when it already ends in docs/security — a hook firing from
-         a session whose cwd is already inside the output dir.
-      3. ``<nearest enclosing checkout that has one>/docs/security``.
-      4. cwd + /docs/security, for a first run with nothing to find yet.
+         a session whose cwd is already inside a legacy output dir.
+      3. The assessment directory of the checkout that contains the cwd
+         (decision AS-1), which may not exist yet.
 
-    Step 3 exists because a run's output directory does not move with the cwd,
-    and appending to the cwd made every subdirectory its own destination. Case
-    2 only ever caught the one cwd that was already the full output path; a
-    hook firing one level up, from ``<repo>/docs``, wrote a stray
-    ``<repo>/docs/docs/security``, and one from ``<repo>/routes`` a
-    ``<repo>/routes/docs/security``. Those writes succeed and go unread — the
-    run that owns the events looks in its own directory — so budget state and
-    hook events silently split across trees.
+    Without a checkout the result is empty. It never falls back to a
+    directory inside the checkout: an earlier fallback created
+    ``<cwd>/docs/security`` on every tool call in every repository, and
+    appending to the cwd made each subdirectory its own destination. ``main``
+    writes nothing unless the resolved directory already exists.
     """
     env = os.environ.get("OUTPUT_DIR")
     if env:
@@ -260,10 +222,13 @@ def _output_dir() -> str:
     norm = cwd.replace("\\", "/").rstrip("/")
     if norm.endswith("/docs/security") or norm == "docs/security":
         return cwd
-    root = _existing_output_root(cwd)
-    if root:
-        return os.path.join(root, "docs", "security")
-    return os.path.join(cwd, "docs", "security")
+    try:
+        from shared.assessment_location import locate_from
+
+        located = locate_from(Path(cwd))
+    except Exception:  # noqa: BLE001 — a hook must never fail on the lookup
+        located = None
+    return str(located) if located is not None else ""
 
 
 def _trace_path() -> str:
@@ -2512,14 +2477,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # env THIS process reads. Each hook call is a fresh process, so the mutation
     # cannot leak across runs; only set when unset; non-Agent tools have no
     # `prompt` field, so `_extract_param` returns '' and this is a no-op.
-    if not os.environ.get("OUTPUT_DIR"):
-        _od = _extract_param(
-            (data.get("tool_input", {}) or {}).get("prompt", "") or "",
-            "OUTPUT_DIR",
-            max_len=512,
-        )
-        if _od:
-            os.environ["OUTPUT_DIR"] = _od
+    _recover_output_dir(data)
 
     # Parsed only after the OUTPUT_DIR recovery above: a payload note has to
     # land in the run's own log, not in the plugin-root fallback.
@@ -3845,6 +3803,18 @@ def handle_subagent_start(data: dict, sid: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _recover_output_dir(data: dict) -> None:
+    """Set OUTPUT_DIR from an Agent dispatch prompt's ``OUTPUT_DIR=<abs>`` when the env lacks it."""
+    if not os.environ.get("OUTPUT_DIR"):
+        _od = _extract_param(
+            (data.get("tool_input", {}) or {}).get("prompt", "") or "",
+            "OUTPUT_DIR",
+            max_len=512,
+        )
+        if _od:
+            os.environ["OUTPUT_DIR"] = _od
+
+
 def main() -> None:
     if sys.argv[1:] == ["--clear-active-tool-calls"]:
         clear_terminal_active_tool_calls()
@@ -3858,6 +3828,24 @@ def main() -> None:
             pass
         return
 
+    # Only an existing output directory receives events. Without one the
+    # handlers, including the write guards, still run, but against a scratch
+    # directory removed afterwards: a session that runs no assessment leaves no
+    # trace in the checkout or the data directory.
+    if data.get("hook_event_name") == "PreToolUse":
+        _recover_output_dir(data)
+    output_dir = _output_dir()
+    if output_dir and os.path.isdir(output_dir):
+        _handle(data)
+        return
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="appsec-hook-") as scratch:
+        os.environ["OUTPUT_DIR"] = scratch
+        _handle(data)
+
+
+def _handle(data: dict) -> None:
     sid = data.get("session_id", "")
     event_name = data.get("hook_event_name", "")
 

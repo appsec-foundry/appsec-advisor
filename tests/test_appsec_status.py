@@ -835,6 +835,16 @@ class TestMain:
         assert rc == 0
         assert captured["od"] == target.resolve()
 
+    def test_main_defaults_to_the_external_assessment_directory(self, appsec_status, tmp_path, monkeypatch, capsys):
+        from shared.assessment_location import application_directory
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+        monkeypatch.setattr(appsec_status, "_last_run_info", lambda od: {"has_baseline": False})
+        monkeypatch.setattr(appsec_status, "_fast_path_preview", lambda od, rr: None)
+        assert appsec_status.main(["--repo-root", str(tmp_path), "--json"]) == 0
+        output = json.loads(capsys.readouterr().out)["paths"]["output_dir"]
+        assert output == str(application_directory(tmp_path))
+
     def test_main_full_is_read_only_for_run_state(self, appsec_status, tmp_path, monkeypatch, capsys):
         output = tmp_path / "out"
         output.mkdir()

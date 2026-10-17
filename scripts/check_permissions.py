@@ -460,7 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--output-dir",
         default=os.environ.get("OUTPUT_DIR", ""),
-        help="Output dir for ${OUTPUT_DIR} placeholders (default: <repo-root>/docs/security)",
+        help="Output dir for ${OUTPUT_DIR} placeholders (default: the repository's assessment directory)",
     )
     p.add_argument(
         "--plugin-dir",
@@ -495,9 +495,10 @@ OPTIONS
                        Grants Read(<path>/**) for recon + STRIDE.
                        Settings files checked: <path>/.claude/settings.{json,local.json}
                        Default: current working directory.
-  --output <path>      Output directory for threat model files.
+  --output <path>      Output directory for assessment files.
                        Grants Write(<path>/**) and Edit(<path>/**).
-                       Default: <repo>/docs/security
+                       Default: the repository's assessment directory under
+                       the user data directory
   --plugin-dir <path>  Plugin installation directory.
                        Grants Read(<path>/**) for schemas, templates, CWE data.
                        Default: auto-detected from script location.
@@ -519,6 +520,17 @@ files and never dispatches an agent.
 """
 
 
+def _assessment_directory(repo_root: Path) -> Path:
+    """Where an assessment of ``repo_root`` writes by default (decision AS-1)."""
+    from shared.assessment_location import LocationError, application_directory
+
+    try:
+        return application_directory(repo_root)
+    except LocationError:
+        # No user data directory: the run needs an explicit --output.
+        return repo_root / "docs" / "security"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -527,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     repo_root = Path(args.repo_root).resolve()
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else _assessment_directory(repo_root)
     plugin_dir = Path(args.plugin_dir).resolve()
 
     required_raw = load_required()
