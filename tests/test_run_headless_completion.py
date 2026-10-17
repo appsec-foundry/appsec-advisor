@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import pytest
+from shared import assessment_location as loc
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-headless.sh"
@@ -169,6 +170,7 @@ def test_configured_claude_executable_is_used_for_auth_and_dispatch(
     assert result.returncode == 42, result.stdout + result.stderr
     launched_args = marker.read_text(encoding="utf-8").splitlines()
     assert launched_args[0] == "-p"
+    assert f'--output "{output.resolve()}"' in launched_args[1]
     assert "--plugin-dir" in launched_args
     assert "--output-format" in launched_args
 
@@ -608,6 +610,7 @@ def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(tm
     )
     stub.chmod(0o755)
     env = _headless_env(stub)
+    env["XDG_DATA_HOME"] = str(tmp_path / "data")
 
     subprocess.run(
         [str(SCRIPT), flag, "--repo", str(repo), "--trust-mode", "trusted", "--quiet"],
@@ -621,3 +624,6 @@ def test_a_requirements_audit_runs_the_audit_skill_in_the_selected_repository(tm
     cwd, prompt = seen.read_text(encoding="utf-8").splitlines()[:2]
     assert Path(cwd).resolve() == repo.resolve()
     assert prompt.startswith("/appsec-advisor:audit-security-requirements")
+    private = loc.application_directory(repo, tmp_path / "data" / "appsec-advisor" / "assessments")
+    assert f'--output "{private}"' in prompt
+    assert not (repo / "docs").exists()

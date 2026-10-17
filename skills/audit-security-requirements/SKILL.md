@@ -37,7 +37,7 @@ the saved path(s):
 ```
 audit: 64 graded · 28 fail · 8 partial · 5 pass · 10 unverifiable · 13 n/a
 saved:
-  docs/security/appsec-requirements-report.md
+  <AUDIT_OUTPUT_DIR>/appsec-requirements-report.md
 ```
 
 In `--quiet` with `--gate`, also print the one-line `requirements-gate:` verdict
@@ -59,10 +59,11 @@ cat "<base-dir>/HELP.txt"
 The user may pass arguments after the skill name. Parse them now:
 
 - **Category filter** — any word that does not start with `--` (e.g. `AUTH`, `SQL`) — grade ONLY requirements whose ID or category contains this string. It narrows scope. An unfiltered run grades the whole catalog.
-- `--md` — save results as `docs/security/appsec-requirements-report.md` after rendering
-- `--pdf` — save `docs/security/appsec-requirements-report.pdf` (converted from the Markdown report, which is written too)
-- `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
+- `--md` — save results as `appsec-requirements-report.md` in `AUDIT_OUTPUT_DIR` after rendering
+- `--pdf` — save `appsec-requirements-report.pdf` in `AUDIT_OUTPUT_DIR` (converted from the Markdown report, which is written too)
+- `--json` — save results as `appsec-requirements-report.json` in `AUDIT_OUTPUT_DIR` after rendering
 - `--save` — save all formats (`--md`, `--pdf`, `--json`)
+- `--output <dir>` — write the reports and run-state files to `<dir>` instead of the application's private directory outside the repository (Step 1b).
 - `--quiet` — suppress the banner and the findings render; after grading + saving, print only a one-line status plus the saved file path(s). Intended with a save flag; the grading, verdict, and gate still run as requested.
 - `--requirements <src>` — override the configured `requirements_yaml_url` for this run. `<src>` is an http(s):// URL (fetched remotely) or a local file path (absolute or relative). The source must load; there is no cache fallback when an explicit source is provided.
 - `--update` — force a fresh re-fetch from the remembered/configured source and refresh the plugin cache before auditing.
@@ -78,13 +79,13 @@ The user may pass arguments after the skill name. Parse them now:
 - `--no-org-profile` — ignore any packaged or env-pointed org profile for this run.
 
 Store the resolved flags: `save_md`, `save_pdf`, `save_json`, `quiet_mode`,
-`category_filter`, `requirements_url_override`, `update`, `cache_only`, `demo`,
+`category_filter`, `output_dir_override`, `requirements_url_override`, `update`, `cache_only`, `demo`,
 `status_mode`, `clear_requirements`, `gate_mode`, `gate_on` (default `fail`),
 `priority_floor` (default `MUST`), `org_profile_override`, `preset_override`,
 `no_org_profile`.
 
 `--save` sets `save_md`, `save_pdf` and `save_json`. `--pdf` implies `save_md`
-(the PDF is converted from the Markdown report). `--gate-on` and
+(the PDF is converted from the Markdown report). `--output`, `--gate-on` and
 `--priority-floor` each consume the following token as their value.
 
 For the three gate knobs also remember whether the user passed the flag
@@ -98,7 +99,7 @@ built-in default (advisory / fail / MUST)**.
 Non-flag words (tokens that do not start with `--`) are always valid — they
 are treated as the `category_filter`. But any token starting with `--` that
 is not one of the recognized flags above — or is not the value consumed by
-`--requirements` — is a hard error. DO NOT proceed. Do not read any files,
+`--requirements` or `--output` — is a hard error. DO NOT proceed. Do not read any files,
 do not fetch requirements, do not scan the repository. Print the following
 block verbatim to stderr, substituting `<TOKEN>` with the first unknown
 flag, then exit with status `2`:
@@ -112,6 +113,7 @@ Error: unknown argument '<TOKEN>'
   --pdf                    Save the report as PDF (also writes the Markdown)
   --json                   Copy the structured verdict to JSON
   --save                   --md, --pdf and --json
+  --output <dir>           Write reports to <dir> instead of the private directory
   --quiet                  Suppress banner + findings; print status + saved paths
   --requirements <url>     Override the configured requirements YAML source
   --update                 Force a fresh re-fetch and refresh the cache
@@ -130,7 +132,7 @@ Error: unknown argument '<TOKEN>'
 Run `/appsec-advisor:audit-security-requirements --help` for details.
 ```
 
-`--requirements`, `--org-profile`, `--preset`, `--gate-on`, and
+`--requirements`, `--output`, `--org-profile`, `--preset`, `--gate-on`, and
 `--priority-floor` count as unknown when their value is missing — treat the flag
 itself as the offending token in that case.
 
@@ -152,14 +154,23 @@ fi
 ```
 
 Resolve the active org profile before resolving the requirements source. The
-audit report output directory is the current repository's `docs/security/`;
-the resolver writes `.org-profile-effective.json` there so the shared
-requirements resolver and fetch gate see the same profile state as
-`appsec-analyzer`.
+audit report output directory is the application's private directory outside
+the repository (or `--output <dir>`); the resolver writes
+`.org-profile-effective.json` there so the shared requirements resolver and
+fetch gate see the same profile state as `appsec-analyzer`. A developer-authored
+catalog stays a repository input: every resolver and fetch call passes
+`--catalog-dir "$PWD/docs/security"` so a local `requirements.yaml` is still
+found. If the private directory cannot be created, print the `Error: ...` line
+and stop; never fall back to `docs/security`.
 
 ```bash
-AUDIT_OUTPUT_DIR="${PWD}/docs/security"
-mkdir -p "$AUDIT_OUTPUT_DIR"
+if [ -n "$OUTPUT_DIR_OVERRIDE" ]; then
+  AUDIT_OUTPUT_DIR="$OUTPUT_DIR_OVERRIDE"
+  mkdir -p "$AUDIT_OUTPUT_DIR" || exit 2
+else
+  AUDIT_OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" destination --repo "$PWD" --create) || exit 2
+fi
+CATALOG_DIR="$PWD/docs/security"
 
 ORG_ARGS=()
 [ -n "$ORG_PROFILE_OVERRIDE" ] && ORG_ARGS+=(--org-profile "$ORG_PROFILE_OVERRIDE")
@@ -214,6 +225,7 @@ exit; the skill does not audit on this invocation:
 if [ "$CLEAR_REQUIREMENTS" = "true" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" \
     --caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" \
+    --catalog-dir "$CATALOG_DIR" \
     --plugin-root "$CLAUDE_PLUGIN_ROOT" --clear-requirements
   exit 0
 fi
@@ -229,7 +241,7 @@ explicit per-run override — `--requirements <src>` or `--demo` (which resolve 
 source `cli` / `demo`) — bypasses the block.
 
 ```bash
-REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
+REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --catalog-dir "$CATALOG_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
 [ -n "$REQUIREMENTS_URL_OVERRIDE" ] && REQ_SOURCE_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
 [ "$DEMO" = "true" ] && REQ_SOURCE_ARGS+=(--demo)
 
@@ -263,7 +275,7 @@ Pass the user's source flags straight through to the gate. `--status` is a
 no-fetch inspection mode; every other invocation loads the catalog:
 
 ```bash
-FETCH_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
+FETCH_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --catalog-dir "$CATALOG_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
 if [ -n "$REQUIREMENTS_URL_OVERRIDE" ]; then
   FETCH_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
 else
@@ -377,7 +389,13 @@ This map is used in Step 3b to show relevant blueprint guidance alongside violat
 
 ## Step 1.5 — Load threat model context (non-fatal)
 
-Try to read `docs/security/threat-model.yaml` relative to the current working directory (the repo root). This step is always non-fatal — if the file is absent or unreadable, skip silently and continue to Step 2 with an empty `req_to_threats` map.
+Locate the assessment directory and read its model — `security-assessment.yaml`, or `threat-model.yaml` in a legacy `docs/security` set. This step is always non-fatal — if the locate call fails or no model file is present or readable, skip silently and continue to Step 2 with an empty `req_to_threats` map.
+
+```bash
+ASSESSMENT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$PWD" 2>/dev/null)
+```
+
+Remember which report file sits next to the model (`security-assessment.md` or `threat-model.md`) as `assessment_report`, for the F-NNN links in Steps 3b and 4.
 
 If the file exists and is valid YAML:
 
@@ -577,7 +595,7 @@ Evidence: routes/search.ts:23
 Fix     : replace string interpolation with bound parameters.
           Use `sequelize.query(sql, { replacements: { term } })` or the ORM query builder.
 Effort  : M
-Links   : https://reqs.example/sec-sql · [F-014](docs/security/threat-model.md#f-014)
+Links   : https://reqs.example/sec-sql · [F-014](/home/dev/.local/share/appsec-advisor/assessments/shop-1a2b3c4d/security-assessment.md#f-014)
 ```
 
 Rules:
@@ -617,7 +635,7 @@ Rules:
   doubled in most renderers). Order and sources:
   - the requirement URL → `requirements[].url` (parsed in Step 1c). Omit the whole Links line when the catalog entry has no `url` and there is nothing else to link.
   - the blueprint URL → the `section_url` from `blueprint_map[<id>]` (Step 1c-ii), when one matched — appended as a second bare URL.
-  - threat model → `[F-NNN](docs/security/threat-model.md#f-nnn)`, only when `req_to_threats[<id>]` is non-empty (Step 1.5). Keep the `F-NNN` label here — it is an identifier pointing at a local anchor, not a web URL.
+  - threat model → `[F-NNN](<ASSESSMENT_DIR>/<assessment_report>#f-nnn)` (absolute path), only when `req_to_threats[<id>]` is non-empty (Step 1.5). Keep the `F-NNN` label here — it is an identifier pointing at a local anchor, not a web URL.
   Separate the present links with ` · `.
 - Separate finding blocks with one blank line. Do not use `---` separators, box drawing, or accent stripes — keep it copy-paste clean.
 

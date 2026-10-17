@@ -191,7 +191,9 @@ def test_slug_names_the_task_file():
     assert "--slug <value>" in text
     assert "PENTEST_FILE=pentest-tasks-authnz-<SLUG>.yaml" in text
     assert "PENTEST_FILE=pentest-tasks-authnz.yaml" in text
-    assert '--output "$REPO_ROOT/docs/security/$PENTEST_FILE"' in text
+    assert '--output "$PENTEST_DIR/$PENTEST_FILE"' in text
+    # The task file never lands in the checkout (REQ-TRU-005).
+    assert "docs/security/$PENTEST_FILE" not in text
     assert "[A-Za-z0-9._-]" in text
 
 

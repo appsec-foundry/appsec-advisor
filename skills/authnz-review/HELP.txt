@@ -12,11 +12,12 @@ OPTIONS
   --requirements <path>   Requirements YAML;
                           findings are annotated with violated requirement IDs
   --with-threat-model     Deduplicate EoP findings already covered by a prior
-                          STRIDE run in docs/security/
-  --save                  Write authnz-report.md + .authnz-report.json to
-                          docs/security/ in addition to console output
-  --pentest-tasks         Write docs/security/pentest-tasks-authnz.yaml —
-                          verification tasks for an AI pentest agent, one per
+                          STRIDE run in the assessment directory
+  --save                  Write authnz-report.md + .authnz-report.json to the
+                          application's private directory outside the
+                          repository in addition to console output
+  --pentest-tasks         Write pentest-tasks-authnz.yaml to the private
+                          directory — verification tasks for an AI pentest agent, one per
                           finding with an eligible CWE and file:line evidence
   --no-pentest-tasks      Skip that export even if the org profile enables it
   --pentest-format <fmt>  generic (default) or strix
