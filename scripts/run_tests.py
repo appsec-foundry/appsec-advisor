@@ -492,6 +492,7 @@ GROUPS = {
         verify_abuse_cases
     """),
     "trust": _tests("""
+        assessment_location
         ensure_output_gitignore
         path_guard
         plugin_read_gate
@@ -3580,6 +3581,9 @@ SOURCE_TESTS = {
         threat_model_fields
         threat_model_fields_evidence
         multi_repo_exports
+    """),
+    "scripts/shared/assessment_location.py": _tests("""
+        assessment_location
     """),
     "scripts/shared/_remote_url.py": _tests("""
         build_threat_model_yaml
