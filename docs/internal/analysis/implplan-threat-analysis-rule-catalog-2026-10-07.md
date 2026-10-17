@@ -202,7 +202,7 @@ All selected inputs load and validate before dependent dispatch. Invalid, missin
 
 ### Repository threat and case admission
 
-The full assessment already reads `docs/known-threats.yaml` and discovers `.appsec/abuse-cases/*.yaml`. Preserve these entry points, the known-threat status behavior documented in [repo-local context](../../threat-modeler.md#known-threats--docsknown-threatsyaml), repository case identities, and the depth and explicit invocation controls documented under [abuse cases](../../org-profiles.md#abuse-cases). Automatic loading neither starts an assessment nor guarantees that disabled case verification ran.
+The full assessment already reads `docs/known-threats.yaml` and discovers `.appsec/abuse-cases/*.yaml`. Preserve these entry points, the known-threat status behavior documented in [repo-local context](../../security-assessment.md#known-threats--docsknown-threatsyaml), repository case identities, and the depth and explicit invocation controls documented under [abuse cases](../../org-profiles.md#abuse-cases). Automatic loading neither starts an assessment nor guarantees that disabled case verification ran.
 
 Fix the discovery defects before publishing the descriptive format, as separate producer fixes with regression tests:
 

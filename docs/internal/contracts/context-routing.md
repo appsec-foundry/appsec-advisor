@@ -1,6 +1,6 @@
 # Context Routing Contract
 
-`data/context-routing-catalog.yaml` is the reviewable Stage-1 context map. It
+`data/context-routing-catalog.yaml` is the reviewable context map of the analysis roles. It
 answers four questions without requiring knowledge of controller code:
 
 1. What kind of context is this?
@@ -100,7 +100,7 @@ cause synthesis receives separate generated-threat and proposed-mitigation
 projections. Neither focused role receives the complete merged-threat artifact
 or triage flags.
 
-Stage 1d projects one matched abuse-case candidate into its own bounded
+The abuse-case stage projects one matched abuse-case candidate into its own bounded
 artifact. The candidate definition, probe patterns, and matched finding hints
 are exact-source-bound and receipted. Targeted repository reads remain a
 separate optional route and cannot expose another candidate or the complete
@@ -143,16 +143,8 @@ introduces a new context needs a separately reviewed internal binding.
 
 ## Enforcement behavior
 
-Every declared action input must map to exactly one human assignment. An active
-declared binding requires the producer's validated exact-byte action receipt;
-missing, stale, or contract-mismatched receipts reject the action before
-dispatch. Shadow bindings and available implicit artifacts receive diagnostic
-byte hashes. Plugin-owned fixed files and scalar settings receive bounded
-receipts. Direct source reads and plugin registries that have not migrated are
-recorded as `legacy_unreceipted` rather than being represented as delivered.
-
-The local `.context-routing-plan.json` repeats human category, agent, context,
-scope, target, delivery, importance, and reason fields beside the internal
-receipt metadata.
-`scripts/contexts/context_routing.py inspect <output-dir>` prints a content-free summary
-grouped by category, agent, and status.
+`scripts/contexts/context_routing.py validate` rejects a catalog or binding
+that does not match the runtime registries. Context builders read their byte,
+line, and item limits from the bindings through `limit_profile_for_artifact`;
+the architecture topology context, for example, drops whole workloads from
+its end until the written file fits, and records how many it omitted.

@@ -1,12 +1,13 @@
-# Threat Modeler
+# Security assessment
 
-`/appsec-advisor:create-threat-model` performs **automated, code-derived threat modeling**. It reconstructs the architecture visible in code and configuration and applies STRIDE to identify threats and control gaps. The analysis covers architectural assumptions and implementation weaknesses, with repository evidence supporting its findings.
+`/appsec-advisor:appsec-analyzer` performs **automated, code-derived threat modeling**. It reconstructs the architecture visible in code and configuration and applies STRIDE to identify threats and control gaps. The analysis covers architectural assumptions and implementation weaknesses, with repository evidence supporting its findings.
 
 → [Back to README](../README.md)
 
 ## Contents
 
 - [What you get](#what-you-get)
+- [Where results are stored](#where-results-are-stored)
 - [Using the model in design reviews](#using-the-model-in-design-reviews)
 - [Threat model lifecycle](#threat-model-lifecycle)
 - [Example report](#example-report-owasp-juice-shop)
@@ -25,18 +26,19 @@ An assessment generates an architecture and security report from repository evid
 
 **Default outputs**
 
-- `threat-model.md`: report for engineers, architects, and security reviewers.
-- `threat-model.yaml`: canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
+- `security-assessment.md`: report for engineers, architects, and security reviewers, titled `Security Assessment Report — <project>`.
+- `security-assessment.yaml`: canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
+- `security-assessment.figure*.svg`: the report's figures.
 
 **Optional outputs**
 
 | File | Enable with | Notes |
 |---|---|---|
-| `threat-model.pdf` | `--pdf` | Requires `pandoc` and `weasyprint`. |
-| `threat-model.html` | `--html` | Requires `pandoc`. |
-| `threat-model.sarif.json` | `--sarif` | SARIF v2.1 for code-scanning integrations. |
+| `security-assessment.pdf` | `--pdf` | Requires `pandoc` and `weasyprint`. |
+| `security-assessment.html` | `--html` | Requires `pandoc`. |
+| `security-assessment.sarif.json` | `--sarif` | SARIF v2.1 for code-scanning integrations. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and pentest plan. |
-| `threat-model.threatdragon.json` | `--threatdragon` | Alpha, opt-in, and lossy. Also imports into OWASP ThreatAtlas. |
+| `security-assessment.threatdragon.json` | `--threatdragon` | Alpha, opt-in, and lossy. Also imports into OWASP ThreatAtlas. |
 
 Generate optional formats from an existing assessment without running the analysis again:
 
@@ -53,7 +55,37 @@ Generate optional formats from an existing assessment without running the analys
 /appsec-advisor:export-security-assessment --formats threatdragon
 ```
 
-SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. PDF and HTML are converted from `threat-model.md`; rendered diagrams also require `mmdc` and Chrome or Chromium. Check dependencies with `/appsec-advisor:export-security-assessment --check-only`, or use `--no-mermaid` to export PDF or HTML without rendered diagrams. See [Threat Dragon export](threat-dragon-export.md) for that format's limits.
+SARIF, pentest tasks, and Threat Dragon are generated from `security-assessment.yaml`. PDF and HTML are converted from `security-assessment.md`; rendered diagrams also require `mmdc` and Chrome or Chromium. Check dependencies with `/appsec-advisor:export-security-assessment --check-only`, or use `--no-mermaid` to export PDF or HTML without rendered diagrams. See [Threat Dragon export](threat-dragon-export.md) for that format's limits.
+
+## Where results are stored
+
+Results are stored outside the analyzed repository by default, in one directory per application:
+
+| Platform | Directory |
+|---|---|
+| Linux and other Unix systems | `$XDG_DATA_HOME/appsec-advisor/assessments/<repo-name>-<hash8>`, or `~/.local/share/appsec-advisor/assessments/<repo-name>-<hash8>` when `XDG_DATA_HOME` is unset or relative |
+| macOS | `~/Library/Application Support/appsec-advisor/assessments/<repo-name>-<hash8>` |
+| Windows | `%LOCALAPPDATA%\appsec-advisor\assessments\<repo-name>-<hash8>` |
+
+`<hash8>` derives from the normalized `origin` remote, or from the canonical repository root when there is no usable remote, so clones and worktrees of one remote share one directory. Several `--repo` selections share one `combined-<hash8>` directory, independent of their order. `--output <path>` writes to another directory instead. Without a resolvable data directory, for example on Windows without `LOCALAPPDATA`, the run stops and asks for `--output`.
+
+The run creates the directory with mode `0700` at every level and its files readable only by you (`0600`). It refuses a level that is a symbolic link, belongs to another user, or is open to others. `/appsec-advisor:status` shows the resolved directory, and this command prints it:
+
+```bash
+python3 scripts/shared/assessment_location.py locate --repo <path-to-checkout>
+```
+
+`locate` prints the directory that the ask, show, export, triage and health skills read. `destination` prints where a new assessment is written. Run either from the plugin directory.
+
+The external location keeps results out of commits and out of other users' reach. It does not protect them from other processes running as your user, from backups or synchronization of your home directory, or from a lost unencrypted device. Use disk encryption on machines that hold assessments.
+
+Repository-owned inputs stay in the repository: `docs/security/business-context.md`, `docs/security/abuse-cases/`, `docs/known-threats.yaml`, and `.appsec/actors.yaml`. Triage decisions stay in `.appsec-triage/` of the checkout. Sharing a result always takes an explicit export to a location you choose.
+
+### Assessments in `docs/security`
+
+Earlier releases wrote `threat-model.md`, `threat-model.yaml` and their exports to `<repo>/docs/security`. The ask, show, export, triage and health skills still read such a set until it is imported.
+
+An interactive run offers once to import a finished set into the application directory. Importing copies the report, model, figures, exports, changelog files and pentest tasks under the new names, and the next run continues its history. The files in the repository stay; remove them yourself when you no longer need them. A headless run that finds such a set stops unless it receives `--migrate-legacy`, which imports it, or `--ignore-legacy`, which starts a new history without it. An interrupted earlier run is reported as incomplete and not imported.
 
 ## Using the model in design reviews
 
@@ -75,18 +107,18 @@ flowchart LR
     model --> choose{"Use the model"}
     choose --> ask["Ask questions<br/>Read-only"]
     choose --> review["Review and decide"]
-    choose --> share["Export or publish"]
+    choose --> share["Export"]
     review --> change["Implement fixes"]
     review --> plan["Plan or accept risk"]
-    change --> update["Update model"]
+    change --> update["Assess again"]
     update --> model
 ```
 
 ### Create or update the model
 
-Use `/appsec-advisor:create-threat-model` for the first assessment. After a code change, running it again without a mode flag, or with `--incremental`, re-analyzes only the components whose files changed and carries the STRIDE results of the others from the previous model. The run is refused before it changes anything when the previous model cannot be carried: a different `--assessment-depth`, a changed requirements setting or plugin analysis version, a combined multi-repository model, or a missing git history or `.appsec-cache/` as in a fresh clone. `/appsec-advisor:create-threat-model --full` reassesses every component while preserving report history.
+Run `/appsec-advisor:appsec-analyzer` for the first assessment and again after code changes. Every run is a full assessment of the selected repository. A new run over a completed assessment replaces it and continues its changelog history. `--resume` continues an interrupted run without repeating its accepted steps. `--rebuild` starts over and resets the history.
 
-`--full` overwrites the model but preserves changelog history, and prints a Change Summary against the previous run. `--rebuild` deliberately clears the prior model, cache, and history, allowing finding IDs to be reassigned; audit logs are kept.
+`--incremental`, `--rerender`, `--dry-run`, `--base`, `--pr-mode`, `--restore-from`, `--clean-cache` and `--clean-all` are refused, and so is a free-text focus such as `focus on the payment service`. A refused run changes nothing.
 
 ### Ask about the model
 
@@ -99,7 +131,7 @@ what is the mitigation for F-003?
 is the threat model still current?
 ```
 
-These questions read `threat-model.yaml`; they do not scan the repository again or change files. You can also write `/appsec-advisor:ask-security-assessment <question>`. Use `/appsec-advisor:show-security-assessment` when you want the standard overview.
+These questions read `security-assessment.yaml`; they do not scan the repository again or change files. You can also write `/appsec-advisor:ask-security-assessment <question>`. Use `/appsec-advisor:show-security-assessment` when you want the standard overview.
 
 ### Review and decide
 
@@ -166,58 +198,55 @@ Declarations alone never change a rating. The next scan re-evaluates the path wh
 
 ### Where the catalog appears
 
-The complete boundary catalog is in `threat-model.yaml` and available through `ask-security-assessment`. The Markdown report shows a shorter table, but it never omits a boundary referenced by a finding. SARIF includes the linked boundary on each result. The architecture diagram is a summary, not the canonical boundary view.
+The complete boundary catalog is in `security-assessment.yaml` and available through `ask-security-assessment`. The Markdown report shows a shorter table, but it never omits a boundary referenced by a finding. SARIF includes the linked boundary on each result. The architecture diagram is a summary, not the canonical boundary view.
 
 ## Usage examples
 
 Run these commands in Claude Code:
 
 ```text
-# Show all options
-/appsec-advisor:create-threat-model --help
+# Assess the current repository
+/appsec-advisor:appsec-analyzer
 
 # Deeper assessment
-/appsec-advisor:create-threat-model --assessment-depth thorough
+/appsec-advisor:appsec-analyzer --assessment-depth thorough
 
-# Fresh scan that may reassign finding IDs
-/appsec-advisor:create-threat-model --rebuild
+# Continue an interrupted run
+/appsec-advisor:appsec-analyzer --resume
 
-# Reassess while preserving report history
-/appsec-advisor:create-threat-model --full
+# Start over and reset the history
+/appsec-advisor:appsec-analyzer --rebuild
+
+# Stop a running assessment
+/appsec-advisor:appsec-analyzer --stop
 ```
 
-### Focused analysis
-
-Focus on a component or directory to reduce cost and review time:
-
-```text
-/appsec-advisor:create-threat-model focus on the authentication service
-/appsec-advisor:create-threat-model focus on the /services/payment-gateway
-```
+The assessment always covers the whole repository. A request to narrow it to a component or directory is refused rather than run in full.
 
 ### Large component inventories
 
-Full and rebuild scans keep every selected component in scope. By default, STRIDE processes up to eight components concurrently and retains completed results across an interrupted parent session. Set `APPSEC_STRIDE_CONCURRENCY=1..10` to adjust parallelism for host capacity. Publication is blocked if a component still has no valid result after retry.
+Every run keeps every selected component in scope. The controller analyzes up to four components at the same time and records each accepted result, so `--resume` does not repeat it. Publication is blocked if a component still has no valid result after retry.
 
 ### Requirements catalog
 
 Use `--requirements` to include an AppSec requirements catalog. See the [harvester guide](harvester.md) for creating one.
 
 ```text
-/appsec-advisor:create-threat-model --requirements https://appsec.int.example.com/appsec-requirements.yaml
+/appsec-advisor:appsec-analyzer --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
 Once `requirements_yaml_url` is configured, later runs use the catalog without the flag.
 
 ### External repositories
 
-Use `--repo` and `--output` when the repository is outside the current working directory:
+Use `--repo` when the repository is outside the current working directory. Its results go to that repository's application directory unless `--output` names another one:
 
 ```text
-/appsec-advisor:create-threat-model --repo ../another-api --output ./audits/another-api
+/appsec-advisor:appsec-analyzer --repo ../another-api
+/appsec-advisor:appsec-analyzer --repo ../another-api --output ./audits/another-api
 ```
 
-For cross-repository analysis context, see [Cross-repo context](#cross-repo-context). For the complete flag reference, run `/appsec-advisor:create-threat-model --help` or read [`HELP.txt`](../skills/create-threat-model/HELP.txt).
+For cross-repository analysis context, see [Cross-repo context](#cross-repo-context). The [non-interactive mode flag reference](headless-mode.md#flag-reference) lists the assessment flags.
 
 ## Assessment depth & cost control
 
@@ -240,19 +269,17 @@ Thorough increases both component coverage and per-component analysis depth.
 |---|---|---|---|
 | Analysis per component | Lighter pass for internal components | Lighter pass for internal components | Full analysis everywhere |
 | Abuse cases checked against the code | Only cases you request | Technical abuse cases and up to 3 business abuse cases | Technical abuse cases, up to 8 business abuse cases, and up to 3 derived for the application |
-| Extra review of findings | No | Final quality check | Final quality check and architect review |
-| Model for finding threats | Sonnet 4.6 | Sonnet 4.6 | Opus |
+| Architect review of findings | No | No | Yes |
+| Model for finding threats | Sonnet 5.5 | Sonnet 5.5 | Opus |
 | Model for rating and merging findings | Sonnet 4.6 | Sonnet 5.5 | Opus |
-| Model for writing the report and checking abuse cases | Sonnet 4.6 | Sonnet 5.5 | Sonnet 5.5 |
-| Model for scanning and routine fixes | Haiku | Haiku | Haiku and Sonnet 4.6 |
+| Model for checking abuse cases | Sonnet 4.6 | Sonnet 5.5 | Sonnet 5.5 |
+| Model for repository discovery | Sonnet 5.5 | Sonnet 5.5 | Sonnet 5.5 |
 
-An experimental [multi-repository assessment](headless-mode.md#assess-several-repositories-as-one-system) finds threats with Sonnet 5.5 at quick and standard depth, because Sonnet 4.6 returns no STRIDE result in that mode; its STRIDE calls cost more than in a single-repository scan.
-
-Your Claude Code session model runs the overall assessment at every depth. In an interactive session, agents may run on the session's Sonnet instead of a specific Sonnet version; the overview at the start of each run shows the models it actually uses.
+No Claude Code session orchestrates the assessment. The controller calls each role's model directly with a fixed model version, independent of the session that started it, and the first lines of each run name the models it uses. See [Model routing](#model-routing).
 
 ### Measured cost by depth
 
-The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session. Quick and standard were measured on 0.5.2-dev, thorough on 0.6.0-beta.4. Results vary with repository, cache state, and model routing.
+The following OWASP Juice Shop runs were measured with the earlier session-orchestrated pipeline on a Sonnet 4.6 Claude Code session: quick and standard on 0.5.2-dev, thorough on 0.6.0-beta.4. They do not measure the current controller. Results vary with repository, cache state, and model routing.
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
@@ -275,43 +302,34 @@ Authentication, frontend, LLM, internet-exposed, file-upload, real-time, data-st
 
 ### Model routing
 
-There are two model choices, and they affect different parts of a run:
-
-- The **Claude Code session model** runs the orchestrator. Use Sonnet 4.6 for most repositories; the long-running session accounts for most of the cost. Repositories with at least 2,500 source files may require Sonnet 5.5 for its larger context window.
-- `--reasoning-model` chooses the analysis tier. The default `sonnet-economy` tier leaves STRIDE on Sonnet 4.6 and uses Sonnet 5.5 for semantic judgment and report authoring in a standard scan.
+The session model does not affect the run. `--reasoning-model` chooses the analysis tier:
 
 | Tier | STRIDE · triage · merge | Use |
 |---|---|---|
-| `sonnet-economy` | Sonnet 4.6 · Sonnet 5.5* · Sonnet 5.5* | Default for quick and standard. In quick mode all three use Sonnet 4.6. |
+| `sonnet-economy` | Sonnet 5.5* · Sonnet 5.5 · Sonnet 5.5 | Default for quick and standard. In quick mode triage and merging use Sonnet 4.6. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Latest Sonnet for the reasoning core. |
 | `opus-cheap` | Sonnet · Sonnet · Opus | Opus only for merging. |
 | `opus` | Opus · Opus · Opus | Default for thorough. |
 
-*In standard mode, the routing targets Sonnet 5.5 for triage, merging, rendering, and abuse-case verification. STRIDE stays on 4.6 for recall and cost, except in a multi-repository assessment, which uses Sonnet 5.5 for STRIDE. Exact version pins depend on the execution path; interactive subagents may inherit the session model. The pre-flight table shows the resolved routing for each run.*
+*The tier's STRIDE default is Sonnet 4.6. The controller moves it to Sonnet 5.5, because each STRIDE result must come back from one model call and Sonnet 4.6 exhausts its thinking there without returning one. An explicit STRIDE model is kept, and the run warns when it is Sonnet 4.6.*
 
-Set the interactive session before starting:
-
-```text
-/model claude-sonnet-4-6
-```
-
-Headless runs default to 4.6 and accept `scripts/run-headless.sh --model <id>`. Per-stage overrides are available through `--stride-model`, `--triage-model`, and `--merger-model`; `--no-opus` disables Opus selections. See [Model Selection, Cost & Context Window](model-selection.md) for routing precedence, execution-path caveats, and benchmark details.
+`--model <id>` sets every role that is not set separately. `--stride-model`, `--triage-model` and `--merger-model` set one stage, and `--no-opus` turns every Opus selection into Sonnet. See [Model selection](model-selection.md) for routing precedence and benchmark details.
 
 ### Budget guardrails
 
-| Interactive | Headless / CI | Effect |
-|---|---|---|
-| `--soft-budget <usd>` | `--soft-budget <usd>` | Steers the run. An invocation that cannot fit does not start; a run that overruns still finishes and reports the overrun. |
-| Unsupported | `--max-duration` | Maximum runtime enforced by the host wrapper. |
-| Unsupported | `--hard-budget` | Maximum API spend enforced by the host wrapper. It kills the session and loses the report, so it sits above the soft budget as a backstop. |
+| Flag | Effect |
+|---|---|
+| `--hard-budget <usd>` | Total model-cost limit of the run. The controller reserves money and time for required analysis and report completion, and replaces optional model work with its deterministic fallback when that work would consume the reserve. |
+| `--soft-budget <usd>` | Deprecated. Alone, it sets the limit to 1.25 times its value; an explicit `--hard-budget` takes precedence. |
+| `--max-duration <seconds>` | Cumulative deadline of the run, kept on `--resume`. Default: 14,400 seconds. |
 
-```text
-./scripts/run-headless.sh --full --max-duration 1800 --soft-budget 30
+Without a budget flag, `/appsec-advisor:appsec-analyzer` sets the limit from the depth: 10 USD for quick, 20 USD for standard, and 40 USD for thorough. A headless run requires `--soft-budget` or `--hard-budget`.
+
+```bash
+./scripts/run-headless.sh --max-duration 1800 --hard-budget 30
 ```
 
-A soft budget is not a cap. It is honoured by refusing a run that cannot fit and, from a later change, by dropping optional work; the run always finishes. Under subscription billing the figures are price-table valuations of token counts rather than money billed.
-
-The hard cut requires an `ANTHROPIC_API_KEY`; the soft budget and time limits also work with Claude subscriptions.
+If the budget cannot cover required work, the run stops as incomplete and keeps a separate, explicitly incomplete snapshot instead of the report; see [non-interactive mode](headless-mode.md#cost-and-duration-limits). Under subscription billing the figures are price-table valuations of token counts rather than money billed.
 
 ## Repo-local context
 
@@ -345,13 +363,13 @@ Partial answers are fine. The Management Summary asks only questions tied to rel
 
 The report's run statistics name the file the context came from and how many findings it applied to, and each of those findings records which declared fields apply. A declared context that maps to no component is reported as a run issue.
 
-Interactive full and rebuild runs first build a small application overview, then ask up to two optional questions before expensive scanning. The English dialog first asks you to confirm or correct the proposed use case, then uses your answer to ask for the worst plausible consequence for the business or its users. Free-text answers are preserved in their original language. The choices describe harm to people or business operations, not technical attack mechanisms. It omits topics explicitly answered by existing context; confirming the use case alone does not answer the worst-case question. Deployment and asset inventories are not standard questions. The answers inform the relevant components’ business purpose and compromise impact, the impact ratings and descriptions of supported findings, and mitigation ordering within the existing technical priorities. Answers apply before analysis begins and are saved in `docs/security/business-context.md` alongside existing repository context. Later analyses reuse them without asking answered questions again. Edit that file when the use case or relevant harm changes. Explicit `--context` imports remain run-only. The overview uses bounded local excerpts and does not run the full reconnaissance scanner. Its target is a 30–60 second delay before questions, although host and model latency can vary. Unknown or skipped answers remain uncertain rather than being inferred.
+Interactive runs first build a small application overview, then ask up to two optional questions before expensive scanning. The English dialog first asks you to confirm or correct the proposed use case, then uses your answer to ask for the worst plausible consequence for the business or its users. Free-text answers are preserved in their original language. The choices describe harm to people or business operations, not technical attack mechanisms. It omits topics explicitly answered by existing context; confirming the use case alone does not answer the worst-case question. Deployment and asset inventories are not standard questions. The answers inform the relevant components’ business purpose and compromise impact, the impact ratings and descriptions of supported findings, and mitigation ordering within the existing technical priorities. Answers apply before analysis begins and are saved in `docs/security/business-context.md` alongside existing repository context. Later analyses reuse them without asking answered questions again. Edit that file when the use case or relevant harm changes. Explicit `--context` imports remain run-only. The overview uses bounded local excerpts and does not run the full reconnaissance scanner. Its target is a 30–60 second delay before questions, although host and model latency can vary. Unknown or skipped answers remain uncertain rather than being inferred.
 
-Supply reusable context in `docs/security/business-context.md`, or use `--context <url|path>` for a single run. `--skip-context` skips both the dialog and stored business context. Headless runs never ask questions and still accept `--context`. Supplied sources are validated before use; a rejected source stops the run. Remaining questions appear in the report; answers added to the persistent file take effect on the next full analysis. The read-only ask skill does not save answers or update ratings.
+Supply reusable context in `docs/security/business-context.md`, or use `--context <url|path>` for a single run. `--skip-context` skips both the dialog and stored business context. Headless runs never ask questions and still accept `--context`. Supplied sources are validated before use; a rejected source stops the run. Remaining questions appear in the report; answers added to the persistent file take effect on the next assessment. The read-only ask skill does not save answers or update ratings.
 
 The impact choices follow the confirmed use case, with the most plausible option recommended first for your confirmation. A training or demo application with synthetic data and no important business operations can have no material business harm; that option states its assumptions instead of treating the application label as proof. Confirmed no-harm context is saved and reported as applied, without adding a business-priority bonus or asking to raise impact merely because an answer exists. Unknown or skipped impact is not a no-harm declaration. Technical findings and independently declared sensitive assets or obligations remain relevant.
 
-Changing persistent context does not re-rate an existing model automatically. Run `--full` to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
+Changing persistent context does not re-rate an existing model automatically. Run a new assessment to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
 
 <a id="actor-layer--appsecactorsyaml"></a>
 ### Actor layer: `.appsec/actors.yaml`
@@ -423,8 +441,8 @@ What the next assessment does with this case:
 
 1. Create a YAML file in `docs/security/abuse-cases/` of the repository, for example by copying the example above. One file can hold several cases.
 2. Run `/appsec-advisor:abuse-cases` and check that your case is listed with origin `repository`. A file the assessment would reject is listed with the reason.
-3. Optional: run `/appsec-advisor:analyze-threats --abuse-case REPO-AC-001` to check the case against the code without a full assessment. The result does not change the threat model.
-4. Run `/appsec-advisor:create-threat-model`. Afterwards, `/appsec-advisor:abuse-cases REPO-AC-001` shows the result step by step with the cited code.
+3. Optional: run `/appsec-advisor:analyze-threats --abuse-case REPO-AC-001` to check the case against the code without a full assessment. The result does not change the assessment.
+4. Run `/appsec-advisor:appsec-analyzer`. Afterwards, `/appsec-advisor:abuse-cases REPO-AC-001` shows the result step by step with the cited code.
 
 #### Fields
 
@@ -454,7 +472,7 @@ What the next assessment does with this case:
 
 #### Limits
 
-Business abuse cases cost model time, so each run checks only a limited number of them. Your own cases share this limit with the seven built-in business rules: a standard run checks at most three, a thorough run at most eight, and a quick run only the cases you name. Cases with the most matching code and findings go first. To make sure a case is checked, name it: `/appsec-advisor:analyze-threats --abuse-case <ID>` checks it on its own, and `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new assessment that checks only the named cases and replaces the existing threat model. Thorough runs also add up to three cases derived for your application.
+Business abuse cases cost model time, so each run checks only a limited number of them. Your own cases share this limit with the seven built-in business rules: a standard run checks at most three, a thorough run at most eight, and a quick run only the cases you name. Cases with the most matching code and findings go first. To make sure a case is checked, name it: `/appsec-advisor:analyze-threats --abuse-case <ID>` checks it on its own, and `/appsec-advisor:appsec-analyzer --only-abuse-case <ID>` runs a new assessment that checks only the named cases and replaces the existing one. Thorough runs also add up to three cases derived for your application.
 
 To apply cases to every repository of your organization, or to write technical attack chains with code patterns, see [Abuse cases in organization profiles](org-profiles.md#abuse-cases).
 
@@ -506,12 +524,12 @@ boundaries:
 
 ## Cross-repo context
 
-`appsec-advisor` scans one repository at a time. Add a called service's model to `docs/related-repos.yaml` when it should inform the local analysis:
+A single-repository assessment reads only that repository's source. Add a called service's exported model to `docs/related-repos.yaml` when it should inform the local analysis:
 
 ```yaml
 related:
   - name: payments-api
-    threat_model: ../payments-api/docs/security/threat-model.yaml
+    threat_model: ../payments-api-assessment/security-assessment.yaml
     interface: POST /api/v1/payments
     expected_auth: JWT
     expected_validation: schema
@@ -523,13 +541,13 @@ The imported model remains untrusted context. It may produce a hypothesis for lo
 
 ### Architect review
 
-Thorough assessments enable architect review automatically; `--architect-review` enables it explicitly and `--no-architect-review` disables it. `--architect-model` selects its model. The reviewer checks findings before prioritization and independently proposes corrections to ratings and remediation steps. Accepted corrections remain in later report rebuilds.
+Thorough assessments enable architect review automatically; `--architect-review` enables it explicitly and `--no-architect-review` disables it. `--architect-model` selects its model. The reviewer checks findings before prioritization and independently proposes corrections to ratings and remediation steps.
 
-The completion receipt distinguishes reviewed, incomplete and not-run coverage. Timeouts, missing evidence and findings outside the bounded review remain visible as gaps; they do not mean the findings were approved. The review does not edit CVSS, evidence, CWE mappings or general report prose. Rerendering an older model does not run a new analysis.
+The completion receipt distinguishes reviewed, incomplete and not-run coverage. Timeouts, missing evidence and findings outside the bounded review remain visible as gaps; they do not mean the findings were approved. The review does not edit CVSS, evidence, CWE mappings or general report prose.
 
 ## Architecture
 
-Agents read the repository and make the security judgments. Python checks their structured output and builds the report. The report does not come from one free-form model response.
+Models make the security judgments; Python checks their structured output and builds the report. The report does not come from one free-form model response.
 
 ![Threat Model Pipeline](images/threat-model-pipeline.png)
 
@@ -537,13 +555,13 @@ Agents read the repository and make the security judgments. Python checks their 
 
 The stages do not talk to each other. They hand over files.
 
-Every stage writes its result into the output directory, `docs/security/` by default. The next stage reads what it needs from there. Reconnaissance writes the repository summary. Architecture writes the components and data flows. The trust-boundary and control analyses write their catalogs. Each STRIDE analysis writes its findings to one `.stride-<component>.json`. Merge, evidence verification, and triage build on those files before the report is composed.
+The controller records every accepted step in the output directory: the run state in `.assessment-state.json` and the step results under `.assessment-work/`. Reconnaissance produces the repository summary. Architecture produces the components and data flows. The trust-boundary and control analyses produce their catalogs, and each STRIDE analysis its findings for one component. Merge, evidence verification, and triage build on those results before the report is composed.
 
-Each file has a schema. A file that fails its schema stops the run; it is never passed on.
+Each result has a schema. A result that fails its schema stops the run; it is never passed on.
 
-No agent reads the whole directory. The runtime gives each agent only the files its task needs, and often only part of a file. The STRIDE analyses of one component group run at the same time and do not see each other's findings. Their findings meet in the merge step.
+The models have no file, shell or network tools. The controller gives each call only the source excerpts and results its task needs, with secrets masked. The STRIDE analyses of different components run at the same time and do not see each other's findings. Their findings meet in the merge step.
 
-The intermediate files remain in the output directory after a run, so results can be audited and re-exported.
+After a single-repository run, the intermediate results remain in the output directory, so results can be audited and re-exported.
 
 ## Workflow commands
 
@@ -551,7 +569,7 @@ The intermediate files remain in the output directory after a run, so results ca
 |---|---|
 | `/appsec-advisor:ask-security-assessment <question>` | Answer from the structured model without rescanning or writing files. |
 | `/appsec-advisor:show-security-assessment` | Show a fixed overview of freshness, findings, mitigations, and control posture. |
-| `/appsec-advisor:create-threat-model --full` | Reassess the repository while preserving report history. |
+| `/appsec-advisor:appsec-analyzer` | Assess the repository again; a new run continues the history of a completed one. |
 | `/appsec-advisor:triage-security-assessment` | Review findings, record decisions, implement selected fixes, or build a remediation plan. |
 | `/appsec-advisor:export-security-assessment` | Export an existing model without another analysis. |
 | `/appsec-advisor:security-assessment-health` | Check whether the model is fresh, stale, missing, or blocked. |
