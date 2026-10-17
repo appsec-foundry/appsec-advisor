@@ -9,9 +9,11 @@
 
 > ⚠️ **Beta: not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for **repository-based security analysis**. Its main command, `/appsec-advisor:appsec-analyzer`, examines code and configuration to assess the application's architecture, security controls, implementation weaknesses, and design risks. The resulting Security Assessment ties findings to repository evidence and provides prioritized remediation guidance for developers, architects, and AppSec reviewers.
+`appsec-advisor` is a Claude Code plugin for application security analysis and review. Its main command, `/appsec-advisor:appsec-analyzer`, performs **repository-based security analysis with a focus on architecture**. It examines code and configuration to assess security controls, implementation weaknesses, and design risks. The resulting Security Assessment ties findings to repository evidence and provides prioritized remediation guidance for developers, architects, and AppSec reviewers.
 
-The analysis reconstructs components, data flows, and trust boundaries, uses STRIDE to identify threats, and checks abuse cases against the implementation. Architecture and threat models support the assessment and its diagrams.
+The analyzer reconstructs components, data flows, and trust boundaries, examines potential threats and attack paths, and checks abuse cases against the implementation. Its architecture model explains how security controls and weaknesses relate across the application.
+
+Threat modeling is planned as a separate skill. The analyzer's workflow is a security assessment of the implemented application.
 
 The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
@@ -30,7 +32,7 @@ The assessment helps answer:
 - Which implementation weaknesses, design risks, and abuse cases need attention?
 - Which remediation steps should the team prioritize?
 
-Run an assessment when taking over a repository and again when code or configuration changes. Use its findings and open questions in architecture reviews, remediation planning, and collaborative threat modeling. The team supplies design intent and business context, validates findings, and decides which risks to accept.
+Run an assessment when taking over a repository and again when code or configuration changes. Use its findings and open questions in security architecture reviews and remediation planning. The team supplies design intent and business context, validates findings, and decides which risks to accept.
 
 Before code exists, the experimental [Threat Analyst](#threat-analyst) prepares the team discussion of a planned feature with threat scenarios, protection assumptions, and open questions. It also reviews single changes and reports evidence-backed findings.
 
@@ -344,15 +346,15 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 
 | Project | Primary scope | Relation to `appsec-advisor` |
 |---|---|---|
-| [tachi](https://github.com/davidmatousek/tachi) | Multi-agent analysis of an architecture description. | Tachi treats the description as its primary input; `appsec-advisor` derives the model from code and configuration. |
+| [tachi](https://github.com/davidmatousek/tachi) | Multi-agent analysis of an architecture description. | Tachi treats the description as its primary input; the analyzer assesses the architecture evidenced in code and configuration. |
 | [stride-gpt](https://github.com/mrwadams/stride-gpt) | Provider-independent STRIDE analysis from a description or codebase. | `stride-gpt` supports several model providers; `appsec-advisor` runs in Claude Code and adds schema validation and stable finding IDs. |
-| [OWASP pytm](https://github.com/OWASP/pytm) | Threat models authored and maintained as Python code. | pytm requires developers to declare the model; `appsec-advisor` derives it from the implementation. |
-| [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) | Visual threat modeling and editable data-flow diagrams. | Threat Dragon starts from a modeler-authored diagram; `appsec-advisor` can generate and export an initial model from a repository. |
+| [OWASP pytm](https://github.com/OWASP/pytm) | Threat models authored and maintained as Python code. | pytm supports explicitly authored threat models; the analyzer assesses security architecture and weaknesses in an existing implementation. |
+| [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) | Visual threat modeling and editable data-flow diagrams. | The assessment's architecture and findings can be exported to Threat Dragon for further work. |
 | [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) | Collaborative threat-modeling workshops on shared diagrams. | ThreatAtlas records the workshop model; `appsec-advisor` provides repository-based assessments to inform those reviews. |
 | [OWASP Precogly](https://github.com/precogly/precogly) | Program-level threat modeling, libraries, and compliance traceability. | Precogly acts as a maintained system of record; `appsec-advisor` assesses selected repositories and produces an architecture and security report. |
 | [Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security) | Enterprise scanning for exploitable codebase vulnerabilities. | Claude Security focuses on implementation flaws; `appsec-advisor` also identifies architectural gaps without a single vulnerable line. |
 
-The Threat Dragon export can carry generated models into Threat Dragon and ThreatAtlas.
+The Threat Dragon export carries architecture and findings from an assessment into Threat Dragon and ThreatAtlas.
 
 ## What's new
 
@@ -362,8 +364,8 @@ Highlights from the 0.6.0 beta releases.
 
 - **New abuse-case catalog.** The built-in catalog now covers business misuse, such as viewing other users' data or skipping an approval, alongside technical attack chains. Runs check both by default, and you can add your own cases as one sentence each. Reworked rules keep unrelated findings from inflating severity and report unchecked cases. See [Abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases).
 - **New `/appsec-advisor:abuse-cases` command.** It lists all abuse cases with their result and explains each one step by step.
-- **Reworked Threat Analyst.** It checks a single abuse case against your code (`--abuse-case <ID>`), rates each attack step with evidence, and uses your existing threat model as context. See [Threat Analyst](#threat-analyst).
-- **Several repositories, one threat model.** Repeat `--repo` in headless mode to assess a system split across repositories in a single report. See [Assess multiple repositories](#assess-multiple-repositories).
+- **Reworked Threat Analyst.** It checks a single abuse case against your code (`--abuse-case <ID>`), rates each attack step with evidence, and uses your existing assessment as context. See [Threat Analyst](#threat-analyst).
+- **Several repositories, one assessment.** Repeat `--repo` in headless mode to assess a system split across repositories in a single report. See [Assess multiple repositories](#assess-multiple-repositories).
 - **Report improvements.** Critical findings are grouped by root cause with the fix for each group, the diagrams show trust boundaries more clearly, and secrets from your code are masked in every output.
 - **More accurate analysis.** Reworked scanners fix missed detections and false positives, and standard and thorough runs use Sonnet 5.5.
 

@@ -1,6 +1,8 @@
 # Security assessment
 
-`/appsec-advisor:appsec-analyzer` performs **automated, code-derived threat modeling**. It reconstructs the architecture visible in code and configuration and applies STRIDE to identify threats and control gaps. The analysis covers architectural assumptions and implementation weaknesses, with repository evidence supporting its findings.
+`/appsec-advisor:appsec-analyzer` performs **repository-based security analysis with a focus on architecture**. It reconstructs components, data flows, and trust boundaries from code and configuration, assesses security controls, and identifies implementation weaknesses and design risks. Threat analysis examines potential attack paths and abuse cases within that architecture. Findings cite repository evidence and include remediation guidance.
+
+The result is a Security Assessment of the implemented application. Threat modeling is planned as a separate skill.
 
 → [Back to README](../README.md)
 
@@ -8,8 +10,8 @@
 
 - [What you get](#what-you-get)
 - [Where results are stored](#where-results-are-stored)
-- [Using the model in design reviews](#using-the-model-in-design-reviews)
-- [Threat model lifecycle](#threat-model-lifecycle)
+- [Using the assessment in architecture reviews](#using-the-assessment-in-architecture-reviews)
+- [Assessment lifecycle](#assessment-lifecycle)
 - [Example report](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
 - [Trust boundaries](#trust-boundaries)
@@ -22,7 +24,7 @@
 
 ## What you get
 
-An assessment generates an architecture and security report from repository evidence. The report covers components, data flows, trust boundaries, STRIDE findings, affected code, remediation guidance, and diagrams. The Markdown and YAML outputs are rendered from the same validated data.
+An assessment generates an architecture and security report from repository evidence. The report covers components, data flows, trust boundaries, security controls and their gaps, systemic weaknesses, design risks, potential attack paths, and concrete findings with affected code and remediation guidance. Diagrams show the relationships between these elements. The Markdown and YAML outputs are rendered from the same validated data.
 
 **Default outputs**
 
@@ -87,24 +89,28 @@ Earlier releases wrote `threat-model.md`, `threat-model.yaml` and their exports 
 
 An interactive run offers once to import a finished set into the application directory. Importing copies the report, model, figures, exports, changelog files and pentest tasks under the new names, and the next run continues its history. The files in the repository stay; remove them yourself when you no longer need them. A headless run that finds such a set stops unless it receives `--migrate-legacy`, which imports it, or `--ignore-legacy`, which starts a new history without it. An interrupted earlier run is reported as incomplete and not imported.
 
-## Using the model in design reviews
+<a id="using-the-model-in-design-reviews"></a>
 
-Review the generated model with developers, architects, and security reviewers. Compare its data flows and trust boundaries with the intended design, investigate findings, and resolve assumptions that repository evidence cannot settle. If no documented threat model exists, use the generated model as a starting point.
+## Using the assessment in architecture reviews
+
+Review the assessment with developers, architects, and security reviewers. Compare the reconstructed architecture, data flows, and trust boundaries with the intended design. Examine which security controls are evidenced, missing, broken, or uncertain, investigate findings and systemic weaknesses, and resolve assumptions that repository evidence cannot settle.
 
 Supply business purpose, sensitive assets, and security assumptions through [repo-local context](#repo-local-context). Use [trust-boundary declarations](#trust-boundary-declarations--appsectrust-boundariesyaml) to clarify deployment, tenancy, or ownership that the source does not establish. Declarations provide context; they do not prove that a control works. The analysis cannot verify runtime behavior or production-only controls.
 
 Use the review to decide which design changes and fixes are needed. After implementation changes, reassess the repository to check the revised design against the available code and configuration.
 
-## Threat model lifecycle
+<a id="threat-model-lifecycle"></a>
 
-The plugin automates repository analysis and report generation. The team validates findings, resolves open assumptions, and decides on design changes, remediation, or risk acceptance. Rerun the assessment as the implementation changes to keep the model current.
+## Assessment lifecycle
+
+The analyzer automates repository analysis and report generation. The team validates findings, resolves open assumptions, and decides on design changes, remediation, or risk acceptance. Rerun the assessment as the implementation changes to keep its conclusions current.
 
 The Management Summary verdict rates security concerns in the assessed scope: red indicates Critical concerns, yellow indicates High concerns, and green means neither was reported. It includes finding priorities and design risks without changing individual finding ratings. Green does not establish deployment safety or coverage of unexamined surfaces. When you explicitly declare no material business harm, the verdict shows the component scope of that declaration separately; technical findings and their severity remain available for benchmarking. Design-risk citations link directly to weaknesses and do not assert confirmed exploitation; the team retains the deployment decision.
 
 ```mermaid
 flowchart LR
-    create["Create model"] --> model["Validated<br/>Markdown + YAML"]
-    model --> choose{"Use the model"}
+    create["Assess repository"] --> model["Security Assessment<br/>Markdown + YAML"]
+    model --> choose{"Use the assessment"}
     choose --> ask["Ask questions<br/>Read-only"]
     choose --> review["Review and decide"]
     choose --> share["Export"]
@@ -114,21 +120,25 @@ flowchart LR
     update --> model
 ```
 
-### Create or update the model
+<a id="create-or-update-the-model"></a>
+
+### Run or update the assessment
 
 Run `/appsec-advisor:appsec-analyzer` for the first assessment and again after code changes. Every run is a full assessment of the selected repository. A new run over a completed assessment replaces it and continues its changelog history. `--resume` continues an interrupted run without repeating its accepted steps. `--rebuild` starts over and resets the history.
 
 `--incremental`, `--rerender`, `--dry-run`, `--base`, `--pr-mode`, `--restore-from`, `--clean-cache` and `--clean-all` are refused, and so is a free-text focus such as `focus on the payment service`. A refused run changes nothing.
 
-### Ask about the model
+<a id="ask-about-the-model"></a>
+
+### Ask about the assessment
 
 Ask a question directly in Claude Code:
 
 ```text
 what are the most critical findings?
-does the model cover SSRF?
+does the assessment cover SSRF?
 what is the mitigation for F-003?
-is the threat model still current?
+is the assessment still current?
 ```
 
 These questions read `security-assessment.yaml`; they do not scan the repository again or change files. You can also write `/appsec-advisor:ask-security-assessment <question>`. Use `/appsec-advisor:show-security-assessment` when you want the standard overview.
@@ -137,11 +147,11 @@ These questions read `security-assessment.yaml`; they do not scan the repository
 
 `/appsec-advisor:triage-security-assessment` supports finding review, fix and risk decisions, implementation of selected fixes, and remediation planning with owners and target dates.
 
-Decisions are stored separately from the generated model and survive reassessment. The workflow changes source only after an explicit implementation choice.
+Decisions are stored separately from the generated assessment and survive reassessment. The workflow changes source only after an explicit implementation choice.
 
 ### Export
 
-`/appsec-advisor:export-security-assessment` creates exports from an existing model. Sharing a result is always an explicit export; no command commits it to the analyzed repository.
+`/appsec-advisor:export-security-assessment` creates exports from an existing assessment. Sharing a result is always an explicit export; no command commits it to the analyzed repository.
 
 Figure 1 presents the Architecture and Threat Overview with attack paths and hexagonal authentication markers at component accesses. Equal methods share a number; `0` marks evidenced absence of separate authentication and `?` marks uncertainty. Marker colours describe method properties, not a security verdict. Dashed lines mark trust boundaries; the Trust Boundaries table lists them with their IDs. Matching E-labelled rows inside components name the peer and direction of connections whose lines are omitted. A model too large for one diagram also links a detail view that retains the data-flow and boundary catalogues. Existing models without authentication evidence need a new analysis to populate these markers; exporting does not infer missing controls.
 
@@ -151,11 +161,11 @@ Figure 2 connects actors, attack routes, underlying weaknesses and impact using 
 
 The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
 
-![Figure 1a of the Juice Shop threat model](images/figure1-example.svg)
+![Runtime architecture and attack paths in the Juice Shop assessment](images/figure1-example.svg)
 
 ## What it checks
 
-Before it runs STRIDE, the plugin maps routes, authentication flows, trust boundaries, sensitive sinks, security controls, deployment files, and supply-chain configuration.
+The analyzer maps routes, authentication flows, trust boundaries, sensitive sinks, security controls, deployment files, and supply-chain configuration. It assesses how these controls protect the application and where architectural assumptions or implementation weaknesses leave gaps.
 
 | Area | What is inspected |
 |---|---|
@@ -171,7 +181,7 @@ Before it runs STRIDE, the plugin maps routes, authentication flows, trust bound
 | **Threat actors** | Insider, supply-chain, partner, and adjacent-tenant threats where applicable. |
 | **Abuse cases** | Checks of what an attacker or user must not be able to do, such as reading other users' data or bypassing an approval. Built-in cases, your own cases, and at thorough depth cases derived for your application are each checked against the code. |
 
-These signals form the analysis context for STRIDE. They do not replace SAST, SCA, secret scanning, or IaC scanning. A hypothesis becomes a finding only when repository evidence supports it, and the resulting report still requires expert review.
+The threat-analysis stage uses STRIDE categories to examine these signals for potential attacks and control gaps. The assessment complements SAST, SCA, secret scanning, and IaC scanning. A hypothesis becomes a finding only when repository evidence supports it, and the resulting report still requires expert review.
 
 ## Trust boundaries
 
@@ -549,7 +559,7 @@ The completion receipt distinguishes reviewed, incomplete and not-run coverage. 
 
 Models make the security judgments; Python checks their structured output and builds the report. The report does not come from one free-form model response.
 
-![Threat Model Pipeline](images/threat-model-pipeline.png)
+![Repository security assessment pipeline](images/threat-model-pipeline.png)
 
 ### How stages share state
 
@@ -573,7 +583,7 @@ After a single-repository run, the intermediate results remain in the output dir
 | `/appsec-advisor:triage-security-assessment` | Review findings, record decisions, implement selected fixes, or build a remediation plan. |
 | `/appsec-advisor:export-security-assessment` | Export an existing model without another analysis. |
 | `/appsec-advisor:security-assessment-health` | Check whether the model is fresh, stale, missing, or blocked. |
-| `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
+| `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without the full security assessment. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
 | `/appsec-advisor:fix-run-issues` | Show manual plugin-fix guidance from a validated diagnosis of the previous run. |
 | `/appsec-advisor:report-error` | Investigate a run error locally, review an anonymised issue draft, and optionally approve publication to the plugin repository; `--bundle-only` keeps the manual diagnostic-bundle workflow. |
