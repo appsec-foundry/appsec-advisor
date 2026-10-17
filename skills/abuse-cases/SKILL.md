@@ -35,7 +35,7 @@ WHAT IT SHOWS
   a run would reject is listed with its reason. The organization profile is
   named only when one is active.
 
-  When docs/security/threat-model.yaml exists, a column shows what the last
+  When the repository has a threat model, a column shows what the last
   threat-model run recorded for each case: confirmed, partly blocked,
   mitigated, unresolved, not applicable, or not checked. Unresolved is never
   safe. Cases the model derived for the application are listed too.

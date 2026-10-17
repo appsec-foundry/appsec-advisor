@@ -104,7 +104,7 @@ Recognized flags (everything else is the user's question, kept verbatim):
   `--help` | `-h`
 
 - Default `REPO_ROOT` to the current working directory; `--repo` overrides.
-- Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`; `--output` overrides.
+- Default `OUTPUT_DIR` to the repository's assessment directory, resolved in Step 2; `--output` overrides.
 - `--grep <term>` sets an optional topic pre-filter, `--severity <level>` an
   exact severity filter, `--component <name>` a component filter, and
   `--evidence-state <state>` an exact evidence-state filter. They compose with
@@ -121,7 +121,11 @@ if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] \
   echo "Error: CLAUDE_PLUGIN_ROOT is missing or does not identify a valid appsec-advisor plugin." >&2
   exit 2
 fi
+[ -n "${OUTPUT_DIR:-}" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
 ```
+
+On exit 2, print the resolver's `Error: ...` line and stop; never fall back to
+`docs/security`.
 
 ## Step 3a — Overview request (deterministic, no composition)
 

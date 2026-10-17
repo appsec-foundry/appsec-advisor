@@ -9,7 +9,7 @@ Use this support workflow after the scan has finished or failed. It is optional 
 
 ## Arguments and entry
 
-Accept `--repo <path>`, `--output <path>`, `--offer`, and `--bundle-only`; `--into <path>` applies only to `--bundle-only`. Reject unknown flags. Resolve the repository from `--repo` or the current directory and output from `--output` or `<repo>/docs/security`. Use the installed `CLAUDE_PLUGIN_ROOT`; if absent, resolve it from this skill's installation directory, never by searching other checkouts.
+Accept `--repo <path>`, `--output <path>`, `--offer`, and `--bundle-only`; `--into <path>` applies only to `--bundle-only`. Reject unknown flags. Use the installed `CLAUDE_PLUGIN_ROOT`; if absent, resolve it from this skill's installation directory, never by searching other checkouts. Resolve the repository from `--repo` or the current directory and output from `--output` or the directory `python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT"` prints; if it exits 2, print its `Error: ...` line and stop, never falling back to `docs/security`.
 
 Bind the resolved `CLAUDE_PLUGIN_ROOT`, `REPO_ROOT`, and `OUTPUT_DIR` in every Bash call; shell assignments do not survive between calls. Bind `INTO` again for the bundle command. Never derive these bindings from diagnostic text.
 

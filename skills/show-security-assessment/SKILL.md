@@ -56,7 +56,7 @@ USAGE
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repo's assessment directory)
   --all             List every threat grouped by severity (default: top Critical only)
   --json            Emit the overview as machine-readable JSON
 
@@ -93,7 +93,7 @@ Recognized flags (and the values consumed by `--repo` / `--output`):
 Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `ALL_MODE`, `JSON_MODE`.
 
 - Default `REPO_ROOT` to the current working directory.
-- Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`.
+- Default `OUTPUT_DIR` to the repository's assessment directory, resolved in Step 2.
 - `--repo <path>` overrides `REPO_ROOT`; `--output <path>` overrides `OUTPUT_DIR`.
 - `--all` and `--json` are boolean toggles that consume no value.
 
@@ -110,7 +110,7 @@ Error: unknown argument '<TOKEN>'
 
 /appsec-advisor:show-security-assessment accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repo's assessment directory)
   --all             List every threat grouped by severity
   --json            Emit the overview as machine-readable JSON
   --help, -h        Show full help and exit
@@ -135,7 +135,11 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
   exit 2
 fi
+[ -n "${OUTPUT_DIR:-}" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
 ```
+
+On exit 2, print the resolver's `Error: ...` line and stop; never fall back to
+`docs/security`.
 
 ## Step 3 — Dispatch to the helpers
 
@@ -166,5 +170,5 @@ renderer exits `1` (no model found), it already prints the hint to run
 
 Exit-code reference (for shell callers):
 - `0` — threat model present, overview rendered
-- `1` — no threat model found at `<output>/threat-model.yaml`
+- `1` — no threat model found in `<output>`
 - `2` — error (unreadable / unparseable model, or unknown argument)

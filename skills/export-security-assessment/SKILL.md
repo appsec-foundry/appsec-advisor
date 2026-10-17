@@ -1,9 +1,9 @@
 ---
 name: export-security-assessment
-description: Re-export a finished threat-model.yaml/.md into PDF + HTML + SARIF + pentest-tasks artifacts, or the alpha OWASP Threat Dragon / ThreatAtlas JSON. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF, pentest-tasks and Threat Dragon are derived deterministically from threat-model.yaml; PDF and HTML are converted from threat-model.md (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
+description: Re-export a finished security assessment (security-assessment.yaml/.md, or a legacy threat-model.* set) into PDF + HTML + SARIF + pentest-tasks artifacts, or the alpha OWASP Threat Dragon / ThreatAtlas JSON. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF, pentest-tasks and Threat Dragon are derived deterministically from the assessment YAML; PDF and HTML are converted from the report Markdown (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
 ---
 
-You are exporting an existing threat model into one or more artifact formats. This skill is **standalone post-processing** — do not analyze the repository, do not dispatch any agent, do not modify the source `threat-model.md` or `threat-model.yaml`. The skill reads those two files and writes the requested exports.
+You are exporting an existing threat model into one or more artifact formats. This skill is **standalone post-processing** — do not analyze the repository, do not dispatch any agent, do not modify the source report or model (`security-assessment.md` and `.yaml`, or `threat-model.*` in a legacy directory). The skill reads those two files and writes the requested exports under the `security-assessment` name.
 
 ## `--help` — inline help (early exit)
 
@@ -17,15 +17,14 @@ USAGE
 
 FLAGS
   --repo <path>            Repository to operate on (default: current working dir)
-  --output <path>          Threat-model source directory — must contain
-                           threat-model.md and/or threat-model.yaml from a
-                           prior appsec-analyzer run
-                           (default: <repo>/docs/security)
+  --output <path>          Assessment source directory — must contain the
+                           report and/or model of a prior appsec-analyzer run
+                           (default: the repo's assessment directory)
   --exports-dir <path>     Directory where the NEW export files are written
                            (default: same as --output — exports land next to
                            the source files)
   --input <path>           Markdown input for PDF/HTML export. Overrides
-                           <output>/threat-model.md for markup exports.
+                           the report in <output> for markup exports.
   --output-pdf <path>      Exact PDF destination. Implies --formats pdf when
                            --formats is not explicitly provided.
   --formats <csv>          Comma-separated subset of: pdf, html, sarif, pentest,
@@ -35,7 +34,7 @@ FLAGS
   --pentest-format <name>  Pentest dialect: generic|strix (default: generic)
   --pentest-target <url>   Optional base URL for the pentest target
   --slug <value>           Insert -<value> into every export filename
-                           (threat-model-<value>.pdf, pentest-tasks-<value>.yaml,
+                           (security-assessment-<value>.pdf, pentest-tasks-<value>.yaml,
                            …), matching appsec-analyzer --slug.
                            1-64 characters from [A-Za-z0-9._-].
   --no-mermaid             Skip Mermaid SVG pre-rendering for PDF/HTML
@@ -57,11 +56,11 @@ DEPENDENCIES (installed by the user, not by this plugin)
                 apt install python3-yaml | pip install pyyaml
 
 OUTPUTS
-  <exports-dir>/threat-model.pdf                 (when pdf ∈ formats)
-  <exports-dir>/threat-model.html                (when html ∈ formats)
-  <exports-dir>/threat-model.sarif.json          (when sarif ∈ formats)
+  <exports-dir>/security-assessment.pdf                 (when pdf ∈ formats)
+  <exports-dir>/security-assessment.html                (when html ∈ formats)
+  <exports-dir>/security-assessment.sarif.json          (when sarif ∈ formats)
   <exports-dir>/pentest-tasks.yaml               (when pentest ∈ formats)
-  <exports-dir>/threat-model.threatdragon.json   (when threatdragon ∈ formats)
+  <exports-dir>/security-assessment.threatdragon.json   (when threatdragon ∈ formats)
   With --slug, each name carries -<slug> after its prefix.
 
 THREAT DRAGON EXPORT (ALPHA)
@@ -88,8 +87,8 @@ exports. It never dispatches agents and never spends LLM tokens.
 EXIT CODES
   0  All requested exports written (or --check-only succeeded)
   1  Missing dependency (pandoc / weasyprint / mmdc+Chrome / pyyaml)
-  2  Input file not found (threat-model.md or .yaml)
-  3  threat-model.yaml is schema-invalid
+  2  Input file not found (report or model), or the directory holds both naming sets
+  3  The assessment YAML is schema-invalid
   4  Conversion error from one of the helpers
 ```
 
@@ -109,10 +108,10 @@ Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `EXPORTS_DIR`, `INPUT_MD_OVERRIDE
 
 Defaults:
 - `REPO_ROOT` → current working directory
-- `OUTPUT_DIR` → `$REPO_ROOT/docs/security`
+- `OUTPUT_DIR` → the repository's assessment directory, resolved at the start of Step 3
 - `EXPORTS_DIR` → `$OUTPUT_DIR` (same dir)
-- `INPUT_MD_OVERRIDE` → unset (use `$OUTPUT_DIR/threat-model.md`)
-- `OUTPUT_PDF_OVERRIDE` → unset (use `$EXPORTS_DIR/threat-model.pdf`)
+- `INPUT_MD_OVERRIDE` → unset (use the report in `$OUTPUT_DIR`)
+- `OUTPUT_PDF_OVERRIDE` → unset (use `$EXPORTS_DIR/security-assessment.pdf`)
 - `FORMATS` → `pdf,html,sarif,pentest` (when `all`, or no `--formats` flag)
 - `PENTEST_FORMAT` → `generic`
 - `PENTEST_TARGET_URL` → unset
@@ -140,8 +139,20 @@ Set boolean flags `DO_PDF`, `DO_HTML`, `DO_SARIF`, `DO_PENTEST`, `DO_THREATDRAGO
 For each requested format, verify the inputs and dependencies exist. Print each line as you check.
 
 ```bash
-INPUT_MD="$OUTPUT_DIR/threat-model.md"
-INPUT_YAML="$OUTPUT_DIR/threat-model.yaml"
+# Resolver failure prints its own "Error: ..." line; stop, never fall back to docs/security.
+[ -n "$OUTPUT_DIR" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
+[ -n "$EXPORTS_DIR" ] || EXPORTS_DIR="$OUTPUT_DIR"
+# Report and model come from one naming set: security-assessment.*, or a legacy threat-model.* set.
+NEW=0; OLD=0
+{ [ -f "$OUTPUT_DIR/security-assessment.yaml" ] || [ -f "$OUTPUT_DIR/security-assessment.md" ]; } && NEW=1
+{ [ -f "$OUTPUT_DIR/threat-model.yaml" ] || [ -f "$OUTPUT_DIR/threat-model.md" ]; } && OLD=1
+if [ "$NEW" = 1 ] && [ "$OLD" = 1 ]; then
+  echo "ERROR: $OUTPUT_DIR holds both security-assessment.* and threat-model.*; move the older set away first" >&2
+  exit 2
+fi
+STEM=security-assessment; [ "$OLD" = 1 ] && STEM=threat-model
+INPUT_MD="$OUTPUT_DIR/$STEM.md"
+INPUT_YAML="$OUTPUT_DIR/$STEM.yaml"
 [ -n "$INPUT_MD_OVERRIDE" ] && INPUT_MD="$INPUT_MD_OVERRIDE"
 
 # The slug becomes part of every export filename, so only filename-safe values pass.
@@ -157,12 +168,12 @@ PREFLIGHT_FAIL=0
 # Yaml needed for sarif + pentest + threatdragon
 if [ "$DO_SARIF" = "true" ] || [ "$DO_PENTEST" = "true" ] || [ "$DO_THREATDRAGON" = "true" ]; then
   if [ ! -f "$INPUT_YAML" ]; then
-    echo "ERROR: threat-model.yaml not found at $INPUT_YAML" >&2
+    echo "ERROR: assessment model not found at $INPUT_YAML" >&2
     PREFLIGHT_FAIL=2
   else
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" \
       threat_model_output "$INPUT_YAML" >/dev/null 2>&1 || {
-        echo "ERROR: threat-model.yaml is schema-invalid (run validators/validate_intermediate.py for details)" >&2
+        echo "ERROR: $STEM.yaml is schema-invalid (run validators/validate_intermediate.py for details)" >&2
         PREFLIGHT_FAIL=3
       }
   fi
@@ -170,7 +181,7 @@ fi
 
 # Markdown needed for pdf and html
 if { [ "$DO_PDF" = "true" ] || [ "$DO_HTML" = "true" ]; } && [ ! -f "$INPUT_MD" ]; then
-  echo "ERROR: threat-model.md not found at $INPUT_MD" >&2
+  echo "ERROR: assessment report not found at $INPUT_MD" >&2
   PREFLIGHT_FAIL=2
 fi
 
@@ -206,7 +217,7 @@ EXIT_CODE=0
 if [ "$DO_SARIF" = "true" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_sarif.py" \
     --threat-model "$INPUT_YAML" \
-    --output       "$EXPORTS_DIR/threat-model$SFX.sarif.json" \
+    --output       "$EXPORTS_DIR/security-assessment$SFX.sarif.json" \
     || EXIT_CODE=4
 fi
 
@@ -222,13 +233,13 @@ fi
 if [ "$DO_THREATDRAGON" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_threat_dragon.py" \
     --threat-model "$INPUT_YAML" \
-    --output       "$EXPORTS_DIR/threat-model$SFX.threatdragon.json" \
+    --output       "$EXPORTS_DIR/security-assessment$SFX.threatdragon.json" \
     || EXIT_CODE=4
 fi
 
 if [ "$DO_HTML" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
   HTML_ARGS="--input $INPUT_MD \
-             --output $EXPORTS_DIR/threat-model$SFX.html"
+             --output $EXPORTS_DIR/security-assessment$SFX.html"
   [ "$NO_MERMAID"      = "true" ] && HTML_ARGS="$HTML_ARGS --no-mermaid"
   [ "$REQUIRE_MERMAID" = "true" ] && HTML_ARGS="$HTML_ARGS --require-mermaid"
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" $HTML_ARGS \
@@ -236,7 +247,7 @@ if [ "$DO_HTML" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
 fi
 
 if [ "$DO_PDF" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
-  OUTPUT_PDF="$EXPORTS_DIR/threat-model$SFX.pdf"
+  OUTPUT_PDF="$EXPORTS_DIR/security-assessment$SFX.pdf"
   [ -n "$OUTPUT_PDF_OVERRIDE" ] && OUTPUT_PDF="$OUTPUT_PDF_OVERRIDE"
   mkdir -p "$(dirname "$OUTPUT_PDF")"
   PDF_ARGS="--input $INPUT_MD \

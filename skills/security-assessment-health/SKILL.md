@@ -20,7 +20,7 @@ USAGE
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repo's assessment directory)
   --json            Emit results as machine-readable JSON
 
 CHECKS
@@ -59,7 +59,7 @@ Recognized flags (and the values consumed by `--repo` / `--output`):
 Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `JSON_MODE`.
 
 - Default `REPO_ROOT` to the current working directory.
-- Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`.
+- Default `OUTPUT_DIR` to the repository's assessment directory, resolved in Step 2.
 - `--repo <path>` overrides `REPO_ROOT`.
 - `--output <path>` overrides `OUTPUT_DIR`.
 
@@ -76,7 +76,7 @@ Error: unknown argument '<TOKEN>'
 
 /appsec-advisor:security-assessment-health accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repo's assessment directory)
   --json            Emit results as machine-readable JSON
   --help, -h        Show full help and exit
 
@@ -100,7 +100,11 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
   exit 2
 fi
+[ -n "${OUTPUT_DIR:-}" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 4
 ```
+
+If the resolver fails, print its `Error: ...` line and stop with exit `4`;
+never fall back to `docs/security`.
 
 ## Step 3 — Dispatch to the helper
 
