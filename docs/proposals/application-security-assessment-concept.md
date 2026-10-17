@@ -2,6 +2,8 @@
 
 Status: discussion draft, 2026-10-16; target release 0.6.0-beta.5, released only after the operator approves the completed work. This proposal does not change approved requirements, record an accepted technical decision, or authorize implementation.
 
+The subsequent [AppSec product architecture](appsec-product-architecture-concept.md) names the independent assessment product, repository, CLI, and skill `appsec-analyzer`, integrated through `/appsec-advisor:appsec-analyzer`. This document retains the earlier `create-security-assessment` transition terminology and its report and storage scope. Reconcile release timing and command replacement before implementation; the later architecture does not silently add aliases or change this proposal's artifact semantics.
+
 The proposed main workflow is **Application Security Assessment**, invoked through `/appsec-advisor:create-security-assessment`. Its result is a **Security Assessment Report**, saved as `security-assessment.md` with canonical data in `security-assessment.yaml`. The report subtitle makes its focus on security architecture, threats, and requirements implementation explicit. Threat modeling remains an analysis method and part of the result. This release changes commands, report titles, file names, and the default storage location together. It preserves the analysis content and removes the repository-publication skill. New project-document analysis and a design-based threat-modeling workflow are outside this proposal's implementation scope.
 
 ## Purpose and terminology

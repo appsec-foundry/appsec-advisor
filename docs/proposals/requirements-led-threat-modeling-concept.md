@@ -1,6 +1,6 @@
 # Threat modeling from requirements and design
 
-Status: concept draft, 2026-10-13; revised 2026-10-16. This proposal describes an independent skill for creating and maintaining a team's threat model. It does not change approved product requirements, record accepted implementation decisions, or introduce an executable skill.
+Status: concept draft, 2026-10-13; revised 2026-10-17. This proposal describes an independent skill for creating and maintaining a team's threat model. It does not change approved product requirements, record accepted implementation decisions, or introduce an executable skill.
 
 The skill helps teams understand what they need to protect, how their system could be misused, and which design choices address those threats. Requirements and specifications establish intended behavior and the proposed system. Architecture descriptions, team knowledge, and optional bounded code exploration provide further context. The workflow works before implementation exists.
 
@@ -19,6 +19,8 @@ Support three tasks: create an initial model, update it for a change, and review
 The workflow is independent of the existing code assessment pipeline. A threat scenario can be relevant without an implementation flaw or a vulnerable source line. Existing controls and planned safeguards belong in the model alongside unresolved risks. Their presence does not establish that they work in production.
 
 Selective reuse of suitable catalogs, source handling, or validation helpers is possible after checking their semantics. Reuse should preserve this workflow's focus on design and team decisions. The separate [application security assessment concept](application-security-assessment-concept.md) describes the assessment naming proposal; implementing either concept does not depend on implementing the other.
+
+The [AppSec product architecture](appsec-product-architecture-concept.md) places this skill in `appsec-skills` and includes its published bundle in `appsec-advisor-plugin`. It remains usable without AppSec Analyzer and owns its modeling behavior; the plugin supplies the Claude integration. The target plugin command is `/appsec-advisor:create-threat-model`, introduced only after resolving the legacy assessment command collision.
 
 ## Methodological basis
 
