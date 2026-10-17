@@ -738,7 +738,8 @@ def test_list_without_org_profile_omits_org_cases_and_shows_rejected_files(tmp_p
     assert rac.main(["--list", "--no-org-profile", "--repo-root", str(repo)]) == 0
     out = capsys.readouterr().out
     assert (
-        out.splitlines()[0] == f"ABUSE CASES in repo — {len(_LIBRARY_IDS)} active · no threat model in docs/security/"
+        out.splitlines()[0]
+        == f"ABUSE CASES in repo — {len(_LIBRARY_IDS)} active · no security assessment for this repository"
     )
     assert "ORG-AC-001" not in out
     assert "REJECTED docs/security/abuse-cases/broken.yaml" in out
@@ -786,7 +787,7 @@ def test_list_shows_the_outcome_the_threat_model_records_for_each_case(tmp_path,
 def test_list_without_a_threat_model_has_no_outcome_column(tmp_path, capsys):
     assert rac.main(["--list", "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith("· no threat model in docs/security/") and "not checked" not in out
+    assert out.splitlines()[0].endswith("· no security assessment for this repository") and "not checked" not in out
     assert out.splitlines()[-1] == "Results per case:  create a threat model with /appsec-advisor:appsec-analyzer"
 
 
@@ -832,7 +833,7 @@ def test_show_puts_a_confirmed_chain_into_sections_with_a_step_table(tmp_path, c
     assert lines[0] == "AC-T-003 · Privilege Escalation to Admin via JWT Algorithm Confusion"
     assert lines[1] == "Technical abuse case · plugin"
     assert "RESULT: CONFIRMED — this case applies to the code." in lines
-    assert "  (risk Critical · docs/security/threat-model.yaml, 2026-10-10)" in lines
+    assert "  (risk Critical · threat-model.yaml, 2026-10-10)" in lines
     assert lines[lines.index("HOW") + 1] == "  Attacker signs a token with the public key."
     assert lines[lines.index("IMPACT") + 1] == "  Admin access."
     table = lines[lines.index("STEPS") + 1 : lines.index("STEPS") + 4]
@@ -874,7 +875,8 @@ def test_show_gives_a_business_case_a_where_section_and_links_the_report(tmp_pat
     assert "  Control found: rate limit, bypassable" in lines
     assert not any("Existing control" in line for line in lines)  # the step's control is not repeated
     assert "STEPS" not in lines
-    assert "  Report:         docs/security/threat-model.md#ac-b-003" in lines
+    report = (tmp_path / "docs" / "security" / "threat-model.md").resolve()
+    assert f"  Report:         {report.as_posix()}#ac-b-003" in lines
 
 
 def test_show_says_what_blocks_a_mitigated_case_and_explains_no_attack(tmp_path, capsys):
@@ -893,14 +895,14 @@ def test_show_says_what_blocks_a_mitigated_case_and_explains_no_attack(tmp_path,
 def test_show_says_when_a_case_has_no_recorded_result(tmp_path, capsys):
     lines = _show(tmp_path, "AC-B-001", capsys)
     assert lines[1] == "Business abuse case · plugin"
-    assert any(line.startswith("RESULT: NOT CHECKED — no threat model in") for line in lines)
+    assert any(line.startswith("RESULT: NOT CHECKED — no security assessment for") for line in lines)
     assert "  Threat model:   /appsec-advisor:appsec-analyzer" in lines
     _write_model(
         tmp_path,
         {"status": "completed", "cases": [], "catalog_evaluated": [{"id": "AC-B-001", "reason": "no tenants"}]},
     )
     lines = _show(tmp_path, "AC-B-001", capsys)
-    assert "RESULT: NOT APPLICABLE  (docs/security/threat-model.yaml, 2026-10-10)" in lines
+    assert "RESULT: NOT APPLICABLE  (threat-model.yaml, 2026-10-10)" in lines
     assert "  Reason: no tenants" in lines
 
 
@@ -993,3 +995,14 @@ def test_show_offers_a_check_only_where_one_can_run(tmp_path, capsys):
     assert (
         lines[-1] == "  Check again:    /appsec-advisor:analyze-threats --abuse-case AC-T-003 --isolated [--model opus]"
     )
+
+
+def test_the_external_assessment_model_is_read_before_a_legacy_one(tmp_path, monkeypatch):
+    from shared.assessment_location import application_directory
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    _write_model(tmp_path, {"status": "completed", "cases": []})
+    external = application_directory(tmp_path)
+    external.mkdir(parents=True)
+    (external / "security-assessment.yaml").write_text(yaml.safe_dump({"meta": {"project": "external"}}))
+    assert rac.load_threat_model(tmp_path)["meta"]["project"] == "external"

@@ -70,7 +70,21 @@ _HERE = Path(__file__).resolve().parents[1]
 _DEFAULT_SCHEMA = _HERE.parent / "schemas" / "cross-repo-register.schema.json"
 
 _DEFAULT_MAX_SIBLINGS = 8
-_DEFAULT_TM_REL_PATH = Path("docs") / "security" / "threat-model.yaml"
+
+
+def _assessment_model(root: Path) -> Path:
+    """The model file of the assessment of the checkout at ``root`` (decision AS-1).
+
+    The external application directory, or a legacy ``docs/security`` set; a
+    path that does not exist when neither can be located.
+    """
+    from shared.artifact_names import ArtifactSetError, model_path
+    from shared.assessment_location import LocationError, locate
+
+    try:
+        return model_path(locate(root)[0])
+    except (LocationError, ArtifactSetError, OSError):
+        return root / "docs" / "security" / "security-assessment.yaml"
 
 
 def _should_skip_sibling_discovery(
@@ -185,7 +199,7 @@ def _discover_siblings(
             continue
         if len(entries) >= max_siblings:
             break
-        tm_path = sibling / _DEFAULT_TM_REL_PATH
+        tm_path = _assessment_model(sibling)
         if tm_path.is_file():
             tm_meta = _read_threat_model_meta(tm_path)
             entries.append(
@@ -239,7 +253,7 @@ def _discover_submodules(
         name = m.group(1) if m else Path(subpath).name
         if name in declared_names:
             continue
-        tm_path = repo_root / subpath / _DEFAULT_TM_REL_PATH
+        tm_path = _assessment_model(repo_root / subpath)
         if tm_path.is_file():
             tm_meta = _read_threat_model_meta(tm_path)
         else:

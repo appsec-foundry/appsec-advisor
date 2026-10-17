@@ -38,6 +38,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 from runtime.event_log import format_line
 
@@ -190,18 +191,31 @@ def _load_org_profile_coach():
     return _coach_from_configured_profile()
 
 
+def _assessment_directory() -> str | None:
+    """The assessment directory of the working directory's checkout; None when it cannot be resolved."""
+    try:
+        from shared.assessment_location import locate_from
+
+        located = locate_from(Path(os.getcwd()))
+    except Exception:  # noqa: BLE001 — the hook must never fail on the lookup
+        return None
+    return str(located) if located is not None else None
+
+
 def _coach_from_effective_profile():
     """``security_coach`` of the first active ``.org-profile-effective.json``; None when there is none.
 
-    That file is the profile a threat-model run already resolved, so it is the cheapest source. It is looked for
-    in OUTPUT_DIR, then in docs/security/ under the working directory. An active profile without a coach block
-    yields ``{}`` and ends the lookup: the configured profile is not consulted then.
+    That file is the profile an assessment run already resolved, so it is the cheapest source. It is looked for
+    in OUTPUT_DIR, then in the assessment directory of the working directory's checkout. An active profile
+    without a coach block yields ``{}`` and ends the lookup: the configured profile is not consulted then.
     """
     candidates = []
     output_dir = os.environ.get("OUTPUT_DIR")
     if output_dir:
         candidates.append(os.path.join(output_dir, ".org-profile-effective.json"))
-    candidates.append(os.path.join(os.getcwd(), "docs", "security", ".org-profile-effective.json"))
+    located = _assessment_directory()
+    if located is not None:
+        candidates.append(os.path.join(located, ".org-profile-effective.json"))
     for path in candidates:
         try:
             with open(path) as fh:
@@ -506,11 +520,14 @@ def _log_coach_event(topics, req_ids, chars, prompt):
     Best-effort. Never raises: a non-writable log directory (e.g. read-only
     filesystem, `--repo` pointing at an external tree) must not fail the hook.
     Format matches agent_logger._write() so both producers share one log.
-    The prompt is recorded only as a short hash, never as text.
+    The prompt is recorded only as a short hash, never as text. The line goes
+    to an existing assessment directory only; without one nothing is written,
+    so the hook never creates a directory inside the checkout.
     """
     try:
-        log_dir = os.path.join(os.getcwd(), "docs", "security")
-        os.makedirs(log_dir, exist_ok=True)
+        log_dir = _assessment_directory()
+        if log_dir is None or not os.path.isdir(log_dir):
+            return
         log_file = os.path.join(log_dir, ".hook-events.log")
 
         topic_str = ",".join(sorted(t for t in topics if not t.startswith("_"))) or "-"

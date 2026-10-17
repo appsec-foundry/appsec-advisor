@@ -72,10 +72,15 @@ _DEFAULT_OUTDATED_DAYS = 90
 
 
 def _locate_threat_model(repo: Path) -> Path | None:
-    cand = [
-        repo / "docs" / "security" / "threat-model.yaml",
-        repo / "threat-model.yaml",
-    ]
+    from shared.artifact_names import ArtifactSetError, model_path
+    from shared.assessment_location import LocationError, locate
+
+    cand = [repo / "threat-model.yaml"]
+    try:
+        # The repository's assessment directory (decision AS-1) or its legacy docs/security set.
+        cand.insert(0, model_path(locate(repo)[0]))
+    except (LocationError, ArtifactSetError, OSError):
+        pass
     for p in cand:
         if p.is_file():
             return p

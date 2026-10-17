@@ -2236,7 +2236,11 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
         description="Assess several local Git checkouts as one system.",
     )
     parser.add_argument("--repo", action="append", required=True, metavar="PATH")
-    parser.add_argument("--output", required=True, metavar="PATH")
+    parser.add_argument(
+        "--output",
+        metavar="PATH",
+        help="Destination directory; by default the application's directory under the user data directory.",
+    )
     parser.add_argument("--full", action="store_true", help="Accepted for symmetry; every run is a full assessment.")
     parser.add_argument("--resume", action="store_true")
     # Redo every model job instead of reusing an earlier run's accepted ones.
@@ -4057,6 +4061,58 @@ def _assessment_publish(
     return delivered
 
 
+def _default_output(repos: list[str]) -> str:
+    """The application directory a run without --output writes to (decision AS-1).
+
+    One repository uses its own directory; several selected repositories share
+    the directory of their combined identity, independent of selection order.
+    """
+    from shared.assessment_location import (
+        LocationError,
+        application_directory,
+        application_name,
+        assessment_directory,
+        combined_application_name,
+        remote_of,
+    )
+
+    roots = [Path(repo) for repo in repos]
+    try:
+        if len(roots) == 1:
+            return str(application_directory(roots[0]))
+        names = [application_name(root, remote_of(root)) for root in roots]
+        return str(assessment_directory(combined_application_name(names)))
+    except LocationError as exc:
+        raise CallError(f"the default assessment destination cannot be resolved ({exc}); pass --output") from exc
+
+
+def _assessment_destination(ns) -> str:
+    """Resolve the run's output directory and create it privately when it lies under the data directory."""
+    return _private_destination(ns.output or _default_output(ns.repo))
+
+
+def _private_destination(output: str) -> str:
+    """Create ``output`` privately when it lies under the per-user data directory.
+
+    REQ-TRU-005: such a destination is created with mode 0700 at every level,
+    and a symlinked, foreign or group-readable level stops the run. An
+    explicit --output elsewhere is used as given.
+    """
+    from shared.assessment_location import LocationError, data_base, private_directory
+
+    try:
+        base = data_base()
+    except LocationError:
+        return output
+    target = Path(os.path.abspath(output))
+    if target == base.parent or base.parent in target.parents:
+        try:
+            private_directory(target, base)
+        except (LocationError, OSError) as exc:
+            raise CallError(f"the assessment destination is not private: {exc}") from exc
+    return output
+
+
 def assess_repositories(argv: list[str], *, host_factory=None, progress=None) -> dict[str, Any]:
     """Assess several selected local checkouts as one system and publish one model."""
     import contextlib
@@ -4070,6 +4126,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
 
     parser = _assessment_argument_parser()
     ns, rest = parser.parse_known_args(argv)
+    ns.output = _assessment_destination(ns)
     # Opened first, so every refusal after this still ends the file with its `end` record.
     _AssessmentProgress.open(ns.progress_file)
     unsupported = sorted({arg.split("=", 1)[0] for arg in rest} & set(_ASSESSMENT_UNSUPPORTED))
@@ -4404,11 +4461,10 @@ def _draft_stamp(argv: list[str]) -> tuple[Path, int | None] | None:
     """The render workspace draft of `argv`'s output and its modification time, if present."""
     try:
         ns, _rest = _assessment_argument_parser().parse_known_args(argv)
-    except SystemExit:
+        output = ns.output or _default_output(ns.repo)
+    except (SystemExit, CallError):
         return None
-    if not getattr(ns, "output", None):
-        return None
-    draft = Path(ns.output) / ".assessment-work" / "render"
+    draft = Path(output) / ".assessment-work" / "render"
     try:
         return draft, (draft / "threat-model.md").stat().st_mtime_ns
     except OSError:
@@ -4458,26 +4514,31 @@ def _stop_on_terminate(state):
             signal.signal(signum, handler)
 
 
-def _launch_directory(repo: str) -> tuple[Path, Path]:
-    """The checkout and report directory of an `appsec-analyzer` launch."""
+def _launch_directory(repo: str, output: str | None = None) -> tuple[Path, Path]:
+    """The checkout and output directory of an `appsec-analyzer` launch.
+
+    The output is the launch's --output, by default the application directory
+    the run writes to, so the dialog's files and the run share one directory.
+    """
     from runtime.multi_repo_scope import ScopeError, checkout_report_directory
 
     try:
-        root, output = checkout_report_directory(repo)
+        root, _legacy = checkout_report_directory(repo)
     except ScopeError as exc:
         raise CallError(f"repository selection rejected: {exc}") from exc
-    if acquire_lock.lock_held_by_live_other_run(output / ".appsec-lock"):
-        raise CallError("another live run holds this repository's docs/security; wait for it or stop it first")
-    return root, output
+    target = Path(_private_destination(output or _default_output([str(root)])))
+    if acquire_lock.lock_held_by_live_other_run(target / ".appsec-lock"):
+        raise CallError("another live run holds this assessment's output directory; wait for it or stop it first")
+    return root, target
 
 
-def assess_context_preview(repo: str) -> dict[str, Any]:
+def assess_context_preview(repo: str, output: str | None = None) -> dict[str, Any]:
     """Write the bounded application overview the business-context dialog reads."""
     import contexts.business_context_preview as business_context_preview
     import contexts.load_business_context as load_business_context
     from shared._atomic_io import atomic_write_json
 
-    root, output = _launch_directory(repo)
+    root, output = _launch_directory(repo, output)
     output.mkdir(parents=True, exist_ok=True)
     # An answer file left by an abandoned dialog never counts as this one.
     (output / business_context_preview.RAW_NAME).unlink(missing_ok=True)
@@ -4494,12 +4555,17 @@ def assess_context_preview(repo: str) -> dict[str, Any]:
 
 
 def assess_context_save(
-    repo: str, *, context_answer: str, impact_choice: str | None, use_case_choice: str | None
+    repo: str,
+    *,
+    context_answer: str,
+    impact_choice: str | None,
+    use_case_choice: str | None,
+    output: str | None = None,
 ) -> dict[str, Any]:
     """Persist the dialog result with the same checks as the session runtime's preflight."""
     import contexts.business_context_preview as business_context_preview
 
-    root, output = _launch_directory(repo)
+    root, output = _launch_directory(repo, output)
     _save_business_context_answer(
         root, output, context_answer=context_answer, impact_choice=impact_choice, use_case_choice=use_case_choice
     )
@@ -4558,6 +4624,7 @@ def _launch_main(command: str, argv: list[str]) -> int:
         parser.add_argument("--output", required=True)
     else:
         parser.add_argument("--repo", required=True)
+        parser.add_argument("--output", help="The launch's output directory; by default the application directory.")
     if command == "assess-context-save":
         parser.add_argument("--context-answer", choices=("answered", "skip", "unchanged"), required=True)
         parser.add_argument("--impact-choice", choices=("no-material-harm", "declared-harm"))
@@ -4565,13 +4632,14 @@ def _launch_main(command: str, argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         if command == "assess-context-preview":
-            action = assess_context_preview(args.repo)
+            action = assess_context_preview(args.repo, args.output)
         elif command == "assess-context-save":
             action = assess_context_save(
                 args.repo,
                 context_answer=args.context_answer,
                 impact_choice=args.impact_choice,
                 use_case_choice=args.use_case_choice,
+                output=args.output,
             )
         else:
             action = assess_stop(Path(args.output))
@@ -4701,10 +4769,13 @@ def _save_closing(outcome: dict, elapsed: str) -> None:
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
     code = 1
+    # REQ-TRU-005: every file the run creates is readable by the current user only.
+    umask = os.umask(0o077)
     try:
         code = _assess_main(argv)
         return code
     finally:
+        os.umask(umask)
         # Also after an unexpected exception, which counts as failed.
         _AssessmentProgress.end(code)
 

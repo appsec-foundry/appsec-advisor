@@ -149,6 +149,21 @@ def _installed_skills() -> list[str]:
     return sorted(path.parent.name for path in skills_dir.glob("*/SKILL.md") if path.is_file())
 
 
+def _assessment_directory(repo_root: Path) -> Path:
+    """The directory whose assessment the repository's consumers read (decision AS-1).
+
+    The legacy ``docs/security`` of a checkout that has not been migrated yet
+    is read when only it holds an assessment.
+    """
+    from shared.assessment_location import LocationError, locate
+
+    try:
+        return locate(repo_root)[0]
+    except (LocationError, OSError):
+        # No user data directory: only a legacy assessment can exist.
+        return repo_root / "docs" / "security"
+
+
 def _skills_status(output_dir: Path) -> dict:
     """Every skill this build ships, plus what the skill policy says about it.
 
@@ -1053,7 +1068,7 @@ USAGE
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repository's assessment directory)
   --json            Emit the status as machine-readable JSON
   --live            Print only the in-flight run snapshot (active tool calls,
                     per-component progress, heartbeat freshness). Honours --json.
@@ -1071,7 +1086,7 @@ ARGUMENT_ERROR = """Error: unknown argument '{token}'
 
 /appsec-advisor:status accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repository's assessment directory)
   --json            Emit the status as machine-readable JSON
   --live            Print only the in-flight run snapshot (cron-style polling)
   --check-updates   Check the baseline and core versions against their sources
@@ -1114,7 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
         "--output-dir",
         dest="output_dir",
         default=None,
-        help="Override output directory (default: <repo>/docs/security).",
+        help="Override output directory (default: the repository's assessment directory).",
     )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     p.add_argument(
@@ -1139,7 +1154,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     repo_root = Path(args.repo_root).resolve()
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else _assessment_directory(repo_root)
 
     if args.live:
         snap = _live_snapshot(output_dir)

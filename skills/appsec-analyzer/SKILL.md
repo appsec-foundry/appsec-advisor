@@ -2,9 +2,10 @@
 name: appsec-analyzer
 description: >-
   Security assessment of one repository through the deterministic controller;
-  writes security-assessment.md and security-assessment.yaml to docs/security.
-  Runs full assessments only: --incremental, --rerender, --dry-run, --base, --pr-mode,
-  --restore-from and a free-text focus are refused. Without a budget flag the
+  writes security-assessment.md and security-assessment.yaml to a private
+  directory per application under the user data directory, or to --output.
+  Runs full assessments only: --incremental, --rerender, --dry-run, --base,
+  --pr-mode, --restore-from and a free-text focus are refused. Without a budget flag the
   depth sets a hard budget (quick 10, standard 20, thorough 40 USD). Models are
   fixed per role, not taken from the session; --model, --stride-model,
   --triage-model, --merger-model and --reasoning-model change them. --width
@@ -22,20 +23,24 @@ Run once, with the raw invocation arguments as separate arguments:
 ```bash
 _args=(<invocation-arguments>)
 REPO=""
+OUTPUT_DIR=""
 for i in "${!_args[@]}"; do
   case "${_args[$i]}" in
     --plugin-dir) CLAUDE_PLUGIN_ROOT="${_args[$((i+1))]}" ;;
     --repo) REPO="${_args[$((i+1))]}" ;;
+    --output) OUTPUT_DIR="${_args[$((i+1))]}" ;;
   esac
 done
 # <base-dir> from the invocation line. Never search the filesystem.
 [ -n "$CLAUDE_PLUGIN_ROOT" ] || CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 [ -n "$REPO" ] || REPO=$(git rev-parse --show-toplevel)
-OUTPUT_DIR="$REPO/docs/security"
+[ -n "$OUTPUT_DIR" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" destination --repo "$REPO")
 echo "CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT REPO=$REPO OUTPUT_DIR=$OUTPUT_DIR"
 ```
 
-Use these three values literally in every later command.
+Use these three values literally in every later command. When the
+destination cannot be resolved, print its error and stop; never fall back to a
+directory inside the repository.
 
 ## `--stop`
 
@@ -108,7 +113,8 @@ content.
 Skip this section when the arguments contain `--skip-context`. Otherwise run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" assess-context-preview --repo "$REPO"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" assess-context-preview \
+  --repo "$REPO" --output "$OUTPUT_DIR"
 ```
 
 On an error, print it and stop. Otherwise read the returned `preview` file and
@@ -150,7 +156,7 @@ Start this command as a background Bash command (`run_in_background: true`; an
 assessment outlasts the foreground limit) with
 `allowed_domains: ["api.anthropic.com"]` (the controller's model sessions call
 the API; a sandbox that blocks it turns every call into retries ending in
-`server_error`), passing every invocation argument except `--repo`,
+`server_error`), passing every invocation argument except `--repo`, `--output`,
 `--plugin-dir` and their values, plus `--trust-mode trusted` when the trust
 preflight granted it, plus `--width 72` when the arguments contain no
 `--width` (the output panel cuts longer lines instead of wrapping them):

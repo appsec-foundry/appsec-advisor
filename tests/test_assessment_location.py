@@ -184,3 +184,17 @@ def test_cli_refuses_a_mixed_set_without_a_traceback(tmp_path, monkeypatch, caps
     assert err.startswith("Error:") and "Traceback" not in err
     assert loc.main(["destination", "--repo", str(repo), "--json"]) == 0
     assert str(tmp_path / "data" / TAIL) in capsys.readouterr().out
+
+
+def test_hooks_and_exports_find_the_checkouts_assessment_from_any_subdirectory(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(loc.sys, "platform", "linux")
+    repo = _clone(tmp_path / "repo", "https://h/org/app.git")
+    (repo / "src").mkdir()
+    external = loc.application_directory(repo)
+    assert loc.locate_from(repo / "src") == external
+    assert loc.default_report(repo / "src") == external / "security-assessment.md"
+    legacy = repo / "docs" / "security"
+    legacy.mkdir(parents=True)
+    (legacy / "threat-model.md").write_text("x")
+    assert loc.default_report(repo) == legacy.resolve() / "threat-model.md"

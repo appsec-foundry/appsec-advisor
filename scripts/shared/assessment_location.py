@@ -35,7 +35,7 @@ import urllib.parse
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from shared.artifact_names import ArtifactSetError, artifact_stem
+from shared.artifact_names import ArtifactSetError, artifact_stem, report_path
 
 APP_DIRECTORY = "appsec-advisor"
 ASSESSMENTS_DIRECTORY = "assessments"
@@ -218,6 +218,38 @@ def locate(repo_root: Path, base: Path | None = None) -> tuple[Path, bool]:
     if artifact_stem(legacy) is not None:
         return legacy, True
     return directory, False
+
+
+def locate_from(cwd: Path) -> Path | None:
+    """The assessment directory of the checkout containing ``cwd``, or None when there is none.
+
+    For hooks that run in a session without an explicit output directory. A
+    failed resolution returns None rather than a directory inside the checkout,
+    so no caller falls back to writing there.
+    """
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / ".git").exists():
+            try:
+                return locate(candidate)[0]
+            except (LocationError, ArtifactSetError, OSError):
+                return None
+    return None
+
+
+def default_report(cwd: Path) -> Path:
+    """The report an export reads when no input is named: the assessment of the checkout containing ``cwd``.
+
+    Outside a checkout, or when the directory holds both naming sets, the
+    published report name under ``docs/security`` of ``cwd`` is returned; the
+    caller reports it as missing.
+    """
+    located = locate_from(cwd)
+    try:
+        if located is not None:
+            return report_path(located)
+    except ArtifactSetError:
+        pass
+    return cwd / LEGACY_DIRECTORY / "security-assessment.md"
 
 
 def main(argv: list[str] | None = None) -> int:

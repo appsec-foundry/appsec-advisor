@@ -97,7 +97,7 @@ def _analysis(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--threat-model", type=_path, help="structured threat-model.yaml to use as context")
     parser.add_argument("--threat-model-required", action="store_true")
     parser.add_argument(
-        "--isolated", action="store_true", help="analyze without the existing docs/security/threat-model.yaml"
+        "--isolated", action="store_true", help="analyze without the repository's existing security assessment"
     )
     parser.add_argument(
         "--explore",
@@ -167,14 +167,22 @@ def _terminate(signum, frame):
     raise ctl.Terminated()
 
 
+def _existing_model(repo: Path) -> Path | None:
+    """The model file of the repository's assessment (decision AS-1), when one exists."""
+    from model.resolve_abuse_cases import assessment_model
+
+    model = assessment_model(repo)
+    return model if model is not None and model.is_file() else None
+
+
 def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Fill --hypothesis and --path from the selected abuse cases."""
     from model.abuse_case_hypothesis import AbuseCaseError, build
 
     if args.isolated and args.threat_model is not None:
         parser.error("--isolated excludes --threat-model")
-    existing = args.repo / "docs" / "security" / "threat-model.yaml"
-    if args.threat_model is None and not args.isolated and existing.is_file():
+    existing = _existing_model(args.repo)
+    if args.threat_model is None and not args.isolated and existing is not None:
         args.threat_model = existing
     try:
         args.hypothesis, args.path, summary = build(
@@ -204,8 +212,8 @@ def _default_threat_model(args: argparse.Namespace, parser: argparse.ArgumentPar
     """An interactive analysis uses the repository's threat model unless --isolated; CI names it explicitly."""
     if args.isolated and (args.threat_model is not None or not args.interactive):
         parser.error("--isolated is interactive only and excludes --threat-model")
-    existing = args.repo / "docs" / "security" / "threat-model.yaml"
-    if args.interactive and args.threat_model is None and not args.isolated and existing.is_file():
+    existing = _existing_model(args.repo)
+    if args.interactive and args.threat_model is None and not args.isolated and existing is not None:
         args.threat_model = existing
 
 

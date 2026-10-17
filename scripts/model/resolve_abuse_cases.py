@@ -482,15 +482,27 @@ def _recorded_label(case: dict) -> str:
     return label
 
 
-THREAT_MODEL_FILE = Path("docs") / "security" / "threat-model.yaml"
 MAX_THREAT_MODEL_BYTES = 2 * 1024 * 1024
 
 
-def load_threat_model(repo_root: Path | None) -> dict | None:
-    """The repository's threat model as untrusted data, read bounded; ``None`` without one."""
+def assessment_model(repo_root: Path | None) -> Path | None:
+    """The model file of the repository's assessment (decision AS-1); ``None`` when it cannot be located."""
+    from shared.artifact_names import ArtifactSetError, model_path
+    from shared.assessment_location import LocationError, locate
+
     if repo_root is None:
         return None
-    path = repo_root / THREAT_MODEL_FILE
+    try:
+        return model_path(locate(repo_root)[0])
+    except (LocationError, ArtifactSetError, OSError):
+        return None
+
+
+def load_threat_model(repo_root: Path | None) -> dict | None:
+    """The repository's assessment model as untrusted data, read bounded; ``None`` without one."""
+    path = assessment_model(repo_root)
+    if path is None:
+        return None
     try:
         if path.stat().st_size > MAX_THREAT_MODEL_BYTES:
             return None
@@ -580,7 +592,7 @@ def render_case_list(
         when = f" of {recorded['date']}" if recorded["date"] else ""
         header += f" · threat model{when}" + ("" if recorded["checked"] else ": abuse cases were not checked")
     else:
-        header += " · no threat model in docs/security/"
+        header += " · no security assessment for this repository"
     lines = [header]
     rows = [(c, _ORIGIN_LABEL.get(origins.get(str(c.get("id") or ""), ""), "unknown")) for c in cases]
     known = {str(c.get("id") or "") for c in cases}
@@ -637,7 +649,9 @@ def _cited(step: dict) -> str:
     return " · ".join(parts)
 
 
-def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: str, report: Path | None = None) -> str:
+def render_case_detail(
+    case: dict, origin: str, data: dict | None, repo_name: str, report: Path | None = None, source: str = ""
+) -> str:
     """One case in sections: what it checks, the result the threat model
     records with how and where it applies, the steps, mitigations, open
     questions, and where to go next. Strings from the model are clipped and
@@ -664,12 +678,12 @@ def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: st
     analysis = analysis if isinstance(analysis, dict) else {}
     record = _record_for(analysis, cid) if data is not None else None
     generated = str(((data or {}).get("meta") or {}).get("generated") or "")[:10]
-    source = THREAT_MODEL_FILE.as_posix() + (f", {generated}" if generated else "")
+    source = (source or "security assessment") + (f", {generated}" if generated else "")
     definition_steps = {s.get("step"): s for s in case.get("chain") or [] if isinstance(s, dict)}
     recorded_steps = [st for st in (record or {}).get("steps") or [] if isinstance(st, dict)]
 
     if data is None:
-        out += [f"RESULT: NOT CHECKED — no threat model in {repo_name or 'this repository'}/docs/security/", ""]
+        out += [f"RESULT: NOT CHECKED — no security assessment for {repo_name or 'this repository'}", ""]
     elif record is None:
         skipped = next(
             (
@@ -840,9 +854,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 1
         origin = _ORIGIN_LABEL.get(origins.get(args.show, ""), "unknown")
-        report = THREAT_MODEL_FILE.with_suffix(".md")
-        report = report if repo_root and (repo_root / report).is_file() else None
-        print(render_case_detail(case, origin, data, repo_root.name if repo_root else "", report))
+        model = assessment_model(repo_root)
+        report = model.with_suffix(".md") if model is not None else None
+        report = report if report is not None and report.is_file() else None
+        source = model.name if data is not None and model is not None else ""
+        print(render_case_detail(case, origin, data, repo_root.name if repo_root else "", report, source))
         return 0
     if args.list:
         for e in errors:

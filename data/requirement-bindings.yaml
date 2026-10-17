@@ -1443,12 +1443,23 @@ requirements:
     applies_to:
       - scripts/orchestrator/orchestration_controller.py
       - scripts/runtime/ensure_output_gitignore.py
+      - scripts/shared/assessment_location.py
+      - scripts/runtime/agent_logger.py
+      - scripts/analyzers/security_steering.py
     decisions:
       - AS-1
     documents:
       - docs/threat-modeler.md
-    coverage: advisory
-    guards: []
+    coverage: partial
+    guards:
+      - tests/test_single_repo_controller.py::test_without_output_the_run_writes_to_a_private_application_directory
+      - tests/test_single_repo_controller.py::test_a_destination_another_process_could_redirect_is_refused
+      - tests/test_single_repo_controller.py::test_the_run_creates_files_for_its_owner_only_and_restores_the_umask
+      - tests/test_assessment_location.py::test_destination_is_created_private
+      - tests/test_assessment_location.py::test_a_symlinked_level_is_refused
+      - tests/test_assessment_location.py::test_a_level_open_to_others_is_refused
+      - tests/test_agent_logger_cov.py::TestOutputDir::test_a_session_without_an_assessment_writes_nothing
+      - tests/test_security_steering_units.py::test_log_coach_event_never_creates_a_directory_in_the_checkout
 
   REQ-FLW-006:
     applies_to:
