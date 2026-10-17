@@ -147,7 +147,6 @@ GROUPS = {
         lib_manifest
         manifest_readers
         mass_assignment_scanner
-        postscan_secret_check
         recon_patterns
         repo_profile
         repo_scan
@@ -499,7 +498,6 @@ GROUPS = {
         path_guard
         plugin_read_gate
         plugin_write_gate
-        postscan_secret_check
         preflight_untrusted
         redact_known_secrets
         remote_url
@@ -5075,14 +5073,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/validators/postscan_secret_check.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        postscan_secret_check
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/validators/preflight_untrusted.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5714,7 +5704,6 @@ SOURCE_TESTS = {
         load_business_context
         orchestration_controller
         p1_renderer_correctness
-        postscan_secret_check
         publish_threat_model
         qa_checks_cov_band1
         qa_checks_cov_band2

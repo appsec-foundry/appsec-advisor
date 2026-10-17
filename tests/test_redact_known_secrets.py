@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -320,3 +321,23 @@ def test_unmasked_secrets_gate_checks_the_same_known_values(tmp_path: Path) -> N
     assert R.main(["--repo-root", str(repo), "--output-dir", str(out)]) == 0
     after = Q.check_unmasked_secrets(md, out)
     assert after.ok == 1, after.issues
+
+
+# Built at runtime so no literal token sits in the repository.
+@pytest.mark.parametrize("leak", ["ghp_" + "Z" * 36, "AKIA" + "Q7" * 8])
+def test_a_pattern_secret_left_in_the_model_blocks_publication(tmp_path: Path, leak: str) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "threat-model.md").write_text("# Report\n\nNothing sensitive.\n", encoding="utf-8")
+    (out / "threat-model.yaml").write_text(f"threats:\n- description: a token {leak} in the config\n", encoding="utf-8")
+    (tmp_path / "repo").mkdir()
+    assert R.main(["--repo-root", str(tmp_path / "repo"), "--output-dir", str(out)]) == 2
+
+
+def test_a_clean_report_passes_the_secret_gate(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "threat-model.md").write_text("# Report\n\nNothing sensitive.\n", encoding="utf-8")
+    (out / "threat-model.yaml").write_text("threats:\n- description: an unchecked parameter\n", encoding="utf-8")
+    (tmp_path / "repo").mkdir()
+    assert R.main(["--repo-root", str(tmp_path / "repo"), "--output-dir", str(out)]) == 0

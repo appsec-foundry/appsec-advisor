@@ -989,7 +989,6 @@ requirements:
 
   REQ-TRU-002:
     applies_to:
-      - scripts/validators/postscan_secret_check.py
       - scripts/validators/secret_scan.py
       - scripts/validators/redact_known_secrets.py
     decisions: []
@@ -997,8 +996,8 @@ requirements:
       - README.md
     coverage: direct
     guards:
-      - tests/test_postscan_secret_check.py::test_run_uses_real_secret_scan_for_clean_masked_and_leaky_artifacts
-      - tests/test_postscan_secret_check.py::test_main_text_output_reports_hits_and_returns_2
+      - tests/test_redact_known_secrets.py::test_a_pattern_secret_left_in_the_model_blocks_publication
+      - tests/test_redact_known_secrets.py::test_a_clean_report_passes_the_secret_gate
 
   REQ-CFG-001:
     applies_to:
