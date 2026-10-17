@@ -19282,7 +19282,7 @@ def _stage_branding_logo(ctx: RenderContext, logo: str | None) -> str | None:
 
 
 def _render_title(ctx: RenderContext, *, title_template_override: str | None = None) -> str:
-    """Render the document `# Threat Model — <Project Name>` header.
+    """Render the document `# Security Assessment Report — <Project Name>` header and its focus line.
 
     Shares the project-name derivation with `_render_infobox` via
     `_derive_project_name()` so the title and the infobox never disagree.

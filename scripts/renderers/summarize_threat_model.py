@@ -41,8 +41,8 @@ Flags:
                          into the rendered Status line.
 
 Exit codes:
-    0  threat model present, summary rendered
-    1  no threat model found at <output-dir>/threat-model.yaml
+    0  assessment present, summary rendered
+    1  no assessment model found in <output-dir>
     2  error (unreadable / unparseable YAML)
 """
 
@@ -583,7 +583,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
     name = proj["name"]
     if proj["version"]:
         name += f" ({proj['version']})"
-    buf.append(f"Threat Model — {name}")
+    buf.append(f"Security Assessment — {name}")
 
     # Scan identity line — only non-empty fields.
     bits = []
