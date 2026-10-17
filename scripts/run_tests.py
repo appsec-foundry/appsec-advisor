@@ -307,7 +307,6 @@ GROUPS = {
     "incremental": _tests("""
         analysis_version_upgrade
         build_threat_model_yaml
-        incremental_two_run_e2e
         persist_run_baseline
     """),
     "e2e": _tests("""
@@ -843,7 +842,6 @@ SOURCE_TESTS = {
     "scripts/analyzers/architect_review_runtime.py": _tests("""
         run_invariants
         actor_presentation
-        incremental_two_run_e2e
         runtime_doc_cli_contract
         threat_fixture
         render_completion_summary
@@ -916,7 +914,6 @@ SOURCE_TESTS = {
         orchestration_controller
         actor_presentation
         build_threat_model_yaml
-        incremental_two_run_e2e
         runtime_doc_cli_contract
         threat_fixture
         architect_review
@@ -1016,7 +1013,6 @@ SOURCE_TESTS = {
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
-        incremental_two_run_e2e
         match_abuse_cases
         merge_threats
         new_schemas
@@ -1335,7 +1331,6 @@ SOURCE_TESTS = {
         emit_verdict_to_model
         enrichment_pass
         figure1_security
-        incremental_two_run_e2e
         load_related_repos
         merge_threats
         new_schemas
@@ -1430,7 +1425,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         detect_public_repo
         emit_general_mitigation_titles
-        incremental_two_run_e2e
         render_completion_summary_config
         runtime_doc_cli_contract
         threat_fixture
@@ -1457,7 +1451,6 @@ SOURCE_TESTS = {
         figure1_dfd
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         intermediate_json
         lens_coverage
         match_abuse_cases
@@ -1606,7 +1599,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         check_target_specificity
         config_iac_checks
-        incremental_two_run_e2e
         merge_threats
         threat_fixture
     """),
@@ -2150,7 +2142,6 @@ SOURCE_TESTS = {
         threat_fixture
         actor_presentation
         build_threat_model_yaml
-        incremental_two_run_e2e
     """),
     "scripts/analyzers/source_auth_scanner.py": _tests("""
         assessment_scanner_findings
@@ -2457,7 +2448,6 @@ SOURCE_TESTS = {
         config_iac_checks
         dispatch_manifest
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         prepare_trust_boundary_context
@@ -2837,7 +2827,6 @@ SOURCE_TESTS = {
         report_anatomy
         figure1b_compose
         script_layout
-        incremental_two_run_e2e
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -2922,7 +2911,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         check_target_specificity
         gate_preconditions
-        incremental_two_run_e2e
         orchestration_controller
         requirements_verification
         run_path_guard
@@ -2951,7 +2939,6 @@ SOURCE_TESTS = {
         fragment_invariant_parity
         fragment_registry
         gate_preconditions
-        incremental_two_run_e2e
         new_schemas
         orchestration_controller
         pregenerate_fragments
@@ -3050,7 +3037,6 @@ SOURCE_TESTS = {
         flow_route_auth
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         load_business_context
         merge_threats
         mermaid_validator
@@ -3134,7 +3120,6 @@ SOURCE_TESTS = {
         figure_details
         fragment_authoring_fidelity
         gate_preconditions
-        incremental_two_run_e2e
         ms_input_digest
         orchestration_controller
         p1_renderer_correctness
@@ -3200,7 +3185,6 @@ SOURCE_TESTS = {
     """),
     "scripts/shared/_manifest_readers.py": _tests("""
         build_threat_model_yaml
-        incremental_two_run_e2e
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -3268,7 +3252,6 @@ SOURCE_TESTS = {
         flow_route_auth
         gate_preconditions
         handler_resolver
-        incremental_two_run_e2e
         log_agent_end
         mass_assignment_scanner
         orchestration_controller
@@ -3463,7 +3446,6 @@ SOURCE_TESTS = {
         flow_route_auth
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         intermediate_json
         lens_coverage
         log_shape_contract
@@ -4374,7 +4356,6 @@ SOURCE_TESTS = {
         detect_public_repo
         emit_clean_finding_titles
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         promote_verified_abuse_cases
@@ -4716,7 +4697,6 @@ SOURCE_TESTS = {
         flow_route_auth
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         new_schemas
         orchestration_controller
         p1_renderer_correctness
@@ -4886,7 +4866,6 @@ SOURCE_TESTS = {
         crypto_path_xxe_checks
         detect_impl_strategy
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         promote_verified_abuse_cases
@@ -5098,7 +5077,6 @@ SOURCE_TESTS = {
         figure1_svg
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         prepare_trust_boundary_context
@@ -5422,7 +5400,6 @@ SOURCE_TESTS = {
         figure_details
         fragment_authoring_fidelity
         gate_preconditions
-        incremental_two_run_e2e
         ms_input_digest
         p1_renderer_correctness
         p3_behavior_tuning
@@ -5700,7 +5677,6 @@ SOURCE_TESTS = {
         enforcement_mutations
         enrichment_pass
         gate_preconditions
-        incremental_two_run_e2e
         load_business_context
         orchestration_controller
         p1_renderer_correctness
@@ -5817,7 +5793,6 @@ SOURCE_TESTS = {
         check_target_specificity
         e2e_pipeline
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         requirements_verification
         run_path_guard
