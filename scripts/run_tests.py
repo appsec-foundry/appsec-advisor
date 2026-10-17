@@ -3846,9 +3846,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "schemas/incremental-carry.schema.json": _tests("""
-        schemas
-    """),
     "scripts/baseline/baseline_check.py": _tests("""
         appsec_status
         baseline_check

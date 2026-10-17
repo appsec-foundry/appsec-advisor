@@ -31,7 +31,6 @@ template, emitted deterministically on context-v2, and validated through
 | `stride-repository-registry.schema.json` | `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 controller via `contexts/build_stride_evidence_bundles.py` | evidence-bundle builder, manifest validator, and component repository projector |
 | `stride-dispatch-manifest.schema.yaml` | `$OUTPUT_DIR/.stride-dispatch-manifest.json` | `scripts/orchestrator/build_stride_dispatch_manifest.py` | Level-0 dispatcher and `scripts/validators/validate_dispatch_manifest.py` |
 | `stride-dispatch-waves.schema.json` | `$OUTPUT_DIR/.dispatch-waves.json` | `scripts/orchestrator/stride_dispatch_waves.py` | context-v2 controller and bounded STRIDE join waiter |
-| `incremental-carry.schema.json` | `$OUTPUT_DIR/.incremental-carry.json` | `scripts/baseline/carry_plan.py` | context-v2 controller and `scripts/orchestrator/check_stride_dispatch.py` |
 | `orchestration-action.schema.json` | ephemeral controller stdout | `scripts/orchestrator/orchestration_controller.py` | thin skill runtimes |
 | `merge-candidates.schema.json` | `$OUTPUT_DIR/.merge-candidates.json` | `scripts/model/merge_threats.py collect` | threat merger and `scripts/model/merge_threats.py finalize` |
 | `merge-review-context.schema.json` | `$OUTPUT_DIR/.merge-context/candidates.json` | context-v2 controller | focused threat merger |
