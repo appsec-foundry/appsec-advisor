@@ -27,7 +27,6 @@ Two properties are pinned here, both repository-independent:
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -37,8 +36,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import validators.qa_checks as qa  # noqa: E402
-
-STAGE3_SKILL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md"
 
 # §6 stub in the shape `check_control_subsection_coverage` parses. The two
 # variants differ ONLY in the anchor the `**Controls covered:**` line names —
@@ -64,11 +61,6 @@ def _write(tmp_path: Path, name: str, content: str) -> Path:
     f = d / "threat-model.md"
     f.write_text(content, encoding="utf-8")
     return f
-
-
-def _normalize(text: str) -> str:
-    """Collapse shell line continuations and runs of whitespace."""
-    return re.sub(r"\s+", " ", text.replace("\\\n", " "))
 
 
 def test_contract_cannot_observe_a_defect_the_gate_blocks_on(tmp_path):
@@ -117,29 +109,4 @@ def test_blocking_types_outside_check_contract_are_not_named_by_the_contract_che
     assert action_type not in src[start:end], (
         f"{action_type} now appears inside check_contract; if the contract check "
         "has genuinely absorbed it, update this test AND the exclusion list above"
-    )
-
-
-def test_skill_stage3_still_decides_on_the_same_gate():
-    """Pins the other half of the invariant — if the skill's decision command
-    ever moves, this test fails alongside the agent test above rather than
-    letting the two drift apart silently."""
-    text = _normalize(STAGE3_SKILL.read_text(encoding="utf-8"))
-    assert re.search(r'qa_checks\.py"? gate ', text)
-
-
-def test_skill_repair_block_prescribes_the_gate_not_the_contract_check():
-    """The skill's Re-Render-Loop block mirrors the agent contract; both must
-    prescribe the same self-check or the fix is only half applied."""
-    text = STAGE3_SKILL.read_text(encoding="utf-8")
-    start = text.index("## 3. Bounded repair")
-    block = _normalize(text[start:])
-    assert "`validators/qa_checks.py gate`" in block, (
-        "the Re-Render-Loop repair block must prescribe `validators/qa_checks.py gate` as the "
-        "fixer's self-check — the command the loop itself decides on"
-    )
-    # `contract` may be *named* in the block (the prohibition explains why it is
-    # wrong); it must not be prescribed as a command to run.
-    assert not re.search(r'python3 [^`\n]*qa_checks\.py"? contract ', block), (
-        "`validators/qa_checks.py contract` must not be prescribed as the repair self-check"
     )

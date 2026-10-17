@@ -45,9 +45,9 @@ def _make_valid(root: Path, name: str = NAME) -> None:
     profile.parent.mkdir(parents=True, exist_ok=True)
     profile.write_text("organization: { id: acme }\n")
 
-    skill = root / "skills" / "create-threat-model" / "SKILL.md"
+    skill = root / "skills" / "appsec-analyzer" / "SKILL.md"
     skill.parent.mkdir(parents=True, exist_ok=True)
-    skill.write_text(f"Run /{name}:create-threat-model.\n")
+    skill.write_text(f"Run /{name}:appsec-analyzer.\n")
 
     for rel in ABUSE_CASE_FILES:
         target = root / rel
@@ -99,7 +99,7 @@ def test_fails_on_namespace_leak(tmp_path: Path) -> None:
 
 def test_fails_when_entry_command_missing(tmp_path: Path) -> None:
     _make_valid(tmp_path)
-    skill = tmp_path / "skills" / "create-threat-model" / "SKILL.md"
+    skill = tmp_path / "skills" / "appsec-analyzer" / "SKILL.md"
     skill.write_text("No entry command here.\n")
     result = _run(tmp_path)
     assert result.returncode == 1
@@ -113,7 +113,7 @@ def test_fails_when_entry_command_missing(tmp_path: Path) -> None:
         ("nested/.coverage-data", True),
         (".agent-run.log", False),
         ("nested/.appsec-progress.json", False),
-        ("skills/create-threat-model/docs", True),
+        ("skills/appsec-analyzer/docs", True),
         ("docs/analysis", True),
         ("docs/internal", True),
         ("data/appsec-requirements-fallback.yaml", False),
@@ -200,7 +200,7 @@ def test_passes_with_matching_surface_manifest(tmp_path: Path) -> None:
             {
                 "version": 1,
                 "skills": {
-                    "included": ["create-threat-model"],
+                    "included": ["appsec-analyzer"],
                     "removed": ["publish-threat-model"],
                 },
                 "hooks": {
@@ -225,7 +225,7 @@ def test_fails_when_removed_skill_is_present(tmp_path: Path) -> None:
             {
                 "version": 1,
                 "skills": {
-                    "included": ["create-threat-model"],
+                    "included": ["appsec-analyzer"],
                     "removed": ["publish-threat-model"],
                 },
                 "hooks": {"included": [], "removed": []},
@@ -264,7 +264,7 @@ def test_fails_when_removed_hook_is_registered(tmp_path: Path) -> None:
         json.dumps(
             {
                 "version": 1,
-                "skills": {"included": ["create-threat-model"], "removed": []},
+                "skills": {"included": ["appsec-analyzer"], "removed": []},
                 "hooks": {"included": [], "removed": ["security-coach"]},
             }
         )
@@ -415,7 +415,7 @@ def test_check_surface_manifest_absent_is_noop(tmp_path):
 def test_check_surface_manifest_included_skill_missing(tmp_path):
     manifest = tmp_path / ".claude-plugin" / "package-surface.json"
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(json.dumps({"skills": {"included": ["create-threat-model"]}}))
+    manifest.write_text(json.dumps({"skills": {"included": ["appsec-analyzer"]}}))
     with pytest.raises(SystemExit):
         smk.check_surface_manifest(tmp_path)
 

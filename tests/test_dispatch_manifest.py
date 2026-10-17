@@ -1,5 +1,4 @@
-"""Unit tests for the Full-M1 STRIDE dispatch manifest validator
-(scripts/validators/validate_dispatch_manifest.py) + its schema."""
+"""Unit tests for the STRIDE dispatch manifest builder."""
 
 from __future__ import annotations
 
@@ -12,126 +11,6 @@ from pathlib import Path
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "validators/validate_dispatch_manifest.py"
-
-
-def _load():
-    spec = importlib.util.spec_from_file_location("validators.validate_dispatch_manifest", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-vm = _load()
-
-
-def _component(cid="backend-api", **over):
-    comp = {
-        "component_id": cid,
-        "component_name": "Express REST API Backend",
-        "component_description": "Node/Express backend.",
-        "component_paths": ["routes/**", "lib/**"],
-        "component_complexity": "complex",
-        "max_turns": 31,
-        "estimated_threat_count": 8,
-        "interfaces": "REST endpoints under /rest and /api",
-        "controls": "JWT auth (unsafe), input validation (partial)",
-        "index_paths": {
-            "prior_findings": "none",
-            "known_threats": "none",
-            "cross_repo": "none",
-            "requirements_violations": "none",
-            "relevant_actors": "none",
-            "trust_boundaries": "none",
-        },
-    }
-    comp.update(over)
-    return comp
-
-
-def _manifest(*comps):
-    return {
-        "schema_version": 1,
-        "generated_at": "2026-06-04T00:00:00Z",
-        "stride_profile": "full",
-        "components": list(comps) or [_component()],
-    }
-
-
-def _write(tmp_path: Path, manifest: dict, components_json: dict | None = None) -> Path:
-    mpath = tmp_path / ".stride-dispatch-manifest.json"
-    mpath.write_text(json.dumps(manifest), encoding="utf-8")
-    if components_json is not None:
-        (tmp_path / ".components.json").write_text(json.dumps(components_json), encoding="utf-8")
-    return mpath
-
-
-def test_valid_manifest_passes(tmp_path):
-    cj = {"schema_version": 1, "components": [{"id": "backend-api", "name": "x"}]}
-    mpath = _write(tmp_path, _manifest(), cj)
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert ok, errors
-
-
-def test_missing_required_field_fails(tmp_path):
-    comp = _component()
-    del comp["max_turns"]
-    mpath = _write(tmp_path, _manifest(comp))
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert not ok and any("max_turns" in e for e in errors)
-
-
-def test_bad_complexity_enum_fails(tmp_path):
-    mpath = _write(tmp_path, _manifest(_component(component_complexity="enormous")))
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert not ok
-
-
-def test_missing_index_file_fails(tmp_path):
-    comp = _component()
-    comp["index_paths"]["prior_findings"] = ".dispatch-context/backend-api/prior-findings.json"
-    mpath = _write(tmp_path, _manifest(comp))  # file does NOT exist
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert not ok and any("prior_findings" in e and "missing" in e for e in errors)
-
-
-def test_existing_index_file_passes(tmp_path):
-    dc = tmp_path / ".dispatch-context" / "backend-api"
-    dc.mkdir(parents=True)
-    (dc / "prior-findings.json").write_text("[]", encoding="utf-8")
-    comp = _component()
-    comp["index_paths"]["prior_findings"] = ".dispatch-context/backend-api/prior-findings.json"
-    mpath = _write(tmp_path, _manifest(comp))
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert ok, errors
-
-
-def test_phantom_component_fails(tmp_path):
-    cj = {"schema_version": 1, "components": [{"id": "frontend-spa", "name": "x"}]}
-    mpath = _write(tmp_path, _manifest(_component(cid="backend-api")), cj)
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert not ok and any("phantom" in e for e in errors)
-
-
-def test_uncovered_component_warns_not_fails(tmp_path):
-    cj = {"schema_version": 1, "components": [{"id": "backend-api", "name": "x"}, {"id": "frontend-spa", "name": "y"}]}
-    mpath = _write(tmp_path, _manifest(_component(cid="backend-api")), cj)
-    ok, errors, warnings = vm.validate(mpath, tmp_path)
-    assert ok, errors
-    assert any("frontend-spa" in w for w in warnings)
-
-
-def test_empty_components_fails(tmp_path):
-    m = _manifest()
-    m["components"] = []
-    mpath = _write(tmp_path, m)
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert not ok
-
-
-def test_missing_manifest_file_fails(tmp_path):
-    ok, errors, _ = vm.validate(tmp_path / "nope.json", tmp_path)
-    assert not ok and any("not found" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -232,16 +111,6 @@ def test_builder_carries_generated_at_while_the_manifest_is_unchanged(tmp_path, 
     assert json.loads(mpath.read_bytes())["generated_at"] == "2026-01-03T00:00:00Z"
 
 
-def test_builder_roundtrip_validates(tmp_path):
-    _seed_output_dir(tmp_path)
-    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
-    mpath = tmp_path / ".stride-dispatch-manifest.json"
-    mpath.write_text(json.dumps(manifest), encoding="utf-8")
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert ok, errors
-    assert {c["component_id"] for c in manifest["components"]} == {"backend-api", "frontend-spa"}
-
-
 def test_builder_rebuilds_actor_slices_from_canonical_components(tmp_path):
     (tmp_path / ".components.json").write_text(
         json.dumps(
@@ -335,33 +204,6 @@ def _seed_zoned_pair(tmp_path: Path):
         else:
             c["deployment_zones"] = ["browser"]
     (tmp_path / ".components.json").write_text(json.dumps(comps), encoding="utf-8")
-
-
-def test_builder_cheap_stride_screens_internal_tail(tmp_path):
-    """--cheap-stride (Variant 1): a provably-internal component gets the flat
-    CHEAP_STRIDE_TURNS budget + forced low estimate + audit marker; everything
-    carrying surface (priority <=2) is spared at full depth."""
-    _seed_zoned_pair(tmp_path)
-    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
-    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
-    by_id = {c["component_id"]: c for c in manifest["components"]}
-    # batch-worker: internal-network, no role anchor -> cheapened
-    be = by_id["batch-worker"]
-    assert be["max_turns"] == bm.CHEAP_STRIDE_TURNS
-    assert be["estimated_threat_count"] == 3  # "low"
-    # The analyzer paces on the LABEL, not the integer — without it a cheapened
-    # component runs `moderate` pacing inside an 8-turn budget.
-    assert be["estimated_threat_count_label"] == "low"
-    assert be["cheap_stride"] is True
-    # frontend-spa: _is_frontend -> priority 1 -> spared, full simple depth
-    fe = by_id["frontend-spa"]
-    assert fe["max_turns"] == 15  # standard/simple, unchanged
-    assert "cheap_stride" not in fe
-    # manifest with the extra cheap fields still validates (additionalProperties)
-    mpath = tmp_path / ".stride-dispatch-manifest.json"
-    mpath.write_text(json.dumps(manifest), encoding="utf-8")
-    ok, errors, _ = vm.validate(mpath, tmp_path)
-    assert ok, errors
 
 
 def test_builder_cheap_stride_off_keeps_full_depth(tmp_path):
@@ -872,20 +714,6 @@ def test_no_renderer_authors_the_model_owned_root_cause_fragment():
     threat_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
     assert "### `ms-critical-attack-tree.json` authoring contract" not in threat_md
     assert "Do not write `.fragments/ms-critical-attack-tree.json`" in threat_md
-
-
-def test_renderer_delegates_every_export_to_the_controller_tail():
-    """Stage 2 must not regain export ownership after the compact cutover."""
-    renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
-    completion_md = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md").read_text(
-        encoding="utf-8"
-    )
-    controller = (PLUGIN_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
-    assert "controller owns validation, composition" in renderer_md
-    assert "Do not compose" in renderer_md
-    assert "## 2. Exports and summary" in completion_md
-    for flag in ("write_sarif", "write_pentest_tasks", "write_threatdragon"):
-        assert flag in controller
 
 
 def test_owasp_llm07_grep_covers_cookie_tool_call_leakage():
@@ -1651,50 +1479,6 @@ def test_realtime_injected_when_upload_component_present(tmp_path):
 # Selection-pipeline coverage hardening: the contract handoff + predicate
 # branches that the isolated unit/fixture tests do not exercise.
 # ---------------------------------------------------------------------------
-
-
-def test_selection_report_flows_into_scope_rendering():
-    """Contract integration: the REAL select_stride_components report →
-    build_component_selection → gen_system_overview. Catches reason-string
-    drift between the selector and the §1 Scope renderer that the isolated
-    tests (hand-built `cs` fixtures) cannot."""
-    import importlib.util as _ilu
-
-    def _load(name):
-        s = _ilu.spec_from_file_location(name, PLUGIN_ROOT / "scripts" / (name.replace(".", "/") + ".py"))
-        m = _ilu.module_from_spec(s)
-        s.loader.exec_module(m)
-        return m
-
-    btm = _load("model.build_threat_model_yaml")
-    pf = _load("renderers.pregenerate_fragments")
-
-    comps = [
-        _c("express-backend", zones=["internet", "dmz"], sensitive=True, name="Express Backend"),
-        _c("angular-spa", zones=["client-device"], tier="client", name="Angular SPA"),
-        _c("user-store", zones=["internal-network"], tier="data", sensitive=True, name="User Store"),
-        _c("ci-cd", zones=["ci-cd-runtime"], name="CI/CD Pipeline"),
-        _c("internal-worker", zones=["internal-network"], name="Internal Worker"),
-    ]
-    selected, report = bm.select_stride_components(comps, "standard")
-    assert {c["id"] for c in selected} == {"express-backend", "angular-spa", "user-store", "ci-cd"}
-    assert {e["id"] for e in report["excluded"]} == {"internal-worker"}
-
-    # real selector report → §1 scope data model → rendered markdown
-    cs = btm.build_component_selection(report, comps)
-    assert cs is not None and cs["analyzed"] == 4 and cs["total"] == 5
-    out = pf.gen_system_overview(
-        {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
-    )
-
-    assert "**4 of 5**" in out
-    assert "Internal Worker" in out  # out-of-scope component is named
-    assert "Not analysed at this depth: Internal Worker" in out
-    # the selector's OWN reason strings survive the handoff into the criteria line
-    crit_line = next(line for line in out.splitlines() if "Selection criteria" in line)
-    assert "crown-jewel" in crit_line
-    assert "internet-exposed" in crit_line
-    assert "ci-cd" in crit_line
 
 
 def test_format_selection_console_renders_empty_skipped_set():

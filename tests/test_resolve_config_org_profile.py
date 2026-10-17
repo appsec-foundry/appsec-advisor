@@ -57,7 +57,7 @@ def test_org_profile_activation_via_cli(tmp_path):
     # so the preset default applies.
     assert cfg["write_sarif"] is True
     # The selected preset and profile requirements source enable requirements by
-    # default; this must feed the final create-threat-model config, not just the
+    # default; this must feed the final appsec-analyzer config, not just the
     # emitted org-profile metadata.
     assert cfg["check_requirements"] is True
     assert cfg["requirements_url_override"] is None

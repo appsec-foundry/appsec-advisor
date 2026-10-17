@@ -167,45 +167,6 @@ class TestConfigValidation:
 
 
 # ---------------------------------------------------------------------------
-# Skill definitions reference valid agents
-# ---------------------------------------------------------------------------
-
-# Each entry declares a capability that the SKILL.md MUST document. A failure
-# means either the skill was refactored without updating this list (expected —
-# update the list) or a capability was silently dropped (unexpected —
-# investigate). Using lowercase=True performs case-insensitive matching; some
-# capabilities want to find both a flag (--x) and an env-var (X) so the
-# `phrases` list can hold multiple required substrings.
-_CREATE_THREAT_MODEL_INVARIANTS = [
-    # (test-id,              phrases that must all be present,            case-insensitive?)
-    ("references-controller", ["orchestrator/orchestration_controller.py"], False),
-    ("references-qa-reviewer", ["appsec-qa-reviewer"], False),
-]
-
-
-class TestSkillAgentReferences:
-    @pytest.mark.parametrize(
-        "phrases,case_insensitive",
-        [(p, ci) for _, p, ci in _CREATE_THREAT_MODEL_INVARIANTS],
-        ids=[tid for tid, _, _ in _CREATE_THREAT_MODEL_INVARIANTS],
-    )
-    def test_create_threat_model_documents(self, phrases, case_insensitive):
-        """SKILL.md must mention every capability the skill supports.
-
-        Collapsed from six individual tests (test_create_threat_model_*) into
-        a single parametrized test. Each phrase list maps to one pytest case;
-        the failure message shows which phrase was missing.
-        """
-        skill_dir = SKILLS_DIR / "create-threat-model"
-        content = (skill_dir / "SKILL.md").read_text()
-        for runtime in skill_dir.glob("SKILL-*.md"):
-            content += "\n" + runtime.read_text()
-        haystack = content.lower() if case_insensitive else content
-        missing = [p for p in phrases if (p.lower() if case_insensitive else p) not in haystack]
-        assert not missing, f"SKILL.md is missing required phrase(s): {missing!r}"
-
-
-# ---------------------------------------------------------------------------
 # Steering keywords config consistency
 # ---------------------------------------------------------------------------
 

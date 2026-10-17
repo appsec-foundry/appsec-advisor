@@ -90,13 +90,13 @@ GIT_TIMEOUT_SECONDS = 3
 # check_namespace_leaks fails the build if one is missed. Keep the literals
 # whole — a namespace assembled at runtime would slip past both.
 REVIEW = "/appsec-advisor:review-threat-model"
-CREATE = "/appsec-advisor:create-threat-model"
+CREATE = "/appsec-advisor:appsec-analyzer"
 STATUS = "/appsec-advisor:status"
 HELP = "/appsec-advisor:help"
 INSTALL_BASELINE = "/appsec-advisor:install-baseline"
 UPDATE_BASELINE = "/appsec-advisor:update-baseline"
-REBUILD = f"{CREATE} --full --rebuild"
-REFRESH = f"{CREATE} --full"
+REBUILD = f"{CREATE} --rebuild"
+REFRESH = CREATE
 
 # Fixed domain label. The baseline line is headed by the ``baseline`` block's
 # own ``name`` instead, so an organization's baseline appears under its name;

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`appsec-advisor` is a Claude Code plugin for code-derived STRIDE threat modeling. Its main skill is [create-threat-model](skills/create-threat-model/SKILL.md). Agents handle discovery and prose; deterministic Python owns validation, rendering, exports, orchestration, and release gates. Prefer deterministic threat emitters. When uncertain, preserve the deterministic pipeline and make the LLM do less.
+`appsec-advisor` is a Claude Code plugin for code-derived STRIDE threat modeling. Its main skill is [appsec-analyzer](skills/appsec-analyzer/SKILL.md). Agents handle discovery and prose; deterministic Python owns validation, rendering, exports, orchestration, and release gates. Prefer deterministic threat emitters. When uncertain, preserve the deterministic pipeline and make the LLM do less.
 
 ## Before changing files
 

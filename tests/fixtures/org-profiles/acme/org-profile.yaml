@@ -62,7 +62,7 @@ hooks:
     command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
 
 skill_toggles:
-  create-threat-model: true
+  appsec-analyzer: true
   audit-security-requirements: true
   export-threat-model: true
   publish-threat-model:

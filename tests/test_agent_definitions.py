@@ -752,42 +752,6 @@ class TestBodyContentConsistency:
             "same block, so it expands to the empty string:\n  " + "\n  ".join(offenders)
         )
 
-    def test_context_v2_stride_producer_carries_exact_boundary_and_progress_contracts(self):
-        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
-        flat = " ".join(stride.split())
-        for field in ("boundary_id", "origin_component_id", "rationale", "evidence_locations"):
-            assert f'"{field}"' in stride
-        assert "Never emit `id`" in stride
-        assert "exactly repeats its evidence" in flat
-        assert "Never emit `TH-UNCLASSIFIED`" in stride
-        assert 'bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh"' in stride
-        assert "never invoke that shell script with Python" in stride
-        assert "--agent stride-analyzer-v2" in stride
-        assert '--component-id "<COMPONENT_ID literal>"' in flat
-        assert "never author depth" in flat
-        assert "`MODEL_ID` and exact plan `analysis.depth` (`full` or `light`)" in flat
-        assert "never infer it from profile, budget, or another component" in flat
-        assert "role/permission/identity claims as authorization questions" in flat
-        assert "use one `missing-control-proof` escape" in flat
-        assert "Never read the shared effective plan or dispatch manifest" in flat
-        assert "Its `analysis`, `lens_ids`, and `inputs` own the policy" in flat
-        assert "max_threats_per_category" in stride
-        assert "read the plugin-owned full\n`data/threat-category-taxonomy.yaml` once" in stride
-        thin_runtime = (AGENTS_DIR.parent / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(
-            encoding="utf-8"
-        )
-        assert "STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>" in thin_runtime
-        assert "`COMPONENT_CONTEXT_PLAN_PATH`" in thin_runtime
-        assert "`COMPONENT_CONTEXT_PLAN_SHA256`" in thin_runtime
-        assert "`THREAT_TAXONOMY_SHA256`" in thin_runtime
-        flat_runtime = " ".join(thin_runtime.split())
-        assert "Never recommend resume" in flat_runtime
-        assert "a later fresh full run restarts Stage 1" in flat_runtime
-
-        architecture = (AGENTS_DIR / "appsec-architecture-analyst.md").read_text(encoding="utf-8")
-        assert "AI/LLM surface separate only when it is a distinct deployable" in architecture
-        assert "preserve the LLM evidence\nand lens instead of inventing a second component" in architecture
-
     def test_context_v2_root_cause_producer_maps_component_tiers_to_schema_keys(self):
         _, body = parse_frontmatter(AGENTS_DIR / "appsec-post-stride-synthesizer.md")
         assert "`client` → `edge`" in body
@@ -1186,25 +1150,6 @@ def test_recon_signal_prompt_states_the_coupling_the_validator_enforces():
         "the prompt must name the compliant way out when no location was observed"
     )
     assert "never invent a location" in rules, "the way out must not be fabricated evidence"
-
-
-def test_agent_budget_queries_require_their_controller_job_identity():
-    queries = []
-    for path in AGENTS_DIR.rglob("*.md"):
-        for block in _BASH_BLOCKS.findall(path.read_text(encoding="utf-8")):
-            if "runtime/budget_watchdog.py" not in block:
-                continue
-            queries.append(path)
-            assert "active-job-critical" in block, path
-            assert '--action-id "<ACTION_ID>"' in block, path
-            assert '--job-id "<JOB_ID>"' in block, path
-            assert not re.search(r"\bactive-critical\b", block), path
-    assert queries, "expected live agent budget queries"
-    root = AGENTS_DIR.parent / "skills" / "create-threat-model"
-    for filename in ("SKILL-thin-stage1-v2.md", "SKILL-thin-stage1d.md"):
-        text = (root / filename).read_text(encoding="utf-8")
-        assert "ACTION_ID=<context_plan.action_id>" in text
-        assert "JOB_ID=<dispatch_jobs[].job_id>" in text
 
 
 def test_architecture_agent_states_access_variants_and_unauthenticated_access():

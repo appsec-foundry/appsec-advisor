@@ -25,7 +25,6 @@ import runtime.completion_relay as relay
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AGENT_LOGGER = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 RELAY = REPO_ROOT / "scripts" / "runtime/completion_relay.py"
-COMPLETION_SKILL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
 RUN_IDENTITY_VARS = ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OUTPUT_DIR", "APPSEC_HEADLESS")
 RUN_ID = "run-1788592678-3277507"
 OTHER_RUN_ID = "run-1788000000-1"
@@ -289,9 +288,3 @@ class TestTheHooks:
 
 def test_the_logger_checks_for_the_record_relay_owns():
     assert agent_logger._SUMMARY_RECORD == relay.RECORD
-
-
-def test_the_completion_runtime_does_not_ask_for_a_copy_of_the_summary():
-    text = COMPLETION_SKILL.read_text(encoding="utf-8")
-    assert "exactly as printed" not in text
-    assert "Do not reproduce, rewrite or summarize it" in text

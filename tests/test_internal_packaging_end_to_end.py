@@ -35,8 +35,8 @@ def test_upstream_packager_excludes_vcs_and_local_outputs(tmp_path: Path) -> Non
     _write(upstream / "config.json", "{}")
     (upstream / "schemas").mkdir(parents=True)
     _write(
-        upstream / "skills" / "create-threat-model" / "SKILL.md",
-        "Run /appsec-advisor:create-threat-model.\nSchema appsec-advisor.org-profile/v2 must stay unchanged.\n",
+        upstream / "skills" / "appsec-analyzer" / "SKILL.md",
+        "Run /appsec-advisor:appsec-analyzer.\nSchema appsec-advisor.org-profile/v2 must stay unchanged.\n",
     )
     _write(upstream / "agents" / "dispatch.yaml", "agent: appsec-advisor:worker\n")
     _write(
@@ -93,9 +93,9 @@ def test_upstream_packager_excludes_vcs_and_local_outputs(tmp_path: Path) -> Non
     assert not (build / "scripts" / "__pycache__").exists()
     assert (build / "org-profile" / "org-profile.yaml").exists()
 
-    skill_text = (build / "skills" / "create-threat-model" / "SKILL.md").read_text()
+    skill_text = (build / "skills" / "appsec-analyzer" / "SKILL.md").read_text()
     agent_text = (build / "agents" / "dispatch.yaml").read_text()
-    assert "/acme-appsec:create-threat-model" in skill_text
+    assert "/acme-appsec:appsec-analyzer" in skill_text
     assert "appsec-advisor:" not in skill_text
     assert "appsec-advisor.org-profile/v2" in skill_text
     assert "agent: acme-appsec:worker" in agent_text
@@ -184,8 +184,8 @@ plugin_surface:
     (upstream / "schemas").mkdir(parents=True)
     (upstream / "scripts").mkdir(parents=True)
     _write(
-        upstream / "skills" / "create-threat-model" / "SKILL.md",
-        "Run /appsec-advisor:create-threat-model.\n",
+        upstream / "skills" / "appsec-analyzer" / "SKILL.md",
+        "Run /appsec-advisor:appsec-analyzer.\n",
     )
     _write(
         upstream / "skills" / "status" / "SKILL.md",
@@ -255,7 +255,7 @@ plugin_surface:
     )
 
     build = tmp_path / "build" / "acme-appsec"
-    assert (build / "skills" / "create-threat-model" / "SKILL.md").exists()
+    assert (build / "skills" / "appsec-analyzer" / "SKILL.md").exists()
     assert (build / "skills" / "status" / "SKILL.md").exists()
     assert not (build / "skills" / "audit-security-requirements").exists()
     assert not (build / "skills" / "publish-threat-model").exists()

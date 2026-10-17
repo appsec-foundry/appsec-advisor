@@ -91,7 +91,7 @@ PATH_EXCLUDES = {
     ("docs", "proposals"),
     ("docs", "security"),
     ("scripts", "docs"),
-    ("skills", "create-threat-model", "docs"),
+    ("skills", "appsec-analyzer", "docs"),
     ("tests", "fixtures", "e2e", "_last-run"),
 }
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -565,7 +565,7 @@ def apply_skill_policy(build: Path, surface: dict) -> dict:
         surface.get("skills"),
         available,
         "skills",
-        required={"create-threat-model"},
+        required={"appsec-analyzer"},
     )
     keep.update(required_internal)
     removed = sorted(available - keep)
@@ -589,7 +589,7 @@ def overlay_org_skills(build: Path) -> list[str]:
     Two refusals rather than a silent result:
 
     * A name that collides with an upstream skill aborts the build. Overwriting
-      ``create-threat-model`` with an organization's own file would replace the
+      ``appsec-analyzer`` with an organization's own file would replace the
       pipeline's entry point without anyone deciding to.
     * Frontmatter that would not pass for an upstream skill aborts too. The
       description is the only text the model sees when choosing a skill, so a
@@ -927,7 +927,7 @@ HOOK_DESCRIPTIONS = {
 }
 
 # Skills with their own detailed section in the README
-MAIN_SKILLS = ["create-threat-model", "audit-security-requirements", "verify-requirements"]
+MAIN_SKILLS = ["appsec-analyzer", "audit-security-requirements", "verify-requirements"]
 INTERNAL_SKILLS = INTERNAL_REQUIRED_SKILLS
 # Skills grouped into a single utility section
 UTILITY_SKILLS = [
@@ -983,20 +983,20 @@ def _skill_description(build: Path, skill: str) -> str:
 
 
 def _skill_section(name: str, org_name: str, skill: str, build: Path) -> str:
-    if skill == "create-threat-model":
+    if skill == "appsec-analyzer":
         return f"""
-## `/{name}:create-threat-model`
+## `/{name}:appsec-analyzer`
 
-STRIDE-based architectural threat assessment. Produces `docs/security/threat-model.md`
-in your repo, checked against {org_name} security requirements.
+Security assessment derived from the repository's code and configuration. Produces
+`docs/security/threat-model.md` in your repo, checked against {org_name} security requirements.
 
 **Depth:**
 
 | Flag | Description |
 |---|---|
-| _(none)_ | Standard — full STRIDE analysis with QA review |
-| `--quick` | Faster, lighter analysis; skips QA and attack walkthroughs |
-| `--thorough` | Deepest analysis; adds architect review and extended walkthroughs |
+| _(none)_ | Standard — full STRIDE analysis |
+| `--quick` | Faster, lighter analysis |
+| `--thorough` | Deepest analysis; adds architect review |
 
 **Common options:**
 
@@ -1004,24 +1004,21 @@ in your repo, checked against {org_name} security requirements.
 |---|---|
 | `--requirements` | Check findings against {org_name} security requirements |
 | `--no-requirements` | Skip requirements check for this run |
-| `--incremental` | Re-analyze only components changed since last run |
-| `--resume` | Continue from the last saved checkpoint after an interruption |
+| `--resume` | Continue an interrupted assessment |
+| `--rebuild` | Start completely fresh |
 | `--repo <path>` | Analyze a different repository instead of the current one |
 | `--output <path>` | Write results to a custom output directory |
 | `--sarif` | Also write `threat-model.sarif.json` for CI/tooling integration |
-| `--pr-mode` | Focused delta report for a pull/merge request (implies `--incremental`) |
-| `--rebuild` | Wipe all prior output and start completely fresh |
-| `--dry-run` | Run the full pipeline but write nothing to the repo |
+| `--stop` | Stop a running assessment |
 
 **Examples:**
 
 ```text
-/{name}:create-threat-model
-/{name}:create-threat-model --quick
-/{name}:create-threat-model --thorough --requirements
-/{name}:create-threat-model --incremental --sarif
-/{name}:create-threat-model --repo ../other-service
-/{name}:create-threat-model --help
+/{name}:appsec-analyzer
+/{name}:appsec-analyzer --quick
+/{name}:appsec-analyzer --thorough --requirements
+/{name}:appsec-analyzer --sarif
+/{name}:appsec-analyzer --repo ../other-service
 ```
 """
     if skill == "audit-security-requirements":
