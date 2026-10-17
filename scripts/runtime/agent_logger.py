@@ -595,7 +595,6 @@ _AGENT_SHORT_NAMES = {
     "appsec-recon-scanner": "recon-scanner",
     "appsec-dep-scanner": "dep-scanner",
     "appsec-stride-analyzer-v2": "stride-analyzer-v2",
-    "appsec-qa-reviewer": "qa-reviewer",
 }
 
 

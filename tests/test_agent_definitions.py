@@ -51,7 +51,6 @@ EXPECTED_MAX_TURNS = {
     "appsec-architecture-analyst": 60,
     "appsec-control-analyst": 40,
     "appsec-post-stride-synthesizer": 20,
-    "appsec-context-resolver": 25,
     "appsec-recon-scanner": 36,
     "appsec-stride-analyzer-v2": 96,
     "appsec-triage-validator": 20,
@@ -67,14 +66,12 @@ EXPECTED_MAX_TURNS = {
     # the secarch-renderer's one, yet carried the tighter of the two Stage-2
     # ceilings. Matched to its sibling.
     "appsec-ms-renderer": 60,
-    "appsec-qa-reviewer": 200,
     # 40 → 100 (2026-08-30): 40 could never have sufficed — the agent's own
     # budget table summed to 41 turns at thorough depth. Two reviews in one
     # juice-shop run consumed 81 and 90 turns and each truncated at 40, and a
     # resume costs a full context re-prefill (the pair read 21M cached tokens),
     # so the higher ceiling is the cheaper of the two shapes.
     "appsec-architect-reviewer": 30,
-    "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     # 20 → 40 (2026-08-22): 8fbbd534 had taken this from 60 to 20 while
     # routing bounded context, leaving 20 turns for a sample set capped at 30.
@@ -84,12 +81,6 @@ EXPECTED_MAX_TURNS = {
     # 2026-07-24 cut-off, which 022bf115 reverted without a measurement.
     "appsec-abuse-case-verifier": 36,
     "appsec-trust-boundary-analyst": 24,
-    # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE).
-    # 30 → 45 after the 2026-08-21 insecure-large-spring-app run logged MAX_TURNS
-    # at 30/30 and the fixer's closing message was cut mid-sentence; 30 was both
-    # its budget and its ceiling, so there was no headroom to absorb a repair
-    # plan naming several fragments.
-    "appsec-fragment-fixer": 45,
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct
     "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)
     "appsec-run-diagnostician": 45,  # APPSEC_PLUGIN_DEV post-run diagnosis: 12 issues x ~2 grounding reads + startup + write
@@ -131,12 +122,6 @@ MIN_MAX_TURNS = {
     # died twice at 56. This is the one budget in the plugin that also scales
     # per component; the frontmatter value is its hard ceiling.
     "appsec-stride-analyzer-v2": 96,
-    # 7cceff0d (2026-08-21): cut off mid-sentence at 30/30 on a repair plan
-    # naming several fragments.
-    "appsec-fragment-fixer": 45,
-    # 240850ee (2026-08-02): large semantic repair plans exhausted 120 turns
-    # before the mandatory completion status.
-    "appsec-qa-reviewer": 200,
     # 74846143 (2026-08-07): a live run consumed all 25 turns and skipped the
     # required Markdown validator.
     "appsec-recon-scanner": 36,
@@ -152,7 +137,6 @@ INTERNAL_AGENTS = {
     "appsec-architecture-analyst",
     "appsec-control-analyst",
     "appsec-post-stride-synthesizer",
-    "appsec-context-resolver",
     "appsec-recon-scanner",
     "appsec-stride-analyzer-v2",
     "appsec-triage-validator",
@@ -160,21 +144,18 @@ INTERNAL_AGENTS = {
     "appsec-threat-renderer",
     "appsec-secarch-renderer",
     "appsec-ms-renderer",
-    "appsec-qa-reviewer",
     "appsec-architect-reviewer",
-    "appsec-config-scanner",
     "appsec-actor-discoverer",  # Phase 2.7 sub-agent — internal (body already carries the marker; set was missing it)
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
     "appsec-trust-boundary-analyst",
-    "appsec-fragment-fixer",
     "appsec-run-diagnostician",  # dispatched by the orchestrator at completion, never by the user
 }
 
 # The deterministic controller owns all Level-0 dispatch. No pipeline agent may
 # recursively dispatch another agent.
 AGENT_TOOL_OWNERS = set()
-EDIT_TOOL_OWNERS = {"appsec-fragment-fixer", "appsec-qa-reviewer"}
+EDIT_TOOL_OWNERS: set[str] = set()
 
 KERNEL_PRELOAD_ROLES = {
     "appsec-architecture-analyst",
@@ -394,42 +375,11 @@ class TestAgentInventory:
 
 
 # ---------------------------------------------------------------------------
-# Re-Render-Loop finalization tail (AGENTS.md "Critical ordering rule")
+# Agent set
 # ---------------------------------------------------------------------------
 
 
-class TestFragmentFixerFinalizationTail:
-    """The fragment-fixer recomposes from fragments, which discards the
-    autofix-exclusive §4/§5 GFM→HTML fixed-layout table conversion + path
-    backticking. The canonical tail `compose --strict → apply_prose_fixes →
-    <autofix-bearing command>` MUST run after the recompose, with the autofix
-    LAST, else repaired runs ship regressed §4/§5 tables. Recurring regression
-    class — see AGENTS.md "Critical ordering rule".
-
-    `validators/qa_checks.py gate` satisfies the autofix half: `cmd_gate` runs
-    `_run_autofix` and only then validates the resulting bytes. It is the
-    preferred form because it is also the command the thin Stage-3 runtime uses —
-    see tests/test_repair_self_verification.py for why the fixer must not
-    self-verify with anything narrower."""
-
-    def test_fragment_fixer_reruns_autofix_after_prose_fixes(self):
-        body = (AGENTS_DIR / "appsec-fragment-fixer.md").read_text(encoding="utf-8")
-        prose_idx = body.find("repairs/apply_prose_fixes.py")
-        # `gate` = `_run_autofix` + `cmd_repair_plan`; either form re-applies
-        # the autofix-exclusive passes. Quoting/line continuations vary.
-        autofix_match = re.search(r'qa_checks\.py"?\s*\\?\s*(?:autofix|gate)\b', body)
-        compose_idx = body.find("renderers/compose_threat_model.py")
-        assert prose_idx != -1, "fragment-fixer must re-run apply_prose_fixes after recompose"
-        assert autofix_match is not None, (
-            "fragment-fixer must re-run `validators/qa_checks.py autofix` (or `gate`, which "
-            "subsumes it) after recompose — it owns the §4/§5 GFM→HTML table "
-            "conversion that compose drops"
-        )
-        assert compose_idx < prose_idx < autofix_match.start(), (
-            "canonical order must be compose --strict → apply_prose_fixes → "
-            "qa_checks autofix/gate (the autofix is the LAST mutation)"
-        )
-
+class TestAgentSetIsComplete:
     def test_no_unexpected_agents(self):
         """Fail loudly if a new agent is added without updating this test suite."""
         found = {f.stem for f in agent_files()}
@@ -502,7 +452,6 @@ class TestModelIdConsistency:
 # Agents that reference the context file (all except context-resolver which writes it)
 _CONTEXT_FILE_AGENTS = {
     "appsec-stride-analyzer-v2",
-    "appsec-context-resolver",
 }
 
 
@@ -647,26 +596,6 @@ class TestBodyContentConsistency:
         assert "`GREP_RESULT_CAP_PER_CATEGORY=40`" in body
         assert "disclose the omitted count" in body
 
-    def test_context_resolver_self_validates_before_completion(self):
-        meta, body = parse_frontmatter(AGENTS_DIR / "appsec-context-resolver.md")
-        assert "scripts/validators/validate_threat_modeling_context.py" in body
-        assert "--repair-missing-headings" in body
-        assert "the **next tool call**" in body
-        assert "Do not log completion or print the final summary before this exits 0" in " ".join(body.split())
-        discovery_limit = int(re.search(r"`DISCOVERY_TOOL_CALL_LIMIT=(\d+)`", body).group(1))
-        publication_reserve = int(re.search(r"`PUBLICATION_TOOL_CALL_RESERVE=(\d+)`", body).group(1))
-        assert discovery_limit == 18
-        assert publication_reserve >= 7
-        assert meta["maxTurns"] - discovery_limit >= publication_reserve
-        assert "Never spend the publication reserve on additional discovery" in body
-
-    def test_context_resolver_never_sources_repository_values_as_shell(self):
-        _meta, body = parse_frontmatter(AGENTS_DIR / "appsec-context-resolver.md")
-        flat = " ".join(body.split())
-        assert "Never write or source a shell environment file" in flat
-        assert "never place discovered values into shell assignments" in flat
-        assert "multiple paths in JSON" in flat
-
     @pytest.mark.parametrize(
         ("agent_name", "discovery_limit", "publication_reserve"),
         [
@@ -695,12 +624,6 @@ class TestBodyContentConsistency:
                 "assets",
                 "attack-surface-overrides",
             ),
-            "appsec-config-scanner.md": (
-                "model/normalize_config_scan.py",
-                "validators/validate_intermediate.py",
-                "config_scan_findings",
-            ),
-            "appsec-context-resolver.md": ("validators/validate_threat_modeling_context.py",),
             "appsec-control-analyst.md": (
                 "validators/validate_fragment.py",
                 "security-controls",
@@ -956,14 +879,11 @@ INLINE_LOG_TEMPLATE_BUDGET = {
 
 # Everything else: zero inline templates. Use shared/logging-standard.md.
 AGENT_FILES_WITH_ZERO_BUDGET = [
-    AGENTS_DIR / "appsec-qa-reviewer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",
-    AGENTS_DIR / "appsec-context-resolver.md",
     AGENTS_DIR / "appsec-recon-scanner.md",
     AGENTS_DIR / "appsec-triage-validator.md",
     AGENTS_DIR / "appsec-threat-merger.md",
     AGENTS_DIR / "appsec-architect-reviewer.md",
-    AGENTS_DIR / "appsec-config-scanner.md",
     AGENTS_DIR / "appsec-eval-judge.md",
 ]
 
@@ -1171,14 +1091,12 @@ class TestProseStyleAnchor:
 # (PI-1/PI-2, audit 2026-06-11.)
 REPO_READING_AGENTS = [
     "appsec-recon-scanner",
-    "appsec-config-scanner",
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
     "appsec-stride-analyzer-v2",
     "appsec-threat-renderer",
     "appsec-secarch-renderer",
     "appsec-ms-renderer",
-    "appsec-context-resolver",
     "appsec-eval-judge",
 ]
 

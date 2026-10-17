@@ -14,7 +14,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STAGE3 = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md"
-QA_REVIEWER = REPO_ROOT / "agents" / "appsec-qa-reviewer.md"
 
 
 def _flat() -> str:
@@ -26,11 +25,6 @@ def test_a_non_actionable_repair_required_plan_skips_the_loop():
     assert "`repair_required` enters the repair loop only when `.qa-repair-plan.json` is actionable" in text
     assert "goes to §4 with 0 repair iterations" in text
     assert "A non-actionable plan never enters this loop" in text
-
-
-def test_the_reviewer_release_path_keeps_the_source_the_reviewer_writes():
-    reviewer_source = re.search(r'"source": "([^"]+)"', QA_REVIEWER.read_text(encoding="utf-8")).group(1)
-    assert f"`source` (`{reviewer_source}`)" in _flat()
 
 
 def test_every_stage3_stats_row_has_its_own_variant():

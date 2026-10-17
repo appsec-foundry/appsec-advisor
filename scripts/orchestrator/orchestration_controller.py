@@ -110,18 +110,6 @@ SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
             "schemas/fragments/attack-surface-overrides.schema.json",
         ),
     },
-    "config_scanner": {
-        "agent": "appsec-config-scanner",
-        "instruction": PLUGIN_ROOT / "agents" / "appsec-config-scanner.md",
-        "tools": ("Read", "Glob", "Grep", "Bash", "Write"),
-        "output_contracts": ("schemas/config-scan-findings.schema.yaml",),
-    },
-    "context_resolver": {
-        "agent": "appsec-context-resolver",
-        "instruction": PLUGIN_ROOT / "agents" / "appsec-context-resolver.md",
-        "tools": ("Read", "Bash", "Write"),
-        "output_contracts": ("contract:threat-modeling-context-markdown-v1",),
-    },
     "control_analyst": {
         "agent": "appsec-control-analyst",
         "instruction": PLUGIN_ROOT / "agents" / "appsec-control-analyst.md",
@@ -196,8 +184,6 @@ SEMANTIC_ROLE_MODEL_KEYS = {
     "actor_discoverer": "actor_discovery_model",
     "architecture_analyst": "orchestrator_model",
     "architect_reviewer": "architect_model",
-    "config_scanner": "config_scanner_model",
-    "context_resolver": "context_resolver_model",
     "control_analyst": "orchestrator_model",
     "evidence_verifier": "evidence_verifier_model",
     "post_stride_synthesizer": "triage_model",

@@ -321,7 +321,7 @@ def test_semantics_reject_plugin_symlink_escape(tmp_path):
     outside.write_text("checks: []\n", encoding="utf-8")
     (plugin / "escape.yaml").symlink_to(outside)
     changed = copy.deepcopy(bindings)
-    binding = next(row for row in changed["contexts"] if row["id"] == "discovery.config_checks")
+    binding = next(row for row in changed["contexts"] if row["id"] == "discovery.scan_policy")
     binding["source"]["plugin_path"] = "escape.yaml"
     with pytest.raises(routing.ContextRoutingError, match="escapes the plugin"):
         routing.validate_catalog_semantics(
@@ -396,9 +396,7 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
     output = tmp_path / "out"
     output.mkdir()
     jobs = [
-        ("context_resolver", "phase1-context", [".skill-config.json"], None),
         ("recon_scanner", "phase2-recon", [".skill-config.json"], None),
-        ("config_scanner", "phase2-config", [".skill-config.json"], None),
         (
             "actor_discoverer",
             "phase2-actors",

@@ -41,12 +41,12 @@ class ThreatModelingContextValidationError(ValueError):
 
 
 def _default_template_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "agents" / "appsec-context-resolver.md"
+    return Path(__file__).resolve().parents[2] / "templates" / "threat-modeling-context.md"
 
 
 @cache
 def required_headings(template_path: Path | None = None) -> tuple[str, ...]:
-    """Return ordered headings from the context resolver's output template."""
+    """Return ordered headings from the threat-modeling context template."""
     path = (template_path or _default_template_path()).resolve()
     try:
         template = path.read_text(encoding="utf-8")

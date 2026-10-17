@@ -38,7 +38,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import validators.qa_checks as qa  # noqa: E402
 
-FIXER_AGENT = REPO_ROOT / "agents" / "appsec-fragment-fixer.md"
 STAGE3_SKILL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md"
 
 # §6 stub in the shape `check_control_subsection_coverage` parses. The two
@@ -118,18 +117,6 @@ def test_blocking_types_outside_check_contract_are_not_named_by_the_contract_che
     assert action_type not in src[start:end], (
         f"{action_type} now appears inside check_contract; if the contract check "
         "has genuinely absorbed it, update this test AND the exclusion list above"
-    )
-
-
-def test_fixer_self_verifies_with_the_deciding_gate():
-    text = _normalize(FIXER_AGENT.read_text(encoding="utf-8"))
-    assert re.search(r'qa_checks\.py"? gate ', text), (
-        "appsec-fragment-fixer must verify its own repair with `validators/qa_checks.py gate` — "
-        "the command Stage 3 uses to decide whether the repair converged"
-    )
-    assert not re.search(r'qa_checks\.py"? contract ', text), (
-        "`validators/qa_checks.py contract` is a strict subset of the gate and reports success "
-        "for most blocking defects; it must not be used as a repair self-check"
     )
 
 
