@@ -36,7 +36,7 @@ USAGE
 
 FLAGS
   --repo <path>     Repository the run assessed (default: current working dir)
-  --output <path>   Output directory of that run (default: <repo>/docs/security)
+  --output <path>   Output directory of that run (default: the repo's assessment directory)
   --help, -h        Show this help and exit
 
 REQUIRES
@@ -54,10 +54,19 @@ Recognized flags (and the values consumed by `--repo` / `--output`):
 
   `--repo <path>`  `--output <path>`  `--help` | `-h`
 
-Default `REPO_ROOT` to the current working directory and `OUTPUT_DIR` to
-`$REPO_ROOT/docs/security`; the flags override them. Any other token is a hard
+Default `REPO_ROOT` to the current working directory; the flags override it
+and `OUTPUT_DIR`. Any other token is a hard
 failure: print `Error: unknown argument '<TOKEN>'` followed by the flag list
 above to stderr and exit `2` without touching a file.
+
+Without `--output`, resolve the repository's assessment directory:
+
+```bash
+OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
+```
+
+On exit 2, print the resolver's `Error: ...` line and stop; never fall back to
+`docs/security`.
 
 ## Step 2 — Gate
 

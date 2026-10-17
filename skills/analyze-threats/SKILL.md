@@ -17,10 +17,10 @@ Decide exactly one scope from the arguments:
 - Plain text without scope flags: a design request (`design --text`).
 - `--design-file <path>`: a design request from that file.
 
-A design request reads no repository source. The CLI uses `docs/security/threat-model.yaml` as context when it exists, unless `--isolated` is given.
+A design request reads no repository source. The CLI uses the repository's existing threat model as context when one exists, unless `--isolated` is given.
 - `--worktree`, `--staged`, or `--base <commit> --head <commit>` (optionally `--exact-base`): a review. When the developer asks a concrete question about the change, pass it as `--question` through a quoted heredoc.
 - `--hypothesis <text> --revision <commit> --path <file-or-directory>`: a hypothesis check. Repeat `--path` for additional source areas. Paths are literal and repository-relative; directories include their descendants. This mode reads committed source at that revision, not uncommitted edits.
-- `--abuse-case <ID>` (repeatable): a hypothesis check of defined abuse cases. The CLI builds the hypothesis and selects the files from the case; never write a hypothesis or choose paths for it yourself. Pass `--revision HEAD` unless the developer named one, and pass the developer's `--path`, `--isolated`, `--org-profile`, or `--no-org-profile` through. The CLI uses `docs/security/threat-model.yaml` as context when it exists, unless `--isolated` is given.
+- `--abuse-case <ID>` (repeatable): a hypothesis check of defined abuse cases. The CLI builds the hypothesis and selects the files from the case; never write a hypothesis or choose paths for it yourself. Pass `--revision HEAD` unless the developer named one, and pass the developer's `--path`, `--isolated`, `--org-profile`, or `--no-org-profile` through. The CLI uses the repository's existing threat model as context when one exists, unless `--isolated` is given.
 
 Add `--explore` only when the developer asks for it. It lets a design question or a review read a redacted copy of the tracked files instead of only the selected change; it never applies to a hypothesis or abuse-case check.
 

@@ -20,7 +20,7 @@ USAGE
 
 FLAGS
   --repo <path>     Repository to clean (default: current working dir)
-  --output <path>   Output directory to clean (default: <repo>/docs/security)
+  --output <path>   Output directory to clean (default: the repo's assessment directory)
   --force           Clean even when an active run is detected (dangerous —
                     will kill the other session's lock; use only when you
                     are certain the other process is dead)
@@ -67,7 +67,7 @@ Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `FORCE_MODE`, `DRY_RUN_MODE`,
 `JSON_MODE`.
 
 - Default `REPO_ROOT` to the current working directory.
-- Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`.
+- Default `OUTPUT_DIR` to the repository's assessment directory, resolved in Step 2.
 - `--repo <path>` overrides `REPO_ROOT`.
 - `--output <path>` overrides `OUTPUT_DIR`.
 
@@ -85,7 +85,7 @@ Error: unknown argument '<TOKEN>'
 
 /appsec-advisor:clean-run-state accepts only:
   --repo <path>     Repository to clean (default: current working dir)
-  --output <path>   Output directory to clean (default: <repo>/docs/security)
+  --output <path>   Output directory to clean (default: the repo's assessment directory)
   --force           Clean even when an active run is detected
   --dry-run         Report what would be cleaned without removing anything
   --json            Emit the result as machine-readable JSON
@@ -112,7 +112,11 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
   exit 2
 fi
+[ -n "${OUTPUT_DIR:-}" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
 ```
+
+On exit 2, print the resolver's `Error: ...` line and stop; never fall back to
+`docs/security`.
 
 ## Step 3 — Dispatch to the helper
 

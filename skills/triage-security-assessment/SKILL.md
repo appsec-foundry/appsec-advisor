@@ -66,7 +66,7 @@ cat "<base-dir>/HELP.txt"
 Recognized flags: `--repo <path>`  `--output <path>`  `--plan <path>`  `--help` | `-h`.
 
 - Default `REPO_ROOT` to the current working directory.
-- Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`; `--output` overrides.
+- Default `OUTPUT_DIR` to the repository's assessment directory, resolved in Step 2; `--output` overrides.
 - Default `TRIAGE` to `$REPO_ROOT/.appsec-triage/triage.yaml`.
 - Default `PLAN` to `$REPO_ROOT/.appsec-triage/remediation-plan.md`; `--plan` overrides.
 
@@ -93,7 +93,11 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
   exit 2
 fi
+[ -n "${OUTPUT_DIR:-}" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
 ```
+
+On exit 2, print the resolver's `Error: ...` line and stop; never fall back to
+`docs/security`.
 
 ## Step 3 — Load the console payload
 

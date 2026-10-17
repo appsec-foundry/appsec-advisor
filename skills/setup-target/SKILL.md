@@ -14,7 +14,9 @@ Recognized flags:
 Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `PLUGIN_DIR`, `SCOPE`.
 Default `REPO_ROOT` to the current working directory (do NOT fall back to the
 plugin repo root — this skill is always about a *target* repo, not the plugin
-itself).  Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`. Default `SCOPE`
+itself).  Leave `OUTPUT_DIR` empty unless `--output` is given, so
+`check_permissions.py` uses the repository's assessment directory
+`<data dir>/appsec-advisor/assessments/<repo-name>-<hash8>`. Default `SCOPE`
 to `project` (writes `<repo>/.claude/settings.json` — committed by the repo
 maintainer so all contributors get prompt-free runs automatically).
 
@@ -30,7 +32,7 @@ Error: unknown argument '<TOKEN>'
 
 /appsec-advisor:setup-target accepts only:
   --repo <path>        Target repository to configure (default: cwd)
-  --output <path>      Output directory for scan artefacts (default: <repo>/docs/security)
+  --output <path>      Output directory for scan artefacts (default: the repo's assessment directory)
   --plugin-dir <path>  Plugin install directory (default: $CLAUDE_PLUGIN_ROOT)
   --scope <scope>      Settings scope: project (default) | local | user
                          project → <repo>/.claude/settings.json        (committed, shared; default)
@@ -54,7 +56,7 @@ Call `check_permissions.py` with `--update` so it merges the required entries
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_permissions.py" \
   --repo-root "$REPO_ROOT" \
-  --output-dir "$OUTPUT_DIR" \
+  ${OUTPUT_DIR:+--output-dir "$OUTPUT_DIR"} \
   --plugin-dir "$PLUGIN_DIR" \
   --scope "$SCOPE" \
   --update
