@@ -109,14 +109,6 @@ required:
     reason: "agents and deterministic preparers, including analyzers/config_iac_scanner.py, analyzers/deployment_inventory.py (.deployment-inventory.json) and model/merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children; the early business-context dialog writes .business-context-preview.json and .business-context-raw.md using prepare --interactive-context and complete-preflight"
     category: file
 
-  - entry: "Edit(${OUTPUT_DIR}/**)"
-    reason: "left from the removed QA re-render loop; no current skill or agent edits files under OUTPUT_DIR in place"
-    category: file
-
-  - entry: "Edit(${OUTPUT_DIR}/.*)"
-    reason: "repair loops edit direct dotfile sidecars; Claude Code's /** glob does NOT match direct dotfile children"
-    category: file
-
   - entry: "Edit(${PLUGIN_ROOT}/**)"
     reason: "explicit maintainer development edits plugin source after root-cause and contract review; fix-run-issues currently emits manual guidance only"
     category: file
