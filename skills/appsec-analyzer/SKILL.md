@@ -1,5 +1,5 @@
 ---
-name: create-security-assessment
+name: appsec-analyzer
 description: >-
   Security assessment of one repository through the deterministic controller;
   writes threat-model.md and threat-model.yaml to docs/security. Runs full
@@ -48,7 +48,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" a
 ## Refuse unsupported modes
 
 When the arguments contain `--incremental`, `--rerender`, `--dry-run`, `--base`,
-`--pr-mode` or `--restore-from`, print `create-security-assessment runs full assessments
+`--pr-mode` or `--restore-from`, print `appsec-analyzer runs full assessments
 only; <flag> is not supported.` and stop.
 
 ## Running assessment
@@ -162,7 +162,7 @@ preflight granted it, plus `--width 72` when the arguments contain no
 
 Before it, print exactly one line: `▶ Assessment started — progress follows
 phase by phase. To cancel, say "stop" or run
-/appsec-advisor:create-security-assessment --stop.`
+/appsec-advisor:appsec-analyzer --stop.`
 
 ## Phase tasks
 
