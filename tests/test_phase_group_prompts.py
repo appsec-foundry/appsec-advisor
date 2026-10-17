@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).parent.parent
 RENDERER = REPO_ROOT / "agents" / "appsec-threat-renderer.md"
 SEC6_CONTRACT = REPO_ROOT / "agents" / "shared" / "sec6-authoring.md"
 CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
+POSTURE = REPO_ROOT / "scripts" / "model/assessment_posture.py"
 
 
 def test_security_architecture_v2_authoring_contract_is_active():
@@ -22,6 +23,7 @@ def test_security_architecture_v2_authoring_contract_is_active():
 
 
 def test_actor_discovery_output_is_validated_at_both_boundaries():
-    text = CONTROLLER.read_text(encoding="utf-8")
-    assert text.count('"actors_resolved"') >= 2
-    assert '"actors_discovered"' in text
+    text = POSTURE.read_text(encoding="utf-8")
+    assert 'validate_actors_resolved(_read(workspace / ".actors-resolved.json"))' in text
+    assert "validate_actors_discovered(discovered)" in text
+    assert "assessment_posture.discover_actors(" in CONTROLLER.read_text(encoding="utf-8")

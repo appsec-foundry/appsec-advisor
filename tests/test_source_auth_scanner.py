@@ -1471,13 +1471,13 @@ def test_no_sidecar_is_non_fatal(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_controller_invokes_scanner_in_prepass() -> None:
+def test_controller_invokes_scanner_in_render_stage() -> None:
     text = CONTROLLER.read_text(encoding="utf-8")
-    start = text.index("def _prepasses(")
+    start = text.index("def _assessment_render(")
     block = text[start : text.index("\ndef ", start + 1)]
     assert "analyzers/source_auth_scanner.py" in block, (
         "the controller must invoke analyzers/source_auth_scanner.py in the deterministic "
-        "pre-pass — otherwise .source-auth-findings.json is never produced and "
+        "render stage — otherwise .source-auth-findings.json is never produced and "
         "the AUTHZ-001..008 checks are dead (merge_threats only reads the file)."
     )
     assert "analyzers/route_inventory.py" in block

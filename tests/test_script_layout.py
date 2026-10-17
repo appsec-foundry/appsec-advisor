@@ -47,8 +47,9 @@ def test_package_has_an_inert_initializer(package):
     ],
 )
 def test_cli_bootstrap_does_not_depend_on_the_working_directory(script, tmp_path):
+    help_args = ["assess", "--help"] if script == "orchestrator/orchestration_controller.py" else ["--help"]
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / script), "--help"],
+        [sys.executable, str(SCRIPTS / script), *help_args],
         cwd=tmp_path,
         capture_output=True,
         text=True,

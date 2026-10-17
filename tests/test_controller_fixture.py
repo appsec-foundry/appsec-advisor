@@ -142,7 +142,7 @@ def test_web_application_run_publishes_a_valid_model(tmp_path, monkeypatch):
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
     outcome, _, out = _assess(tmp_path, monkeypatch, ("shop",), ("--no-pdf",), seed=_seed, host=WebApplicationHost())
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert validate_threat_model_output(model)[0]
 
     # Client-to-API flows from the routes the client requests, one per proven authentication.

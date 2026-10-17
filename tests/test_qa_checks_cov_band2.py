@@ -503,7 +503,7 @@ def test_attack_surface_tables_to_html_noop():
 
 
 def test_emit_as_html_table_prose_col_strips_br():
-    spec = qa._FIXED_LAYOUT_SPECS[1]  # Asset table, prose col 2
+    spec = next(spec for spec in qa._FIXED_LAYOUT_SPECS if spec[0] == qa._ASSET_TABLE_HEADERS)
     rows = ["| Name | Conf | line one<br/>line two | [F-1](#f-1) |"]
     html = qa._emit_as_html_table(rows, spec)
     joined = "\n".join(html)

@@ -172,7 +172,7 @@ class TestSystemOverview:
         # A coverage gap in one line, not a question list beside the team questions.
         assert (
             "**Not assessed:** 1 security-relevant code location was read but could not be judged (Web 1); "
-            "`threat-model.yaml` records each with its reason under `meta.undecided_targets`."
+            "`security-assessment.yaml` records each with its reason under `meta.undecided_targets`."
         ) in md
         assert "Open analysis questions" not in md and "allow-list helper" not in md
 

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.6.0-beta.5 (2026-10-17)
+
 ### Added
 
 - Experimental: repeat `--repo` in the headless runner to assess several local checkouts as one system, with evidenced cross-repository calls and repository attribution in the model, report, and Figure 1; replacing an earlier combined report requires `--rebuild`.
@@ -31,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completion summaries name the published assessment files and recover missing requested exports under those names.
 - Hardcoded secrets cited by findings, including keys passed as call arguments, are masked in every report output, and the secret gate fails if one remains.
 - `appsec-reviewer-cli` rejects repository-local Claude Code configuration unless `--trust-mode trusted` is passed and no longer accepts checkout verdict files as its own results; the Threat Analyst honors organization Opus bans.
 - Authentication checks recognize more JavaScript middleware and imported handlers, and ownership middleware suppresses findings only when its binding and execution order protect every recognized handler registration.

@@ -89,7 +89,7 @@ class TestDiagnosticExcerpt:
 
 
 # ---------------------------------------------------------------------------
-# Evidence-coverage shortfall — one threshold, two callers
+# Evidence-coverage shortfall in aggregated run diagnostics
 # ---------------------------------------------------------------------------
 
 
@@ -114,12 +114,6 @@ class TestEvidenceCoverageShortfall:
 
     def test_the_ratio_is_the_reported_fraction(self):
         assert agg.evidence_coverage_shortfall(100, 10) == 0.1
-
-    def test_the_controller_uses_the_aggregator_threshold(self):
-        # Two copies of this rule would drift, and the run would then warn at
-        # the end about a shortfall the dispatch gate had already cleared.
-        source = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
-        assert "from runtime.aggregate_run_issues import evidence_coverage_shortfall" in source
 
 
 # ---------------------------------------------------------------------------

@@ -3589,6 +3589,7 @@ SOURCE_TESTS = {
         assessment_location
         query_threat_model
         summarize_threat_model
+        threat_fixture
     """),
     "scripts/shared/assessment_location.py": _tests("""
         assessment_location
@@ -3601,6 +3602,7 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         multi_repo_assessment
         remote_url
+        threat_fixture
     """),
     "scripts/shared/_url_guard.py": _tests("""
         appsec_status

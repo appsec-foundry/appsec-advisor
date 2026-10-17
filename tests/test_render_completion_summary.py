@@ -2513,12 +2513,18 @@ class TestExportDeliverablesBackstop:
     def test_exports_threatdragon_when_requested(self, tmp_path: Path):
         self._seed(tmp_path, write_threatdragon=True)
         rcs._export_deliverables_if_configured(tmp_path)
-        assert (tmp_path / "threat-model.threatdragon.json").is_file()
+        assert (tmp_path / "security-assessment.threatdragon.json").is_file()
+
+    def test_exports_from_published_yaml(self, tmp_path: Path):
+        self._seed(tmp_path, write_threatdragon=True)
+        (tmp_path / "threat-model.yaml").rename(tmp_path / "security-assessment.yaml")
+        rcs._export_deliverables_if_configured(tmp_path)
+        assert (tmp_path / "security-assessment.threatdragon.json").is_file()
 
     def test_noop_when_not_requested(self, tmp_path: Path):
         self._seed(tmp_path, write_threatdragon=False)
         rcs._export_deliverables_if_configured(tmp_path)
-        assert not (tmp_path / "threat-model.threatdragon.json").exists()
+        assert not (tmp_path / "security-assessment.threatdragon.json").exists()
 
     def test_noop_when_no_config(self, tmp_path: Path, monkeypatch):
         calls = []
@@ -2528,7 +2534,7 @@ class TestExportDeliverablesBackstop:
 
     def test_leaves_an_existing_export_alone(self, tmp_path: Path, monkeypatch):
         self._seed(tmp_path, write_threatdragon=True)
-        (tmp_path / "threat-model.threatdragon.json").write_text('{"mine": true}', encoding="utf-8")
+        (tmp_path / "security-assessment.threatdragon.json").write_text('{"mine": true}', encoding="utf-8")
         calls = []
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
         rcs._export_deliverables_if_configured(tmp_path)
@@ -2604,10 +2610,10 @@ class TestRequestedDeliverablesAreReported:
         mod = _load_module()
         assert sorted(mod.missing_deliverables(tmp_path, self.ALL_REQUESTED)) == [
             "pentest-tasks.yaml",
-            "threat-model.html",
-            "threat-model.pdf",
-            "threat-model.sarif.json",
-            "threat-model.threatdragon.json",
+            "security-assessment.html",
+            "security-assessment.pdf",
+            "security-assessment.sarif.json",
+            "security-assessment.threatdragon.json",
         ]
 
     def test_outputs_block_marks_them_missing(self, tmp_path):
@@ -2618,19 +2624,19 @@ class TestRequestedDeliverablesAreReported:
 
     def test_a_missing_pdf_or_html_prints_its_export_command(self, tmp_path):
         mod = _load_module()
-        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        (tmp_path / "security-assessment.pdf").write_text("x", encoding="utf-8")
         body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True, "write_html": True, "write_sarif": True}))
         commands = [line.strip() for line in body.splitlines() if line.strip().startswith("python3 ")]
         assert len(commands) == 1
         assert "exporters/export_html.py --require-mermaid --input" in commands[0]
-        assert commands[0].endswith(str(tmp_path / "threat-model.html"))
+        assert commands[0].endswith(str(tmp_path / "security-assessment.html"))
         assert "--no-mermaid" not in body
 
     def test_present_deliverable_is_listed_normally(self, tmp_path):
         mod = _load_module()
-        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        (tmp_path / "security-assessment.pdf").write_text("x", encoding="utf-8")
         body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True}))
-        assert "threat-model.pdf" in body
+        assert "security-assessment.pdf" in body
         assert "MISSING" not in body
         assert mod.missing_deliverables(tmp_path, {"write_pdf": True}) == []
 

@@ -136,7 +136,7 @@ def test_a_shell_write_to_a_governed_file_carries_its_requirements(command):
 
 
 def test_a_shell_write_to_an_ungoverned_file_is_left_alone():
-    assert requirements_hook.decide(bash("sed -i 's/a/b/' scripts/runtime/agent_logger.py")) is None
+    assert requirements_hook.decide(bash("sed -i 's/a/b/' CHANGELOG.md")) is None
 
 
 def test_a_read_only_command_naming_a_governed_file_is_left_alone():

@@ -50,7 +50,7 @@ Covers the overall verdict, the systemic weaknesses, the most important threats,
 - `## Management Summary` — always. Its blocks appear in this order:
   - `### Verdict` — always. A 🟢, 🟡, or 🔴 rating with a highlighted statement citing at least two findings, then **About this assessment**, **Method and limits**, **Risk distribution**, and the security concerns behind the rating.
   - `### Remediation Priorities` — always. What to fix first: one row per mitigation, grouped under the top root causes. The root-cause cell spans its group's rows and names the lasting fix. Every mitigation that fixes a Critical finding is listed; one without a root cause appears under *No root cause linked*.
-    - Table (HTML, the root-cause cell spans rows): `| Root cause → lasting fix | Do first | Resolves | Effort |`
+    - Table: `| Root cause → lasting fix | Do first | Resolves | Effort |` The HTML root-cause cell spans its group's rows.
   - `### Open Questions for the Team` — only when a decision is open that only the team can settle. At most three questions.
   - `### Security Posture & Top Threats` — always. **Figure 1a** (runtime architecture and threats), **Figure 1b** (supply chain and build, only when a build is evidenced), **Figure 2** (attack routes and impact), and the threat actors behind the routes. Every route in Figure 2 has exactly one table row, and every row links its findings into §8.
     - Table: `| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |`
@@ -75,7 +75,7 @@ Covers what the system is, what was analyzed and what was not, who interacts wit
     - Table, only when actor roles were resolved: `| Actor | Type | Access | Scenarios | Attributed findings |`
     - Table, only when no actor role was resolved: `| Actor | Role | Reach | Findings | Components |`
   - `### Trust Boundaries` — only when trust boundaries were derived.
-    - Table: `| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |`
+    - Table: `| ID | Crossing | Required condition | Findings / open question |`
 
 ## §2 Architecture Diagrams
 

@@ -142,10 +142,8 @@ answer, including free text, stops.
 
 ## Launch
 
-An earlier controller assessment is replaced, whatever its status: no live
-run holds the directory any more (**Running assessment** above), so it is
-complete, failed or abandoned. A completed one keeps its history in the new
-report.
+Replace an earlier controller assessment after **Running assessment** confirms
+no live holder. A completed assessment keeps its history in the new report.
 
 ```bash
 python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' \
@@ -156,9 +154,8 @@ When this prints something other than `complete`, add `--rebuild` to the
 launch, print one line, `Replacing the earlier unfinished assessment.`, and
 say nothing else about it.
 
-The whole assessment runs as one background command, so its output panel
-scrolls on from the first phase to the last instead of starting over at each
-phase. The phases are Reconnaissance, Architecture, Trust boundaries,
+Run the assessment as one background command. The phases are Reconnaissance,
+Architecture, Trust boundaries,
 Controls, Threat analysis, Consolidation, Abuse cases and Finalization; `N` is
 8, or 7 when the run skips abuse cases. The first `phase_start` event states
 `N` as `total`.
