@@ -18,18 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 # the action, never the environment. The decision now rides in the action.
 
 
-def test_the_runtime_reads_the_field_instead_of_the_environment():
-    """Drift guard on the instruction the fix exists for: §1a must gate on the
-    action. The environment variable stays named elsewhere (§2a, as background
-    to a field) — this asserts only that the lock section no longer asks the
-    runtime to read it."""
-    runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
-    section = runtime.split("### 1a.")[1].split("### 2")[0]
-
-    assert "ACTION.lock_prompt_needed" in section
-    assert "APPSEC_HEADLESS" not in section
-
-
 def test_compose_if_ready_requires_llm_fragments(tmp_path):
     """No render fragments on disk → cannot compose, caller must dispatch Stage 2."""
     output = tmp_path / "out"
@@ -263,13 +251,6 @@ class TestRetiredSelfReportedProvenance:
 # ---------------------------------------------------------------------------
 # REQ-BIZ-004 — a declared --context source reaches the run or stops it
 # ---------------------------------------------------------------------------
-
-
-def test_the_runtime_no_longer_writes_the_run_start_marker():
-    """One producer for the marker. Both writing it would let the later write
-    move the run boundary after the prepasses already read the earlier one."""
-    runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
-    assert ".scan-start-epoch" not in runtime
 
 
 # ---------------------------------------------------------------------------

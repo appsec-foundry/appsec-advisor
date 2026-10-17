@@ -125,7 +125,7 @@ class TestLoaders:
 
 class TestSkillExists:
     def test_real_skill_present(self, appsec_status):
-        assert appsec_status._skill_exists("create-threat-model") is True
+        assert appsec_status._skill_exists("appsec-analyzer") is True
 
     def test_unknown_skill_absent(self, appsec_status):
         assert appsec_status._skill_exists("no-such-skill-xyz") is False
@@ -231,7 +231,7 @@ class TestOrgProfileStatus:
             "configured": True,
             "path": "/org/p",
             "default_preset": "std",
-            "note": "configured via config.json — run create-threat-model to resolve",
+            "note": "configured via config.json — run appsec-analyzer to resolve",
         }
 
     def test_not_configured(self, appsec_status, tmp_path, monkeypatch):
@@ -415,9 +415,9 @@ class TestSkillsStatus:
         return root
 
     def test_lists_every_installed_skill_without_a_policy(self, appsec_status, plugin_root, tmp_path):
-        _build_plugin_root(plugin_root, ["create-threat-model", "status"])
+        _build_plugin_root(plugin_root, ["appsec-analyzer", "status"])
         res = appsec_status._skills_status(tmp_path / "out")
-        assert [e["name"] for e in res["entries"]] == ["create-threat-model", "status"]
+        assert [e["name"] for e in res["entries"]] == ["appsec-analyzer", "status"]
         assert all(e["state"] == "enabled" for e in res["entries"])
         assert res["policy_source"] is None
         assert res["installed_count"] == 2
@@ -426,14 +426,14 @@ class TestSkillsStatus:
     def test_packaged_toggle_disables_with_its_reason(self, appsec_status, plugin_root, tmp_path):
         _build_plugin_root(
             plugin_root,
-            ["create-threat-model", "export-threat-model"],
+            ["appsec-analyzer", "export-threat-model"],
             config={"skill_toggles": {"export-threat-model": {"enabled": False, "reason": "Release job only."}}},
         )
         entries = {e["name"]: e for e in appsec_status._skills_status(tmp_path / "out")["entries"]}
         assert entries["export-threat-model"]["state"] == "disabled"
         assert entries["export-threat-model"]["reason"] == "Release job only."
         assert entries["export-threat-model"]["enabled"] is False
-        assert entries["create-threat-model"]["enabled"] is True
+        assert entries["appsec-analyzer"]["enabled"] is True
 
     def test_operational_skill_is_reported_as_warn_only(self, appsec_status, plugin_root, tmp_path):
         # The gate never hard-blocks an operational skill; status must not claim
@@ -464,9 +464,9 @@ class TestSkillsStatus:
     def test_skill_removed_by_package_policy_is_still_listed(self, appsec_status, plugin_root, tmp_path):
         _build_plugin_root(
             plugin_root,
-            ["create-threat-model"],
+            ["appsec-analyzer"],
             config={"skill_toggles": {"publish-threat-model": {"enabled": False, "reason": "Not in this build."}}},
-            surface={"skills": {"included": ["create-threat-model"], "removed": ["publish-threat-model"]}},
+            surface={"skills": {"included": ["appsec-analyzer"], "removed": ["publish-threat-model"]}},
         )
         res = appsec_status._skills_status(tmp_path / "out")
         removed = [e for e in res["entries"] if e["name"] == "publish-threat-model"]
@@ -478,13 +478,13 @@ class TestSkillsStatus:
     def test_origin_marks_org_added_and_internal_skills(self, appsec_status, plugin_root, tmp_path):
         _build_plugin_root(
             plugin_root,
-            ["acme-release-check", "create-threat-model", "internal-threat-analysis-kernel"],
+            ["acme-release-check", "appsec-analyzer", "internal-threat-analysis-kernel"],
             surface={"skills": {"included": [], "org_added": ["acme-release-check"]}},
         )
         origins = {e["name"]: e["origin"] for e in appsec_status._skills_status(tmp_path / "out")["entries"]}
         assert origins == {
             "acme-release-check": "organization",
-            "create-threat-model": "plugin",
+            "appsec-analyzer": "plugin",
             "internal-threat-analysis-kernel": "internal",
         }
 
@@ -608,7 +608,7 @@ def _base_data():
         "paths": {"plugin_root": "/p", "repo_root": "/r", "output_dir": "/o"},
         "capsules": {
             "coach": {"state": "inactive", "note": "opt-in"},
-            "threat_assessment": {"command": "/appsec-advisor:create-threat-model"},
+            "threat_assessment": {"command": "/appsec-advisor:appsec-analyzer"},
             "requirements_audit": {"command": "/appsec-advisor:audit-security-requirements"},
         },
         "last_run": {"has_baseline": False},
@@ -690,7 +690,7 @@ class TestRenderText:
             "removed_count": 1,
             "entries": [
                 {
-                    "name": "create-threat-model",
+                    "name": "appsec-analyzer",
                     "state": "enabled",
                     "enabled": True,
                     "reason": None,

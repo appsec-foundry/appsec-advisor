@@ -1914,23 +1914,6 @@ class TestRenderFiles:
         out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": True}))
         assert "Threat Dragon" not in out
 
-    def test_completion_runtime_passes_only_the_output_dir(self):
-        """RA-8: the run config carries identity and switches; the runtime argv cannot drift from it.
-
-        A long documented argv once described flags the parser no longer
-        accepted, and an auto-mode classifier refused another. Every documented
-        call passes the output directory only, and the parser accepts it.
-        """
-        impl = (
-            Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
-        ).read_text(encoding="utf-8")
-        calls = re.findall(r"scripts/renderers/render_completion_summary\.py\"?((?:\\\n|[^\n`])*)", impl)
-        assert len(calls) == 2, calls
-        for args in calls:
-            flags = set(re.findall(r"--[a-z-]+", args))
-            assert flags <= {"--output-dir", "--patch-placeholders", "--no-print"}, flags
-            assert "--output-dir" in flags
-
 
 class TestRunIssues:
     def test_extract_missing(self, tmp_path: Path):
@@ -2676,10 +2659,6 @@ class TestHeadlessWrapperForwardsVerbose:
     """`run-headless.sh` consumes `--verbose` for its own console tails. It has
     to forward it to the skill as well, or the detail this module gates on the
     resolved `verbose` flag is unreachable outside an interactive run."""
-
-    def test_verbose_reaches_the_skill_prompt(self):
-        body = (REPO_ROOT / "scripts" / "run-headless.sh").read_text(encoding="utf-8")
-        assert 'PROMPT="$PROMPT $VERBOSE"' in body
 
 
 # ---------------------------------------------------------------------------

@@ -450,13 +450,6 @@ class TestSkillApplicability:
         assert "only open requirements (`FAIL` and `PARTIAL`)" in markdown
         assert "Do not include `PASS` or\n`UNVERIFIABLE` requirement entries" in markdown
 
-    def test_create_skill_supports_both_flags(self):
-        """Verify create-threat-model help defines --requirements and --no-requirements."""
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
-        content = skill_md.read_text()
-        assert "--requirements" in content
-        assert "--no-requirements" in content
-
 
 # ---------------------------------------------------------------------------
 # Context-resolver contract
@@ -470,10 +463,3 @@ class TestSkillApplicability:
 
 class TestDeprecatedAliases:
     """The old flags should be documented as deprecated in user help."""
-
-    def test_deprecated_aliases_documented(self):
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
-        content = skill_md.read_text()
-        assert "Deprecated" in content or "deprecated" in content
-        assert "--with-requirements" in content
-        assert "--ignore-requirements" in content

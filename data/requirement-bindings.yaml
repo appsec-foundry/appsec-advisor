@@ -26,7 +26,7 @@ retired_ids:
 requirements:
   REQ-PUR-001:
     applies_to:
-      - skills/create-threat-model/**
+      - skills/appsec-analyzer/**
       - agents/appsec-recon-scanner.md
       - scripts/contexts/build_architecture_analysis_context.py
       - schemas/architecture-role-units.schema.json
@@ -427,11 +427,8 @@ requirements:
       - scripts/contexts/load_business_context.py
       - scripts/orchestrator/orchestration_controller.py
       - schemas/business-context-preview.schema.json
-      - skills/create-threat-model/SKILL-full-runtime.md
-      - skills/create-threat-model/modes/business-context.md
-      - skills/create-threat-model/modes/business-impact.md
-      - skills/create-security-assessment/business-context.md
-      - skills/create-security-assessment/SKILL.md
+      - skills/appsec-analyzer/business-context.md
+      - skills/appsec-analyzer/SKILL.md
     decisions: []
     documents:
       - docs/threat-modeler.md
@@ -444,7 +441,6 @@ requirements:
       - tests/test_load_business_context.py::test_repository_context_precedence_and_run_override
       - tests/test_load_business_context.py::test_invalid_preferred_context_does_not_reactivate_legacy
       - tests/test_business_context_preview.py::test_large_repository_preview_stays_bounded
-      - tests/test_lazy_phase_group_loading.py::test_business_context_reaches_the_default_full_runtime
 
   REQ-RPT-001:
     applies_to:
@@ -1110,7 +1106,7 @@ requirements:
   REQ-FLW-009:
     applies_to:
       - scripts/runtime/resolve_config.py
-      - skills/create-threat-model/**
+      - skills/appsec-analyzer/**
     decisions: []
     documents:
       - docs/threat-modeler.md
@@ -1208,10 +1204,7 @@ requirements:
       - scripts/contexts/load_business_context.py
       - scripts/orchestrator/orchestration_controller.py
       - schemas/business-context-preview.schema.json
-      - skills/create-threat-model/SKILL-full-runtime.md
-      - skills/create-threat-model/modes/business-context.md
-      - skills/create-threat-model/modes/business-impact.md
-      - skills/create-security-assessment/business-context.md
+      - skills/appsec-analyzer/business-context.md
     decisions: []
     documents:
       - docs/threat-modeler.md
@@ -1301,7 +1294,7 @@ requirements:
       - scripts/runtime/resolve_config.py
       - scripts/orchestrator/orchestration_controller.py
       - scripts/model/persist_run_baseline.py
-      - skills/create-threat-model/**
+      - skills/appsec-analyzer/**
     decisions: []
     documents:
       - docs/threat-modeler.md

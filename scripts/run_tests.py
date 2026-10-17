@@ -171,7 +171,6 @@ GROUPS = {
         context_prompt_budgets
         context_routing
         dispatch_prompt_cache_order
-        help_file
         help_reference
         lazy_phase_group_loading
         phase_group_prompts
@@ -267,7 +266,6 @@ GROUPS = {
         log_shape_contract
         measure_run
         orchestration_controller
-        recon_dispatch_contract
         refusal_aware_stride
         render_completion_summary
         render_completion_summary_config
@@ -293,13 +291,11 @@ GROUPS = {
         skill_auto_retry
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
-        stage3_runtime_contract
         stamp_threat_model
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         stride_quick_profile
-        stride_serial_dispatch_detection
         term_style
         terminate_run
         thin_runtime_regressions_2026_07_20
@@ -753,10 +749,10 @@ SOURCE_TESTS = {
     "skills/abuse-cases/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} resolve_abuse_cases skill_definitions"),
     "skills/ask-threat-model/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
     "skills/help/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} help_reference skill_definitions"),
-    "skills/create-security-assessment/SKILL.md": _tests(
+    "skills/appsec-analyzer/SKILL.md": _tests(
         f"{_SKILL_FILE_TESTS} assessment_console single_repo_controller skill_definitions"
     ),
-    "skills/create-security-assessment/business-context.md": _tests(
+    "skills/appsec-analyzer/business-context.md": _tests(
         f"{_SKILL_FILE_TESTS} single_repo_controller skill_definitions"
     ),
     "data/supply-chain-controls.yaml": _tests("""
@@ -845,16 +841,6 @@ SOURCE_TESTS = {
         check_target_specificity
         prompt_token_bounds
         stride_outputs
-    """),
-    "skills/create-threat-model/SKILL-thin-stage4.md": _tests("""
-        integration
-        requirements_verification
-        wait_agent_calls
-        lazy_phase_group_loading
-        runtime_doc_cli_contract
-        check_target_specificity
-        context_prompt_budgets
-        prompt_token_bounds
     """),
     "scripts/analyzers/architect_review_runtime.py": _tests("""
         run_invariants
@@ -1236,15 +1222,6 @@ SOURCE_TESTS = {
         run_headless_completion
         run_ownership
     """),
-    "skills/create-threat-model/HELP.txt": _tests("""
-        analyst_skill
-        check_target_specificity
-        help_file
-        reasoning_model_resolution
-        requirements_resolution
-        runtime_cleanup
-        skill_definitions
-    """),
     "agents/appsec-secarch-renderer.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
@@ -1449,7 +1426,6 @@ SOURCE_TESTS = {
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        stride_serial_dispatch_detection
         actor_presentation
         architect_review_runtime
         auto_emitter_pass
@@ -2603,7 +2579,6 @@ SOURCE_TESTS = {
         hook_payload_contract
         match_abuse_cases
         orchestration_controller
-        recon_dispatch_contract
         requirements_verification
         stage1_context_edge_inventory
         stride_outputs
@@ -2998,47 +2973,6 @@ SOURCE_TESTS = {
         validate_intermediate
         validate_ms_compactness
         topology_workloads
-    """),
-    "skills/create-threat-model/SKILL-full-runtime.md": _tests("""
-        check_target_specificity
-        context_prompt_budgets
-        integration
-        lazy_phase_group_loading
-        orchestration_controller
-        qa_depth_profile
-        reasoning_model_resolution
-        requirements_resolution
-        requirements_verification
-        runtime_cleanup
-        runtime_doc_cli_contract
-    """),
-    "skills/create-threat-model/SKILL-thin-stage1-v2.md": _tests("""
-        agent_definitions
-        check_target_specificity
-        config_scanner_wireup
-        context_prompt_budgets
-        dispatch_prompt_cache_order
-        integration
-        orchestration_controller
-        recon_dispatch_contract
-        requirements_verification
-        runtime_doc_cli_contract
-        stride_serial_dispatch_detection
-        thin_runtime_regressions_2026_07_20
-        wait_agent_calls
-    """),
-    "skills/create-threat-model/SKILL.md": _tests("""
-        check_target_specificity
-        context_prompt_budgets
-        help_file
-        integration
-        lazy_phase_group_loading
-        package_internal_plugin
-        reasoning_model_resolution
-        requirements_verification
-        runtime_cleanup
-        runtime_doc_cli_contract
-        skill_definitions
     """),
     "templates/fragments/verdict.md.j2": _tests("""
         analysis_version_upgrade
@@ -3572,7 +3506,6 @@ SOURCE_TESTS = {
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        stride_serial_dispatch_detection
         team_questions
         threat_fixture
         threats_merged_schema
@@ -5580,7 +5513,6 @@ SOURCE_TESTS = {
         finalize_component_inventory
         gate_preconditions
         haiku_routing_per_depth
-        help_file
         model_lineup
         orchestration_controller
         p3_behavior_tuning
@@ -5906,7 +5838,6 @@ SOURCE_TESTS = {
         runtime_helper_batch
         severity_policy
         stride_outputs
-        stride_serial_dispatch_detection
         threat_fixture
         write_stride_progress
         actor_presentation

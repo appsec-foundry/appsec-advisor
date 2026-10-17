@@ -288,7 +288,7 @@ def _org_profile_status(output_dir: Path) -> dict:
             "configured": True,
             "path": block["path"],
             "default_preset": block.get("default_preset"),
-            "note": "configured via config.json — run create-threat-model to resolve",
+            "note": "configured via config.json — run appsec-analyzer to resolve",
         }
     return {"active": False, "configured": False}
 
@@ -1149,8 +1149,8 @@ def main(argv: list[str] | None = None) -> int:
     capsules = {
         "coach": {"state": coach_state, "note": coach_note},
     }
-    if _skill_exists("create-threat-model"):
-        capsules["threat_assessment"] = {"command": "/appsec-advisor:create-threat-model"}
+    if _skill_exists("appsec-analyzer"):
+        capsules["threat_assessment"] = {"command": "/appsec-advisor:appsec-analyzer"}
     if _skill_exists("audit-security-requirements"):
         capsules["requirements_audit"] = {"command": "/appsec-advisor:audit-security-requirements"}
 

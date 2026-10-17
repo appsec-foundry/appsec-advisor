@@ -15,83 +15,10 @@ surfaces:
     path: AGENTS.md
     max_bytes: 18500
   skill_router:
-    path: skills/create-threat-model/SKILL.md
-    # Includes the cross-path release-gate schedule; keep enough slack for a
-    # concise new invariant without hiding material router growth.
-    max_bytes: 8500
-  thin_full_runtime:
-    path: skills/create-threat-model/SKILL-full-runtime.md
-    # Raised to cover routed evidence-verifier fields and the explicit
-    # cross-path Stage-3 safety-gate handoff. 13250 -> 15500 (2026-08-29): the
-    # file had reached 13226 bytes, 24 short of the ceiling, so the next edit
-    # would have failed the hard budget with no prior warning. The headroom
-    # guard now covers this surface and needs a band to warn in. This is not a
-    # licence to grow: the aggregate gates below measure real bytes and sit at
-    # 96% of thin_full_pre_stage2_max_bytes, so roughly a kilobyte is all the
-    # thin control surface can actually gain.
-    max_bytes: 15500
-  thin_rerender_runtime:
-    path: skills/create-threat-model/SKILL-rerender-runtime.md
-    max_bytes: 10000
-  thin_stage1_v2_runtime:
-    # Carries the boundary loop and dispatch rules only, never a phase
-    # algorithm. The headroom guard requires at least ten percent free.
-    # 6400 -> 6800 (2026-08-29): at 6400 the file sat 11 bytes under the
-    # headroom threshold while 651 bytes remained to the hard ceiling, so the
-    # guard blocked before it could warn. Same reasoning as thin_full_runtime.
-    path: skills/create-threat-model/SKILL-thin-stage1-v2.md
-    max_bytes: 6800
-  thin_stage1d_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage1d.md
-    # 3400 -> 3600 (2026-08-21), matching thin_stage2_runtime. The waiter's
-    # nonzero exit needed a one-shot retry instruction: a verifier cut off at
-    # its turn ceiling leaves an unfinalized pre-seed, and without the repeat
-    # that chain ships as a plain `inconclusive`. At 3400 the file already sat
-    # at 89.6%, so the only way to fit it was deleting existing dispatch
-    # guidance. Raised instead, so the ten-percent headroom guard keeps doing
-    # its job rather than being worked around.
-    #
-    # 3600 -> 4000 (2026-08-23). That retry is now the controller's, keyed on
-    # the merged verdicts instead of the waiter's exit status, which a
-    # background launch reports as 0 no matter what the script returned. The
-    # runtime has to describe a second possible action from `finalize-abuse`,
-    # which is more text than the branch it replaces. At 3600 the file landed
-    # on 89.9% — passing only by rounding, and only after the wording had been
-    # cut past the point of clarity. 4000 restores headroom comparable to
-    # thin_stage2_runtime (81%), so the guard measures drift again rather than
-    # rationing a control-flow rule the orchestrator has to follow exactly.
-    #
-    # 4000 -> 4400 (2026-10-10). Thorough runs dispatch one abuse-case deriver
-    # before matching (decision AC-12), so the runtime describes a third action
-    # from `prepare-abuse`: launch the job, join it, and run its boundary. The
-    # instruction takes 284 bytes, which left the file at 96.8% of 4000. 4400
-    # restores the ten-percent headroom without trimming dispatch guidance.
-    max_bytes: 4400
-  thin_stage2_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage2.md
-    # 3600 -> 3800 (2026-09-12): the runtime joins its asynchronous renderer
-    # and repair calls with orchestrator/wait_agent_calls.py instead of leaving the wait to
-    # the orchestrator, whose turn then filled with log polling and status
-    # prose (run 65f6ccdc: 111 messages during the render, none during the
-    # waiter-joined STRIDE waves). The join adds 268 bytes (3112 -> 3380)
-    # where 128 remained under the headroom guard; 3800 is the smallest
-    # 200-byte step that holds it (88.9%).
-    max_bytes: 3800
-  thin_stage3_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage3.md
-    # 8000 -> 8200 (2026-09-12): the QA-reviewer and fixer join, for the same
-    # reason as thin_stage2_runtime. It adds 256 bytes (7052 -> 7308) where
-    # 148 remained under the guard; smallest 200-byte step (89.1%).
-    max_bytes: 8200
-  thin_stage4_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage4.md
-    # 3600 -> 3800 (2026-09-12): the editorial-wave join, for the same reason
-    # as thin_stage2_runtime. It adds 194 bytes (3207 -> 3401) where 33
-    # remained under the guard; smallest 200-byte step (89.5%).
-    max_bytes: 3800
-  thin_completion_runtime:
-    path: skills/create-threat-model/SKILL-thin-completion.md
-    max_bytes: 6000
+    path: skills/appsec-analyzer/SKILL.md
+    # Loaded on every assessment invocation. The business-context dialog is a
+    # separate file the skill reads only when the dialog runs.
+    max_bytes: 12000
   shared_threat_analysis_kernel:
     path: skills/internal-threat-analysis-kernel/SKILL.md
     # The release budget is 4k measured tokens. This byte ceiling is the fast
@@ -148,16 +75,6 @@ surfaces:
   stride_lens_supply_chain:
     path: agents/shared/supply-chain-patterns.md
     max_bytes: 14000
-aggregate:
-  # Router + compact runtime + Stage 1 + conditional Stage 1d.
-  thin_full_pre_stage2_max_bytes: 30000
-  thin_full_without_stage1d_max_bytes: 27000
-  # Cumulative thin control prose through the Stage-2 dispatch.
-  thin_full_through_stage2_max_bytes: 33000
-  # Router + rerender runtime. Stage-2 instructions are loaded only after the
-  # controller has verified on-disk Stage-1 artifacts.
-  thin_rerender_pre_stage2_max_bytes: 13000
-
 admission:
   shared_kernel_max_tokens: 4000
   role_contract_max_tokens: 3000

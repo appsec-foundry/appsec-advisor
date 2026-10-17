@@ -138,7 +138,7 @@ def check_namespace_rewritten(root: Path, name: str) -> None:
         shown = "\n  - ".join(leaks[:20])
         _die(f"upstream namespace {needle!r} still present:\n  - {shown}")
 
-    entry = f"{name}:create-threat-model"
+    entry = f"{name}:appsec-analyzer"
     skills = root / "skills"
     if skills.is_dir() and not any(
         entry in p.read_text(encoding="utf-8", errors="ignore") for p in _text_files(skills)
