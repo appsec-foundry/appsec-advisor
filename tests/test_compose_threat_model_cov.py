@@ -2846,9 +2846,15 @@ class TestRiskDistributionCounts:
 
     def test_folded_practice_excluded_weakness_counted_once(self):
         yd = {
-            "threats": [{"risk": "High", "evidence_tier": "insecure-practice"}],
+            "threats": [{"id": "T-001", "risk": "High", "evidence_tier": "insecure-practice"}],
             "weaknesses": [
-                {"id": "W-001", "kind": "implementation", "severity": "High", "severity_basis": "design-risk"}
+                {
+                    "id": "W-001",
+                    "kind": "implementation",
+                    "severity": "High",
+                    "severity_basis": "design-risk",
+                    "observable_backing": {"practice_evidence": [{"id": "T-001"}]},
+                }
             ],
         }
         assert compose._risk_distribution_counts(yd)["high"] == 1
