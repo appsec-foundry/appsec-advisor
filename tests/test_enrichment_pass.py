@@ -77,27 +77,6 @@ def test_verdict_writer_preserves_only_a_verified_receipt(tmp_path, monkeypatch,
     assert valid_receipt(yaml.safe_load(path.read_text())) is (initial == "valid")
 
 
-def test_editorial_change_preserves_receipt_without_loosening_structural_guard(tmp_path):
-    from repairs.apply_editorial_plan import _apply_structured
-    from validators.check_editorial_diff import verify
-
-    document = {"meta": {}, "threats": [{"id": "T-001", "scenario": "Original prose.", "risk": "High"}]}
-    stamp(document)
-    path = tmp_path / "threat-model.yaml"
-    path.write_text(yaml.safe_dump(document))
-    snapshot = {"files": {path.name: path.read_text()}}
-    action = {"path": "threats[0].scenario", "find": "Original prose.", "replace": "Clearer prose."}
-    assert _apply_structured(path.name, path, [action])[0] == 1
-    changed = yaml.safe_load(path.read_text())
-    assert valid_receipt(changed)
-    assert verify(snapshot, tmp_path) == []
-    continuation = EnrichmentContinuation(changed)
-    changed["threats"][0]["risk"] = "Low"
-    continuation.refresh(changed)
-    path.write_text(yaml.safe_dump(changed))
-    assert verify(snapshot, tmp_path)
-
-
 def test_receipt_has_a_closed_schema():
     import jsonschema
 

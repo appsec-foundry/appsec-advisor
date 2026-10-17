@@ -14,7 +14,6 @@ sys.path.insert(0, str(SCRIPTS))
 
 import runtime.agent_lifecycle as agent_lifecycle  # noqa: E402
 import runtime.log_event as log_event  # noqa: E402
-import runtime.stride_progress as stride_progress  # noqa: E402
 import runtime.write_stride_progress as progress  # noqa: E402
 
 
@@ -171,54 +170,6 @@ def test_cli_reports_invalid_step_without_writing(tmp_path: Path) -> None:
     assert "progress step must be within its total" in result.stderr
 
 
-@pytest.mark.parametrize("depth", ["full", "light"])
-def test_agent_log_and_status_use_the_same_authoritative_depth(
-    tmp_path: Path, depth: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _plan(tmp_path, depth)
-    claim = _claim(tmp_path, depth)
-    rc = log_event.main(
-        [
-            "runtime/log_event.py",
-            str(tmp_path),
-            "step-start",
-            "[Phase 9/11] [2/9] depth=TBD Spoofing",
-            "--agent",
-            "stride-analyzer-v2",
-            "--component-id",
-            "api",
-        ]
-    )
-    assert rc == 0
-    log = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
-    assert f"component=api depth={depth}" in log
-    assert f"action_id={claim['action_id']} job_id={claim['job_id']} attempt={claim['attempt']}" in log
-    assert "depth=TBD" not in log
-    appsec_progress = json.loads((tmp_path / ".appsec-progress.json").read_text(encoding="utf-8"))
-    assert f"component=api depth={depth}" in appsec_progress["detail"]
-
-    progress.write_progress(tmp_path, "api", "API", 2, 9, "Spoofing", ROOT)
-    assert stride_progress.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"]) == 1
-    status = capsys.readouterr().out
-    assert f"({depth}) API" in status
-    assert "TBD" not in status
-
-
-def test_status_rejects_progress_that_contradicts_the_context_plan(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _plan(tmp_path, "full")
-    _claim(tmp_path, "full")
-    progress.write_progress(tmp_path, "api", "API", 1, 9, "Context", ROOT)
-    path = tmp_path / ".progress" / "api.json"
-    value = json.loads(path.read_text(encoding="utf-8"))
-    value["analysis_depth"] = "light"
-    path.write_text(json.dumps(value), encoding="utf-8")
-
-    assert stride_progress.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"]) == 2
-    assert "contradicts current context plan" in capsys.readouterr().err
-
-
 def test_progress_rejects_stale_attempt_claim(tmp_path: Path) -> None:
     _plan(tmp_path, "full")
     _claim(tmp_path, "full", attempt=1)
@@ -371,25 +322,6 @@ def test_runtime_failure_is_reported_without_an_argparse_usage_block(tmp_path: P
     assert result.returncode == 2
     assert "progress step must be within its total" in result.stderr
     assert "usage:" not in result.stderr
-
-
-def test_status_never_shows_old_v2_progress_as_the_new_attempts(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # A retry claim is active before its analyzer writes a step, so the old
-    # record is expected history: it keeps the join waiting, shows no step, and
-    # only an attempt beyond the claim is a contradiction.
-    _plan(tmp_path, "full")
-    _claim(tmp_path, "full", attempt=1)
-    progress.write_progress(tmp_path, "api", "API", 1, 9, "Context", ROOT)
-    waves = json.loads((tmp_path / ".dispatch-waves.json").read_text(encoding="utf-8"))
-    waves["active_claim"]["attempts"]["api"] = 2
-    (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
-
-    assert stride_progress.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"]) == 1
-    out = capsys.readouterr().out
-    assert "API [starting]" in out
-    assert "1/9" not in out
 
 
 _ALL_SIX = [

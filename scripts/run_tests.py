@@ -108,18 +108,15 @@ GROUPS = {
         reference_format
         render_abuse_cases
         render_changelog_audit
-        render_editorial_receipt
         render_integrity
         render_pentest_tasks
         render_properties
-        render_qa_receipt
         render_requirements_banner
         render_review_report
         render_threat_model
         run_invariants
         sarif_validation
         section_condition_wiring
-        section_integrity
         slug
         summarize_threat_model
         threat_fixture
@@ -150,7 +147,6 @@ GROUPS = {
         lib_manifest
         manifest_readers
         mass_assignment_scanner
-        normalize_config_scan
         postscan_secret_check
         recon_patterns
         repo_profile
@@ -187,7 +183,6 @@ GROUPS = {
     "runtime": _tests("""
         acquire_lock_heartbeat
         active_tool_calls
-        actor_discovery_cache
         agent_lifecycle
         agent_logger
         agent_logger_branches
@@ -247,7 +242,6 @@ GROUPS = {
         check_state
         check_state_coverage
         check_state_hung_aborted
-        check_stride_dispatch
         ci_dispatch_workflows
         completion_contract
         completion_relay
@@ -274,8 +268,6 @@ GROUPS = {
         measure_run
         orchestration_controller
         recon_dispatch_contract
-        record_component_durations
-        record_stage_stats
         refusal_aware_stride
         render_completion_summary
         render_completion_summary_config
@@ -299,39 +291,29 @@ GROUPS = {
         schema_canonicalize
         session_banner
         skill_auto_retry
-        skill_watchdog
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
-        stage2_state
         stage3_runtime_contract
-        stall_notice
         stamp_threat_model
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        stride_progress
         stride_quick_profile
         stride_serial_dispatch_detection
-        telemetry_consistency
         term_style
         terminate_run
         thin_runtime_regressions_2026_07_20
         validate_analyst
-        validate_dispatch_manifest
         verify_run_costs
-        wait_abuse_progress
         wait_agent_calls
-        wait_stride_progress
         watch_run
         write_stride_progress
     """),
     "incremental": _tests("""
         analysis_version_upgrade
         build_threat_model_yaml
-        carry_plan
         incremental_two_run_e2e
         persist_run_baseline
-        validate_cache
     """),
     "e2e": _tests("""
         e2e_pipeline
@@ -343,15 +325,8 @@ GROUPS = {
         calibrate_architect_review
         apply_content_repair
         apply_content_repair_coverage
-        apply_editorial_plan
         apply_prose_fixes
         apply_prose_fixes_coverage
-        apply_repair_plan
-        build_editorial_context
-        check_editorial_diff
-        check_inline_shortcut
-        check_inline_shortcut_coverage
-        editorial_gate
         eval_threat_model
         evidence_verification_schema
         ground_truth_recall
@@ -429,16 +404,12 @@ GROUPS = {
     """),
     "config": _tests("""
         detect_public_repo
-        detect_session_model
-        estimate_duration
         haiku_routing_per_depth
         load_business_context
-        load_org_context
         model_lineup
         model_release_pricing
         org_profile_schema
         phase_budgets
-        project_run_cost
         reasoning_model_resolution
         resolve_config
         resolve_config_org_profile
@@ -522,7 +493,6 @@ GROUPS = {
         resolve_actors
         slice_actors
         slice_cross_repo_for_component
-        slice_taxonomy
         stage1_context_edge_inventory
         topology_workloads
         validate_recon_summary
@@ -822,7 +792,6 @@ SOURCE_TESTS = {
         agent_definitions
         completion_contract
         config_scanner_wireup
-        telemetry_consistency
         validate_intermediate
     """),
     "schemas/source-auth-findings.schema.yaml": _tests("""
@@ -888,7 +857,6 @@ SOURCE_TESTS = {
         integration
         requirements_verification
         wait_agent_calls
-        editorial_gate
         lazy_phase_group_loading
         runtime_doc_cli_contract
         check_target_specificity
@@ -1317,7 +1285,6 @@ SOURCE_TESTS = {
         context_routing
         gate_preconditions
         orchestration_controller
-        record_stage_stats
         requirements_verification
         run_path_guard
         stride_outputs
@@ -1462,7 +1429,6 @@ SOURCE_TESTS = {
         validate_assessment_architecture
         stride_attempt_writer
         topology_workloads
-        check_stride_dispatch
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -1476,8 +1442,6 @@ SOURCE_TESTS = {
         refusal_aware_stride
     """),
     "scripts/orchestrator/stride_dispatch_waves.py": _tests("""
-        carry_plan
-        check_stride_dispatch
         check_target_specificity
         gate_preconditions
         lens_coverage
@@ -1493,7 +1457,6 @@ SOURCE_TESTS = {
         stride_dispatch_waves
         stride_outputs
         stride_serial_dispatch_detection
-        wait_stride_progress
         actor_presentation
         architect_review_runtime
         auto_emitter_pass
@@ -1518,7 +1481,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         build_threat_modeling_context
         build_trust_boundary_assessment_input
-        check_stride_dispatch
         check_target_specificity
         config_scanner_wireup
         credential_lifecycle_checks
@@ -1559,7 +1521,6 @@ SOURCE_TESTS = {
         threats_merged_schema
         triage_compute_ranking
         validate_intermediate
-        wait_stride_progress
         architect_review
         architect_review_runtime
         build_architect_context
@@ -2397,7 +2358,6 @@ SOURCE_TESTS = {
         run_issues_pipeline
         run_path_guard
         runtime_doc_cli_contract
-        skill_watchdog
         stride_outputs
         terminate_run
         verify_run_costs
@@ -2426,7 +2386,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_headless_completion
         shared_paths
-        skill_watchdog
         stride_outputs
         team_questions
         term_style
@@ -2592,16 +2551,7 @@ SOURCE_TESTS = {
         source_auth_scanner
         stage1_coverage_recovery_2026_07_20
         stride_outputs
-        telemetry_consistency
         thin_runtime_regressions_2026_07_20
-    """),
-    "scripts/orchestrator/stage2_state.py": _tests("""
-        requirements_verification
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        stage2_state
-        stride_outputs
     """),
     "scripts/renderers/_business_relevance.py": _tests("""
         analysis_version_upgrade
@@ -2751,7 +2701,6 @@ SOURCE_TESTS = {
         requirements_verification
         review_threat_model
         schemas
-        slice_taxonomy
         taxonomy_coverage
         validate_intermediate
     """),
@@ -2765,7 +2714,6 @@ SOURCE_TESTS = {
         orchestration_controller
         requirements_verification
         schemas
-        slice_taxonomy
     """),
     "data/context-routing-bindings.json": _tests("""
         build_abuse_case_contexts
@@ -3149,7 +3097,6 @@ SOURCE_TESTS = {
         analysis_version_upgrade
         annotate_architecture
         annotate_sequences
-        apply_editorial_plan
         apply_prose_fixes_coverage
         atomic_io
         auto_emitter_pass
@@ -3157,13 +3104,11 @@ SOURCE_TESTS = {
         baseline_state_coverage
         build_abuse_case_contexts
         build_architecture_analysis_context
-        build_editorial_context
         build_post_stride_contexts
         build_stride_evidence_bundles
         build_threat_model_yaml
         build_threat_modeling_context
         build_trust_boundary_assessment_input
-        check_editorial_diff
         check_target_specificity
         completion_relay
         compose_threat_model
@@ -3176,7 +3121,6 @@ SOURCE_TESTS = {
         discover_identity_providers
         dispatch_manifest
         e2e_pipeline
-        editorial_gate
         embedded_store_access
         emit_verdict_to_model
         enforce_yaml_invariants
@@ -3192,7 +3136,6 @@ SOURCE_TESTS = {
         load_business_context
         merge_threats
         mermaid_validator
-        normalize_config_scan
         orchestration_controller
         p1_renderer_correctness
         prepare_trust_boundary_context
@@ -3205,7 +3148,6 @@ SOURCE_TESTS = {
         reference_format
         render_abuse_cases
         render_completion_summary
-        render_editorial_receipt
         render_integrity
         render_properties
         repo_scan
@@ -3215,14 +3157,12 @@ SOURCE_TESTS = {
         resolve_actors
         run_headless_completion
         run_path_guard
-        section_integrity
         security_score
         severity_policy
         stride_outputs
         terminate_run
         threat_fixture
         triage_validate_ratings
-        validate_dispatch_manifest
         validate_fragment
         validate_ms_compactness
         validate_recon_summary
@@ -3391,15 +3331,12 @@ SOURCE_TESTS = {
         validate_ms_compactness
     """),
     "scripts/shared/_path_guard.py": _tests("""
-        section_integrity
         architect_review_runtime
         actor_presentation
         aggregate_run_issues
-        apply_editorial_plan
         arch_coverage_bridge
         architecture_coverage_checks
         auto_emitter_pass
-        build_editorial_context
         build_threat_model_yaml
         check_target_specificity
         credential_lifecycle_checks
@@ -3408,7 +3345,6 @@ SOURCE_TESTS = {
         detect_open_registration
         detect_public_repo
         dispatch_manifest
-        editorial_gate
         emit_sca_practice
         enrichment_pass
         flow_route_auth
@@ -3433,7 +3369,6 @@ SOURCE_TESTS = {
         scanner_review_regressions
         security_score
         skill_auto_retry
-        skill_watchdog
         source_auth_scanner
         stride_outputs
         supply_chain_config
@@ -3588,7 +3523,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         build_threat_modeling_context
         build_trust_boundary_assessment_input
-        check_stride_dispatch
         check_target_specificity
         compose_threat_model
         compose_threat_model_cov2
@@ -3654,14 +3588,12 @@ SOURCE_TESTS = {
         stride_outputs
         stride_serial_dispatch_detection
         team_questions
-        telemetry_consistency
         threat_fixture
         threats_merged_schema
         triage_compute_ranking
         triage_validate_ratings
         validate_evidence_lines
         validate_intermediate
-        wait_stride_progress
         weakness_signals
         architect_review
         architect_review_runtime
@@ -3816,14 +3748,6 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
     """),
-    "scripts/contexts/actor_discovery_cache.py": _tests("""
-        actor_discovery_cache
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/runtime/agent_config_checks.py": _tests("""
         iac_resource_checks
         agent_config_checks
@@ -3866,13 +3790,9 @@ SOURCE_TESTS = {
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        telemetry_consistency
         terminate_run
-        wait_abuse_progress
         wait_agent_calls
-        wait_stride_progress
         write_stride_progress
-        check_stride_dispatch
         stage1_coverage_recovery_2026_07_20
     """),
     "scripts/runtime/agent_logger.py": _tests("""
@@ -3932,24 +3852,6 @@ SOURCE_TESTS = {
     "scripts/repairs/apply_content_repair.py": _tests("""
         apply_content_repair
         apply_content_repair_coverage
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
-    "scripts/repairs/apply_editorial_plan.py": _tests("""
-        apply_editorial_plan
-        build_editorial_context
-        check_target_specificity
-        enrichment_pass
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
-    "scripts/repairs/apply_repair_plan.py": _tests("""
-        apply_repair_plan
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -4025,18 +3927,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/baseline/carry_plan.py": _tests("""
-        carry_plan
-        check_stride_dispatch
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-    """),
     "schemas/incremental-carry.schema.json": _tests("""
-        carry_plan
-        check_stride_dispatch
         schemas
     """),
     "scripts/baseline/baseline_check.py": _tests("""
@@ -4090,7 +3981,6 @@ SOURCE_TESTS = {
         portable_model_readers
         analysis_version_upgrade
         baseline_content_unchanged
-        carry_plan
         baseline_state_coverage
         check_target_specificity
         e2e_pipeline
@@ -4099,14 +3989,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
-        stride_outputs
-    """),
-    "scripts/orchestrator/batch_checkpoint.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
         stride_outputs
     """),
     "scripts/runtime/budget_watchdog.py": _tests("""
@@ -4128,7 +4010,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_attempt_writer
         stride_outputs
-        telemetry_consistency
         terminate_run
         verify_abuse_cases
         refusal_aware_stride
@@ -4166,16 +4047,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         single_repo_no_cross_repo_regression
-        stride_outputs
-    """),
-    "scripts/contexts/build_editorial_context.py": _tests("""
-        apply_editorial_plan
-        build_editorial_context
-        check_target_specificity
-        editorial_gate
-        gate_preconditions
-        requirements_verification
-        run_path_guard
         stride_outputs
     """),
     "scripts/model/build_posture_verdict.py": _tests("""
@@ -4223,7 +4094,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-        validate_dispatch_manifest
         validate_intermediate
     """),
     "scripts/contexts/build_threat_modeling_context.py": _tests("""
@@ -4296,19 +4166,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/validators/check_editorial_diff.py": _tests("""
-        apply_editorial_plan
-        build_editorial_context
-        check_editorial_diff
-        check_target_specificity
-        editorial_gate
-        enrichment_pass
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-    """),
     "scripts/validators/check_fragment_registry.py": _tests("""
         check_fragment_registry
         check_target_specificity
@@ -4316,18 +4173,6 @@ SOURCE_TESTS = {
         gate_preconditions
         requirements_verification
         run_path_guard
-        stride_outputs
-    """),
-    "scripts/validators/check_inline_shortcut.py": _tests("""
-        check_inline_shortcut
-        check_inline_shortcut_coverage
-        check_target_specificity
-        gate_preconditions
-        pregenerate_fragments
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        skill_auto_retry
         stride_outputs
     """),
     "scripts/check_permissions.py": _tests("""
@@ -4402,16 +4247,6 @@ SOURCE_TESTS = {
         stride_outputs
         threat_model_health
     """),
-    "scripts/orchestrator/check_stride_dispatch.py": _tests("""
-        check_stride_dispatch
-        check_target_specificity
-        gate_preconditions
-        log_shape_contract
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        stride_serial_dispatch_detection
-    """),
     "scripts/check_target_specificity.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -4461,7 +4296,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-        telemetry_consistency
         refusal_aware_stride
     """),
     "scripts/runtime/context_window_report.py": _tests("""
@@ -4482,7 +4316,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_headless_completion
         run_path_guard
-        skill_watchdog
         stride_outputs
     """),
     "scripts/runtime/cutoff_cause.py": _tests("""
@@ -4567,15 +4400,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/analyzers/detect_session_model.py": _tests("""
-        check_target_specificity
-        detect_session_model
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/runtime/diagnostic_bundle.py": _tests("""
         script_layout
         check_target_specificity
@@ -4601,15 +4425,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         validate_fragment
-    """),
-    "scripts/validators/editorial_gate.py": _tests("""
-        check_target_specificity
-        editorial_gate
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
     """),
     "scripts/analyzers/embedded_store_access.py": _tests("""
         multi_repo_assessment
@@ -4827,10 +4642,8 @@ SOURCE_TESTS = {
     """),
     "scripts/model/enrichment_pass.py": _tests("""
         agent_config_checks
-        apply_editorial_plan
         assert_completeness
         auto_emitter_pass
-        check_editorial_diff
         check_target_specificity
         detect_public_repo
         emit_general_mitigation_titles
@@ -4856,19 +4669,6 @@ SOURCE_TESTS = {
         orchestration_controller
         requirements_verification
         run_path_guard
-        stride_outputs
-    """),
-    "scripts/runtime/estimate_duration.py": _tests("""
-        check_target_specificity
-        dispatch_model_and_diagnostics
-        estimate_duration
-        gate_preconditions
-        orchestration_controller
-        persist_run_baseline
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        skill_watchdog
         stride_outputs
     """),
     "scripts/validators/eval_threat_model.py": _tests("""
@@ -4919,9 +4719,6 @@ SOURCE_TESTS = {
         model_release_pricing
         orchestration_controller
         reconcile_role_access
-        record_stage_stats
-        render_editorial_receipt
-        render_qa_receipt
         report_plugin_issue
         requirements_verification
         run_diagnostics_recovery_2026_07_20
@@ -4931,12 +4728,9 @@ SOURCE_TESTS = {
         security_steering
         security_steering_units
         skill_auto_retry
-        skill_watchdog
-        stall_notice
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        telemetry_consistency
         terminate_run
         verify_run_costs
         write_stride_progress
@@ -5122,14 +4916,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/contexts/load_org_context.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        load_org_context
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/contexts/load_related_repos.py": _tests("""
         build_threat_modeling_context
         check_target_specificity
@@ -5204,12 +4990,10 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-        check_stride_dispatch
         refusal_aware_stride
         run_diagnostics_recovery_2026_07_20
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
-        wait_stride_progress
         write_stride_progress
         multi_repo_builder
         multi_repo_exports
@@ -5221,14 +5005,6 @@ SOURCE_TESTS = {
         model_lineup
         requirements_verification
         run_headless_completion
-        run_path_guard
-        stride_outputs
-    """),
-    "scripts/model/normalize_config_scan.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        normalize_config_scan
-        requirements_verification
         run_path_guard
         stride_outputs
     """),
@@ -5343,19 +5119,10 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_07_20
         stride_outputs
         team_questions
-        telemetry_consistency
         terminate_run
         threat_model_health
         watch_run
         runtime_cleanup
-    """),
-    "scripts/runtime/phase_elapsed.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
-        stride_outputs
     """),
     "scripts/runtime/plugin_meta.py": _tests("""
         analysis_version_upgrade
@@ -5448,18 +5215,6 @@ SOURCE_TESTS = {
         gate_preconditions
         requirements_verification
         run_path_guard
-        section_integrity
-        stride_outputs
-    """),
-    "scripts/runtime/project_run_cost.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        persist_run_baseline
-        project_run_cost
-        requirements_verification
-        run_headless_completion
-        run_path_guard
         stride_outputs
     """),
     "scripts/model/promote_verified_abuse_cases.py": _tests("""
@@ -5494,8 +5249,6 @@ SOURCE_TESTS = {
         actor_presentation
         analysis_version_upgrade
         check_fragment_registry
-        check_inline_shortcut
-        check_inline_shortcut_coverage
         check_target_specificity
         compose_threat_model
         compose_threat_model_cov2
@@ -5527,15 +5280,6 @@ SOURCE_TESTS = {
         skill_auto_retry
         stride_outputs
         threat_fixture
-    """),
-    "scripts/validators/qa_release_gate.py": _tests("""
-        check_target_specificity
-        editorial_gate
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
-        stride_outputs
     """),
     "scripts/model/query_threat_model.py": _tests("""
         portable_model_readers
@@ -5603,27 +5347,6 @@ SOURCE_TESTS = {
         stride_outputs
         validate_fragment
     """),
-    "scripts/runtime/record_component_durations.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        log_shape_contract
-        record_component_durations
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
-        stride_outputs
-    """),
-    "scripts/runtime/record_stage_stats.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        model_release_pricing
-        record_stage_stats
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-        thin_runtime_regressions_2026_07_20
-    """),
     "scripts/validators/redact_known_secrets.py": _tests("""
         check_target_specificity
         enrichment_pass
@@ -5656,15 +5379,6 @@ SOURCE_TESTS = {
         threat_fixture
         runtime_cleanup
     """),
-    "scripts/renderers/render_editorial_receipt.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        render_completion_summary_config
-        render_editorial_receipt
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/renderers/render_pentest_tasks.py": _tests("""
         portable_model_readers
         render_completion_summary
@@ -5675,15 +5389,6 @@ SOURCE_TESTS = {
         gate_preconditions
         pentest_tasks
         render_pentest_tasks
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-    """),
-    "scripts/renderers/render_qa_receipt.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        render_qa_receipt
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
@@ -6024,7 +5729,7 @@ SOURCE_TESTS = {
         assessment_context assessment_declarations assessment_jobs assessment_posture assessment_review
         assessment_scanner_findings assessment_sources assessment_stage2 assessment_state authnz_review_skill
         build_architecture_analysis_context build_threat_model_yaml build_trust_boundary_assessment_input
-        business_abuse_cases carry_plan compose_threat_model_cov2 config_iac_scanner config_scanner_wireup
+        business_abuse_cases compose_threat_model_cov2 config_iac_scanner config_scanner_wireup
         derive_abuse_cases egress_clients emit_sca_practice emit_threat_vektors enrichment_pass iac_resource_checks
         multi_repo_analysis multi_repo_boundaries multi_repo_controller portable_model_readers supply_chain_facts
         validate_evidence_lines
@@ -6115,18 +5820,8 @@ SOURCE_TESTS = {
         multi_repo_exports
     """
     ),
-    "scripts/validators/section_integrity.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        section_integrity
-        stride_outputs
-    """),
     "scripts/analyzers/security_relevance_filter.py": _tests("""
         baseline_content_unchanged
-        carry_plan
         baseline_state_coverage
         check_target_specificity
         gate_preconditions
@@ -6161,15 +5856,6 @@ SOURCE_TESTS = {
         skill_policy_gate
         stride_outputs
     """),
-    "scripts/runtime/skill_watchdog.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        skill_watchdog
-        stride_outputs
-    """),
     "scripts/contexts/slice_actors.py": _tests("""
         check_target_specificity
         dispatch_manifest
@@ -6188,15 +5874,6 @@ SOURCE_TESTS = {
         slice_cross_repo_for_component
         stride_outputs
     """),
-    "scripts/contexts/slice_taxonomy.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        slice_taxonomy
-        stride_outputs
-    """),
     "scripts/smoke_test_package.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -6206,28 +5883,12 @@ SOURCE_TESTS = {
         smoke_test_package
         stride_outputs
     """),
-    "scripts/repairs/snapshot_preserved_sections.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/spec_guard.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
         run_path_guard
         spec_guard
-        stride_outputs
-    """),
-    "scripts/runtime/stall_notice.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stall_notice
         stride_outputs
     """),
     "scripts/model/stamp_threat_model.py": _tests("""
@@ -6249,35 +5910,22 @@ SOURCE_TESTS = {
         baseline_content_unchanged
         baseline_state_coverage
         build_threat_model_yaml
-        check_stride_dispatch
         check_target_specificity
         e2e_pipeline
         gate_preconditions
         incremental_two_run_e2e
         merge_threats
-        record_component_durations
         requirements_verification
         run_path_guard
         runtime_helper_batch
         severity_policy
-        skill_watchdog
         stride_outputs
-        stride_progress
         stride_serial_dispatch_detection
         threat_fixture
         write_stride_progress
         actor_presentation
         architect_review_runtime
         refusal_aware_stride
-    """),
-    "scripts/runtime/stride_progress.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        stride_progress
-        write_stride_progress
     """),
     "scripts/baseline/sync_baseline.py": _tests("""
         check_target_specificity
@@ -6287,16 +5935,6 @@ SOURCE_TESTS = {
         stride_outputs
         sync_baseline
         update_baseline
-    """),
-    "scripts/runtime/telemetry_consistency.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        refusal_aware_stride
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        telemetry_consistency
     """),
     "scripts/runtime/terminate_run.py": _tests("""
         check_target_specificity
@@ -6344,15 +5982,6 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
         update_baseline
-    """),
-    "scripts/validators/validate_cache.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_cache
     """),
     "scripts/validators/validate_config.py": _tests("""
         check_target_specificity
@@ -6652,15 +6281,6 @@ SOURCE_TESTS = {
         shared_paths
         stride_outputs
     """),
-    "scripts/validators/validate_dispatch_manifest.py": _tests("""
-        check_target_specificity
-        dispatch_manifest
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_dispatch_manifest
-    """),
     "scripts/validators/validate_evidence_lines.py": _tests("""
         auto_emitter_pass
         check_target_specificity
@@ -6742,7 +6362,6 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stage1_coverage_recovery_2026_07_20
         stride_outputs
-        telemetry_consistency
         validate_threat_modeling_context
         runtime_cleanup
     """),
@@ -6754,21 +6373,8 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         verify_abuse_cases
-        wait_abuse_progress
-    """),
-    "scripts/orchestrator/wait_abuse_progress.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        refusal_aware_stride
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-        thin_runtime_regressions_2026_07_20
-        wait_abuse_progress
     """),
     "scripts/orchestrator/wait_agent_calls.py": _tests("""
-        wait_abuse_progress
         agent_lifecycle
         check_target_specificity
         gate_preconditions
@@ -6781,17 +6387,6 @@ SOURCE_TESTS = {
         wait_agent_calls
         refusal_aware_stride
         stride_dispatch_waves
-    """),
-    "scripts/orchestrator/wait_stride_progress.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        refusal_aware_stride
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-        thin_runtime_regressions_2026_07_20
-        wait_stride_progress
     """),
     "scripts/runtime/watch_run.py": _tests("""
         check_target_specificity

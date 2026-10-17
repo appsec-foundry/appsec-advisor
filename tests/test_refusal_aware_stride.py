@@ -12,13 +12,10 @@ from pathlib import Path
 
 import model.build_threat_model_yaml as tm_yaml
 import orchestrator.stride_dispatch_waves as waves
-import orchestrator.wait_abuse_progress as wap
-import orchestrator.wait_stride_progress as wsp
 import pytest
 import renderers.pregenerate_fragments as pregen
 import runtime.agent_lifecycle as lifecycle
 import runtime.agent_logger as agent_logger
-import runtime.telemetry_consistency as telemetry
 
 ALL = list(waves.STRIDE_CATEGORIES)
 
@@ -296,33 +293,6 @@ def test_claim_never_dispatches_a_retry_beside_a_live_attempt(tmp_path: Path, mo
     assert plan["attempts"]["api"] == 1
 
 
-def test_stride_waiter_returns_to_the_controller_on_a_settled_wave(tmp_path: Path, monkeypatch) -> None:
-    plan, manifest = _claimed_wave(tmp_path, "api")
-    (tmp_path / ".dispatch-waves.json").write_text(json.dumps(plan), encoding="utf-8")
-    (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    call_id = _register(tmp_path, "stride:api:attempt-1", attempt=1)
-    lifecycle.note_child_stop(tmp_path, call_id)
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (1, ""))
-    monkeypatch.setattr(wsp.time, "sleep", lambda _s: pytest.fail("a settled wave must not keep polling"))
-    assert wsp.main([str(tmp_path), "1", "--component", "api", "--rounds", "24"]) == 1
-
-
-def test_abuse_waiter_stops_polling_once_every_verifier_stopped(tmp_path: Path, monkeypatch) -> None:
-    for cid in ("AC-T-001", "AC-T-002"):
-        call_id = _register(tmp_path, f"phase10c-abuse-{cid}", call_id=f"toolu_{cid.replace('-', '_')}")
-        lifecycle.note_child_stop(tmp_path, call_id)
-    monkeypatch.setattr(wap.time, "sleep", lambda _s: pytest.fail("stopped verifiers must not keep polling"))
-    assert wap.main([str(tmp_path), "AC-T-001", "AC-T-002", "--rounds", "24"]) == 1
-
-
-def test_abuse_waiter_keeps_polling_while_a_verifier_runs(tmp_path: Path, monkeypatch) -> None:
-    _register(tmp_path, "phase10c-abuse-AC-T-001", call_id="toolu_AC_T_001")
-    sleeps: list[int] = []
-    monkeypatch.setattr(wap.time, "sleep", sleeps.append)
-    assert wap.main([str(tmp_path), "AC-T-001", "--rounds", "3", "--interval", "1"]) == wap.PENDING_EXIT_CODE
-    assert len(sleeps) == 2
-
-
 # --- budget: a refusal becomes a declared gap, anything else still aborts ----------
 
 
@@ -419,38 +389,6 @@ def test_selection_without_declined_components_is_unchanged(tmp_path: Path) -> N
 
 
 # --- telemetry: an explained failure is not a mismatch ------------------------------
-
-
-@pytest.mark.parametrize(
-    ("stop", "flagged"),
-    [
-        ("subagent_stop:refusal", False),
-        ("subagent_stop:max_turns", False),
-        ("settled_incomplete", False),
-        ("subagent_stop:unknown", True),
-    ],
-)
-def test_telemetry_flags_only_unexplained_failures(tmp_path: Path, stop: str, flagged: bool) -> None:
-    (tmp_path / ".context-routing-plan.json").write_text(
-        json.dumps({"actions": [{"action_id": "stage1c:x", "job_ids": ["stride:api:attempt-1"]}]}), encoding="utf-8"
-    )
-    lifecycle.register_call(
-        tmp_path,
-        {
-            "agent_call_id": "toolu_api",
-            "session_id": "shared01",
-            "agent": "stride-analyzer-v2",
-            "agent_type": "appsec-advisor:appsec-stride-analyzer-v2",
-            "model": "opus",
-            "description": "STRIDE",
-            "background": False,
-            "action_id": "stage1c:x",
-            "job_id": "stride:api:attempt-1",
-        },
-    )
-    lifecycle.fail_call(tmp_path, "toolu_api", stop)
-    codes = [finding["code"] for finding in telemetry.check_returned_calls(tmp_path)]
-    assert ("lifecycle_failed_after_accepted_output" in codes) is flagged
 
 
 # --- retry: continue from what an earlier attempt persisted -------------------------

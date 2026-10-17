@@ -260,7 +260,6 @@ requirements:
   REQ-FLW-002:
     applies_to:
       - scripts/orchestrator/build_stride_dispatch_manifest.py
-      - scripts/orchestrator/check_stride_dispatch.py
       - scripts/runtime/aggregate_run_issues.py
     decisions: []
     documents:
@@ -279,8 +278,6 @@ requirements:
       - scripts/model/enrichment_pass.py
       - scripts/auto_emitter_pass.sh
       - scripts/validators/assert_completeness.py
-      - scripts/repairs/apply_editorial_plan.py
-      - scripts/validators/check_editorial_diff.py
       - scripts/model/backfill_scanner_remediation.py
       - scripts/model/hydrate_mitigation_details.py
       - scripts/model/emit_general_mitigation_titles.py
@@ -292,7 +289,6 @@ requirements:
       - scripts/validators/redact_known_secrets.py
       - data/completeness-contract.yaml
       - scripts/orchestrator/orchestration_controller.py
-      - scripts/orchestrator/stage2_state.py
       - scripts/contexts/context_routing.py
       - scripts/validators/validate_intermediate.py
       - scripts/renderers/compose_threat_model.py
