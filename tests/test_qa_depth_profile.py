@@ -10,7 +10,6 @@ Tests for deterministic QA dispatch policy:
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 
 
 def _read(path: Path) -> str:

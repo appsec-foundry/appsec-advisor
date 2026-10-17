@@ -193,8 +193,8 @@ class TestAgentReturn:
         event = make_post_tool_event(
             "Agent",
             {
-                "subagent_type": "appsec-advisor:appsec-qa-reviewer",
-                "description": "QA review",
+                "subagent_type": "appsec-advisor:appsec-threat-merger",
+                "description": "merge review",
                 "prompt": "REPO_ROOT=/tmp/repo",
                 "run_in_background": False,
             },
@@ -457,7 +457,7 @@ class TestAgentModel:
     def test_reads_model_from_agent_definition(self, monkeypatch):
         """Without override, model is read from agents/<name>.md frontmatter."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        result = _agent_model("appsec-advisor:appsec-qa-reviewer", {})
+        result = _agent_model("appsec-advisor:appsec-threat-merger", {})
         assert result == "sonnet"
 
     def test_reads_model_for_all_known_agents(self, monkeypatch):
