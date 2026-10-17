@@ -12,7 +12,7 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 
 - **REQ-PUR-003:** Users must be able to select local repositories or Git URLs and a separate output location, including combined assessments of multiple repositories.
 - **REQ-FLW-005:** Each assessment must identify its source revisions, analysis scope, context sources, exclusions, and coverage gaps.
-- **REQ-FLW-009:** Users must be able to select analysis depth and focus on specific components or directories.
+- **REQ-FLW-009:** Users must be able to select analysis depth; a request to narrow the analysis to specific components or directories must be refused, never silently run in full.
 - **REQ-FLW-002:** Every analyzed component must receive all six STRIDE checks at every analysis depth.
 - **REQ-FLW-010:** Analysis must inspect applicable authentication, authorization, input handling, cryptography, secrets, frontend, deployment, supply-chain, and AI security controls.
 
@@ -69,7 +69,7 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 
 ## Model lifecycle and review
 
-- **REQ-USE-004:** Incremental updates must reuse only compatible results; full assessments must preserve history, while deliberate rebuilds may reset the model and history.
+- **REQ-USE-004:** Full assessments must preserve the history of earlier results; deliberate rebuilds may reset the model and history.
 - **REQ-USE-005:** Model questions and overviews must read existing results without rescanning sources or changing files.
 - **REQ-USE-006:** Users must be able to determine whether a model is fresh, stale, missing, or blocked.
 - **REQ-USE-001:** Users must be able to review findings, record decisions, and plan remediation; decisions must survive reassessment, and code changes must require explicit selection.
