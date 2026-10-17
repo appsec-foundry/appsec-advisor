@@ -333,7 +333,6 @@ GROUPS = {
         guard_evidence_verification
         inline_code_formatter
         mermaid_validator
-        pre_render_repair_scope
         qa_arch_coverage
         qa_arch_coverage_coverage
         qa_checks
@@ -786,12 +785,6 @@ SOURCE_TESTS = {
         merge_threats
         orchestration_controller
         supply_chain_facts
-        validate_intermediate
-    """),
-    "agents/appsec-config-scanner.md": _tests("""
-        agent_definitions
-        completion_contract
-        config_scanner_wireup
         validate_intermediate
     """),
     "schemas/source-auth-findings.schema.yaml": _tests("""
@@ -2676,13 +2669,6 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "agents/shared/prose-samples.md": _tests("""
-        agent_definitions
-        agent_doc_shell_snippets
-        check_target_specificity
-        requirements_verification
-        stride_outputs
-    """),
-    "agents/shared/qa-ms-checks.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
         check_target_specificity

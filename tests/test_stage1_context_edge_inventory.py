@@ -36,9 +36,7 @@ def test_inventory_names_every_current_stage1_semantic_consumer():
 def test_inventory_pins_declared_and_implicit_semantic_deliveries():
     rows = _inventory_rows("consumer")
     expected_markers = {
-        "context_resolver": (".skill-config.json", ".requirements.yaml", "docs/related-repos.yaml"),
         "recon_scanner": (".skill-config.json", ".recon-patterns.json", "recon template"),
-        "config_scanner": (".skill-config.json", "data/config-iac-checks.yaml", "direct-source"),
         "actor_discoverer": (".actors-merged-static.json", ".recon-summary.md", ".recon-signals.json"),
         "architecture_analyst": (".recon-summary.md", ".route-inventory.json", ".actors-resolved.json"),
         "trust_boundary_analyst": (".trust-boundary-assessment-input.json", "exact-byte receipt"),
@@ -76,17 +74,11 @@ def test_inventory_pins_every_current_deterministic_stage1_edge():
 
 def test_inventory_hidden_edges_still_exist_in_consumer_contracts():
     prompt_markers = {
-        "agents/appsec-context-resolver.md": (
-            ".requirements.yaml",
-            "docs/known-threats.yaml",
-            "docs/related-repos.yaml",
-        ),
         "agents/appsec-recon-scanner.md": (
             ".recon-patterns.json",
             "data/scan-excludes.yaml",
             "agents/shared/recon-output-template.md",
         ),
-        "agents/appsec-config-scanner.md": ("data/config-iac-checks.yaml",),
         "agents/appsec-actor-discoverer.md": (".recon-signals.json",),
         "agents/appsec-control-analyst.md": ("Requirements violations",),
         "agents/appsec-stride-analyzer-v2.md": ("path_routing.focus_paths", "path_routing.exclude_paths"),

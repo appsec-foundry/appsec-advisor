@@ -41,21 +41,11 @@ categories:
 
 # Names and purposes are written for AppSec and engineering reviewers.
 agents:
-  - id: context_resolver
-    name: Project context resolver
-    purpose: Resolve bounded business, policy, requirements, and related-repository context.
-    scope: whole_run
-    stage: Project context
   - id: recon_scanner
     name: Repository reconnaissance scanner
     purpose: Discover repository technologies, entry points, deployment surfaces, and security signals.
     scope: whole_run
     stage: Repository recon
-  - id: config_scanner
-    name: Configuration and infrastructure scanner
-    purpose: Inspect bounded configuration, infrastructure-as-code, container, and deployment surfaces.
-    scope: whole_run
-    stage: Configuration discovery
   - id: actor_discoverer
     name: Actor discoverer
     purpose: Propose repository-specific actors from the validated static actor set and recon signals.
@@ -163,16 +153,6 @@ contexts:
     description: Security role, exposed interfaces, security dependencies, deployment constraints, and analytical
       assumptions that apply to the current component.
     scope: one_component
-  - id: business.context_sources
-    name: Project context source documents
-    category: business_and_requirements
-    description: Repository and organization documents used to derive business and security context.
-    scope: whole_run
-  - id: requirements.security
-    name: Resolved security requirements
-    category: business_and_requirements
-    description: Validated requirements selected from operator, organization, repository, or fallback policy.
-    scope: whole_run
   - id: requirements.component_context
     name: Component requirement violations
     category: business_and_requirements
@@ -207,16 +187,6 @@ contexts:
     name: Core scan policy
     category: repository_discovery
     description: Plugin-owned exclusions and output structure that constrain broad reconnaissance.
-    scope: whole_run
-  - id: discovery.config_checks
-    name: Configuration and IaC checks
-    category: repository_discovery
-    description: Plugin-owned checks, evidence requirements, mappings, and false-positive exclusions.
-    scope: whole_run
-  - id: discovery.config_surface
-    name: Configuration discovery surface
-    category: repository_discovery
-    description: Bounded selected configuration, infrastructure, container, and deployment files.
     scope: whole_run
   - id: discovery.recon_summary
     name: Validated reconnaissance summary
@@ -432,9 +402,7 @@ assignments:
   - id: run-config-for-early-analysis
     context: run.configuration
     agents:
-      - context_resolver
       - recon_scanner
-      - config_scanner
     delivery: required
     importance: essential
     applies_to: whole_run
@@ -442,7 +410,6 @@ assignments:
   - id: assessment-depth-for-bounded-discovery
     context: run.assessment_depth
     agents:
-      - config_scanner
       - actor_discoverer
     delivery: optional
     importance: supporting
@@ -456,14 +423,6 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: The manifest narrows discovery only when the operator explicitly provides it.
-  - id: business-context-sources
-    context: business.context_sources
-    agents:
-      - context_resolver
-    delivery: optional
-    importance: supporting
-    applies_to: whole_run
-    reason: Project documents provide bounded facts and remain untrusted data.
   - id: project-context-for-component-projection
     context: business.project_context
     agents:
@@ -500,14 +459,6 @@ assignments:
     applies_to: current_component
     reason: A component receives only its bounded security-architecture projection; the complete shared model remains
       forbidden.
-  - id: security-requirements
-    context: requirements.security
-    agents:
-      - context_resolver
-    delivery: optional
-    importance: supporting
-    applies_to: whole_run
-    reason: Requirements enrich project context while the configured requirements fail mode remains authoritative.
   - id: deterministic-recon-patterns
     context: discovery.recon_patterns
     agents:
@@ -556,22 +507,6 @@ assignments:
     importance: essential
     applies_to: whole_run
     reason: Broad discovery must always apply plugin-owned exclusions and output structure.
-  - id: core-config-checks
-    context: discovery.config_checks
-    agents:
-      - config_scanner
-    delivery: required
-    importance: essential
-    applies_to: whole_run
-    reason: Configuration findings require plugin-owned checks and false-positive exclusions.
-  - id: configuration-discovery
-    context: discovery.config_surface
-    agents:
-      - config_scanner
-    delivery: optional
-    importance: supporting
-    applies_to: whole_run
-    reason: The scanner may read only bounded configuration and infrastructure surfaces.
   - id: static-actors-for-discovery
     context: actors.static
     agents:

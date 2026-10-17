@@ -212,23 +212,6 @@ class TestScannerOutputPassesItsValidator:
 # ---------------------------------------------------------------------------
 
 
-class TestSpecIntegration:
-    def test_context_v2_dispatch_supplies_config_depth_alias(self):
-        text = (ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text()
-        assert "config gets `ASSESSMENT_DEPTH`" in text
-
-    def test_config_scanner_contains_all_repository_access_and_output_paths(self):
-        text = (ROOT / "agents" / "appsec-config-scanner.md").read_text()
-        assert "scripts/analyzers/config_iac_scanner.py" in text
-        assert "Do not independently read the catalog" in text
-        assert "only `scripts/analyzers/config_iac_scanner.py` may emit this artifact" in text
-        assert "derive `checks_run` and `violations` from those exact final bytes" in text
-
-    def test_controller_routes_the_config_scanner(self):
-        text = (ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text()
-        assert '"agent": "appsec-config-scanner"' in text
-
-
 # ---------------------------------------------------------------------------
 # Pre-check correctness — skip when no IaC surface
 # ---------------------------------------------------------------------------
@@ -238,4 +221,3 @@ class TestPreCheck:
     def test_controller_owns_the_iac_surface_precheck(self):
         text = (ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text()
         assert "_has_iac_surface" in text
-        assert "config scan skipped: no IaC surface" in text
