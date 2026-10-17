@@ -842,7 +842,7 @@ def test_show_puts_a_confirmed_chain_into_sections_with_a_step_table(tmp_path, c
     assert "  F-010  Insecure JWT verification (High)" in lines
     assert "  M-098  Pin RS256" in lines
     assert lines[lines.index("OPEN QUESTIONS") + 1] == "  Which jws version runs in production?"
-    assert "  Finding:        /appsec-advisor:ask-threat-model --id F-010" in lines
+    assert "  Finding:        /appsec-advisor:ask-security-assessment --id F-010" in lines
     assert not any(line.startswith("  Report:") for line in lines)  # no rendered report here
     assert lines[-1] == "  Check again:    /appsec-advisor:analyze-threats --abuse-case AC-T-003 [--model opus]"
 

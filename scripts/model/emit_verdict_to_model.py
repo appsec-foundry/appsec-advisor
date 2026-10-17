@@ -6,7 +6,7 @@ with, plus the worst-case scenarios behind it — existed in exactly two places:
 the rendered ``threat-model.md`` and ``.fragments/ms-verdict.json``. Cleanup
 deletes the fragment directory (``runtime_cleanup.POST_QA_DIRS``), so once a
 run finished, the semantic model could not state its own verdict and every
-consumer (``show-threat-model``, ``ask-threat-model``, exports) had to either
+consumer (``show-security-assessment``, ``ask-security-assessment``, exports) had to either
 omit it or scrape markdown.
 
 This emitter closes that gap. It reads the fragment the composer just

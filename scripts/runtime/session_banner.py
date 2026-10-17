@@ -89,7 +89,7 @@ GIT_TIMEOUT_SECONDS = 3
 # to the organization's own namespace across packaged .py files, and
 # check_namespace_leaks fails the build if one is missed. Keep the literals
 # whole — a namespace assembled at runtime would slip past both.
-REVIEW = "/appsec-advisor:review-threat-model"
+REVIEW = "/appsec-advisor:triage-security-assessment"
 CREATE = "/appsec-advisor:appsec-analyzer"
 STATUS = "/appsec-advisor:status"
 HELP = "/appsec-advisor:help"

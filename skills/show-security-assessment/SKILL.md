@@ -1,5 +1,5 @@
 ---
-name: show-threat-model
+name: show-security-assessment
 description: >-
   Print the standard summary block of the current threat model — scan identity,
   findings by severity, the remediation backlog (P1/P2/P3) and mitigation
@@ -12,7 +12,7 @@ description: >-
   rendered block verbatim and cannot answer anything the block does not already
   contain. Do NOT route a natural-language question here, not even "is there a
   threat model?" / "gibt es hier ein bedrohungsmodell?" — every question goes to
-  ask-threat-model, which answers directly and can produce this block too.
+  ask-security-assessment, which answers directly and can produce this block too.
 ---
 
 You are printing a human-facing overview of the threat model in the target
@@ -29,12 +29,12 @@ If the user's request was actually a **question** — "is there a threat model?"
 "does it cover SSRF?", "what's the fix for F-003?", "was ist am schlimmsten?" —
 routing landed on the wrong skill. Print the block (it is still useful context),
 then hand off in one line: *"Für Fragen zum Modell:
-`/appsec-advisor:ask-threat-model`"*. Do not attempt the answer yourself from
+`/appsec-advisor:ask-security-assessment`"*. Do not attempt the answer yourself from
 the block — it holds a fixed set of facts and cannot answer beyond them, and a
 plausible-sounding answer assembled from a summary is exactly the ungrounded
-output `ask-threat-model` exists to prevent.
+output `ask-security-assessment` exists to prevent.
 
-The two skills are asymmetric on purpose: `ask-threat-model` can also produce
+The two skills are asymmetric on purpose: `ask-security-assessment` can also produce
 this block, so a misroute in that direction costs nothing — a misroute *here*
 is a dead end unless you hand off.
 
@@ -49,10 +49,10 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim
 and exit.
 
 ```
-/appsec-advisor:show-threat-model — Read-only threat model overview.
+/appsec-advisor:show-security-assessment — Read-only threat model overview.
 
 USAGE
-  /appsec-advisor:show-threat-model [--repo <path>] [--output <path>] [--all] [--json]
+  /appsec-advisor:show-security-assessment [--repo <path>] [--output <path>] [--all] [--json]
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
@@ -77,8 +77,8 @@ WHAT IT SHOWS
   * Mitigation and control counts, plus the rendered report path
 
 RELATED
-  /appsec-advisor:ask-threat-model      Ask anything about the model (any question)
-  /appsec-advisor:threat-model-health   Ops/CI probe: freshness + cleanup + run state
+  /appsec-advisor:ask-security-assessment      Ask anything about the model (any question)
+  /appsec-advisor:security-assessment-health   Ops/CI probe: freshness + cleanup + run state
   /appsec-advisor:create-threat-model   Generate or update the threat model
 ```
 
@@ -108,14 +108,14 @@ touch any file. Print the following block verbatim to stderr, substituting
 ```
 Error: unknown argument '<TOKEN>'
 
-/appsec-advisor:show-threat-model accepts only:
+/appsec-advisor:show-security-assessment accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
   --output <path>   Output directory to inspect (default: <repo>/docs/security)
   --all             List every threat grouped by severity
   --json            Emit the overview as machine-readable JSON
   --help, -h        Show full help and exit
 
-Run `/appsec-advisor:show-threat-model --help` for details.
+Run `/appsec-advisor:show-security-assessment --help` for details.
 ```
 
 A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown
@@ -160,7 +160,7 @@ Print the renderer's output **in full**, exactly as emitted, as the complete
 deliverable — do not add commentary, and do not drop, reorder or summarize any
 line. The `Ask` / `Act` lane pointers near the top are part of the block: they
 are how a reader whose actual question this block cannot answer finds
-`ask-threat-model`, so trimming them turns a misroute into a dead end. If the
+`ask-security-assessment`, so trimming them turns a misroute into a dead end. If the
 renderer exits `1` (no model found), it already prints the hint to run
 `/appsec-advisor:create-threat-model`; surface that as-is.
 

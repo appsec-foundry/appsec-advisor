@@ -42,18 +42,18 @@ Generate optional formats from an existing assessment without running the analys
 
 ```text
 # All stable formats
-/appsec-advisor:export-threat-model
+/appsec-advisor:export-security-assessment
 
 # Selected formats
-/appsec-advisor:export-threat-model --formats sarif
-/appsec-advisor:export-threat-model --formats html
-/appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
+/appsec-advisor:export-security-assessment --formats sarif
+/appsec-advisor:export-security-assessment --formats html
+/appsec-advisor:export-security-assessment --formats pentest --pentest-target https://staging.example.com
 
 # Alpha: Threat Dragon v2 JSON
-/appsec-advisor:export-threat-model --formats threatdragon
+/appsec-advisor:export-security-assessment --formats threatdragon
 ```
 
-SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. PDF and HTML are converted from `threat-model.md`; rendered diagrams also require `mmdc` and Chrome or Chromium. Check dependencies with `/appsec-advisor:export-threat-model --check-only`, or use `--no-mermaid` to export PDF or HTML without rendered diagrams. See [Threat Dragon export](threat-dragon-export.md) for that format's limits.
+SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. PDF and HTML are converted from `threat-model.md`; rendered diagrams also require `mmdc` and Chrome or Chromium. Check dependencies with `/appsec-advisor:export-security-assessment --check-only`, or use `--no-mermaid` to export PDF or HTML without rendered diagrams. See [Threat Dragon export](threat-dragon-export.md) for that format's limits.
 
 ## Using the model in design reviews
 
@@ -99,17 +99,17 @@ what is the mitigation for F-003?
 is the threat model still current?
 ```
 
-These questions read `threat-model.yaml`; they do not scan the repository again or change files. You can also write `/appsec-advisor:ask-threat-model <question>`. Use `/appsec-advisor:show-threat-model` when you want the standard overview.
+These questions read `threat-model.yaml`; they do not scan the repository again or change files. You can also write `/appsec-advisor:ask-security-assessment <question>`. Use `/appsec-advisor:show-security-assessment` when you want the standard overview.
 
 ### Review and decide
 
-`/appsec-advisor:review-threat-model` supports finding review, fix and risk decisions, implementation of selected fixes, and remediation planning with owners and target dates.
+`/appsec-advisor:triage-security-assessment` supports finding review, fix and risk decisions, implementation of selected fixes, and remediation planning with owners and target dates.
 
 Decisions are stored separately from the generated model and survive reassessment. The workflow changes source only after an explicit implementation choice.
 
 ### Export or publish
 
-`/appsec-advisor:export-threat-model` creates exports from an existing model. `/appsec-advisor:publish-threat-model` is the separate path for making reviewed report files trackable in version control.
+`/appsec-advisor:export-security-assessment` creates exports from an existing model. `/appsec-advisor:publish-threat-model` is the separate path for making reviewed report files trackable in version control.
 
 Figure 1 presents the Architecture and Threat Overview with attack paths and hexagonal authentication markers at component accesses. Equal methods share a number; `0` marks evidenced absence of separate authentication and `?` marks uncertainty. Marker colours describe method properties, not a security verdict. Dashed lines mark trust boundaries; the Trust Boundaries table lists them with their IDs. Matching E-labelled rows inside components name the peer and direction of connections whose lines are omitted. A model too large for one diagram also links a detail view that retains the data-flow and boundary catalogues. Existing models without authentication evidence need a new analysis to populate these markers; exporting does not infer missing controls.
 
@@ -166,7 +166,7 @@ Declarations alone never change a rating. The next scan re-evaluates the path wh
 
 ### Where the catalog appears
 
-The complete boundary catalog is in `threat-model.yaml` and available through `ask-threat-model`. The Markdown report shows a shorter table, but it never omits a boundary referenced by a finding. SARIF includes the linked boundary on each result. The architecture diagram is a summary, not the canonical boundary view.
+The complete boundary catalog is in `threat-model.yaml` and available through `ask-security-assessment`. The Markdown report shows a shorter table, but it never omits a boundary referenced by a finding. SARIF includes the linked boundary on each result. The architecture diagram is a summary, not the canonical boundary view.
 
 ## Usage examples
 
@@ -549,13 +549,13 @@ The intermediate files remain in the output directory after a run, so results ca
 
 | Command | Purpose |
 |---|---|
-| `/appsec-advisor:ask-threat-model <question>` | Answer from the structured model without rescanning or writing files. |
-| `/appsec-advisor:show-threat-model` | Show a fixed overview of freshness, findings, mitigations, and control posture. |
+| `/appsec-advisor:ask-security-assessment <question>` | Answer from the structured model without rescanning or writing files. |
+| `/appsec-advisor:show-security-assessment` | Show a fixed overview of freshness, findings, mitigations, and control posture. |
 | `/appsec-advisor:create-threat-model --full` | Reassess the repository while preserving report history. |
-| `/appsec-advisor:review-threat-model` | Review findings, record decisions, implement selected fixes, or build a remediation plan. |
+| `/appsec-advisor:triage-security-assessment` | Review findings, record decisions, implement selected fixes, or build a remediation plan. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable after publication checks. |
-| `/appsec-advisor:export-threat-model` | Export an existing model without another analysis. |
-| `/appsec-advisor:threat-model-health` | Check whether the model is fresh, stale, missing, or blocked. |
+| `/appsec-advisor:export-security-assessment` | Export an existing model without another analysis. |
+| `/appsec-advisor:security-assessment-health` | Check whether the model is fresh, stale, missing, or blocked. |
 | `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
 | `/appsec-advisor:fix-run-issues` | Show manual plugin-fix guidance from a validated diagnosis of the previous run. |

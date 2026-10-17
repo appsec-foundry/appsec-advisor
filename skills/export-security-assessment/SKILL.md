@@ -1,5 +1,5 @@
 ---
-name: export-threat-model
+name: export-security-assessment
 description: Re-export a finished threat-model.yaml/.md into PDF + HTML + SARIF + pentest-tasks artifacts, or the alpha OWASP Threat Dragon / ThreatAtlas JSON. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF, pentest-tasks and Threat Dragon are derived deterministically from threat-model.yaml; PDF and HTML are converted from threat-model.md (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
 ---
 
@@ -10,10 +10,10 @@ You are exporting an existing threat model into one or more artifact formats. Th
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
 
 ```
-/appsec-advisor:export-threat-model — Re-export a threat model into PDF / HTML / SARIF / pentest-tasks / Threat Dragon.
+/appsec-advisor:export-security-assessment — Re-export a threat model into PDF / HTML / SARIF / pentest-tasks / Threat Dragon.
 
 USAGE
-  /appsec-advisor:export-threat-model [FLAGS]
+  /appsec-advisor:export-security-assessment [FLAGS]
 
 FLAGS
   --repo <path>            Repository to operate on (default: current working dir)
@@ -72,15 +72,15 @@ THREAT DRAGON EXPORT (ALPHA)
   threat keeps its F-NNN anchor. See docs/threat-dragon-export.md.
 
 EXAMPLES
-  /appsec-advisor:export-threat-model
-  /appsec-advisor:export-threat-model --formats sarif,pentest
-  /appsec-advisor:export-threat-model --formats threatdragon
-  /appsec-advisor:export-threat-model --formats html
-  /appsec-advisor:export-threat-model --formats pdf --no-mermaid
-  /appsec-advisor:export-threat-model --formats pdf --input ./report.md --output-pdf ./report.pdf
-  /appsec-advisor:export-threat-model --pentest-target https://staging.example.com
-  /appsec-advisor:export-threat-model --formats pentest --slug a3f9
-  /appsec-advisor:export-threat-model --check-only
+  /appsec-advisor:export-security-assessment
+  /appsec-advisor:export-security-assessment --formats sarif,pentest
+  /appsec-advisor:export-security-assessment --formats threatdragon
+  /appsec-advisor:export-security-assessment --formats html
+  /appsec-advisor:export-security-assessment --formats pdf --no-mermaid
+  /appsec-advisor:export-security-assessment --formats pdf --input ./report.md --output-pdf ./report.pdf
+  /appsec-advisor:export-security-assessment --pentest-target https://staging.example.com
+  /appsec-advisor:export-security-assessment --formats pentest --slug a3f9
+  /appsec-advisor:export-security-assessment --check-only
 
 The skill is idempotent and side-effect-free apart from writing the requested
 exports. It never dispatches agents and never spends LLM tokens.

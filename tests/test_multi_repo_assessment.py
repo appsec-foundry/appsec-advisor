@@ -1913,7 +1913,7 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
         f"              {tmp_path / 'threat-model.pdf'}",
         "              + 2 figures",
         # The single-repository summary's rules: findings to triage, then questions about them.
-        "  Next        Triage the findings — /appsec-advisor:review-threat-model",
+        "  Next        Triage the findings — /appsec-advisor:triage-security-assessment",
         "              Or just ask me:",
         '                "What are the most critical findings?"',
         '                "What should I fix first?"',
@@ -1931,7 +1931,7 @@ def _closing_lines(tmp_path, monkeypatch, capsys, yaml_text, deliverables):
 
 def test_a_clean_run_offers_questions_about_its_scope_and_nothing_to_triage(tmp_path, monkeypatch, capsys):
     out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
-    assert not any("review-threat-model" in line for line in out)
+    assert not any("triage-security-assessment" in line for line in out)
     assert '                "What did the scan cover?"' in out
 
 

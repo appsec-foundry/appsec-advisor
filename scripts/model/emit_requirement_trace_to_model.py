@@ -10,7 +10,7 @@ which only exist once Stage 2 has authored
 Without this step the two artifacts of one run name different requirement sets
 for the same mitigation — in a measured run, 22 of 55 mitigations diverged and
 several pairs were disjoint, so a consumer reading the YAML (SARIF export,
-``review-threat-model``, ``ask-threat-model``) got a different answer from a
+``triage-security-assessment``, ``ask-security-assessment``) got a different answer from a
 reader of the report. This emitter makes the YAML the superset: the rendered
 block stays a filtered view of it, showing only requirements the §7b table
 marked FAIL / PARTIAL / ANTI-PATTERN, never a requirement the model lacks.

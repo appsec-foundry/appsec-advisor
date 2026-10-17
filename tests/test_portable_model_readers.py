@@ -104,7 +104,7 @@ def test_review_refuses_before_writing(output, tmp_path, command, target):
     if target:
         args += [target, tmp_path / "written.md"]
     result = run("validators/review_threat_model.py", *args)
-    assert result.returncode == 2 and REFUSAL in result.stderr and "ask-threat-model" in result.stderr
+    assert result.returncode == 2 and REFUSAL in result.stderr and "ask-security-assessment" in result.stderr
     assert not (tmp_path / "written.md").exists() and not (tmp_path / "triage.yaml").exists()
 
 

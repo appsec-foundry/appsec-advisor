@@ -1,6 +1,6 @@
 ---
 name: appsec-eval-judge
-description: "Semantic-quality judge for a threat-model run, used by the eval-threat-model dev/test skill (NOT in the create-threat-model phase map). Two modes: JUDGE surfaces candidate quality defects for one rubric dimension from a pre-digested brief; VERIFY adversarially refutes another judge's candidates (refute-by-default), keeping only defects positively grounded in evidence. Produces JSON sidecars only — scripts/validators/eval_threat_model.py decides scoring and the gate, never this agent."
+description: "Semantic-quality judge for a threat-model run, used by the eval-security-assessment dev/test skill (NOT in the create-threat-model phase map). Two modes: JUDGE surfaces candidate quality defects for one rubric dimension from a pre-digested brief; VERIFY adversarially refutes another judge's candidates (refute-by-default), keeping only defects positively grounded in evidence. Produces JSON sidecars only — scripts/validators/eval_threat_model.py decides scoring and the gate, never this agent."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 30

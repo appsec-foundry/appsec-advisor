@@ -2,7 +2,7 @@
 
 Mirrors tests/test_agent_definitions.py, which has enforced agent frontmatter
 for a while. Skills had no equivalent guard, and two SKILL.md files
-(review-threat-model, update-threat-model) shipped with YAML-invalid
+(triage-security-assessment, update-threat-model) shipped with YAML-invalid
 frontmatter — an unquoted description containing a bare ``": "``, which YAML
 reads as a nested mapping key. Both passed review, `make test` and
 `make release-check` because nothing ever parsed them.
@@ -119,7 +119,7 @@ def test_skill_on_demand_files_exist(skill_file: Path):
 
 
 @pytest.mark.parametrize(
-    "slug", ["ask-threat-model", "audit-security-requirements", "authnz-review", "review-threat-model"]
+    "slug", ["ask-security-assessment", "audit-security-requirements", "authnz-review", "triage-security-assessment"]
 )
 def test_help_lives_in_help_txt(slug: str):
     """Help text is loaded only on `--help`; inlined in SKILL.md it costs context on every call."""

@@ -515,9 +515,9 @@ Skills can be disabled with a reason. The policy is enforced by the `skill-polic
 
 A disabled skill is refused with the organization's reason:
 
-- **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
+- **User skills** (e.g. `export-security-assessment`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
-- **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
+- **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `security-assessment-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
 Toggles accept any skill included in the build, including organization-added skills. They also accept skills removed by package policy, so you can retain the reason for removal. Unknown names are rejected.
 
@@ -606,7 +606,7 @@ skill and one the package policy removed are both visible with the reason your p
 Skills (24 installed · 1 disabled by org profile · 1 removed by package policy)
 ------------------------------------------------------------------------------
   create-threat-model   enabled
-  export-threat-model   disabled — Release job only.
+  export-security-assessment   disabled — Release job only.
   acme-release-check    enabled  [organization]
   publish-threat-model  removed by package policy
 ```

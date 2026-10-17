@@ -24,7 +24,7 @@ command -v claude >/dev/null 2>&1 || {
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-PROMPT="/appsec-advisor:eval-threat-model RUN_DIR=$RUN_DIR OUT=$OUT REPO=$REPO"
+PROMPT="/appsec-advisor:eval-security-assessment RUN_DIR=$RUN_DIR OUT=$OUT REPO=$REPO"
 STATUS=0
 if command -v timeout >/dev/null 2>&1; then
     timeout --preserve-status "${MAXDUR}s" \
@@ -46,7 +46,7 @@ else
 fi
 
 [ "$STATUS" -eq 0 ] || {
-    echo "ERROR: eval-threat-model invocation failed with exit $STATUS" >&2
+    echo "ERROR: eval-security-assessment invocation failed with exit $STATUS" >&2
     exit 1
 }
 [ -f "$OUT/eval-results.json" ] || {

@@ -205,7 +205,7 @@ class TestOrgProfileStatus:
                 {"id": "doc2", "loaded": False},
             ],
             "skill_toggles": {
-                "export-threat-model": {"enabled": False},
+                "export-security-assessment": {"enabled": False},
                 "status": {"enabled": True},
                 "raw-bool": True,
             },
@@ -216,7 +216,7 @@ class TestOrgProfileStatus:
         assert res["id"] == "acme"
         assert res["preset"] == "ci-standard"
         assert res["context_documents"] == ["doc1"]
-        assert res["disabled_skills"] == ["export-threat-model"]
+        assert res["disabled_skills"] == ["export-security-assessment"]
 
     def test_falls_back_to_config_pointer(self, appsec_status, tmp_path, monkeypatch):
         # no effective file → read config.json organization_profile block
@@ -426,13 +426,13 @@ class TestSkillsStatus:
     def test_packaged_toggle_disables_with_its_reason(self, appsec_status, plugin_root, tmp_path):
         _build_plugin_root(
             plugin_root,
-            ["appsec-analyzer", "export-threat-model"],
-            config={"skill_toggles": {"export-threat-model": {"enabled": False, "reason": "Release job only."}}},
+            ["appsec-analyzer", "export-security-assessment"],
+            config={"skill_toggles": {"export-security-assessment": {"enabled": False, "reason": "Release job only."}}},
         )
         entries = {e["name"]: e for e in appsec_status._skills_status(tmp_path / "out")["entries"]}
-        assert entries["export-threat-model"]["state"] == "disabled"
-        assert entries["export-threat-model"]["reason"] == "Release job only."
-        assert entries["export-threat-model"]["enabled"] is False
+        assert entries["export-security-assessment"]["state"] == "disabled"
+        assert entries["export-security-assessment"]["reason"] == "Release job only."
+        assert entries["export-security-assessment"]["enabled"] is False
         assert entries["appsec-analyzer"]["enabled"] is True
 
     def test_operational_skill_is_reported_as_warn_only(self, appsec_status, plugin_root, tmp_path):
@@ -450,8 +450,8 @@ class TestSkillsStatus:
     def test_effective_profile_wins_over_the_packaged_config(self, appsec_status, plugin_root, tmp_path):
         _build_plugin_root(
             plugin_root,
-            ["export-threat-model"],
-            config={"skill_toggles": {"export-threat-model": {"enabled": False, "reason": "packaged"}}},
+            ["export-security-assessment"],
+            config={"skill_toggles": {"export-security-assessment": {"enabled": False, "reason": "packaged"}}},
         )
         out = tmp_path / "out"
         out.mkdir()
@@ -662,13 +662,13 @@ class TestRenderText:
             "base_mode": "standard",
             "requirements_label": "ACME reqs",
             "context_documents": ["doc1", "doc2"],
-            "disabled_skills": ["export-threat-model"],
+            "disabled_skills": ["export-security-assessment"],
         }
         out = appsec_status.render_text(data)
         assert "Org Profile" in out
         assert "acme" in out
         assert "doc1, doc2" in out
-        assert "export-threat-model" in out
+        assert "export-security-assessment" in out
 
     def test_org_profile_states_absence_of_context_and_toggles(self, appsec_status):
         data = _base_data()
@@ -697,7 +697,7 @@ class TestRenderText:
                     "origin": "plugin",
                 },
                 {
-                    "name": "export-threat-model",
+                    "name": "export-security-assessment",
                     "state": "disabled",
                     "enabled": False,
                     "reason": "Release job only.",
@@ -714,8 +714,8 @@ class TestRenderText:
         }
         out = appsec_status.render_text(data)
         assert "Skills (2 installed · 1 disabled by org profile · 1 removed by package policy)" in out
-        assert "export-threat-model   disabled — Release job only." in out
-        assert "publish-threat-model  removed by package policy" in out
+        assert "export-security-assessment  disabled — Release job only." in out
+        assert "publish-threat-model        removed by package policy" in out
 
     def test_skills_table_marks_a_non_plugin_origin(self, appsec_status):
         data = _base_data()

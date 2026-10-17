@@ -32,7 +32,7 @@ tests/fixtures/e2e/_last-repo/
 # scratch dir, run with --keep-runtime-files. Never commit.
 tests/fixtures/e2e/_repair-run/
 tests/fixtures/e2e/_eval-run/
-# eval-threat-model skill working dir (brief + judge/verify sidecars +
+# eval-security-assessment skill working dir (brief + judge/verify sidecars +
 # EVAL-REVIEW.md). Same threat-data sensitivity rationale — never commit.
 .eval-out/
 

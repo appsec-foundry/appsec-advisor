@@ -215,7 +215,7 @@ requirements:
       - scripts/appsec-analyst-cli
       - skills/abuse-cases/SKILL.md
       - skills/analyze-threats/SKILL.md
-      - skills/ask-threat-model/SKILL.md
+      - skills/ask-security-assessment/SKILL.md
     decisions: []
     documents:
       - docs/org-profiles.md
@@ -769,8 +769,8 @@ requirements:
 
   REQ-USE-001:
     applies_to:
-      - skills/ask-threat-model/**
-      - skills/review-threat-model/**
+      - skills/ask-security-assessment/**
+      - skills/triage-security-assessment/**
       - scripts/model/query_threat_model.py
       - scripts/validators/review_threat_model.py
     decisions: []
@@ -1284,7 +1284,7 @@ requirements:
 
   REQ-RPT-016:
     applies_to:
-      - skills/export-threat-model/**
+      - skills/export-security-assessment/**
       - scripts/exporters/**
       - scripts/model/build_threat_model_yaml.py
     decisions: []
@@ -1314,8 +1314,8 @@ requirements:
   REQ-USE-005:
     applies_to:
       - scripts/model/query_threat_model.py
-      - skills/ask-threat-model/**
-      - skills/show-threat-model/**
+      - skills/ask-security-assessment/**
+      - skills/show-security-assessment/**
     decisions: []
     documents:
       - docs/threat-modeler.md
@@ -1327,7 +1327,7 @@ requirements:
   REQ-USE-006:
     applies_to:
       - scripts/model/threat_model_health.py
-      - skills/threat-model-health/**
+      - skills/security-assessment-health/**
     decisions: []
     documents:
       - docs/threat-modeler.md

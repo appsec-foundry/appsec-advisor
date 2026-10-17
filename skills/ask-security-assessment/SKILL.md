@@ -1,5 +1,5 @@
 ---
-name: ask-threat-model
+name: ask-security-assessment
 description: >-
   Answer ANY question about the threat model in this repo — read-only Q&A over
   the committed threat-model.yaml. The default surface for every
@@ -12,9 +12,9 @@ description: >-
   es?", "deckt mein bedrohungsmodell XSS ab?"), and meta questions ("what does
   P1 mean?", "what is STRIDE here?"). Grounds every data answer in the model and
   cites F-ids; never analyzes code, re-scores, spawns agents, or writes files.
-  Prefer this over show-threat-model for anything phrased as a question — show
+  Prefer this over show-security-assessment for anything phrased as a question — show
   only prints a fixed summary block on explicit request. To act on findings use
-  review-threat-model; to (re)generate use create-threat-model.
+  triage-security-assessment; to (re)generate use create-threat-model.
 ---
 
 You answer a user's **concrete question about the threat model** in their
@@ -33,7 +33,7 @@ never justifies guessing: if answering correctly needs another read, do it.
 
 This is the "just ask" surface. It is distinct from its siblings:
 
-- **show-threat-model** is a *display command*, not a question surface: it
+- **show-security-assessment** is a *display command*, not a question surface: it
   prints the standard summary block and nothing else. It is reached by explicit
   invocation. **Every** natural-language question about the model lands here
   instead — including the simplest ("is there one?"). The capabilities are
@@ -41,7 +41,7 @@ This is the "just ask" surface. It is distinct from its siblings:
   `show` can never answer a question its fixed block does not already contain.
   So a misroute into this skill is recoverable and a misroute into `show` is a
   dead end — when in doubt, answer here.
-- **review-threat-model** is an interactive triage console that can *apply
+- **triage-security-assessment** is an interactive triage console that can *apply
   fixes* or build a remediation plan. Route the user there when they want to
   **act** ("fix these", "accept this risk", "build a remediation plan").
 - **create-threat-model** *generates or updates* the model (analyzes code).
@@ -50,7 +50,7 @@ This is the "just ask" surface. It is distinct from its siblings:
   Answer what the model already says, then name
   `/appsec-advisor:analyze-threats <question>` for the design advice; never
   start it yourself.
-- **ask-threat-model** (this skill) **answers questions** and changes nothing.
+- **ask-security-assessment** (this skill) **answers questions** and changes nothing.
 
 ## Step 0 — Classify the question
 
@@ -93,7 +93,7 @@ cat "<base-dir>/HELP.txt"
 
 ## Step 1 — Parse arguments (do NOT reject the question text)
 
-Unlike `show-threat-model`, most invocations of this skill carry a
+Unlike `show-security-assessment`, most invocations of this skill carry a
 **natural-language question** as the arguments. Do not hard-fail on non-flag
 tokens — that text IS the question you must answer.
 
@@ -126,7 +126,7 @@ fi
 ## Step 3a — Overview request (deterministic, no composition)
 
 When the user asked for the summary block itself (Step 0 kind 1), run the same
-pipeline `show-threat-model` runs and print its output **verbatim** as the whole
+pipeline `show-security-assessment` runs and print its output **verbatim** as the whole
 deliverable. This keeps the overview a deterministic render — an LLM
 paraphrase of a fixed block is strictly worse, and re-composing pre-rendered
 output is a known cost sink in this plugin. Do not add commentary; the block
@@ -340,15 +340,15 @@ in the semantic model. Freshness needs git and is only checked on request
 (Step 3b). When a question exceeds what the model records, say so plainly.
 
 **Sibling skills (route actions here — this skill only answers):**
-- `show-threat-model` — display command for the summary block. Never route a
+- `show-security-assessment` — display command for the summary block. Never route a
   question there; if the user wants that block, emit it yourself via Step 3a.
-- `review-threat-model` — triage console: **apply a fix**, **accept a risk**, or
+- `triage-security-assessment` — triage console: **apply a fix**, **accept a risk**, or
   **build a remediation plan**. This is where "fix these" / "accept" go.
 - `create-threat-model` — **generate or update** the model (analyzes code).
 - `create-threat-model --full` — refresh an existing model.
-- `export-threat-model` / `publish-threat-model` — render/share (PDF/HTML).
-- `threat-model-health` — freshness / CI probe.
-- `eval-threat-model` — artifact-quality evaluation of the model itself.
+- `export-security-assessment` / `publish-threat-model` — render/share (PDF/HTML).
+- `security-assessment-health` — freshness / CI probe.
+- `eval-security-assessment` — artifact-quality evaluation of the model itself.
 
 When an answer implies an action, name the exact skill, e.g.: "To apply the fix
-for F-003, run `/appsec-advisor:review-threat-model`."
+for F-003, run `/appsec-advisor:triage-security-assessment`."

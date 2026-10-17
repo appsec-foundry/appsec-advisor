@@ -37,7 +37,7 @@ def _summary(root: str) -> str:
         f"{rule}\n  Assessment complete: Create Threat Model\n{rule}\n\n"
         "Next Steps\n"
         f'  - Open the report — {report} → start at "Management Summary"\n'
-        "  - Triage the findings — /appsec-advisor:review-threat-model\n\n"
+        "  - Triage the findings — /appsec-advisor:triage-security-assessment\n\n"
         "Logs\n"
         f"  Agent run  : {root}/docs/security/.agent-run.log\n"
     )

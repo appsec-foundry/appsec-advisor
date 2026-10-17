@@ -200,7 +200,7 @@ def test_reports_existing_model(tmp_path):
     assert "2 total" in line
     assert "27 Jul 2026" in line
     # Default fixture has no Critical/High → calm → no review command.
-    assert "/appsec-advisor:review-threat-model" not in line
+    assert "/appsec-advisor:triage-security-assessment" not in line
 
 
 def test_assessment_depth_is_left_out(tmp_path):
@@ -367,7 +367,7 @@ def test_critical_and_high_are_counted_severity_first(tmp_path):
     write_severities(tmp_path, "effective_severity", ["Critical", "Critical", "High", "Medium"])
     line = plain(tm_line(run_hook(str(tmp_path))))
     assert line.startswith("threat model · acme-api · 2 CRITICAL · 1 high · 4 total")
-    assert "/appsec-advisor:review-threat-model" in line
+    assert "/appsec-advisor:triage-security-assessment" in line
 
 
 def test_effective_severity_wins_over_risk(tmp_path):
@@ -392,7 +392,7 @@ def test_clean_model_shows_no_severity_marks(tmp_path):
     line = tm_line(run_hook(str(tmp_path)))
     assert "2 total" in line
     assert "CRITICAL" not in line and " high" not in line
-    assert "/appsec-advisor:review-threat-model" not in line
+    assert "/appsec-advisor:triage-security-assessment" not in line
 
 
 def test_state_line_names_what_the_numbers_are(tmp_path):
@@ -453,12 +453,12 @@ def test_banner_carries_no_ansi_escapes(tmp_path):
 
 def test_critical_findings_offer_review(tmp_path):
     write_severities(tmp_path, "effective_severity", ["Critical"])
-    assert "/appsec-advisor:review-threat-model" in tm_line(run_hook(str(tmp_path)))
+    assert "/appsec-advisor:triage-security-assessment" in tm_line(run_hook(str(tmp_path)))
 
 
 def test_high_findings_offer_review(tmp_path):
     write_severities(tmp_path, "effective_severity", ["High"])
-    assert "/appsec-advisor:review-threat-model" in tm_line(run_hook(str(tmp_path)))
+    assert "/appsec-advisor:triage-security-assessment" in tm_line(run_hook(str(tmp_path)))
 
 
 def test_calm_current_model_offers_no_threat_model_command(tmp_path):
@@ -478,7 +478,7 @@ def test_stale_model_offers_full_refresh_not_review(tmp_path):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     line = tm_line(session_banner.build_banner(str(tmp_path)))
     assert line.endswith("/appsec-advisor:appsec-analyzer")
-    assert "review-threat-model" not in line
+    assert "triage-security-assessment" not in line
 
 
 def test_incompatible_model_demands_rebuild(tmp_path):
@@ -812,14 +812,14 @@ def test_examples_live_on_the_help_page_not_in_the_banner(tmp_path):
     write_model(tmp_path)
     message = run_hook(str(tmp_path))
     assert "/appsec-advisor:help" in message
-    assert "ask-threat-model" not in message
+    assert "ask-security-assessment" not in message
     help_page = SCRIPT.parents[2] / "skills" / "help" / "SKILL.md"
     assert "what are the critical findings?" in help_page.read_text(encoding="utf-8")
 
 
 def test_example_question_is_taken_from_the_ask_skill(tmp_path):
     """A question the skill does not advertise could route somewhere else."""
-    skill = SCRIPT.parents[2] / "skills" / "ask-threat-model" / "SKILL.md"
+    skill = SCRIPT.parents[2] / "skills" / "ask-security-assessment" / "SKILL.md"
     description = " ".join(skill.read_text(encoding="utf-8").split())
     assert '"what are the critical findings?"' in description
 
@@ -946,7 +946,7 @@ def test_dropped_skills_leave_no_dangling_commands(tmp_path, monkeypatch):
     packaged_root(tmp_path, ["appsec-analyzer"], monkeypatch)
     lines = session_banner.build_banner(str(repo)).splitlines()
     assert lines[0] == "appsec-advisor"
-    assert not any("review-threat-model" in line or ":help" in line for line in lines)
+    assert not any("triage-security-assessment" in line or ":help" in line for line in lines)
     assert tm_line("\n".join(lines)).startswith("threat model")
 
 
@@ -1056,7 +1056,7 @@ def test_fresh_model_below_threshold_is_not_stale(tmp_path):
     commit(tmp_path, "only.txt", "2026-02-01T12:00:00+00:00")
     line = tm_line(session_banner.build_banner(str(tmp_path)))
     assert "+1 commits" in line
-    assert "/appsec-advisor:review-threat-model" in line
+    assert "/appsec-advisor:triage-security-assessment" in line
     assert "update-threat-model" not in line
 
 

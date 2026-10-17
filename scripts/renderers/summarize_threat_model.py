@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render a human-facing overview of an existing ``threat-model.yaml``.
 
-Powers ``/appsec-advisor:show-threat-model``. Read-only: it parses the
+Powers ``/appsec-advisor:show-security-assessment``. Read-only: it parses the
 committed semantic model and prints a compact at-a-glance summary —
 project + scan identity, the report's verdict, the "worst case if nothing
 changes" scenarios, severity breakdown, remediation backlog by priority +
@@ -139,7 +139,7 @@ _PRIORITY_BANDS = ("P1", "P2", "P3")
 
 def _backlog_by_priority(mitigations: list) -> dict:
     """Remediation backlog sized by mitigation priority — the same P1→P2→P3 spine
-    the review-threat-model triage console uses, but severity-independent so it
+    the triage-security-assessment triage console uses, but severity-independent so it
     never contradicts the risk-based severity histogram above it."""
     counts = {p: 0 for p in _PRIORITY_BANDS}
     for m in mitigations:
@@ -153,7 +153,7 @@ def _backlog_by_priority(mitigations: list) -> dict:
 
 def _coverage(threats: list) -> dict:
     """How many findings the model proposes a mitigation for (keyed on
-    ``mitigation_ids`` — the same signal review-threat-model uses). Uncovered
+    ``mitigation_ids`` — the same signal triage-security-assessment uses). Uncovered
     findings have no proposed fix and most need a human decision."""
     with_m = sum(1 for t in threats if t.get("mitigation_ids"))
     return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
@@ -401,13 +401,13 @@ RECOMMEND_TEXT = {
 
 # This overview is the FIXED fact set. Any question needing an arbitrary subset
 # of the model (a specific finding, "does it cover X?", what to fix first) is
-# ask-threat-model's job. Skill routing between the two is description-based and
+# ask-security-assessment's job. Skill routing between the two is description-based and
 # will never be perfect, so the overview names the other lane itself — a
 # deterministic, zero-cost correction when the router lands here by mistake.
 _NEXT_STEP_LINES = [
     "Ask        a question about a specific finding, coverage, or what to fix first",
-    "           → /appsec-advisor:ask-threat-model",
-    "Act        on the findings → /appsec-advisor:review-threat-model",
+    "           → /appsec-advisor:ask-security-assessment",
+    "Act        on the findings → /appsec-advisor:triage-security-assessment",
 ]
 
 # Posture flag of the report's `### Verdict`, in the report's own colours.
@@ -494,7 +494,7 @@ def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str
     names one action list. No rank: nothing orders the verdict's bullets by
     severity (RA-14). There is no header row and each scenario starts with ✓ or
     •: the completion summary is relayed as Markdown, which strips leading
-    blanks and reads a leading `#` as a heading. review-threat-model's landing
+    blanks and reads a leading `#` as a heading. triage-security-assessment's landing
     lists finding-level worst cases with their fixes — a triage view on another
     basis — and keeps its own rows.
     """
@@ -720,7 +720,7 @@ def completion_rows(output_dir: Path) -> list[tuple[str, str]]:
     """Verdict, finding and mitigation rows for a run's closing console summary.
 
     The same summary and wording as this overview, so the console and
-    ``show-threat-model`` cannot disagree. Empty when the model is missing or
+    ``show-security-assessment`` cannot disagree. Empty when the model is missing or
     unreadable: the closing lines then name only the delivered files.
     """
     summary = _completion_summary(output_dir)

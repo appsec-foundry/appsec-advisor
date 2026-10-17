@@ -468,7 +468,7 @@ def test_no_catalog_means_no_requirement_signal(tmp_path):
 
 def test_bundled_baseline_is_not_a_custom_requirement(tmp_path):
     """The zero-config OWASP fallback must never be presented as a team's own
-    requirement catalog — same gate review-threat-model applies."""
+    requirement catalog — same gate triage-security-assessment applies."""
     bundled = dict(_CATALOG, source="bundled-bestpractices")
     assert _req_facts(tmp_path, catalog=bundled)["requirements"]["integrated"] is False
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit a compact, LLM-friendly facts index of an existing ``threat-model.yaml``.
 
-Powers ``/appsec-advisor:ask-threat-model`` — the free-form "ask my threat
+Powers ``/appsec-advisor:ask-security-assessment`` — the free-form "ask my threat
 model a question" surface. Read-only: it parses the committed semantic model
 and prints a compact digest (identity, severity counts, a one-line record per
 finding + weakness, and the mitigation index) that the skill loads *once* and
@@ -18,7 +18,7 @@ Three query modes:
                        is what catches "what is F-003?" style questions.
 
 This is deliberately NOT ``renderers/summarize_threat_model.py`` (that renders a fixed
-human overview for ``show-threat-model``). This tool exists so an LLM can answer
+human overview for ``show-security-assessment``). This tool exists so an LLM can answer
 arbitrary questions from a small, greppable representation instead of loading
 the multi-thousand-line rendered report and guessing.
 

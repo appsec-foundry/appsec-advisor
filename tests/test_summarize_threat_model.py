@@ -529,7 +529,7 @@ def test_cli_against_repo_fixture():
 
 def test_render_text_names_the_ask_and_review_lanes(tmp_path):
     """The overview is the FIXED fact set; questions needing an arbitrary subset
-    belong to ask-threat-model. Skill routing between the two is description-
+    belong to ask-security-assessment. Skill routing between the two is description-
     based and imperfect, so the rendered block names the other lanes itself —
     a deterministic correction when the router lands here by mistake.
     """
@@ -540,13 +540,13 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
 
-    assert "/appsec-advisor:ask-threat-model" in out, "overview must point at the Q&A lane"
-    assert "/appsec-advisor:review-threat-model" in out, "overview must point at the triage lane"
+    assert "/appsec-advisor:ask-security-assessment" in out, "overview must point at the Q&A lane"
+    assert "/appsec-advisor:triage-security-assessment" in out, "overview must point at the triage lane"
     # Near the top, not at the foot: a reader whose question this block cannot
     # answer must see the other lane before scrolling 40 lines of numbers — and
     # a trailing pointer is the line the invoking agent trims first.
     lines = out.splitlines()
-    ask_at = next(i for i, ln in enumerate(lines) if "ask-threat-model" in ln)
+    ask_at = next(i for i, ln in enumerate(lines) if "ask-security-assessment" in ln)
     findings_at = next(i for i, ln in enumerate(lines) if ln.startswith("Findings"))
     assert ask_at < findings_at
 
@@ -590,7 +590,7 @@ def test_completion_rows_share_the_overview_numbers(tmp_path):
 
 def test_completion_rows_name_the_register_count_when_practice_sites_fold(tmp_path):
     """The console states the §8 card count whenever the headline folds practice
-    sites, as the show-threat-model overview does."""
+    sites, as the show-security-assessment overview does."""
     body = """\
         meta: {project: {name: Demo}}
         threats:

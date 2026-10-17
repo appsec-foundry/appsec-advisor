@@ -10,7 +10,7 @@ description: >-
   commands that fit its state — and, with --all, the full command reference
   with flags, files, and the configuration and coach state in effect. Read-only — it prints
   guidance and does not scan, analyze, or write anything. For a question about the model's CONTENT ("what are the critical
-  findings?") use ask-threat-model instead; this skill explains the tools, not
+  findings?") use ask-security-assessment instead; this skill explains the tools, not
   the results.
 ---
 
@@ -62,8 +62,8 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Threat model · in `docs/security/`
 
-- `/appsec-advisor:show-threat-model` — summary, P1–P3 backlog, freshness
-- `/appsec-advisor:review-threat-model` — fix or accept findings, P1 first
+- `/appsec-advisor:show-security-assessment` — summary, P1–P3 backlog, freshness
+- `/appsec-advisor:triage-security-assessment` — fix or accept findings, P1 first
 - *what are the critical findings?* — ask in plain language; answers cite finding IDs
 
 ### Threat Analyst
@@ -134,8 +134,8 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Work with the model
 
-- `/appsec-advisor:show-threat-model` — summary, P1–P3 backlog, freshness
-- `/appsec-advisor:review-threat-model` — fix or accept findings, P1 first
+- `/appsec-advisor:show-security-assessment` — summary, P1–P3 backlog, freshness
+- `/appsec-advisor:triage-security-assessment` — fix or accept findings, P1 first
 - Ask in plain language — answers come from the model and cite finding IDs
   - *what are the critical findings?*
   - *is there a fix for F-003?*
@@ -187,12 +187,12 @@ A prompt hook that adds matching guidance, and your requirements when a catalog 
 ### Other commands
 
 - `/appsec-advisor:status` — whether a scan is running
-- `/appsec-advisor:threat-model-health` — whether the stored model is consistent
+- `/appsec-advisor:security-assessment-health` — whether the stored model is consistent
 - `/appsec-advisor:authnz-review` — authentication and authorization review, no model needed
 - `/appsec-advisor:abuse-cases` — defined technical and business abuse cases with their origin
 - `/appsec-advisor:security-score` — 0–100 score in seconds, no model needed
 - `/appsec-advisor:repo-profile` — size, stack, and layout
-- `/appsec-advisor:export-threat-model` — PDF, HTML, SARIF
+- `/appsec-advisor:export-security-assessment` — PDF, HTML, SARIF
 - `/appsec-advisor:publish-threat-model` — commit the report to version control
 - `/appsec-advisor:report-error` — report a plugin issue
 

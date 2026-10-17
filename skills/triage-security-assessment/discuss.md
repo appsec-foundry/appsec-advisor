@@ -12,7 +12,7 @@ sidecar, no plan, no code) and returns to the level it was opened from
 (see **Navigation**).
 
 1. **Resolve the id** with the shared read-only lookup — the same resolver the
-   `ask-threat-model` skill uses, so ids and cross-links match exactly (do **not**
+   `ask-security-assessment` skill uses, so ids and cross-links match exactly (do **not**
    build a second resolver here):
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/query_threat_model.py" \
@@ -51,5 +51,5 @@ sidecar, no plan, no code) and returns to the level it was opened from
    this aside was entered from — the lens if it came from a lens, else the mode
    menu (per **Navigation**) — re-printing that screen. Discussing writes nothing
    and never re-scores the model. (For a
-   full free-form Q&A *outside* a triage session, `/appsec-advisor:ask-threat-model`
+   full free-form Q&A *outside* a triage session, `/appsec-advisor:ask-security-assessment`
    is the standalone equivalent.)

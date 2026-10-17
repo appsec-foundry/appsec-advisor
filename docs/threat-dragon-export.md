@@ -15,7 +15,7 @@ During a scan, so the file is written alongside the report:
 Or from an existing assessment, without re-scanning:
 
 ```
-/appsec-advisor:export-threat-model --formats threatdragon
+/appsec-advisor:export-security-assessment --formats threatdragon
 ```
 
 Or directly:

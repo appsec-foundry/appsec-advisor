@@ -1,9 +1,9 @@
 ---
-name: eval-threat-model
+name: eval-security-assessment
 description: Developer/test skill that grades the SEMANTIC quality of a produced threat model (plausibility, severity proportionality, STRIDE coverage, mitigation actionability, missed surfaces) via a find→adversarial-verify loop over a frozen run. Complements the structural pytest/qa_checks suite; does NOT re-run the pipeline.
 ---
 
-# eval-threat-model
+# eval-security-assessment
 
 Evaluate the **quality** of an already-produced threat model, not its structure. The pytest suite and `validators/qa_checks.py` already prove the output is schema-valid, renders, and is cross-reference-clean. They cannot tell you whether the threats are *plausible*, the severities *proportional*, the STRIDE coverage *complete*, or the mitigations *actionable*. This skill does, by evaluating a **frozen run** (default: the bundled fixture) — no expensive pipeline re-run.
 
@@ -30,7 +30,7 @@ REPO_ARGS=()
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/eval_threat_model.py" prepare \
   --run-dir "$RUN_DIR" --out "$OUT" "${REPO_ARGS[@]}"
 PREP_EXIT=$?
-[ "$PREP_EXIT" -ne 0 ] && { echo "eval-threat-model: prepare failed ($PREP_EXIT)"; exit "$PREP_EXIT"; }
+[ "$PREP_EXIT" -ne 0 ] && { echo "eval-security-assessment: prepare failed ($PREP_EXIT)"; exit "$PREP_EXIT"; }
 ```
 
 The dimensions are fixed (5): `stride_coverage`, `severity_proportionality`, `threat_plausibility`, `recommendation_actionability`, `missed_surface`.

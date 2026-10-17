@@ -1,5 +1,5 @@
 ---
-name: threat-model-health
+name: security-assessment-health
 description: Read-only three-check health probe for the threat model. Checks (1) whether a threat model exists and is still current, (2) whether intermediate artifacts are present and should be cleaned up, and (3) whether a threat model assessment is currently running. Check 3 runs first; if a run is active checks 1 and 2 are skipped so the command returns in under 1 second.
 ---
 
@@ -13,10 +13,10 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim
 and exit.
 
 ```
-/appsec-advisor:threat-model-health — Read-only threat model health probe.
+/appsec-advisor:security-assessment-health — Read-only threat model health probe.
 
 USAGE
-  /appsec-advisor:threat-model-health [--repo <path>] [--output <path>] [--json]
+  /appsec-advisor:security-assessment-health [--repo <path>] [--output <path>] [--json]
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
@@ -74,13 +74,13 @@ not touch any file. Print the following block verbatim to stderr, substituting
 ```
 Error: unknown argument '<TOKEN>'
 
-/appsec-advisor:threat-model-health accepts only:
+/appsec-advisor:security-assessment-health accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
   --output <path>   Output directory to inspect (default: <repo>/docs/security)
   --json            Emit results as machine-readable JSON
   --help, -h        Show full help and exit
 
-Run `/appsec-advisor:threat-model-health --help` for details.
+Run `/appsec-advisor:security-assessment-health --help` for details.
 ```
 
 A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown

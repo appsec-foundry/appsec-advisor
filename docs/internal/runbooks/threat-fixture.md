@@ -90,7 +90,7 @@ The deterministic tail and the source scanners, all offline:
 It does **not** cover the LLM layer (recon synthesis, STRIDE analysis, triage,
 §7/MS narrative). Those are frozen as *fixed inputs*; you are testing everything
 downstream of them, not the model output itself. For semantic quality of the
-model output, see the `eval-threat-model` path instead.
+model output, see the `eval-security-assessment` path instead.
 
 ## Volatile fields (scrubbed before every diff)
 

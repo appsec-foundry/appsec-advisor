@@ -6,7 +6,7 @@ Three surfaces present the same model to the same reader and must agree
 
 * ``renderers/compose_threat_model.py`` renders the Management-Summary
   ``**Risk distribution:**`` line and the §8 Findings Register.
-* ``renderers/summarize_threat_model.py`` prints the ``show-threat-model`` overview.
+* ``renderers/summarize_threat_model.py`` prints the ``show-security-assessment`` overview.
 * ``renderers/render_completion_summary.py`` prints the console ``Results`` block that
   closes a run — the mirror of the Management Summary, in the one place a
   headless run shows anything at all.

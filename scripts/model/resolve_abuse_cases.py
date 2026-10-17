@@ -759,8 +759,8 @@ def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: st
         out.append(f"  Report:         {report.as_posix()}#{cid.lower()}")
     found = [_line(f) for f in (record or {}).get("matched_finding_ids") or []]
     if found:
-        out.append(f"  Finding:        /appsec-advisor:ask-threat-model --id {found[0]}")
-        out.append(f"  Fix or accept:  /appsec-advisor:review-threat-model, then pick {', '.join(found)}")
+        out.append(f"  Finding:        /appsec-advisor:ask-security-assessment --id {found[0]}")
+        out.append(f"  Fix or accept:  /appsec-advisor:triage-security-assessment, then pick {', '.join(found)}")
     if data is None:
         out.append("  Threat model:   /appsec-advisor:create-threat-model")
     out.append(_check_hint(cid, case, data))

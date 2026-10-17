@@ -247,7 +247,7 @@ plugin_surface:
       - check-permissions
       - clean-run-state
       - fix-run-issues
-      - threat-model-health
+      - security-assessment-health
   hooks:
     include:
       - agent-logger
@@ -260,7 +260,7 @@ plugin_surface:
   skills:
     exclude:
       - publish-threat-model
-      - export-threat-model
+      - export-security-assessment
   hooks:
     exclude:
       - security-coach

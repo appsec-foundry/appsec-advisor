@@ -1018,15 +1018,15 @@ def build_next_steps(
     # that turns them into a prioritised, owned remediation plan. Runs later and
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
-        lines.append("Triage the findings — /appsec-advisor:review-threat-model")
+        lines.append("Triage the findings — /appsec-advisor:triage-security-assessment")
 
     # Asking is the non-mutating default exploration path and must stay visible
     # rather than sink into an easy-to-miss footer. Show the question, NOT
-    # `/appsec-advisor:ask-threat-model`: that skill routes itself from any
+    # `/appsec-advisor:ask-security-assessment`: that skill routes itself from any
     # natural-language query about the model ("the default surface for every
     # natural-language query", its own description), so naming the command
     # implies a step the reader does not have to take. The question IS the
-    # invocation. review-threat-model is the opposite case — a triage console
+    # invocation. triage-security-assessment is the opposite case — a triage console
     # with modes that has to be started — so it keeps its command.
     #
     # Architect review — only surface the dot-file when it contains actionable defects.

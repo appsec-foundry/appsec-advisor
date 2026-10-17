@@ -119,5 +119,5 @@ Use these entry points for navigation; `check_specs.py` and the bindings identif
 | Run state and liveness | [Status runbook](docs/internal/runbooks/checking-run-status.md), [status helper](scripts/runtime/appsec_status.py) |
 | Runtime cost and telemetry | [Cost model](docs/internal/cost-model.md), [logging standard](agents/shared/logging-standard.md) |
 | Repair | [Repair implementations](scripts/repairs/), [action contract](docs/internal/contracts/orchestration-actions.md), [schema invariants](docs/internal/contracts/schema-invariants.md) |
-| Exports | [Export skill](skills/export-threat-model/SKILL.md), [Threat Dragon guide](docs/threat-dragon-export.md), [schema invariants](docs/internal/contracts/schema-invariants.md) |
+| Exports | [Export skill](skills/export-security-assessment/SKILL.md), [Threat Dragon guide](docs/threat-dragon-export.md), [schema invariants](docs/internal/contracts/schema-invariants.md) |
 | Abuse cases | [Technical cases](data/abuse-cases/technical.yaml), [business cases](data/abuse-cases/business.yaml), [case schema](schemas/abuse-cases.schema.yaml), [business-case configuration](docs/org-profiles.md#business-abuse-cases) |
