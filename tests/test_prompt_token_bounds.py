@@ -34,7 +34,6 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # Lowered 2026-07-20: the canonical post-autofix gate now owns all
     # mechanical checks. The exceptional reviewer consumes only a compact
     # repair plan or an explicitly forced semantic sample.
-    "agents/appsec-qa-reviewer.md": (1_200, 3_000),
     "agents/appsec-architecture-analyst.md": (500, 3_000),
     "agents/appsec-control-analyst.md": (500, 3_000),
     "agents/appsec-post-stride-synthesizer.md": (500, 3_000),

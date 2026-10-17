@@ -7,6 +7,8 @@
 #   taken from the checkout under review.
 # - ANTHROPIC_API_KEY is a masked, protected CI/CD variable. Protected
 #   variables are not available to pipelines for untrusted branches or forks.
+# - The threat model used as context is read from the base commit, so the
+#   change under review cannot choose it.
 # - Findings are advisory; failed, incomplete, or invalid analysis fails the job.
 threat-analysis:
   stage: test
@@ -19,12 +21,18 @@ threat-analysis:
     - git clone --no-checkout https://<host>/<group>/appsec-advisor.git "$CI_BUILDS_DIR/appsec-advisor"
     - git -C "$CI_BUILDS_DIR/appsec-advisor" checkout --detach <pinned-release-commit-sha>
     - npm install --global --ignore-scripts @anthropic-ai/claude-code@<pinned-version>
-    - >
-      python3 "$CI_BUILDS_DIR/appsec-advisor/scripts/appsec-analyst-cli" review --ci
-      --repo "$CI_PROJECT_DIR"
-      --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --head "$CI_COMMIT_SHA"
-      --state-dir "$CI_BUILDS_DIR/analyst-state"
-      --output "$CI_PROJECT_DIR/analyst-report"
+    # The threat model comes from the base commit, never from the change under review.
+    - |
+      set --
+      if git -C "$CI_PROJECT_DIR" show "$CI_MERGE_REQUEST_DIFF_BASE_SHA:docs/security/threat-model.yaml" \
+          > "$CI_BUILDS_DIR/threat-model.yaml" 2>/dev/null; then
+        set -- --threat-model "$CI_BUILDS_DIR/threat-model.yaml"
+      fi
+      python3 "$CI_BUILDS_DIR/appsec-advisor/scripts/appsec-analyst-cli" review --ci \
+        --repo "$CI_PROJECT_DIR" \
+        --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --head "$CI_COMMIT_SHA" \
+        --state-dir "$CI_BUILDS_DIR/analyst-state" \
+        --output "$CI_PROJECT_DIR/analyst-report" "$@"
   artifacts:
     when: always
     paths:

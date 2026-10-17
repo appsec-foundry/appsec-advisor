@@ -1,0 +1,56 @@
+{
+  "summary": "This system embeds an LLM/AI surface (an LLM/AI integration); the risks below are architectural \u2014 they follow from how untrusted input reaches the model's prompt, tools, and outputs.",
+  "ai_risks": [
+    {
+      "name": "Excessive Agency",
+      "description": "The LLM is granted tool/function-calling authority without a secondary authorization boundary, so a manipulated model turn can invoke privileged actions on the user's behalf.",
+      "severity": "red",
+      "findings": [
+        {
+          "ref": "T-042",
+          "label": "Chatbot coupon tool lacks server-side discount limit",
+          "owasp_asi_ids": [
+            "ASI02"
+          ]
+        }
+      ],
+      "owasp_llm_id": "LLM06",
+      "affected_components": [
+        "C-01"
+      ]
+    },
+    {
+      "name": "Prompt Injection",
+      "description": "Untrusted user input reaches the LLM prompt/context without sufficient trust separation, letting an attacker override system instructions, redirect tool calls, or coerce unintended model behaviour.",
+      "severity": "yellow",
+      "findings": [
+        {
+          "ref": "T-055",
+          "label": "Client-supplied chat messages passed to model unvalidated",
+          "owasp_asi_ids": [
+            "ASI01"
+          ]
+        }
+      ],
+      "owasp_llm_id": "LLM01",
+      "affected_components": [
+        "C-01"
+      ]
+    },
+    {
+      "name": "Unbounded Consumption",
+      "description": "The LLM endpoint imposes no authentication, rate, or quota boundary, so any client can drive unbounded model invocations \u2014 uncontrolled provider cost and denial of service for legitimate users.",
+      "severity": "yellow",
+      "findings": [
+        {
+          "ref": "T-083",
+          "label": "Unbounded chat input with no rate limit on LLM endpoint"
+        }
+      ],
+      "owasp_llm_id": "LLM10",
+      "affected_components": [
+        "C-01"
+      ]
+    }
+  ]
+}

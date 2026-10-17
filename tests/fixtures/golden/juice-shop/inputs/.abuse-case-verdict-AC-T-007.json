@@ -1,0 +1,31 @@
+{
+  "abuse_case_id": "AC-T-007",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "    const messages = req.body?.messages ?? []",
+        "file": "routes/chat.ts",
+        "line": 191
+      },
+      "matched_finding_id": "T-055",
+      "reason": "The client-supplied req.body.messages array is passed unfiltered to streamText, so an attacker controls the conversation turns (including any role) the model reads as instruction. No sanitising, delimiting or filtering control appears in the handler.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "confirmed"
+    },
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "          const couponCode = security.generateCoupon(discount) // vuln-code-snippet vuln-line chatbotPromptInjectionChallenge",
+        "file": "routes/chat.ts",
+        "line": 184
+      },
+      "matched_finding_id": "T-042",
+      "reason": "The generateCoupon tool runs with application authority. The discount limit of 10 appears only in the tool description, and execute has no server-side check on the value or the caller, so a manipulated model turn gets an arbitrary-discount coupon. Only getOrderById checks ownership.",
+      "state": "decided",
+      "step": 2,
+      "verdict": "confirmed"
+    }
+  ]
+}

@@ -794,3 +794,110 @@ def test_an_unwatchable_budget_is_said_once():
         ]
     )
     assert "⚠ budget not watchable — budget=$25.00" in out
+
+
+# ── Colour and the live status line ─────────────────────────────────────────
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _TtyOut(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def _stride_run() -> list[str]:
+    def spawn(call: str, comp: str, minute: int) -> str:
+        return (
+            f"2026-08-14T17:{minute:02d}:00Z  [067fff5c]  INFO   AGENT_SPAWN"
+            f"  agent_call_id={call}  agent_type=appsec-advisor:appsec-stride-analyzer-v2"
+            f"  model=sonnet  background=true  component_id={comp}  attempt=1"
+            f"  analysis_depth=full  description=STRIDE: {comp}"
+        )
+
+    return [
+        "2026-08-14T17:00:00Z  [--------]  INFO   threat-analyst    PHASE_START   [Phase 9/11] STRIDE",
+        spawn("toolu_a", "api", 1),
+        spawn("toolu_b", "auth", 1),
+        spawn("toolu_c", "billing", 1),
+        "2026-08-14T17:05:00Z  [067fff5c]  INFO   AGENT_DONE"
+        "  agent_call_id=toolu_a  agent_type=appsec-advisor:appsec-stride-analyzer-v2"
+        "  component_id=api  stop_reason=end_turn",
+        "2026-08-14T17:06:00Z  [067fff5c]  WARN   AGENT_FAILED"
+        "  agent_call_id=toolu_b  agent_type=appsec-advisor:appsec-stride-analyzer-v2"
+        "  component_id=auth  reason=settled_incomplete",
+        "2026-08-14T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=9  duration=20m00s  delta=≥$1.20  total=≥$3.40",
+        "2026-08-14T17:21:00Z  [--------]  INFO   HEARTBEAT           pid=23  phase=skill  step=watchdog  ts=1",
+    ]
+
+
+def test_colour_changes_no_character_of_the_view(monkeypatch):
+    """Off a terminal the view is unchanged; forced colour only wraps it."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    plain = _render(_stride_run())
+    assert "\x1b" not in plain
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    coloured = _render(_stride_run())
+    assert "\x1b[" in coloured
+    assert _ANSI.sub("", coloured) == plain
+
+
+def test_no_colour_wins_over_force(monkeypatch):
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert "\x1b" not in _render(_stride_run())
+
+
+def test_every_coloured_line_closes_its_colour(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    for line in _render(_stride_run()).splitlines():
+        codes = re.findall(r"\x1b\[[0-9;]*m", line)
+        if codes:
+            assert codes[-1] == "\x1b[0m", line
+
+
+def test_live_line_appears_only_on_a_terminal(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    off_tty = _render(_stride_run())
+    assert "\r" not in off_tty
+    assert not any(ch in off_tty for ch in rp._SPINNER)
+
+    old_in, old_out = sys.stdin, sys.stdout
+    sys.stdin = io.StringIO("\n".join(_stride_run()) + "\n")
+    sys.stdout = _TtyOut()
+    try:
+        rp.main()
+        on_tty = sys.stdout.getvalue()
+    finally:
+        sys.stdin, sys.stdout = old_in, old_out
+    live = _ANSI.sub("", on_tty.rsplit("\r\x1b[K", 1)[-1])
+    # One of three components finished: the failed one stays open.
+    assert "Phase 9/11 STRIDE" in live
+    assert "1/3 components" in live
+    assert "running: auth, billing" in live
+    assert "━" in live and "─" in live
+    assert live.split()[1] in rp._SPINNER
+
+
+def test_input_lines_ticks_while_the_pipe_is_quiet():
+    """The spinner's clock: ticks between lines, every byte still delivered."""
+    import threading
+
+    read_fd, write_fd = os.pipe()
+    ticks = []
+
+    def writer():
+        os.write(write_fd, b"first\nsec")
+        time.sleep(0.35)
+        os.write(write_fd, b"ond\nlast-without-newline")
+        os.close(write_fd)
+
+    threading.Thread(target=writer).start()
+    with os.fdopen(read_fd, "r") as stream:
+        lines = list(rp._input_lines(stream, lambda: ticks.append(1)))
+    assert lines == ["first\n", "second\n", "last-without-newline"]
+    assert len(ticks) >= 2

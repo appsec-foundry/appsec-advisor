@@ -17,12 +17,13 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 
-import orchestrator.orchestration_controller as orchestration_controller
 import pytest
 import runtime.budget_watchdog as budget_watchdog
 
@@ -626,41 +627,6 @@ class TestModeDetection:
         assert al._is_tracing() is False
 
 
-class TestRunModeMarkersAcrossProcesses:
-    """The controller writes the markers from its Bash shell and the hooks read
-    them in the Claude Code process; under the sandbox their TMPDIRs differ."""
-
-    @staticmethod
-    def _hook():
-        spec = importlib.util.spec_from_file_location("agent_logger_marker_probe", SCRIPT_PATH)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["agent_logger_marker_probe"] = module
-        assert spec.loader is not None
-        with contextlib.redirect_stderr(io.StringIO()):
-            spec.loader.exec_module(module)
-        return module
-
-    @pytest.mark.parametrize("hook_tmpdir", [None, "claude-sandbox-tmp", "output"])
-    def test_hook_reads_the_markers_the_controller_writes(self, tmp_path, monkeypatch, hook_tmpdir):
-        output = tmp_path / "output"
-        output.mkdir()
-        monkeypatch.delenv("APPSEC_TRACING", raising=False)
-        monkeypatch.setenv("OUTPUT_DIR", str(output))
-        monkeypatch.setenv("TMPDIR", str(tmp_path / "controller-tmp"))
-        orchestration_controller._activate_markers({"tracing": True, "verbose": True}, output)
-
-        if hook_tmpdir is None:
-            monkeypatch.delenv("TMPDIR")
-        else:
-            monkeypatch.setenv("TMPDIR", str(tmp_path / hook_tmpdir))
-        hook = self._hook()
-        assert hook._TRACING is True
-        assert hook._VERBOSE is True
-
-        orchestration_controller._activate_markers({"tracing": False, "verbose": False}, output)
-        assert self._hook()._TRACING is False
-
-
 # ---------------------------------------------------------------------------
 # _output_dir resolution branches
 # ---------------------------------------------------------------------------
@@ -676,75 +642,50 @@ class TestOutputDir:
         monkeypatch.chdir(ds)
         assert al._output_dir() == str(ds)
 
-    def test_cwd_default_appends(self, al, monkeypatch, tmp_path):
-        monkeypatch.delenv("OUTPUT_DIR", raising=False)
-        monkeypatch.chdir(tmp_path)
-        out = al._output_dir()
-        assert out.endswith("docs/security") or out.endswith("docs\\security")
+    def test_every_subdirectory_resolves_to_the_checkouts_assessment_directory(self, al, monkeypatch, tmp_path):
+        # The run's output directory does not move with the cwd: appending to
+        # the cwd once made every subdirectory its own destination.
+        from shared.assessment_location import application_directory
 
-    def test_subdirectory_resolves_to_the_existing_output_dir(self, al, monkeypatch, tmp_path):
-        # The run's output directory does not move with the cwd. Appending to
-        # the cwd made every subdirectory its own destination: a hook firing
-        # from <repo>/docs wrote a stray <repo>/docs/docs/security that the
-        # run owning the events never reads.
         (tmp_path / ".git").mkdir()
-        (tmp_path / "docs" / "security").mkdir(parents=True)
         (tmp_path / "routes").mkdir()
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
         monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        for cwd in (tmp_path, tmp_path / "routes"):
+            monkeypatch.chdir(cwd)
+            assert al._output_dir() == str(application_directory(tmp_path))
 
-        for sub in ("docs", "routes"):
-            monkeypatch.chdir(tmp_path / sub)
-            assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
-
-    def test_cwd_inside_the_output_dir_still_wins(self, al, monkeypatch, tmp_path):
-        (tmp_path / ".git").mkdir()
-        ds = tmp_path / "docs" / "security"
-        ds.mkdir(parents=True)
+    def test_a_legacy_assessment_in_docs_security_is_still_found(self, al, monkeypatch, tmp_path):
+        (tmp_path / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")  # a worktree's .git is a file
+        legacy = tmp_path / "docs" / "security"
+        legacy.mkdir(parents=True)
+        (legacy / "threat-model.yaml").write_text("meta: {}\n")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
         monkeypatch.delenv("OUTPUT_DIR", raising=False)
-        monkeypatch.chdir(ds)
-        assert al._output_dir() == str(ds)
-
-    def test_a_checkout_without_an_output_dir_does_not_capture(self, al, monkeypatch, tmp_path):
-        # Anchoring on .git alone walks to the filesystem root, so a stray
-        # checkout above — an empty /tmp/.git is a real thing to find — would
-        # send hook events outside the tree they belong to.
-        (tmp_path / ".git").mkdir()
-        sub = tmp_path / "routes"
-        sub.mkdir()
-        monkeypatch.delenv("OUTPUT_DIR", raising=False)
-        monkeypatch.chdir(sub)
-        assert al._existing_output_root(str(sub)) is None
-        assert Path(al._output_dir()) == sub.resolve() / "docs" / "security"
-
-    def test_a_stray_nested_output_dir_does_not_capture(self, al, monkeypatch, tmp_path):
-        # The artifact of the very bug being fixed: an earlier run wrote
-        # <repo>/docs/docs/security, which sits one candidate before the real
-        # one for a hook firing from <repo>/docs. Requiring a checkout too is
-        # what stops the bug from keeping its own residue alive.
-        (tmp_path / ".git").mkdir()
-        (tmp_path / "docs" / "security").mkdir(parents=True)
-        (tmp_path / "docs" / "docs" / "security").mkdir(parents=True)
-        monkeypatch.delenv("OUTPUT_DIR", raising=False)
-        monkeypatch.chdir(tmp_path / "docs")
-        assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
-
-    def test_worktree_checkout_has_dot_git_as_a_file(self, al, monkeypatch, tmp_path):
-        (tmp_path / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")
-        (tmp_path / "docs" / "security").mkdir(parents=True)
-        sub = tmp_path / "routes"
-        sub.mkdir()
-        monkeypatch.delenv("OUTPUT_DIR", raising=False)
-        monkeypatch.chdir(sub)
-        assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
-
-    def test_first_run_falls_back_to_the_cwd(self, al, monkeypatch, tmp_path):
-        # Stubbed rather than staged in a directory with no docs/security
-        # above it: the walk ends at the filesystem root, and anything in
-        # tmp_path's ancestry would decide the test instead of the code.
-        monkeypatch.delenv("OUTPUT_DIR", raising=False)
-        monkeypatch.setattr(al, "_existing_output_root", lambda _start: None)
         monkeypatch.chdir(tmp_path)
-        assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
+        assert Path(al._output_dir()) == legacy.resolve()
+
+    def test_outside_a_checkout_nothing_is_resolved(self, al, monkeypatch, tmp_path):
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.setattr("shared.assessment_location.locate_from", lambda _cwd: None)
+        monkeypatch.chdir(tmp_path)
+        assert al._output_dir() == ""
+
+    def test_a_session_without_an_assessment_writes_nothing(self, monkeypatch, tmp_path):
+        # The hook used to create <cwd>/docs/security on every tool call in every repository.
+        (tmp_path / ".git").mkdir()
+        env = {k: v for k, v in os.environ.items() if k != "OUTPUT_DIR"}
+        env["XDG_DATA_HOME"] = str(tmp_path / "_data")
+        event = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {}}
+        subprocess.run(
+            [sys.executable, str(SCRIPT_PATH)],
+            input=json.dumps(event),
+            text=True,
+            cwd=tmp_path,
+            env=env,
+            check=True,
+        )
+        assert sorted(path.name for path in tmp_path.iterdir()) == [".git"]
 
 
 # ---------------------------------------------------------------------------

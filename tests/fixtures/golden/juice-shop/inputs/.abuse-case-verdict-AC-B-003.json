@@ -1,0 +1,18 @@
+{
+  "abuse_case_id": "AC-B-003",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "          const updatedUser = await user.update({ password: newPassword })",
+        "file": "routes/resetPassword.ts",
+        "line": 44
+      },
+      "matched_finding_id": "T-050",
+      "reason": "POST /rest/user/reset-password lets an unauthenticated caller change any account's password with only the email and a security-question answer. This is a weak, guessable knowledge factor, not verified-owner re-authentication. The route has no throttling, no reset token and no session check, so a non-owner who knows or guesses the answer takes over the account.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "confirmed"
+    }
+  ]
+}

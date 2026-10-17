@@ -58,7 +58,7 @@ from runtime.stride_outputs import component_id as _stride_component_id
 from runtime.stride_outputs import stride_output_files
 from shared._artifact_stamp import carry_generated_at
 from shared._atomic_io import atomic_write_json, atomic_write_text
-from shared._finding_state import is_refuted
+from shared._finding_state import is_refuted, record_evidence
 from shared._severity_policy import normalize_risks
 from shared._shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 
@@ -492,6 +492,8 @@ def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
                 f"merge_threats: auto-repaired {n_fixed} invalid JSON escape(s) "
                 f"(e.g. \\! → !) in {path.name} and continued.\n"
             )
+        if isinstance(data, dict) and data.get("schema_version") == 2:
+            raise ValueError("Qualified STRIDE results require the admitted multi-repository controller")
         pairs.append((comp_id, data))
     return pairs
 
@@ -527,10 +529,14 @@ def _json_error_context(raw: str, pos: int, radius: int = 60) -> str:
     return f"{snippet[:marker_offset]}»{snippet[marker_offset : marker_offset + 1]}«{snippet[marker_offset + 1 :]}"
 
 
-def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = None) -> list[dict]:
+def _flatten_threats(
+    pairs: list[tuple[str, dict]], output_dir: Path | None = None, *, assessment_boundaries: list[dict] | None = None
+) -> list[dict]:
     """Collect all threat records with component provenance attached."""
     out: list[dict] = []
     boundary_rows: list[dict] = []
+    if assessment_boundaries is not None:
+        boundary_rows = assessment_boundaries
     if output_dir is not None:
         boundary_doc = _read_json_file(output_dir / ".trust-boundaries.json", default={})
         boundary_rows = boundary_doc.get("trust_boundaries", []) if isinstance(boundary_doc, dict) else []
@@ -587,6 +593,12 @@ def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = No
                         for row in context.get("adjacent_trust_boundaries", [])
                         if isinstance(row, dict) and row.get("id")
                     }
+                    if assessment_boundaries is not None:
+                        candidate_ids = {
+                            b["id"]
+                            for b in assessment_boundaries
+                            if comp_id in (b.get("from"), b.get("to")) or comp_id in (b.get("covers_components") or [])
+                        }
                     carried = t.get("evidence_check") in {
                         "verified-prior",
                         "carried-unverified-shallower-depth",
@@ -882,6 +894,10 @@ def _source_auth_finding_to_threat(f: dict, components: list | None = None) -> d
         "finding_type_id": f.get("finding_type_id"),
         "control_scope": f.get("control_scope"),
     }
+    # The data object an owner-ID or object-lookup query targets keeps IDOR
+    # findings on different objects apart during consolidation.
+    if f.get("object_ref"):
+        threat["object_ref"] = f["object_ref"]
     # The crypto catalog establishes a security-relevant use before emitting a
     # row. Preserve that fact explicitly; do not infer a weakness later from a
     # CWE or an algorithm name alone.
@@ -1250,6 +1266,22 @@ def _declassify_config_title(title: str) -> str:
     return s.strip() or (title or "").strip()
 
 
+def _primary_evidence(t: dict) -> dict:
+    """The first evidence record of a finding.
+
+    Legacy findings carry one evidence dict; a version-2 assessment carries a
+    list of qualified records. Every consolidation step reads the anchor here.
+    """
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        return next((e for e in ev if isinstance(e, dict)), {})
+    return ev if isinstance(ev, dict) else {}
+
+
+def _component_of(t: dict) -> str:
+    return str(t.get("component_id") or t.get("component") or "").strip().lower()
+
+
 def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     """Collapse N config-scan findings sharing the same ``config_check_id`` into
     ONE systemic finding, preserving every hit as an ``instances[]`` entry.
@@ -1263,8 +1295,8 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     result was the 2026-06-13 juice-shop run shipping 74 config findings that
     were really ~13 distinct checks.
 
-    This deterministic pass keys purely on ``config_check_id``: same id →
-    one survivor (highest-risk member) carrying ``instances[]`` (each
+    This deterministic pass keys on ``config_check_id`` within one repository:
+    same id → one survivor (highest-risk member) carrying ``instances[]`` (each
     ``{file, line, snippet?}``), a derived ``affected_files[]`` summary,
     ``instance_count``, and ``systemic: true``. The survivor title is
     declassified (per-file locator stripped). Config findings WITHOUT a
@@ -1284,16 +1316,20 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     from collections import OrderedDict
 
     scanned_checks = {t.get("config_check_id") for t in threats if t.get("source") == "config-scan"}
-    buckets: OrderedDict[str, list[dict]] = OrderedDict()
+    buckets: OrderedDict[tuple[str, str], list[dict]] = OrderedDict()
     out: list[dict] = []
     for t in threats:
         cid = t.get("config_check_id")
         if cid and (t.get("source") == "config-scan" or cid in scanned_checks):
-            buckets.setdefault(cid, []).append(t)
+            # A combined assessment qualifies evidence by repository; a check
+            # never folds hits of two repositories. A carrier finding still
+            # absorbs the check's hits in other components of its repository.
+            repository = str(_primary_evidence(t).get("repository_id") or "")
+            buckets.setdefault((cid, repository), []).append(t)
         else:
             out.append(t)
 
-    for cid, members in buckets.items():
+    for _key, members in buckets.items():
         if len(members) == 1:
             out.append(members[0])
             continue
@@ -1311,7 +1347,7 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
             if m.get("source") != "config-scan":
                 prior = [i for i in m.get("instances") or [] if isinstance(i, dict)]
             if not prior:
-                ev = m.get("evidence") or {}
+                ev = _primary_evidence(m)
                 inst: dict = {"file": (ev.get("file") or "").strip(), "line": ev.get("line")}
                 sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
                 if sn:
@@ -1417,12 +1453,7 @@ def _match_consolidation_group(t: dict, groups: tuple) -> dict | None:
     """First group whose ``match_any`` has an entry matching this threat."""
     cwe = (t.get("cwe") or "").strip().upper()
     title = t.get("title") or ""
-    ev = t.get("evidence")
-    if isinstance(ev, list):
-        ev = next((e for e in ev if isinstance(e, dict)), {})
-    elif not isinstance(ev, dict):
-        ev = {}
-    file_path = ev.get("file") or ""
+    file_path = _primary_evidence(t).get("file") or ""
     scid = t.get("source_check_id") or ""
     ccid = t.get("config_check_id") or ""
     for g in groups:
@@ -1453,16 +1484,20 @@ def _group_bucket_key(t: dict, g: dict) -> tuple:
             # A CWE, title or scanner rule alone does not establish that two
             # services share one owner or control. Keep the manifestations
             # separate until upstream provides a concrete control scope.
-            parts.extend(("component", (t.get("component_id") or t.get("component") or "").strip().lower()))
+            parts.extend(("component", _component_of(t)))
     else:
-        parts.append((t.get("component_id") or t.get("component") or "").strip().lower())
+        parts.append(_component_of(t))
     if g.get("require_shared_sink"):
+        # One defect needs one fix: an explicit shared control, else the one
+        # data object the queries target, else the single sink. A finding
+        # without an object never joins an object bucket.
         scope = str(t.get("control_scope") or "").strip()
-        evidence = t.get("evidence") or {}
-        if isinstance(evidence, list):
-            evidence = next((e for e in evidence if isinstance(e, dict)), {})
+        object_ref = str(t.get("object_ref") or "").strip().lower()
+        evidence = _primary_evidence(t)
         if scope:
             parts.extend(("control", scope))
+        elif object_ref:
+            parts.extend(("object", object_ref))
         elif evidence.get("file") and evidence.get("line"):
             parts.extend(("sink", str(evidence["file"]), str(evidence["line"])))
         else:
@@ -1489,11 +1524,7 @@ def _instances_of(m: dict) -> list[dict]:
                 inst.setdefault("source", m["source"])
             out.append(inst)
         return out
-    ev = m.get("evidence")
-    if isinstance(ev, list):
-        ev = next((e for e in ev if isinstance(e, dict)), {})
-    elif not isinstance(ev, dict):
-        ev = {}
+    ev = _primary_evidence(m)
     inst = {"file": (ev.get("file") or "").strip(), "line": ev.get("line"), "severity": m.get("risk")}
     if m.get("source"):
         inst["source"] = m["source"]
@@ -1603,6 +1634,11 @@ def _consolidate_by_group(threats: list[dict]) -> list[dict]:
         _union_lens_ids(survivor, members)
         if g.get("title"):
             survivor["title"] = g["title"]
+            # Survivors of one group that differ only by their object would
+            # otherwise share one title; every member carries the same value.
+            qualifier = str(survivor.get(g.get("title_qualifier_field") or "") or "").strip()
+            if qualifier:
+                survivor["title"] = f"{g['title']} ({qualifier})"
         if mids:
             survivor["mitigation_ids"] = mids
         if refs:
@@ -2456,6 +2492,40 @@ def _collect_resolved_prior_findings(pairs: list[tuple[str, dict]]) -> list[dict
     return out
 
 
+def consolidate_findings(threats: list[dict]) -> list[dict]:
+    """The one deduplication and consolidation chain of every merge path.
+
+    Legacy ``collect`` and the assessment controller's ``merge_assessment``
+    both run it, so evidence identity, systemic folding and survivor choice
+    cannot drift between the runtimes.
+    """
+    # Normalize before consolidation captures per-instance severity and picks
+    # a survivor; an over-cap analyst rating cannot win either decision.
+    normalize_risks(threats)
+    deduped = _dedupe_exact(threats)
+    # Evidence-identity dedup (2026-06): collapse the cross-STRIDE /
+    # cross-component duplicate (same file:line + CWE) that _exact_key and the
+    # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
+    # the merger / finalize path never has to reunite a STRIDE-split pair.
+    deduped = _dedupe_evidence(deduped)
+    # Title-at-location identity: the same title at the same concrete line is
+    # one finding even when analyzers disagree on CWE and derived category.
+    deduped = _dedupe_title_locator(deduped)
+    # Systemic config-scan consolidation (2026-06-13): collapse N hits of one
+    # IaC/CI check (same config_check_id, across many files or many stages of
+    # one Dockerfile) into a single finding whose instances[] lists every hit.
+    # Runs before grouping so the coarse (CWE, STRIDE) merger never faces the
+    # un-mergeable per-instance pile. See _consolidate_config_checks.
+    deduped = _consolidate_config_checks(deduped)
+    # Generalized systemic consolidation (2026-06-15): collapse findings that
+    # are manifestations of one shared mechanism/object per the declarative
+    # data/consolidation-groups.yaml catalog (JWT verification, missing route
+    # auth, dependabot, websocket channel, …). Runs AFTER the config pass so its
+    # survivors fold in as instances, and BEFORE grouping so the LLM merger never
+    # sees the per-instance pile. Non-matching findings (IDOR, XSS) untouched.
+    return _consolidate_by_group(deduped)
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     if not out_dir.exists():
@@ -2490,31 +2560,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # `.dep-scan.json` ingestion was removed 2026-05 — supply-chain
     # posture now arrives as §7.11 control rows + meta_findings[] sidecars,
     # not as CVE-shaped threats in this merged set.
-    # Normalize before consolidation captures per-instance severity and picks
-    # a survivor; an over-cap analyst rating cannot win either decision.
-    normalize_risks(flat)
-    deduped = _dedupe_exact(flat)
-    # Evidence-identity dedup (2026-06): collapse the cross-STRIDE /
-    # cross-component duplicate (same file:line + CWE) that _exact_key and the
-    # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
-    # the merger / finalize path never has to reunite a STRIDE-split pair.
-    deduped = _dedupe_evidence(deduped)
-    # Title-at-location identity: the same title at the same concrete line is
-    # one finding even when analyzers disagree on CWE and derived category.
-    deduped = _dedupe_title_locator(deduped)
-    # Systemic config-scan consolidation (2026-06-13): collapse N hits of one
-    # IaC/CI check (same config_check_id, across many files or many stages of
-    # one Dockerfile) into a single finding whose instances[] lists every hit.
-    # Runs before grouping so the coarse (CWE, STRIDE) merger never faces the
-    # un-mergeable per-instance pile. See _consolidate_config_checks.
-    deduped = _consolidate_config_checks(deduped)
-    # Generalized systemic consolidation (2026-06-15): collapse findings that
-    # are manifestations of one shared mechanism/object per the declarative
-    # data/consolidation-groups.yaml catalog (JWT verification, missing route
-    # auth, dependabot, websocket channel, …). Runs AFTER the config pass so its
-    # survivors fold in as instances, and BEFORE grouping so the LLM merger never
-    # sees the per-instance pile. Non-matching findings (IDOR, XSS) untouched.
-    deduped = _consolidate_by_group(deduped)
+    deduped = consolidate_findings(flat)
     all_candidates = _group_candidates(deduped)
     candidates, auto_decisions = _split_auto_decisions(all_candidates)
 
@@ -3196,6 +3242,193 @@ def _reconcile_actor_attribution(out_dir: Path, threats: list[dict]) -> list[dic
     return reconcile_output_dir(out_dir, threats)
 
 
+_REVIEW_BASIS = {"verified": "llm-verified"}
+
+
+def single_repository_groups(groups: list[dict], components: list[dict]) -> list[dict]:
+    """Candidate groups whose members all belong to components of one repository.
+
+    A merger judgment compares wording, which never establishes that two
+    repositories share one defect; such groups stay unmerged.
+    """
+    owner = {row["id"]: tuple(row.get("repository_ids") or ()) for row in components}
+
+    def repositories(group: dict) -> set:
+        return {owner.get(member.get("component_id")) for member in group.get("members") or []}
+
+    return [group for group in groups if len(repositories(group)) == 1 and None not in repositories(group)]
+
+
+def merge_assessment(
+    scope,
+    components: dict,
+    stride_documents: list[dict],
+    reviews: list[dict],
+    *,
+    boundaries: list[dict],
+    scanner_threats: dict[str, list[dict]] | None = None,
+    started_at=None,
+    review_groups=None,
+) -> dict:
+    """Validate v2 sources, then run the legacy merge chain on them.
+
+    Scoped jobs have already validated retrieval and independent review. This
+    handoff checks inventory coverage and provenance again, then runs the same
+    steps as ``collect`` and ``finalize`` (see ``ASSESSMENT_TAIL``) within each
+    evidence verdict, so a refuted or unproven finding never absorbs one with a
+    different verdict. Equal source names in different roots remain distinct
+    because file keys stay root-qualified until the end; a model-authored
+    shared-control name never authorizes cross-repository consolidation.
+    ``scanner_threats`` holds deterministic scanner findings per component; the
+    component's evidence review decides them together with its STRIDE findings.
+    They are the only scanner input: no sidecar on disk is read again.
+    ``review_groups`` receives the candidate groups no deterministic rule
+    decides and returns merger decisions; without it those groups stay unmerged.
+    """
+    import copy
+
+    from contexts.multi_repo_analysis import (
+        component_evidence_review_contract,
+        component_stride_contract,
+        contract,
+        validate_identity,
+    )
+    from shared.assessment_sources import source_key, source_rows
+    from validators.validate_assessment_architecture import validate_components, validate_source
+
+    from model.finalize_component_inventory import component_inventory_fingerprint
+
+    scope.verify_unchanged()
+    if started_at is not None and (
+        type(started_at) is not int or not 1 <= started_at <= int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+    ):
+        raise ValueError("Assessment merge requires a valid controller-owned start time")
+    validate_components(scope, components)
+    fingerprint = component_inventory_fingerprint(components["components"])
+    expected = {row["id"] for row in components["components"]}
+    supplied = [row["component_id"] for row in stride_documents]
+    if len(supplied) != len(set(supplied)) or set(supplied) != expected or len(reviews) != len(stride_documents):
+        raise ValueError("Assessment merge must cover every finalized component exactly once")
+    scanner_threats = scanner_threats or {}
+    if not set(scanner_threats) <= expected:
+        raise ValueError("Assessment merge received scanner findings for an unknown component")
+    pairs, scanned_threats, locations = [], [], {}
+    boundary_view = copy.deepcopy(boundaries)
+    for row in source_rows(boundary_view):
+        validate_source(scope, row, path_key="file")
+        key = source_key(row)
+        locations[key] = {k: row[k] for k in ("repository_id", "sha256")}
+        row["file"] = key
+    for document, review in zip(stride_documents, reviews, strict=True):
+        # A component analysed in several jobs may hold more findings than one job (MR-12).
+        if not Draft202012Validator(component_stride_contract(None)).is_valid(document):
+            raise ValueError("Assessment merge received an invalid STRIDE artifact")
+        validate_identity(scope, document, fingerprint)
+        validate_identity(scope, review, fingerprint)
+        # A component reviewed in several jobs may hold more decisions than one job.
+        if not Draft202012Validator(component_evidence_review_contract()).is_valid(review):
+            raise ValueError("Assessment merge received an invalid evidence review")
+        decisions = {row["local_id"]: row for row in review["decisions"]}
+        scanned = copy.deepcopy(scanner_threats.get(document["component_id"], []))
+        if any(threat["component_id"] != document["component_id"] for threat in scanned):
+            raise ValueError("Assessment merge received a scanner finding under another component")
+        local_ids = [t["local_id"] for t in document["threats"]] + [t["local_id"] for t in scanned]
+        if (
+            len(local_ids) != len(set(local_ids))
+            or len(decisions) != len(review["decisions"])
+            or set(decisions) != set(local_ids)
+        ):
+            raise ValueError("Assessment merge received incomplete evidence decisions")
+        normalized = copy.deepcopy(document)
+        seen = set()
+        for row in source_rows([normalized, scanned]):
+            if id(row) in seen:
+                continue
+            seen.add(id(row))
+            validate_source(scope, row, path_key="file")
+            key = source_key(row)
+            locations[key] = {k: row[k] for k in ("repository_id", "sha256")}
+            row["file"] = key
+        for threat in normalized["threats"] + scanned:
+            decision = decisions[threat["local_id"]]
+            # An independent review is the basis of a verified verdict.
+            record_evidence(threat, decision["verdict"], _REVIEW_BASIS.get(decision["verdict"]))
+            if decision["verdict"] == "ambiguous":
+                threat["evidence_tier"] = "insecure-practice"
+                threat.pop("cvss_v4", None)
+            # Comparison scope cannot come from an unrelated root's literal
+            # control name. Actual shared mechanisms need a separate review.
+            if threat.get("control_scope"):
+                threat["control_scope"] = document["component_id"] + ":" + threat["control_scope"]
+        pairs.append((document["component_id"], normalized))
+        scanned_threats.extend(scanned)
+    flat = _flatten_threats(pairs, assessment_boundaries=boundary_view)
+    # Scanner findings already passed intake when they were converted.
+    flat.extend(scanned_threats)
+    normalize_risks(flat)
+    # Reviews already decided each finding. Deduplication keeps the riskiest
+    # member, so it must not let a refuted or unproven duplicate absorb a
+    # finding with a different verdict.
+    by_verdict: dict[str, list[dict]] = {}
+    for threat in flat:
+        by_verdict.setdefault(threat["evidence_check"], []).append(threat)
+    threats = []
+    for verdict, rows in sorted(by_verdict.items()):
+        rows = consolidate_findings(rows)
+        # Group IDs hash the group key, so two verdicts can share one: each
+        # partition is grouped, reviewed and decided on its own.
+        pending, decisions = _split_auto_decisions(_group_candidates(rows))
+        pending = single_repository_groups(pending, components["components"])
+        # Refuted findings never reach the model, so merging them changes nothing.
+        if pending and review_groups is not None and verdict != "refuted":
+            decisions += review_groups(verdict, pending)
+        normalize_risks(rows)
+        threats += _apply_decisions(rows, decisions)
+    normalize_risks(threats)
+    threats = _assign_t_ids(threats)
+    threats = _remap_scenario_local_refs(threats)
+    from contexts.prepare_trust_boundary_context import associate_boundary_refs, revalidate_boundary_refs
+
+    # Both sides still carry root-qualified file keys here, so equal names in
+    # different repositories can never match each other.
+    traceability_gaps = associate_boundary_refs(
+        threats, boundaries=boundary_view, known_component_ids=expected, components=components["components"]
+    )
+    for warning in revalidate_boundary_refs(threats, boundaries=boundary_view, known_component_ids=expected):
+        print(f"TRUST_BOUNDARY_REF_WARN: {warning}", file=sys.stderr)
+    weaknesses = build_weakness_register(threats)
+    seen = set()
+    for row in source_rows({"threats": threats, "weaknesses": weaknesses}):
+        if id(row) in seen:
+            continue
+        seen.add(id(row))
+        qualified = locations.get(row["file"])
+        if qualified is None:
+            raise ValueError("Assessment merge lost the provenance of a source location")
+        key = row["file"]
+        row.update(qualified)
+        row["file"] = key.split("/", 1)[1]
+        validate_source(scope, row, path_key="file")
+    payload = {
+        "version": 2,
+        "generated_at": (
+            _dt.datetime.fromtimestamp(started_at, _dt.timezone.utc)
+            if started_at is not None
+            else _dt.datetime.now(_dt.timezone.utc)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source_scope_sha256": components["source_scope_sha256"],
+        "component_inventory_fingerprint": fingerprint,
+        "severity_policy_version": 1,
+        "threats": threats,
+        **({"weaknesses": weaknesses} if weaknesses else {}),
+        **({"boundary_traceability_gaps": traceability_gaps} if traceability_gaps else {}),
+    }
+    if not Draft202012Validator(contract("threats-merged-v2.schema.json")).is_valid(payload):
+        raise ValueError("Assessment merge violates its versioned output contract")
+    scope.verify_unchanged()
+    return payload
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     cand_path = out_dir / ".merge-candidates.json"
@@ -3228,18 +3461,19 @@ def cmd_finalize(args: argparse.Namespace) -> int:
 
     # Merging rebuilds survivors' instances and unions members' references, so
     # the shared finding rule has the last word on what this artifact carries.
-    from contexts.prepare_trust_boundary_context import revalidate_boundary_refs
+    from contexts.prepare_trust_boundary_context import associate_boundary_refs, revalidate_boundary_refs
 
     boundary_doc = _read_json_file(out_dir / ".trust-boundaries.json", default={})
     component_doc = _read_json_file(out_dir / ".components.json", default={})
-    registered = {
-        row["id"]
-        for row in (component_doc.get("components") or [] if isinstance(component_doc, dict) else [])
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-    }
+    component_rows = component_doc.get("components") or [] if isinstance(component_doc, dict) else []
+    registered = {row["id"] for row in component_rows if isinstance(row, dict) and isinstance(row.get("id"), str)}
+    boundary_rows = boundary_doc.get("trust_boundaries") or [] if isinstance(boundary_doc, dict) else []
+    traceability_gaps = associate_boundary_refs(
+        threats, boundaries=boundary_rows, known_component_ids=registered or None, components=component_rows
+    )
     for warning in revalidate_boundary_refs(
         threats,
-        boundaries=boundary_doc.get("trust_boundaries") or [] if isinstance(boundary_doc, dict) else [],
+        boundaries=boundary_rows,
         known_component_ids=registered or None,
     ):
         print(f"TRUST_BOUNDARY_REF_WARN: {warning}", file=sys.stderr)
@@ -3255,6 +3489,8 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         payload["weaknesses"] = weaknesses
     if attribution_corrections:
         payload["actor_attribution_corrections"] = attribution_corrections
+    if traceability_gaps:
+        payload["boundary_traceability_gaps"] = traceability_gaps
 
     out_path = out_dir / ".threats-merged.json"
     # Atomic write — `.threats-merged.json` is a canonical intermediate
@@ -3297,6 +3533,61 @@ def cmd_finalize(args: argparse.Namespace) -> int:
             pass  # best-effort; never block the merge
 
     return 0
+
+
+def cmd_reconcile_attribution(args: argparse.Namespace) -> int:
+    """Apply finalize's actor attribution once actors are resolved after the merge.
+
+    The assessment controller resolves actors after ``merge_assessment``; this
+    runs the same rule then, keeping corrections an earlier pass recorded.
+    """
+    from analyzers.actor_attribution import merge_corrections
+
+    out_dir = Path(args.output_dir).resolve()
+    path = out_dir / ".threats-merged.json"
+    payload = _read_json_file(path, default=None)
+    if not isinstance(payload, dict) or not isinstance(payload.get("threats"), list):
+        print(f"merge_threats: {path} has no threats list", file=sys.stderr)
+        return 1
+    corrections = _reconcile_actor_attribution(out_dir, payload["threats"])
+    if corrections:
+        payload["actor_attribution_corrections"] = merge_corrections(
+            payload.get("actor_attribution_corrections") or [], corrections
+        )
+        atomic_write_json(path, payload, indent=2, sort_keys=False)
+    print(f"merge_threats: {len(corrections)} actor attribution correction(s)")
+    return 0
+
+
+# The legacy ``collect``/``finalize`` steps and where the assessment controller
+# runs each of them. Every plugin function those two commands call is either
+# here or in ``ASSESSMENT_OMISSIONS``; tests/test_merge_threats.py enforces it,
+# so a step added to the legacy chain cannot silently skip the controller.
+ASSESSMENT_TAIL = {
+    "merge_threats._flatten_threats": "merge_assessment",
+    "merge_threats.consolidate_findings": "merge_assessment",
+    "_severity_policy.normalize_risks": "merge_assessment",
+    "merge_threats._group_candidates": "merge_assessment",
+    "merge_threats._split_auto_decisions": "merge_assessment",
+    "merge_threats._apply_decisions": "merge_assessment",
+    "merge_threats._assign_t_ids": "merge_assessment",
+    "merge_threats._remap_scenario_local_refs": "merge_assessment",
+    "prepare_trust_boundary_context.associate_boundary_refs": "merge_assessment",
+    "prepare_trust_boundary_context.revalidate_boundary_refs": "merge_assessment",
+    "merge_threats._reconcile_actor_attribution": "controller render: merge_threats reconcile-attribution",
+    "merge_threats.refresh_weaknesses": "controller render: merge_threats refresh-weaknesses",
+}
+ASSESSMENT_OMISSIONS = {
+    "merge_threats._load_stride_outputs": "STRIDE artifacts arrive validated in memory, not as .stride-*.json files",
+    "stride_outputs.stride_output_files": "STRIDE artifacts arrive validated in memory, not as .stride-*.json files",
+    "merge_threats._collect_resolved_prior_findings": "incremental affirmed fixes; every assessment is a full run",
+    "merge_threats._load_config_scan_findings": "scanner findings arrive as scanner_threats; sidecars are not re-read",
+    "merge_threats._load_source_auth_findings": "scanner findings arrive as scanner_threats; sidecars are not re-read",
+    "merge_threats._read_agent_decisions": "merger decisions come from the controller job and are validated there",
+    "merge_threats._read_json_file": "artifact I/O; merge_assessment receives its inputs in memory",
+    "_atomic_io.atomic_write_json": "artifact I/O; the controller writes the merged register itself",
+    "_artifact_stamp.carry_generated_at": "artifact I/O; the controller stamps generated_at from its start time",
+}
 
 
 def cmd_validate_decisions(args: argparse.Namespace) -> int:
@@ -3351,6 +3642,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     w = sub.add_parser("refresh-weaknesses", help="Rebuild weaknesses after evidence verification and triage.")
     w.add_argument("--output-dir", required=True)
     w.set_defaults(func=cmd_refresh_weaknesses)
+
+    a = sub.add_parser("reconcile-attribution", help="Apply actor attribution after actors were resolved.")
+    a.add_argument("--output-dir", required=True)
+    a.set_defaults(func=cmd_reconcile_attribution)
 
     v = sub.add_parser(
         "validate-decisions",

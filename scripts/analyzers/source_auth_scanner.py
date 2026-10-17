@@ -68,6 +68,7 @@ import argparse
 import ast
 import json
 import os
+import posixpath
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -183,11 +184,15 @@ class Finding:
     recommended_mitigation_title: str
     breach_vector: str
     evidence_tier: str | None = None
+    object_ref: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # YAML loading
 # ---------------------------------------------------------------------------
+# Every catalog row becomes one compiled Check. A bad regex or an unknown
+# counter_scope fails the whole load, so a broken catalog never scans with
+# silently missing rules.
 
 
 def _compile_pattern(p: str, *, name: str, check_id: str) -> re.Pattern[str]:
@@ -248,6 +253,9 @@ def load_checks(checks_path: Path) -> list[Check]:
 # ---------------------------------------------------------------------------
 # File-system walk
 # ---------------------------------------------------------------------------
+# Which files a check reads: the walk prunes build output, _UNIVERSAL_EXCLUDES
+# drops whole path segments, and each check's file_patterns /
+# exclude_file_patterns are matched with the glob dialect below.
 
 
 def _is_universally_excluded(rel_path: str) -> bool:
@@ -264,91 +272,54 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
       `**`          → `.*`  (matches any path including slashes)
       `*`           → `[^/]*`  (matches anything except slash)
       `?`           → `[^/]`
-      `{a,b,c}`     → `(?:a|b|c)`  (brace expansion)
+      `{a,b,c}`     → `(?:a|b|c)`  (brace expansion; each alternative
+                      follows these same rules, braces do not nest)
       every other char is regex-escaped.
 
     Pattern `**/foo.ts` matches both `foo.ts` (top-level) AND
     `sub/dir/foo.ts` — this is the cross-shell convention that fnmatch
     + PurePath.match do not give us.
     """
+    return re.compile("^" + _glob_body_to_regex(pattern) + "$")
 
-    # 1) handle brace expansion first
-    def expand_braces(s: str) -> str:
-        out = []
-        i = 0
-        while i < len(s):
-            if s[i] == "{":
-                j = s.find("}", i)
-                if j == -1:
-                    out.append(s[i])
-                    i += 1
-                    continue
-                alts = s[i + 1 : j].split(",")
-                out.append("(?:" + "|".join(re.escape(a.strip()) for a in alts) + ")")
-                i = j + 1
-            else:
-                out.append(None)  # placeholder; we re-escape below
-                i += 1
-        # rebuild — placeholders become the original char
-        result = []
-        k = 0
-        i = 0
-        while i < len(s):
-            if s[i] == "{":
-                j = s.find("}", i)
-                if j == -1:
-                    result.append(s[i])
-                    i += 1
-                    continue
-                alts = s[i + 1 : j].split(",")
-                result.append("(?:" + "|".join(re.escape(a.strip()) for a in alts) + ")")
-                i = j + 1
-            else:
-                result.append(s[i])
-                i += 1
-        return "".join(result)
 
-    # Convert glob meta to regex tokens.
-    expanded = expand_braces(pattern)
+def _glob_body_to_regex(glob: str) -> str:
+    """Translate a glob into an unanchored regex body (see `_glob_to_regex`)."""
     out: list[str] = []
     i = 0
-    while i < len(expanded):
-        ch = expanded[i]
-        if expanded[i : i + 3] == "**/" or expanded[i : i + 3] == "**\\":
+    while i < len(glob):
+        ch = glob[i]
+        if glob[i : i + 3] == "**/" or glob[i : i + 3] == "**\\":
             # `**/` consumed greedily: matches "" or "any/path/"
             out.append("(?:.*/)?")
             i += 3
-        elif expanded[i : i + 2] == "**":
+        elif glob[i : i + 2] == "**":
             out.append(".*")
             i += 2
-        elif expanded[i : i + 3] == "(?:":
-            # Internal brace-expansion token, not a glob `?` wildcard.
-            out.append("(?:")
-            i += 3
         elif ch == "*":
             out.append("[^/]*")
             i += 1
         elif ch == "?":
             out.append("[^/]")
             i += 1
-        elif ch in ("(", ")", "|", "\\"):
-            # already-expanded brace tokens; keep regex semantics
-            out.append(ch)
-            i += 1
+        elif ch == "{" and "}" in glob[i:]:
+            j = glob.index("}", i)
+            alts = glob[i + 1 : j].split(",")
+            out.append("(?:" + "|".join(_glob_body_to_regex(a.strip()) for a in alts) + ")")
+            i = j + 1
         elif ch == "[":
             # Char class — copy verbatim until matching ]
-            j = expanded.find("]", i)
+            j = glob.find("]", i)
             if j == -1:
                 out.append(re.escape(ch))
                 i += 1
             else:
-                out.append(expanded[i : j + 1])
+                out.append(glob[i : j + 1])
                 i = j + 1
         else:
             out.append(re.escape(ch))
             i += 1
-    regex = "^" + "".join(out) + "$"
-    return re.compile(regex)
+    return "".join(out)
 
 
 _GLOB_CACHE: dict[str, re.Pattern[str]] = {}
@@ -396,9 +367,28 @@ def _walk_repo(repo_root: Path) -> Iterator[Path]:
             yield Path(dirpath) / fn
 
 
+def _read_source(file_abs: Path) -> str | None:
+    """The file's text, or None when it is larger than _MAX_FILE_BYTES or cannot be read."""
+    try:
+        if file_abs.stat().st_size > _MAX_FILE_BYTES:
+            return None
+        return file_abs.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Counter-scope helpers
 # ---------------------------------------------------------------------------
+# A catalog hit is dropped when a counter pattern matches within its scope
+# (see the module docstring) or when its required context is missing.
+#
+# Some rules need more than a regex; their special handling is keyed on the
+# rule ID, so renaming one of these IDs in the catalog silently turns the
+# special handling off:
+#   _counter_match:            AUTHZ-006, AUTHZ-103, AUTHN-001
+#   _required_context_matches: AUTHZ-104, AUTHZ-009, AUTHZ-CS-003
+#   scan_file:                 AUTHZ-001, AUTHZ-002, AUTHN-002
 
 
 def _scope_lines_for_call(lines: list[str], start_idx: int, max_window: int) -> list[str]:
@@ -562,7 +552,7 @@ def _required_context_matches(
 
 
 # ---------------------------------------------------------------------------
-# Core scanner
+# Finding fields shared by every check
 # ---------------------------------------------------------------------------
 
 
@@ -606,6 +596,16 @@ def _source_type_for(file_rel: str) -> str:
 # that producer → consumer relationship without either missing ordinary
 # variable indirection or turning every generic ``response`` variable into a
 # false positive.
+#
+# The pass walks one file top to bottom and keeps a set of "tainted" names:
+# variables assigned from a model call, and anything assigned from them.
+# Entering a function forgets its parameters' taint; leaving it restores the
+# outer state. Each line is then checked against the sinks below, and a sink
+# counts as guarded only when its guard visibly consumes the same value.
+#
+# The call and statement readers in this section (_call_first_argument,
+# _call_arguments, _forward_statement, ...) are also used by the catalog scan
+# and the Node expression checks.
 _LLM_OUTPUT_CHECK_IDS = frozenset(
     {
         "INJ-LLM-001",  # structured output consumed without validation
@@ -787,86 +787,76 @@ def _value_refs(text: str, refs: set[str]) -> set[str]:
     return hits
 
 
-def _call_first_argument(statement: str, call_match: re.Match[str]) -> str:
-    """Extract a call's first argument without executing or fully parsing code."""
-    start = call_match.end()
-    depth = 0
-    quote: str | None = None
-    escaped = False
-    out: list[str] = []
-    for ch in statement[start:]:
-        if escaped:
-            out.append(ch)
-            escaped = False
-            continue
-        if ch == "\\" and quote:
-            out.append(ch)
-            escaped = True
-            continue
-        if quote:
-            out.append(ch)
-            if ch == quote:
-                quote = None
-            continue
+class _StringTracker:
+    """Tells, one character at a time, whether a character is code or part of a string literal.
+
+    The call and statement readers below count brackets and commas; one inside '…', "…" or `…` (with
+    backslash escapes) must not count. Feed every character in order; the state carries across lines.
+    """
+
+    def __init__(self) -> None:
+        self.quote: str | None = None
+        self.escaped = False
+
+    def is_code(self, ch: str) -> bool:
+        if self.escaped:
+            self.escaped = False
+            return False
+        if self.quote:
+            if ch == "\\":
+                self.escaped = True
+            elif ch == self.quote:
+                self.quote = None
+            return False
         if ch in {'"', "'", "`"}:
-            quote = ch
-            out.append(ch)
-            continue
-        if ch in "([{":
-            depth += 1
-            out.append(ch)
-            continue
-        if ch in ")]}":
-            if depth == 0:
+            self.quote = ch
+            return False
+        return True
+
+
+def _call_first_argument(statement: str, call_match: re.Match[str]) -> str:
+    """Extract a call's first argument without executing or fully parsing code.
+
+    ``call_match`` must end just after the opening parenthesis.
+    """
+    strings = _StringTracker()
+    depth = 0
+    out: list[str] = []
+    for ch in statement[call_match.end() :]:
+        if strings.is_code(ch):
+            if ch in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif ch == "," and depth == 0:
                 break
-            depth -= 1
-            out.append(ch)
-            continue
-        if ch == "," and depth == 0:
-            break
+            elif ch in "([{":
+                depth += 1
         out.append(ch)
     return "".join(out).strip()
 
 
 def _call_arguments(statement: str, call_match: re.Match[str]) -> list[str]:
     """Extract bounded top-level call arguments for sinks with multiple locators."""
+    strings = _StringTracker()
     depth = 0
-    quote: str | None = None
-    escaped = False
     current: list[str] = []
     arguments: list[str] = []
     for ch in statement[call_match.end() :]:
-        if escaped:
-            current.append(ch)
-            escaped = False
-            continue
-        if ch == "\\" and quote:
-            current.append(ch)
-            escaped = True
-            continue
-        if quote:
-            current.append(ch)
-            if ch == quote:
-                quote = None
-            continue
-        if ch in {'"', "'", "`"}:
-            quote = ch
-            current.append(ch)
-        elif ch in "([{":
-            depth += 1
-            current.append(ch)
-        elif ch in ")]}":
-            if depth == 0:
+        if strings.is_code(ch):
+            if ch in ")]}" and depth == 0:
                 if current or arguments:
                     arguments.append("".join(current).strip())
                 break
-            depth -= 1
-            current.append(ch)
-        elif ch == "," and depth == 0:
-            arguments.append("".join(current).strip())
-            current = []
-        else:
-            current.append(ch)
+            if ch == "," and depth == 0:
+                arguments.append("".join(current).strip())
+                current = []
+                continue
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+        current.append(ch)
     return arguments
 
 
@@ -883,37 +873,18 @@ def _call_match_consumes_direct_output(statement: str, call_match: re.Match[str]
             return False
         open_idx = call_match.end() + opening.end() - 1
 
+    strings = _StringTracker()
     depth = 1
-    quote: str | None = None
-    escaped = False
     body: list[str] = []
     for ch in statement[open_idx + 1 :]:
-        if escaped:
-            body.append(ch)
-            escaped = False
-            continue
-        if ch == "\\" and quote:
-            body.append(ch)
-            escaped = True
-            continue
-        if quote:
-            body.append(ch)
-            if ch == quote:
-                quote = None
-            continue
-        if ch in {'"', "'", "`"}:
-            quote = ch
-            body.append(ch)
-        elif ch == "(":
-            depth += 1
-            body.append(ch)
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                break
-            body.append(ch)
-        else:
-            body.append(ch)
+        if strings.is_code(ch):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+        body.append(ch)
     return _direct_llm_call("".join(body), has_surface=True)
 
 
@@ -924,27 +895,20 @@ def _guard_wraps_direct_output(scope: str, guard_re: re.Pattern[str]) -> bool:
 
 
 def _forward_statement(lines: list[str], idx: int, limit: int = 6) -> str:
-    """Join a bounded forward window for ordinary multi-line call/JSX forms."""
+    """Join a bounded forward window for ordinary multi-line call/JSX forms.
+
+    The statement ends at the first line that closes every open bracket and does not end in a
+    continuation character (``=``, ``,`` or an opening bracket).
+    """
+    strings = _StringTracker()
     collected: list[str] = []
     depth = 0
-    quote: str | None = None
-    escaped = False
     for raw in lines[idx : min(len(lines), idx + limit)]:
         collected.append(raw)
         for ch in raw:
-            if escaped:
-                escaped = False
+            if not strings.is_code(ch):
                 continue
-            if ch == "\\" and quote:
-                escaped = True
-                continue
-            if quote:
-                if ch == quote:
-                    quote = None
-                continue
-            if ch in {'"', "'", "`"}:
-                quote = ch
-            elif ch in "([{":
+            if ch in "([{":
                 depth += 1
             elif ch in ")]}":
                 depth = max(0, depth - 1)
@@ -977,39 +941,32 @@ def _html_sanitizes_refs(text: str, refs: set[str]) -> bool:
 
 
 def _definition_scope(lines: list[str], start: int, limit: int = 24) -> str:
-    """Return one bounded schema definition without borrowing nearby constraints."""
+    """Return one bounded schema definition without borrowing nearby constraints.
+
+    A Python class ends at the next line indented no deeper than ``class``; any other definition ends
+    when its brackets close, or at ``;`` when it has none.
+    """
     first = lines[start]
     if re.match(r"^\s*class\s+", first):
-        base_indent = len(first) - len(first.lstrip())
+        base_indent = _indent(first)
         end = start + 1
         while end < min(len(lines), start + limit):
             candidate = lines[end]
-            if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= base_indent:
+            if candidate.strip() and _indent(candidate) <= base_indent:
                 break
             end += 1
         return "\n".join(lines[start:end])
 
+    strings = _StringTracker()
     collected: list[str] = []
     depth = 0
     saw_delimiter = False
-    quote: str | None = None
-    escaped = False
     for raw in lines[start : min(len(lines), start + limit)]:
         collected.append(raw)
         for ch in raw:
-            if escaped:
-                escaped = False
+            if not strings.is_code(ch):
                 continue
-            if ch == "\\" and quote:
-                escaped = True
-                continue
-            if quote:
-                if ch == quote:
-                    quote = None
-                continue
-            if ch in {'"', "'", "`"}:
-                quote = ch
-            elif ch in "([{":
+            if ch in "([{":
                 saw_delimiter = True
                 depth += 1
             elif ch in ")]}":
@@ -1175,15 +1132,20 @@ def _resource_sink_argument(statement: str, sink_match: re.Match[str]) -> str:
 
 
 def _guard_scope_before(lines: list[str], idx: int, column: int, before: int = 14) -> str:
+    """The lines before a sink in which a guard can protect it, plus the sink line up to the sink.
+
+    Walks back to the start of the enclosing function, keeping only lines at the sink's nesting
+    level or outside it: a guard inside a closed sibling block does not protect the sink.
+    """
     prior: list[str] = []
     depth = 0
-    indent = len(lines[idx]) - len(lines[idx].lstrip())
+    indent = _indent(lines[idx])
     for line in reversed(lines[max(0, idx - before) : idx]):
         if re.search(r"\b(?:function|def|class)\b|=>\s*{", line):
             break
         braces = code_only(line)
         depth += braces.count("}") - braces.count("{")
-        if depth <= 0 and len(line) - len(line.lstrip()) <= indent:
+        if depth <= 0 and _indent(line) <= indent:
             prior.append(line)
     return "\n".join([*reversed(prior), lines[idx][:column]])
 
@@ -1577,12 +1539,7 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
         return []
     if _matches_any_glob(file_rel, _LLM_OUTPUT_EXCLUDE_GLOBS):
         return []
-    try:
-        if file_abs.stat().st_size > _MAX_FILE_BYTES:
-            return []
-        text = file_abs.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
+    text = _read_source(file_abs)
     if not text or not _LLM_SURFACE_RE.search(text):
         return []
 
@@ -1602,7 +1559,7 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
     function_frames: list[tuple[int, int, set[str], set[str]]] = []
     brace_depth = 0
     for idx, line in enumerate(lines):
-        indent = len(line) - len(line.lstrip())
+        indent = _indent(line)
         tainted, html_sanitized = _update_llm_function_frames(
             line, suffix, indent, brace_depth, function_frames, tainted, html_sanitized
         )
@@ -1641,6 +1598,10 @@ def _title_with_location(check: Check, file: str, line: int) -> str:
 # ---------------------------------------------------------------------------
 # Node input-to-expression checks (INJ-NODE-006/007/008)
 # ---------------------------------------------------------------------------
+# Like the LLM-output pass, but the source is request input or a database
+# record read and the sinks are $where predicates, eval-style execution and
+# template compilation. Findings carry evidence_tier "insecure-practice": the
+# path is visible, attacker control is not proven.
 
 _REQUEST_INPUT = re.compile(r"\b(?:req|request)\.(?:body|query|params|headers)\b")
 _RECORD_READ = re.compile(r"\b[\w.]+\.(?:findByPk|findById|findOne|findUnique)\s*\(")
@@ -1650,6 +1611,7 @@ _TEMPLATE_COMPILE = re.compile(r"\b(?:pug|jade|ejs|handlebars)\.(?:compile|rende
 
 
 def _without_js_comments(text: str) -> str:
+    """Blank out JS comments, keeping line breaks and string literals (so line numbers stay valid)."""
     return _JS_LEXEME.sub(lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith("/") else m[0], text)
 
 
@@ -1670,8 +1632,12 @@ def _numeric_expression(expr: str) -> bool:
 
 
 def _expression_code(expr: str) -> str:
-    # A quoted identifier is data, not a read of that variable. Template
-    # interpolation remains code; its surrounding literal words do not.
+    """The parts of an expression that are code, with a whole numeric conversion of request input as ``0``.
+
+    A quoted identifier is data, not a read of that variable. Template interpolation remains code; its
+    surrounding literal words do not.
+    """
+
     def code(match: re.Match) -> str:
         token = match[0]
         if token.startswith("`"):
@@ -1690,6 +1656,25 @@ def _expression_input_refs(expr: str, names: set[str]) -> set[str]:
     return _refs_in(_expression_code(expr), names)
 
 
+_EXPRESSION_EXTS = {".js", ".ts", ".mjs", ".cjs"}
+# A source further back than this no longer taints a name; it bounds propagation to roughly one handler.
+_EXPRESSION_TAINT_LINES = 120
+# How far back from the sink `if (` / ternary conditions are quoted in the scenario.
+_CONDITION_LOOKBACK = 24
+# A function or arrow-function head starts a new handler, which forgets every tainted name.
+_HANDLER_START = re.compile(r"\bfunction\s+\w+\s*\(|(?:return|=)\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{")
+# `x.replace(/[^\w-]+/g, "")` leaves only identifier characters, which cannot form an expression.
+_IDENTIFIER_ONLY_REPLACE = re.compile(
+    r"[\w.]+\.replace\(\s*/\[\^(?:\\w-|A-Za-z0-9_-|a-zA-Z0-9_-)\]\+?/g\s*,\s*([\"'])\1\s*\)"
+)
+# (sink, check id, CWE, finding type, title) of the three checks.
+_EXPRESSION_SINKS = (
+    (_DYNAMIC_WHERE, "INJ-NODE-006", "CWE-943", "FT-002", "Input in executable NoSQL predicate"),
+    (_CODE_EXEC_RE, "INJ-NODE-007", "CWE-94", "FT-020", "Input passed to code execution"),
+    (_TEMPLATE_COMPILE, "INJ-NODE-008", "CWE-1336", "FT-022", "Input compiled as template source"),
+)
+
+
 def _scan_expression_inputs(file_abs: Path, file_rel: str) -> list[Finding]:
     """Bounded Node input-to-expression checks, emitted as unproven practices.
 
@@ -1702,96 +1687,106 @@ def _scan_expression_inputs(file_abs: Path, file_rel: str) -> list[Finding]:
     Constants, whole numeric conversions, test files, comments, and unrelated
     variables are excluded. Propagation is limited to one handler and 120 lines.
     """
-    if file_abs.suffix not in {".js", ".ts", ".mjs", ".cjs"} or _matches_any_glob(file_rel, _LLM_OUTPUT_EXCLUDE_GLOBS):
+    if file_abs.suffix not in _EXPRESSION_EXTS or _matches_any_glob(file_rel, _LLM_OUTPUT_EXCLUDE_GLOBS):
         return []
-    try:
-        if file_abs.stat().st_size > _MAX_FILE_BYTES:
-            return []
-        original = file_abs.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    text = _read_source(file_abs)
+    if text is None:
         return []
+    original = text.splitlines()
     lines = _without_js_comments("\n".join(original)).splitlines()
+    # name -> (line index, "request input" | "persisted record") of the read it holds.
     tainted: dict[str, tuple[int, str]] = {}
     findings = []
     for idx, line in enumerate(lines):
-        if re.search(r"\bfunction\s+\w+\s*\(|(?:return|=)\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{", line):
+        if _HANDLER_START.search(line):
             tainted.clear()
-        tainted = {name: source for name, source in tainted.items() if idx - source[0] <= 120}
+        tainted = {name: source for name, source in tainted.items() if idx - source[0] <= _EXPRESSION_TAINT_LINES}
         statement = _forward_statement(lines, idx)
-        assignment = _assignment(line)
-        if assignment:
-            targets, rhs = assignment
-            refs = _expression_input_refs(rhs, set(tainted))
-            source = None
-            if _REQUEST_INPUT.search(_expression_code(rhs)):
-                source = (idx, "request input")
-            elif _RECORD_READ.search(rhs):
-                source = (idx, "persisted record")
-            elif refs:
-                source = min(tainted[name] for name in refs)
-            constrained = re.fullmatch(
-                r"[\w.]+\.replace\(\s*/\[\^(?:\\w-|A-Za-z0-9_-|a-zA-Z0-9_-)\]\+?/g\s*,\s*([\"'])\1\s*\)",
-                rhs.strip().rstrip(";"),
-            )
-            if _numeric_expression(rhs) or constrained:
-                source = None
-            for target in targets:
-                if source:
-                    tainted[target] = source
-                else:
-                    tainted.pop(target, None)
+        _track_expression_taint(line, idx, tainted)
 
-        for pattern, check_id, cwe, finding_type, title in (
-            (_DYNAMIC_WHERE, "INJ-NODE-006", "CWE-943", "FT-002", "Input in executable NoSQL predicate"),
-            (_CODE_EXEC_RE, "INJ-NODE-007", "CWE-94", "FT-020", "Input passed to code execution"),
-            (_TEMPLATE_COMPILE, "INJ-NODE-008", "CWE-1336", "FT-022", "Input compiled as template source"),
-        ):
-            match = pattern.search(line)
+        for sink in _EXPRESSION_SINKS:
+            match = sink[0].search(line)
             if not match:
                 continue
-            if pattern is _DYNAMIC_WHERE:
-                # Parse one expression so a later callback cannot taint a constant predicate.
-                argument = _call_first_argument("(" + statement[match.end() :], re.match(r"\(", "("))
-            else:
-                argument = _call_first_argument(statement, match)
+            argument = _expression_sink_argument(sink[0], match, statement)
             refs = _expression_input_refs(argument, set(tainted))
             direct = bool(_REQUEST_INPUT.search(_expression_code(argument)))
             if (not refs and not direct) or _numeric_expression(argument):
                 continue
-            source_idx, source_kind = (idx, "request input") if direct else min(tainted[name] for name in refs)
-            conditions = [
-                _cut_condition(raw)
-                for raw in lines[max(source_idx, idx - 24) : idx + 1]
-                if re.search(r"\bif\s*\(|\s\?\s", raw)
-            ][:3]
-            condition_text = " Observed path conditions: " + " | ".join(conditions) + "." if conditions else ""
-            findings.append(
-                Finding(
-                    local_id="",
-                    check_id=check_id,
-                    finding_type_id=finding_type,
-                    source_type=_source_type_for(file_rel),
-                    file=file_rel,
-                    line=idx + 1,
-                    evidence_snippet=_evidence_snippet(original, idx),
-                    title=f"{title} — {file_rel}:{idx + 1}",
-                    scenario=(
-                        f"{source_kind.capitalize()} read at {file_rel}:{source_idx + 1} reaches an executable "
-                        f"expression at {file_rel}:{idx + 1}.{condition_text} The unsafe path is observed; "
-                        "attacker control, access prerequisites, and active configuration require verification."
-                    ),
-                    severity="High",
-                    cwe=[cwe],
-                    recommended_mitigation_title=(
-                        "Use typed query predicates instead of $where"
-                        if pattern is _DYNAMIC_WHERE
-                        else "Keep input as data; remove dynamic code or template-source compilation"
-                    ),
-                    breach_vector="n/a",
-                    evidence_tier="insecure-practice",
-                )
-            )
+            source = (idx, "request input") if direct else min(tainted[name] for name in refs)
+            findings.append(_expression_finding(sink, file_rel, original, lines, idx, source))
     return findings
+
+
+def _track_expression_taint(line: str, idx: int, tainted: dict[str, tuple[int, str]]) -> None:
+    """Update ``tainted`` for an assignment on this line: a request or record read, or a tainted name on the
+    right taints the targets; anything else, a whole numeric conversion or an identifier-only replace clears them."""
+    assignment = _assignment(line)
+    if not assignment:
+        return
+    targets, rhs = assignment
+    refs = _expression_input_refs(rhs, set(tainted))
+    source = None
+    if _REQUEST_INPUT.search(_expression_code(rhs)):
+        source = (idx, "request input")
+    elif _RECORD_READ.search(rhs):
+        source = (idx, "persisted record")
+    elif refs:
+        source = min(tainted[name] for name in refs)
+    constrained = _IDENTIFIER_ONLY_REPLACE.fullmatch(rhs.strip().rstrip(";"))
+    if _numeric_expression(rhs) or constrained:
+        source = None
+    for target in targets:
+        if source:
+            tainted[target] = source
+        else:
+            tainted.pop(target, None)
+
+
+def _expression_sink_argument(pattern: re.Pattern[str], match: re.Match[str], statement: str) -> str:
+    """The expression the sink executes: the call's first argument, or the `$where` value."""
+    if pattern is _DYNAMIC_WHERE:
+        # Parse one expression so a later callback cannot taint a constant predicate.
+        return _call_first_argument("(" + statement[match.end() :], re.match(r"\(", "("))
+    return _call_first_argument(statement, match)
+
+
+def _expression_finding(
+    sink: tuple, file_rel: str, original: list[str], lines: list[str], idx: int, source: tuple[int, str]
+) -> Finding:
+    """An insecure-practice finding; the scenario names the source line and up to three path conditions."""
+    pattern, check_id, cwe, finding_type, title = sink
+    source_idx, source_kind = source
+    conditions = [
+        _cut_condition(raw)
+        for raw in lines[max(source_idx, idx - _CONDITION_LOOKBACK) : idx + 1]
+        if re.search(r"\bif\s*\(|\s\?\s", raw)
+    ][:3]
+    condition_text = " Observed path conditions: " + " | ".join(conditions) + "." if conditions else ""
+    return Finding(
+        local_id="",
+        check_id=check_id,
+        finding_type_id=finding_type,
+        source_type=_source_type_for(file_rel),
+        file=file_rel,
+        line=idx + 1,
+        evidence_snippet=_evidence_snippet(original, idx),
+        title=f"{title} — {file_rel}:{idx + 1}",
+        scenario=(
+            f"{source_kind.capitalize()} read at {file_rel}:{source_idx + 1} reaches an executable "
+            f"expression at {file_rel}:{idx + 1}.{condition_text} The unsafe path is observed; "
+            "attacker control, access prerequisites, and active configuration require verification."
+        ),
+        severity="High",
+        cwe=[cwe],
+        recommended_mitigation_title=(
+            "Use typed query predicates instead of $where"
+            if pattern is _DYNAMIC_WHERE
+            else "Keep input as data; remove dynamic code or template-source compilation"
+        ),
+        breach_vector="n/a",
+        evidence_tier="insecure-practice",
+    )
 
 
 def _cut_condition(line: str) -> str:
@@ -1801,19 +1796,27 @@ def _cut_condition(line: str) -> str:
 # ---------------------------------------------------------------------------
 # Catalog scan
 # ---------------------------------------------------------------------------
+# scan_file runs the YAML catalog on one file; scan_repo walks the repository,
+# adds the two flow passes above, drops other hits on a line and CWE the LLM
+# pass already reports, and numbers the result.
 
 
 def _strong_password_rejection(lines: list[str], idx: int, matched: str) -> bool:
+    """AUTHN-002 exception: the length check that matched rejects passwords shorter than 8 characters.
+
+    Follows the matched variable through the same block (up to 12 lines) and accepts only a comparison
+    that rejects the request; the next unrelated condition or use of the variable ends the search.
+    """
     identifier = re.search(r"(?:len\(\s*)?([A-Za-z_]\w*)", matched)
     if not identifier:
         return False
     name = re.escape(identifier.group(1))
     pattern = re.compile(rf"(?:\b{name}\.length(?:\(\))?|len\(\s*{name}\s*\))\s*(<|<=)\s*(\d+)\b")
     depth = 0
-    base_indent = len(lines[idx]) - len(lines[idx].lstrip())
+    base_indent = _indent(lines[idx])
     for pos in range(idx, min(len(lines), idx + 12)):
         line = lines[pos]
-        indent = len(line) - len(line.lstrip())
+        indent = _indent(line)
         if pos > idx and (re.search(r"\b(?:function|def|class)\b", line) or (line.strip() and indent < base_indent)):
             break
         syntax = code_only(line)
@@ -1824,7 +1827,7 @@ def _strong_password_rejection(lines: list[str], idx: int, matched: str) -> bool
         if line.rstrip().endswith(":"):
             block = []
             for following in lines[pos + 1 : pos + 5]:
-                if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                if following.strip() and _indent(following) <= indent:
                     break
                 block.append(following)
             statement += "\n" + "\n".join(block)
@@ -1848,15 +1851,10 @@ def scan_file(
     A hit is dropped when a counter pattern matches near it or its required context is missing.
     AUTHZ-001/002 look for the counter only in the affected query and a following ownership guard.
     """
-    try:
-        if file_abs.stat().st_size > _MAX_FILE_BYTES:
-            return []
-        text = file_abs.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
+    text = _read_source(file_abs)
     if not text:
         return []
+    # Evidence quotes the file as written; matching runs on the comment-free text (same line numbers).
     evidence_lines = text.splitlines()
     text = without_comments(text, python=file_abs.suffix == ".py")
     lines = text.splitlines()
@@ -1869,26 +1867,11 @@ def scan_file(
             continue
 
         for m in check.pattern.finditer(text):
-            # Resolve line number: count newlines before the match start.
             line_idx = text.count("\n", 0, m.start())
-            counter_lines = lines
-            counter_idx = line_idx
             if check.id in {"AUTHZ-001", "AUTHZ-002"}:
-                # Owner/session text must belong to the affected query or to
-                # a rejecting ownership guard before the result is returned.
-                statement = _forward_statement(lines, line_idx)
-                opening = statement.find("(")
-                query = statement[: call_end(statement, opening)] if opening >= 0 else statement
-                tail = []
-                for following in lines[line_idx + len(query.splitlines()) : line_idx + check.counter_window + 1]:
-                    if re.search(r"\b(?:function|def|class)\b|^\s*}", following):
-                        break
-                    if re.search(r"\b(?:requireOwnership|ensureOwner|assertOwnership|verifyOwner)\s*\(", following):
-                        tail.append(following)
-                    elif following.strip():
-                        break
-                counter_lines = (query + "\n" + "\n".join(tail)).splitlines()
-                counter_idx = 0
+                counter_lines, counter_idx = _query_and_ownership_guard(lines, line_idx, check), 0
+            else:
+                counter_lines, counter_idx = lines, line_idx
             if _counter_match(counter_lines, counter_idx, check):
                 continue
             if check.id == "AUTHN-002" and _strong_password_rejection(lines, line_idx, m.group(0)):
@@ -1897,24 +1880,328 @@ def scan_file(
                 continue
             if not _required_context_matches(lines, line_idx, check):
                 continue
-            findings.append(
-                Finding(
-                    local_id="",  # filled in by aggregator
-                    check_id=check.id,
-                    finding_type_id=check.finding_type,
-                    source_type=_source_type_for(file_rel),
-                    file=file_rel,
-                    line=line_idx + 1,
-                    evidence_snippet=_evidence_snippet(evidence_lines, line_idx),
-                    title=_title_with_location(check, file_rel, line_idx + 1),
-                    scenario=check.rationale,  # an attack scenario; requirements belong in remediation
-                    severity=check.severity_if_violated,
-                    cwe=[check.cwe] if check.cwe else [],
-                    recommended_mitigation_title=check.remediation,
-                    breach_vector=check.breach_vector,
-                )
-            )
+            finding = _catalog_finding(check, file_rel, evidence_lines, line_idx)
+            if check.id in _OBJECT_LOOKUP_CHECKS:
+                # The hit itself may name the query call (AUTHZ-002), so the look-back ends at the
+                # match end, clipped to the hit line.
+                line_start = text.rfind("\n", 0, m.start()) + 1
+                line_end = text.find("\n", m.start())
+                end = m.end() if line_end < 0 else min(m.end(), line_end)
+                finding.object_ref = _query_object(lines, line_idx, end - line_start)
+            findings.append(finding)
     return findings
+
+
+# Owner-ID and object-lookup checks whose hit sits inside a data query.
+_OBJECT_LOOKUP_CHECKS = frozenset({"AUTHZ-001", "AUTHZ-002"})
+# A data-access call on a receiver: `AddressModel.findAll(`, `ordersCollection.update(`.
+_QUERY_CALL_RE = re.compile(
+    r"\b([A-Za-z_$][\w$]*)\s*\.\s*(?:findAll|findOne|findByPk|findById|findUnique|findFirst|findMany|find|"
+    r"count|create|bulkCreate|insert|insertOne|insertMany|update|updateOne|updateMany|upsert|increment|"
+    r"decrement|destroy|delete|deleteOne|deleteMany|remove|save|aggregate)\s*\("
+)
+_RECEIVER_SUFFIX_RE = re.compile(r"(?:Model|Models|Repository|Repo|Collection|Schema|Entity|Table|Dao|DAO|Store)$")
+
+
+def _query_object(lines: list[str], line_idx: int, column: int) -> str | None:
+    """The data object the query around a hit targets, or None when no single query encloses it.
+
+    The receiver of the nearest data-access call whose argument list is still open at the hit names the
+    object (`AddressModel.findAll({ where: { UserId: … } })` → `Address`). Looking back is bounded to the
+    statement lines just above the hit, so an unrelated query earlier in the function is never borrowed.
+    """
+    before = "\n".join([*lines[max(0, line_idx - 6) : line_idx], lines[line_idx][:column]])
+    for match in reversed(list(_QUERY_CALL_RE.finditer(before))):
+        tail = before[match.end() :]
+        if tail.count("(") - tail.count(")") >= 0 and ";" not in tail:
+            return _RECEIVER_SUFFIX_RE.sub("", match.group(1)) or match.group(1)
+    return None
+
+
+def _query_and_ownership_guard(lines: list[str], line_idx: int, check: Check) -> list[str]:
+    """The counter scope of AUTHZ-001/002: the affected query call, plus ownership-guard calls directly after it.
+
+    Owner or session text elsewhere in the window (another query, a log line) does not clear the hit; the
+    guard lines must follow the query without any other statement in between.
+    """
+    statement = _forward_statement(lines, line_idx)
+    opening = statement.find("(")
+    query = statement[: call_end(statement, opening)] if opening >= 0 else statement
+    tail = []
+    for following in lines[line_idx + len(query.splitlines()) : line_idx + check.counter_window + 1]:
+        if re.search(r"\b(?:function|def|class)\b|^\s*}", following):
+            break
+        if re.search(r"\b(?:requireOwnership|ensureOwner|assertOwnership|verifyOwner)\s*\(", following):
+            tail.append(following)
+        elif following.strip():
+            break
+    return (query + "\n" + "\n".join(tail)).splitlines()
+
+
+def _catalog_finding(check: Check, file_rel: str, evidence_lines: list[str], line_idx: int) -> Finding:
+    return Finding(
+        local_id="",  # filled in by scan_repo
+        check_id=check.id,
+        finding_type_id=check.finding_type,
+        source_type=_source_type_for(file_rel),
+        file=file_rel,
+        line=line_idx + 1,
+        evidence_snippet=_evidence_snippet(evidence_lines, line_idx),
+        title=_title_with_location(check, file_rel, line_idx + 1),
+        scenario=check.rationale,  # an attack scenario; requirements belong in remediation
+        severity=check.severity_if_violated,
+        cwe=[check.cwe] if check.cwe else [],
+        recommended_mitigation_title=check.remediation,
+        breach_vector=check.breach_vector,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Owner field bound to the authenticated identity by route middleware
+# ---------------------------------------------------------------------------
+#
+# Signal: a middleware function assigns `req.body|query|params.<field>` from
+# the authenticated identity (a token, session or verified claim) and calls
+# `next(`; route registrations mount it before a handler, directly or through
+# an earlier `<router>.use(<prefix>, …)` on the same router.
+# Trigger: an AUTHZ-001 hit binds that same request field inside a handler
+# whose every registration carries the middleware. The query then filters by
+# the session identity, so the hit is not an owner-ID injection.
+# Exclusions (the hit is kept): the assignment reads client input (body,
+# query, params, headers, cookies); the middleware never calls `next(`; a
+# handler cannot be resolved to its defining module through an import; any
+# registration of the handler lacks the middleware; the middleware binds a
+# different field or request part than the hit reads.
+
+_SCRIPT_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
+_IDENT = r"[A-Za-z_$][\w$]*"
+_TOP_LEVEL_DEFINITION_RE = re.compile(
+    rf"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?\s*({_IDENT})|(?:const|let|var)\s+({_IDENT})\s*[:=])"
+)
+_REQUEST_FIELD_ASSIGNMENT_RE = re.compile(rf"\breq\.(body|query|params)\.({_IDENT})\s*=(?!=)\s*(.+)")
+_NAMESPACE_IMPORT_RE = re.compile(rf"import\s+\*\s+as\s+({_IDENT})\s+from\s+['\"]([^'\"]+)['\"]")
+_NAMED_IMPORT_RE = re.compile(r"import\s*\{([^}]*)\}\s*from\s+['\"]([^'\"]+)['\"]")
+_REQUIRE_RE = re.compile(rf"(?:const|let|var)\s+({_IDENT})\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
+_DESTRUCTURED_REQUIRE_RE = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
+_ROUTE_CALL_RE = re.compile(rf"\b({_IDENT})\.(get|head|options|post|put|patch|delete|all|use)\s*\(")
+
+
+def _module_key(path: str) -> str:
+    """A repository module without its script extension or trailing `/index`."""
+    stem = posixpath.normpath(path)
+    for suffix in _SCRIPT_SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return stem[: -len("/index")] if stem.endswith("/index") else stem
+
+
+def _definition_bodies(text: str) -> list[tuple[str, int, list[str]]]:
+    """Return bounded, balanced top-level bodies; trailing code is not a body."""
+    lines = text.splitlines()
+    starts = [
+        (i, m.group(1) or m.group(2))
+        for i, line in enumerate(code_only(text).splitlines())
+        if (m := _TOP_LEVEL_DEFINITION_RE.match(line))
+    ]
+    result = []
+    for n, (start, name) in enumerate(starts):
+        body = "\n".join(lines[start : starts[n + 1][0] if n + 1 < len(starts) else len(lines)])
+        masked = code_only(body)
+        opening = masked.find("{")
+        if opening < 0:
+            continue
+        depth = 0
+        for offset in range(opening, len(masked)):
+            depth += (masked[offset] == "{") - (masked[offset] == "}")
+            if depth == 0:
+                result.append((name, start, body[: offset + 1].splitlines()))
+                break
+    return result
+
+
+def _identity_binding_middlewares(scripts: dict[str, str]) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """Recognize straight-line middleware factories, keyed by defining module.
+
+    Branches, callbacks, extra statements and early continuation are uncertain,
+    so they never establish the guarantee needed to suppress a finding.
+    """
+    bound: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for rel, text in scripts.items():
+        for name, _start, body in _definition_bodies(text):
+            joined = "\n".join(body)
+            factory = re.fullmatch(
+                rf"(?:export\s+)?const\s+{re.escape(name)}\s*=\s*\(\s*\)\s*=>\s*\{{\s*"
+                r"return\s*\(\s*req\s*,\s*res\s*,\s*next\s*\)\s*=>\s*\{(?P<body>.*?)\}\s*;?\s*\}",
+                joined,
+                re.S,
+            )
+            if not factory:
+                continue
+            statements = [s.strip() for s in re.split(r"[;\n]", factory["body"]) if s.strip()]
+            if not statements or statements[-1] != "next()":
+                continue
+            fields = set()
+            for statement in statements[:-1]:
+                m = _REQUEST_FIELD_ASSIGNMENT_RE.fullmatch(statement)
+                if not m or not re.fullmatch(
+                    rf"(?:(?:req\.(?:user|auth)|res\.locals\.user)(?:\.{_IDENT})+"
+                    rf"|sessions\.lookup\(readToken\(req\)\)(?:\.{_IDENT})+)",
+                    m.group(3),
+                ):
+                    break
+                fields.add((m.group(1), m.group(2)))
+            else:
+                if fields:
+                    bound[(_module_key(rel), name)] = fields
+    return bound
+
+
+def _imported_functions(rel: str, text: str) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """Namespace alias → module and imported name → module, for relative imports of one file."""
+
+    def resolve(spec: str) -> str | None:
+        return _module_key(posixpath.join(posixpath.dirname(rel), spec)) if spec.startswith(".") else None
+
+    namespaces: dict[str, str] = {}
+    names: dict[str, tuple[str, str]] = {}
+    masked = code_only(text)
+    for regex in (_NAMESPACE_IMPORT_RE, _REQUIRE_RE):
+        for match in regex.finditer(text):
+            if not masked[match.start() : match.start() + 6].strip():
+                continue
+            alias, spec = match.groups()
+            if (module := resolve(spec)) is not None:
+                namespaces[alias] = module
+    for regex in (_NAMED_IMPORT_RE, _DESTRUCTURED_REQUIRE_RE):
+        for match in regex.finditer(text):
+            if not masked[match.start() : match.start() + 6].strip():
+                continue
+            listed, spec = match.groups()
+            if (module := resolve(spec)) is None:
+                continue
+            for item in listed.split(","):
+                parts = re.split(r"\s+as\s+|\s*:\s*", item.strip())
+                if parts and parts[0]:
+                    names[parts[-1]] = (module, parts[0])
+    return namespaces, names
+
+
+def _handler_bindings(
+    scripts: dict[str, str], middlewares: dict[tuple[str, str], set[tuple[str, str]]]
+) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """(handler module, handler name) → the identity-bound request fields EVERY registration guarantees."""
+    seen: dict[tuple[str, str], list[set[tuple[str, str]]]] = {}
+    for rel, text in scripts.items():
+        namespaces, names = _imported_functions(rel, text)
+        module = _module_key(rel)
+        mounts: list[tuple[str, int, str, set[tuple[str, str]]]] = []
+        masked = code_only(text)
+        cursor = depth = 0
+        for m in _ROUTE_CALL_RE.finditer(text):
+            depth += masked[cursor : m.start()].count("{") - masked[cursor : m.start()].count("}")
+            cursor = m.start()
+            if not masked[m.start() : m.end(2)].strip():
+                continue
+            receiver, verb = m.group(1), m.group(2)
+            # A registration call is bounded so a malformed file cannot make every route rescan it.
+            call = text[m.end(2) : m.end(2) + 4000].lstrip()
+            opening = re.match(r"\(", call)
+            if opening is None or not call[: call_end(call, 0)].endswith(")"):
+                return {}  # An incomplete registration cannot establish exhaustive coverage.
+            all_args = _call_arguments(call, opening)
+            literal = re.fullmatch(r"(['\"])([^'\"\\]*)\1", all_args[0]) if all_args else None
+            path = literal[2] if literal else ""
+            args = all_args[1:] if literal or verb != "use" else all_args
+            position = m.start()
+            inherited: set[tuple[str, str]] = set()
+            for mount_receiver, mount_pos, prefix, fields in mounts:
+                if (
+                    mount_receiver == receiver
+                    and mount_pos < position
+                    and (path == prefix or path.startswith(prefix.rstrip("/") + "/"))
+                ):
+                    inherited = fields.copy()
+            guaranteed = inherited.copy()
+            # Conditional/nested registrations cannot establish a prefix guarantee.
+            line_start = text.rfind("\n", 0, m.start()) + 1
+            unconditional = literal is not None and depth == 0 and not masked[line_start : m.start()].strip()
+            for arg in args:
+                target = re.fullmatch(rf"(?:({_IDENT})\s*\.\s*)?({_IDENT})(\s*\(\s*\))?", arg)
+                if not target:
+                    # An unknown wrapper establishes no ownership guarantee.
+                    for qualifier, name in re.findall(rf"\b({_IDENT})\.({_IDENT})\b", code_only(arg)):
+                        if qualifier in namespaces:
+                            seen.setdefault((namespaces[qualifier], name), []).append(set())
+                    for name in re.findall(_IDENT, code_only(arg)):
+                        if name in names:
+                            seen.setdefault(names[name], []).append(set())
+                    guaranteed.clear()
+                    continue
+                qualifier, name, invoked = target.groups()
+                key = (
+                    ((namespaces[qualifier], name) if qualifier in namespaces else None)
+                    if qualifier
+                    else names.get(name, (module, name))
+                )
+                if key in middlewares and invoked and unconditional:
+                    guaranteed.update(middlewares[key])
+                else:
+                    if key is not None:
+                        seen.setdefault(key, []).append(guaranteed.copy())
+                    # An intervening handler can overwrite the request fields.
+                    guaranteed.clear()
+            if verb == "use":
+                mounts.append((receiver, position, path, guaranteed.copy() if unconditional else set()))
+    return {key: set.intersection(*sets) for key, sets in seen.items()}
+
+
+def _enclosing_definition(text: str, line_idx: int) -> str | None:
+    for name, start, body in reversed(_definition_bodies(text)):
+        if start <= line_idx < start + len(body):
+            return name
+    return None
+
+
+def _drop_identity_bound_owner_ids(findings: list[Finding], scripts: dict[str, str], check: Check) -> list[Finding]:
+    """Drop AUTHZ-001 hits whose request field every route registration binds to the session identity."""
+    module_counts: dict[str, int] = {}
+    for path in scripts:
+        key = _module_key(path)
+        module_counts[key] = module_counts.get(key, 0) + 1
+    middlewares = {
+        key: fields for key, fields in _identity_binding_middlewares(scripts).items() if module_counts[key[0]] == 1
+    }
+    if not middlewares:
+        return findings
+    bindings = _handler_bindings(scripts, middlewares)
+    kept: list[Finding] = []
+    for finding in findings:
+        text = scripts.get(finding.file.replace("\\", "/")) if finding.check_id == check.id else None
+        if text is None:
+            kept.append(finding)
+            continue
+        lines = text.splitlines()
+        hit = check.pattern.search(lines[finding.line - 1]) if 0 < finding.line <= len(lines) else None
+        handler = _enclosing_definition(text, finding.line - 1)
+        module = _module_key(finding.file.replace("\\", "/"))
+        guaranteed = bindings.get((module, handler or ""), set()) if module_counts[module] == 1 else set()
+        # A route binding is no longer a guarantee after the handler replaces
+        # request state or passes the request to an unknown mutating helper.
+        for name, start, _body in _definition_bodies(text):
+            if name == handler:
+                before = "\n".join(lines[start : finding.line - 1])
+                if hit:
+                    before += "\n" + lines[finding.line - 1][: hit.start()]
+                if re.search(
+                    r"\breq\.(?:body|query|params)(?:\.\w+|\[[^\]]*\])*\s*(?:[+?&|]*=|\+\+|--)", before
+                ) or re.search(r"\b(?!async\b|return\b|function\b)\w+\s*\(\s*req\s*[,)]", before):
+                    guaranteed = set()
+                break
+        if hit and (hit.group(2), hit.group(1)) in guaranteed:
+            continue
+        kept.append(finding)
+    return kept
 
 
 def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = False) -> list[Finding]:
@@ -1924,6 +2211,7 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
     replaces any other hit with the same line and CWE.
     """
     findings: list[Finding] = []
+    scripts: dict[str, str] = {}
     for path in _walk_repo(repo_root):
         try:
             rel = str(path.relative_to(repo_root))
@@ -1931,6 +2219,8 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
             continue
         if _is_universally_excluded(rel) or not is_safe_to_read(path, repo_root):
             continue
+        if path.suffix in _SCRIPT_SUFFIXES:
+            scripts[rel.replace("\\", "/")] = without_comments(_read_source(path) or "", python=False)
         catalog_findings = scan_file(path, rel, checks)
         llm_findings = [] if catalog_only else _scan_llm_output_file(path, rel)
         expression_findings = [] if catalog_only else _scan_expression_inputs(path, rel)
@@ -1941,6 +2231,9 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
         findings.extend(f for f in catalog_findings if (f.line, tuple(f.cwe)) not in specific)
         findings.extend(llm_findings)
         findings.extend(f for f in expression_findings if (f.line, tuple(f.cwe)) not in specific)
+    owner_id = next((c for c in checks if c.id == "AUTHZ-001"), None)
+    if owner_id is not None:
+        findings = _drop_identity_bound_owner_ids(findings, scripts, owner_id)
     # Assign sequential local IDs (SAF-001, SAF-002, …) deterministically by
     # (file, line, check_id).
     findings.sort(key=lambda f: (f.file, f.line, f.check_id))

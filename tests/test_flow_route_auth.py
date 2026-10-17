@@ -4,9 +4,7 @@ import copy
 import json
 from pathlib import Path
 
-import analyzers.route_inventory as ri
 import jsonschema
-import orchestrator.orchestration_controller as controller
 import pytest
 import validators.validate_fragment as validate_fragment
 from analyzers.flow_route_auth import fill_from_verified_findings, mixed_route_auth_errors, reconcile
@@ -101,63 +99,22 @@ def test_nothing_unproven_or_authored_is_filled(flow):
     assert mixed_route_auth_errors(result["data_flows"], [VERIFIED, UNRESOLVED]) == []
 
 
+@pytest.mark.parametrize("seen", ["middleware_present", "decorator_present"])
+def test_a_registration_guard_the_resolver_verifies_fills_the_flow(seen):
+    guarded = _route(14, "verified", "bearer", seen, "/e")
+    result, filled, _mixed = reconcile(_doc(_flow("df-001", 14, authentication=UNKNOWN)), [guarded])
+    assert filled == ["df-001"] and result["data_flows"][0]["authentication"]["scheme"] == "bearer"
+    # Seen at registration but not verified by the chain fills nothing.
+    unproven = _route(14, "unresolved", None, seen, "/e")
+    assert reconcile(_doc(_flow("df-001", 14, authentication=UNKNOWN)), [unproven])[1] == []
+
+
 def test_self_check_reports_a_flow_whose_routes_differ(tmp_path):
     (tmp_path / ".route-inventory.json").write_text(json.dumps({"routes": [VERIFIED, NONE]}))
     flows = {"data_flows": [_flow("df-004", 10, 11, authentication=UNKNOWN)]}
     errors = validate_fragment._route_split_errors(flows, tmp_path / ".route-inventory.json")
     assert len(errors) == 1 and errors[0].startswith("df-004:") and "cookie" in errors[0]
     assert validate_fragment._route_split_errors(flows, tmp_path / "missing.json") == []
-
-
-def _write(root, rel, text):
-    path = root / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def test_controller_handoff_fills_flow_authentication_from_the_route_inventory(tmp_path):
-    repo, out = tmp_path / "repo", tmp_path / "out"
-    out.mkdir()
-    _write(
-        repo,
-        "server/app.ts",
-        "import express from 'express'\n"
-        "import { upload } from './upload'\n"
-        "import { profile } from './profile'\n"
-        "const app = express()\n"
-        "app.post('/upload', upload())\n"
-        "app.post('/profile', profile())\n",
-    )
-    _write(repo, "server/upload.ts", "export function upload () {\n  return (req, res) => res.json(req.body)\n}\n")
-    _write(
-        repo,
-        "server/profile.ts",
-        "export function profile () {\n  return (req, res, next) => {\n"
-        "    const who = store.get(req.cookies.sid)\n    if (!who) { res.status(401).end(); return }\n"
-        "    res.json(who)\n  }\n}\n",
-    )
-    _write(repo, "web/main.ts", "fetch('/upload')\n")
-    (out / ".route-inventory.json").write_text(json.dumps(ri.build_inventory(repo)))
-    components = [
-        {"id": "web", "tier": "client", "paths": ["web/**"]},
-        {"id": "api", "tier": "application", "paths": ["server/**"]},
-    ]
-    receipt = {"component_inventory_fingerprint": "sha256:" + "a" * 64, "component_ids": ["web", "api"]}
-    (out / ".components.json").write_text(json.dumps({"components": components}))
-    (out / ".component-inventory-finalization.json").write_text(json.dumps(receipt))
-
-    def unknown_at(line):
-        cited = [{"file": "server/app.ts", "line": line}]
-        return {"evidence": cited, "authentication": {"scheme": "unknown", "scope": "Not located", "evidence": cited}}
-
-    flows = [{**_flow("df-001"), **unknown_at(5)}, {**_flow("df-002"), **unknown_at(6)}]
-    (out / ".data-flows.json").write_text(json.dumps(_doc(*flows)))
-    controller._bind_finalized_component_fingerprint(out, repo)
-    result = {f["id"]: f["authentication"] for f in json.loads((out / ".data-flows.json").read_text())["data_flows"]}
-    assert result["df-001"]["scheme"] == "none"
-    assert result["df-002"]["scheme"] == "cookie"
-    assert result["df-002"]["evidence"] == [{"file": "server/profile.ts", "line": 3}]
-    assert "FLOW_AUTH_RECONCILED" in (out / ".agent-run.log").read_text()
 
 
 def _socket_flow(**auth):

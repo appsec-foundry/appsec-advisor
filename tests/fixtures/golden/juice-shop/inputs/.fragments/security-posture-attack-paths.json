@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "actors": [
+    "internet-anon",
+    "internet-user",
+    "repo-read",
+    "victim-required"
+  ],
+  "attack_paths": [
+    {
+      "class": "injection",
+      "actor": "internet-anon",
+      "target": "data",
+      "scenario_title": "Query injection reads data and bypasses login",
+      "description": "Request-controlled text reaches SQL, NoSQL and XML parsers unescaped, letting callers alter queries, bypass login and read stored data.",
+      "findings": [
+        "F-012",
+        "F-006",
+        "F-027",
+        "F-028",
+        "F-029",
+        "F-033"
+      ],
+      "impact": [
+        "customer-data-exfiltration",
+        "full-admin-takeover"
+      ]
+    },
+    {
+      "class": "auth-bypass",
+      "actor": "repo-read",
+      "target": "application",
+      "scenario_title": "Committed signing key allows forged logins",
+      "description": "Weak or exposed credential handling lets attackers forge or guess login tokens and take over accounts without valid credentials.",
+      "findings": [
+        "F-020",
+        "F-018",
+        "F-014",
+        "F-019",
+        "F-031",
+        "F-035"
+      ],
+      "attack_chains": [
+        "cc-01"
+      ],
+      "impact": [
+        "full-admin-takeover",
+        "customer-session-hijack"
+      ]
+    },
+    {
+      "class": "privilege-escalation",
+      "actor": "internet-user",
+      "target": "application",
+      "scenario_title": "Missing ownership and role checks expose records",
+      "description": "Missing object-level and role checks let ordinary or anonymous callers read, change or administer resources they do not own.",
+      "findings": [
+        "F-008",
+        "F-043",
+        "F-038",
+        "F-024",
+        "F-003",
+        "F-004",
+        "F-039"
+      ],
+      "impact": [
+        "full-admin-takeover",
+        "customer-data-exfiltration"
+      ]
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "actor": "internet-anon",
+      "target": "application",
+      "scenario_title": "File and key disclosure via traversal and SSRF",
+      "description": "Unvalidated paths and URLs let callers read or write files outside intended locations and fetch internal resources.",
+      "findings": [
+        "F-032",
+        "F-022",
+        "F-023",
+        "F-034"
+      ],
+      "impact": [
+        "customer-data-exfiltration"
+      ]
+    },
+    {
+      "class": "remote-code-execution",
+      "actor": "internet-user",
+      "target": "application",
+      "scenario_title": "Profile input executed as server code",
+      "description": "User-supplied text is evaluated as code on the server, giving attackers control over the application process.",
+      "findings": [
+        "F-037"
+      ],
+      "impact": [
+        "full-server-compromise"
+      ]
+    },
+    {
+      "class": "cross-site-scripting",
+      "actor": "victim-required",
+      "target": "victim",
+      "scenario_title": "Script injection steals stored session tokens",
+      "description": "Unsafe HTML rendering combined with script-readable token storage lets injected scripts steal a visitor's session.",
+      "findings": [
+        "F-001",
+        "F-110",
+        "F-002"
+      ],
+      "impact": [
+        "customer-session-hijack"
+      ]
+    }
+  ]
+}

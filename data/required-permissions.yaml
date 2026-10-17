@@ -1,4 +1,4 @@
-# Permissions required for /appsec-advisor:create-threat-model to run without
+# Permissions required for /appsec-advisor:appsec-analyzer to run without
 # prompts in an INTERACTIVE Claude Code session. Consumed by
 # /appsec-advisor:check-permissions (scripts/check_permissions.py).
 #
@@ -24,7 +24,6 @@
 #     --trust-mode untrusted)
 #   • scripts/shared/_path_guard.py          — blocks symlink escapes during file reads
 #   • scripts/shared/_url_guard.py           — SSRF / cloud-metadata defence on fetches
-#   • scripts/validators/postscan_secret_check.py — fails the run on leaked secret values
 #   • scripts/validators/redact_known_secrets.py  — exact-value redaction of source-found
 #     secrets across all artifacts (prose included); fails closed on residual
 # For real isolation, run against a throwaway git worktree (see below) or in a
@@ -36,13 +35,20 @@
 # Bash(*) is the only way to keep an interactive run prompt-free. It is wide
 # open by design; the guards above are what bound the blast radius.
 # A configured permissions.defaultMode of auto or bypassPermissions already
-# keeps the run prompt-free, so the create-threat-model preflight does not
+# keeps the run prompt-free, so the appsec-analyzer preflight does not
 # require this list then (check_permissions.PROMPT_FREE_MODES).
 # model/authnz_report.py finalize --require-inputs and gate use the existing
 # Bash(*) and OUTPUT_DIR dotfile rules; reconciliation writes only .authnz-report.json.
 # Maintainer commands such as scripts/run_tests.py --changed-against,
-# make test-plan, make test-changed, and make test-group use the existing
+# make test-plan, make test-changed, make test-for, and make test-group use the existing
 # Bash(*) rule; local Git diffs and test selection add no permission entries.
+# scripts/appsec-analyst-cli hypothesis uses the existing Bash(*) rule to read
+# caller-selected Git blobs and write private analyst job artifacts; the model
+# receives no tools and cannot expand the selected source paths.
+# Internal multi-repository assessment jobs use the same maintainer Bash rule.
+# The existing controller owns private .assessment-state.json and .assessment-work/
+# under the explicit output directory; models receive no filesystem tools.
+# Lock writers share the persistent .appsec-lock.guard inode under OUTPUT_DIR.
 # scripts/calibrate_architect_review.py uses the same maintainer rule. It is
 # offline, calls no model, and writes only architect-calibration.json in its
 # chosen output directory. It does not enable review or mutate a threat-model run.
@@ -53,7 +59,8 @@
 # files, and final .architect-status.json gate receipt.
 #
 # Placeholders expanded at check-time:
-#   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security
+#   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / the repository's assessment
+#                     directory under <data dir>/appsec-advisor/assessments (decision AS-1)
 #   ${REPO_ROOT}    — from --repo-root  / $REPO_ROOT  / current working dir
 #   ${PLUGIN_ROOT}  — from --plugin-root / auto-detected plugin directory
 #   ${HOME}         — the user's home dir (Path.home()); session-transcript reads
@@ -62,7 +69,7 @@
 # ──────────────────────
 # For additional isolation, run the scan against a git worktree copy of the repo:
 #   git worktree add /tmp/scan-<repo> HEAD
-#   /appsec-advisor:create-threat-model --repo /tmp/scan-<repo>
+#   /appsec-advisor:appsec-analyzer --repo /tmp/scan-<repo>
 # This limits any unexpected writes to the temporary worktree.
 
 version: 1
@@ -91,7 +98,7 @@ required:
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/.*)"
-    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.run-issues.json and .run-bugs.json for diagnosis-bound recommendations, .recon-summary.md, finalized components/data flows, immutable boundary input, candidates, canonical boundaries, coverage/diagnostics, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.run-issues.json and .run-bugs.json for diagnosis-bound recommendations, .recon-summary.md, finalized components/data flows, immutable boundary input, candidates, canonical boundaries, coverage/diagnostics, .stride-*.json, etc.); controller-held multi-repository jobs read their .assessment-state.json; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
@@ -102,24 +109,12 @@ required:
     reason: "agents and deterministic preparers, including analyzers/config_iac_scanner.py, analyzers/deployment_inventory.py (.deployment-inventory.json) and model/merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children; the early business-context dialog writes .business-context-preview.json and .business-context-raw.md using prepare --interactive-context and complete-preflight"
     category: file
 
-  - entry: "Edit(${OUTPUT_DIR}/**)"
-    reason: "QA re-render loop edits threat-model.md and fragment files in place"
-    category: file
-
-  - entry: "Edit(${OUTPUT_DIR}/.*)"
-    reason: "repair loops edit direct dotfile sidecars; Claude Code's /** glob does NOT match direct dotfile children"
-    category: file
-
-  - entry: "Edit(${REPO_ROOT}/.gitignore)"
-    reason: "publish-threat-model skill patches .gitignore with negation exceptions for published files"
-    category: file
-
   - entry: "Edit(${PLUGIN_ROOT}/**)"
     reason: "explicit maintainer development edits plugin source after root-cause and contract review; fix-run-issues currently emits manual guidance only"
     category: file
 
   - entry: "Read(${REPO_ROOT}/.eval-out/**)"
-    reason: "eval-threat-model harness + appsec-eval-judge read the brief and judge/verify sidecars under the default eval output dir"
+    reason: "eval-security-assessment harness + appsec-eval-judge read the brief and judge/verify sidecars under the default eval output dir"
     category: file
 
   - entry: "Write(${REPO_ROOT}/.eval-out/**)"
@@ -127,15 +122,15 @@ required:
     category: file
 
   - entry: "Write(${REPO_ROOT}/.appsec-triage/**)"
-    reason: "review-threat-model skill writes the user's triage sidecar (triage.yaml) and remediation-plan.md under a repo-root namespace kept separate from OUTPUT_DIR so pipeline cleanup / diagnostic-bundle never touch it (reads are covered by Read(${REPO_ROOT}/**))"
+    reason: "triage-security-assessment skill writes the user's triage sidecar (triage.yaml) and remediation-plan.md under a repo-root namespace kept separate from OUTPUT_DIR so pipeline cleanup / diagnostic-bundle never touch it (reads are covered by Read(${REPO_ROOT}/**))"
     category: file
 
   - entry: "Write(${REPO_ROOT}/docs/known-threats.yaml)"
-    reason: "review-threat-model skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `validators/review_threat_model.py promote-accepted`. This is a create-threat-model INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
+    reason: "triage-security-assessment skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `validators/review_threat_model.py promote-accepted`. This is a appsec-analyzer INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
     category: file
 
   - entry: "Edit(${REPO_ROOT}/**)"
-    reason: "review-threat-model skill's explicit 'Mitigate + implement now' action (Step 5b) applies the remediation code changes for the findings the user selects — one at a time, for review, scoped to each finding's affected_files. Only reached on explicit user request; the triage/console flow never edits source, and the threat model itself is never modified (Consumer guarantee)."
+    reason: "triage-security-assessment skill's explicit 'Mitigate + implement now' action (Step 5b) applies the remediation code changes for the findings the user selects — one at a time, for review, scoped to each finding's affected_files. Only reached on explicit user request; the triage/console flow never edits source, and the threat model itself is never modified (Consumer guarantee)."
     category: file
 
   # NOTE: The plugin writes ~30 dot-prefixed sidecar files and dot-directories

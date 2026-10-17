@@ -164,15 +164,12 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     assert "## Management Summary\n" in rendered
     assert "## 1. Management Summary" not in rendered
 
-    # Post-2026-05 — four canonical sub-sections, in order. The former
-    # `### Security Posture at a Glance`, `### Top Findings` and
-    # `### Architecture Assessment` were MERGED into the single
-    # `### Security Posture & Top Threats` section (heatmap = Figure 2 + the
-    # Top Threats table). `### Mitigations` renders as `### Top Mitigations`.
+    # Four canonical sub-sections, in order. `mitigations` renders as
+    # `### Remediation Priorities` directly after the Verdict.
     expected_order = [
         "### Verdict",
+        "### Remediation Priorities",
         "### Security Posture & Top Threats",
-        "### Top Mitigations",
         "### Operational Strengths",
     ]
     positions = [rendered.find(h) for h in expected_order]
@@ -189,6 +186,8 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
         "### Top Findings",
         "### Architecture Assessment",
         "### Immediate Actions",
+        "### Top Weaknesses",
+        "### Top Mitigations",
     ):
         assert forbidden not in ms_slice, f"forbidden MS heading leaked: {forbidden!r}"
 
@@ -251,8 +250,7 @@ def test_ai_exposure_absent_renders_nothing(tmp_path: Path) -> None:
 def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
     """When ms-ai-exposure.json is present, the callout renders inside the
     Management Summary in the specialized-surface band — after the Security
-    Posture / Top Threats and Top Mitigations tables (2026-07-14 move from MS
-    position #2) — naming each risk with its OWASP LLM id, a severity emoji and a
+    Posture / Top Threats table (2026-07-14 move from MS position #2) — naming each risk with its OWASP LLM id, a severity emoji and a
     linkified finding reference."""
     out = _prepare_output_dir(tmp_path)
     frag = {
@@ -1512,14 +1510,57 @@ def _catalog(tmp_path: Path, rows: list[dict], threats: list[dict], components: 
     return compose._render_trust_boundary_catalog(ctx, None, {})
 
 
-def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path) -> None:
-    """The column asks whether the assumption holds, so every row answers.
+@pytest.mark.parametrize("title", ["Unsafe query construction", "Missing ownership check"])
+def test_parenthetical_finding_citations_remain_compact_through_composer_and_qa(tmp_path, title):
+    import yaml
 
-    A condition with no answer leaves the reader to reconcile it against §8 by
-    hand, which nobody does — juice-shop shipped five assumptions and no verdict
-    (user 2026-08-01). All three inputs are already in the model, so the answer
-    costs no analysis turn.
-    """
+    model = {"threats": [{"id": "T-001", "title": title, "risk": "High"}]}
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=model, triage={}, fragments_dir=tmp_path)
+    linked = f"[F-001](#f-001) — {title}"
+    prose = f"Caller data reaches the operation ({linked})."
+    standalone = f"- {linked}"
+    table = f"| Finding | Details |\n|---|---|\n| {linked} | Review |"
+    inline_code = f"Example (`{linked}`)."
+    extended_description = f"Consider this ({linked} in the reporting service)."
+    fenced = f"```text\n{prose}\n```"
+    compact = compose._compact_inline_finding_citations(
+        ctx, "\n\n".join([prose, standalone, table, inline_code, fenced])
+    )
+    assert compact.startswith("Caller data reaches the operation ([F-001](#f-001)).")
+    for preserved in (standalone, table, inline_code, fenced):
+        assert preserved in compact
+    assert compose._compact_inline_finding_citations(ctx, extended_description) == extended_description
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    path = tmp_path / "threat-model.md"
+    path.write_text(compact)
+    _, enriched = qa.linkify_anchors(path)
+    assert enriched.splitlines()[0] == compact.splitlines()[0]
+    assert standalone in enriched and table in enriched
+    path.write_text(enriched)
+    assert qa.linkify_anchors(path)[1] == enriched
+    assert compose._compact_inline_finding_citations(ctx, enriched) == enriched
+
+
+def test_actor_inventory_discloses_findings_missing_from_displayed_counts(tmp_path):
+    model = {
+        "threats": [
+            {"id": "T-001", "risk": "High", "vektor": "internet-anon"},
+            {"id": "T-002", "risk": "Critical"},
+            {"id": "T-003", "risk": "High"},
+        ]
+    }
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=model, triage={}, fragments_dir=tmp_path)
+    people = [{"kind": "attacker", "slug": "internet-anon", "name": "Internet attacker", "scenarios": []}]
+    result = compose._render_actor_inventory(ctx, people)
+    assert "🟠 1" in result
+    assert "2 findings are not represented in the actor counts (1 Critical, 1 High)" in result
+    assert "does not establish inaccessibility" in result
+    model["threats"] = model["threats"][:1]
+    assert "not represented" not in compose._render_actor_inventory(ctx, people)
+
+
+def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path) -> None:
+    """The compact catalogue distinguishes linked gaps, adjacent findings and unverified controls."""
     rows = [
         _canonical_boundary(1),  # refuted — a finding links here
         {**_canonical_boundary(2), "to": "C-02"},  # unconfirmed — findings in C-02, none linked
@@ -1531,12 +1572,11 @@ def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path)
         {"id": "T-003", "component": "C-02"},
     ]
     rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02", "C-03"])
-    assert "**Broken** — see the linked findings." in rendered
-    assert "**In doubt** — 2 finding(s) in the components it covers, none linked here." in rendered
-    assert "_No finding contradicts it._" in rendered
-    # The verdict rides in the assumption cell, not in a column of its own.
-    unconfirmed_row = next(line for line in rendered.splitlines() if "In doubt" in line and line.startswith("|"))
-    assert "In doubt" in unconfirmed_row.split(" | ")[4]
+    assert "Gap evidenced:" in rendered and "[F-001](#f-001)" in rendered
+    assert "2 related findings; relevance to this crossing remains unverified." in rendered
+    assert "control effectiveness is not established" in rendered
+    unconfirmed_row = next(line for line in rendered.splitlines() if "2 related findings" in line)
+    assert "remains unverified" in compose._split_table_row(unconfirmed_row)[3]
 
 
 def test_verdict_matches_the_shared_state_helper(tmp_path: Path) -> None:
@@ -1597,8 +1637,8 @@ def test_verdict_ignores_a_linker_whose_evidence_did_not_survive(tmp_path: Path)
         }
     ]
     rendered = _catalog(tmp_path, rows, threats, ["C-01"])
-    assert "**Broken**" not in rendered
-    assert "**In doubt** — 1 finding(s) in the components it covers, none linked here." in rendered
+    assert "Gap evidenced:" not in rendered
+    assert "1 related finding; relevance to this crossing remains unverified." in rendered
 
 
 def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None:
@@ -1612,7 +1652,7 @@ def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None
     rows = [{**_canonical_boundary(1), "covers_components": ["C-01", "C-02"]}]
     threats = [{"id": "T-001", "component": "C-02"}]
     rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02"])
-    assert "**In doubt** — 1 finding(s) in the components it covers, none linked here." in rendered
+    assert "1 related finding; relevance to this crossing remains unverified." in rendered
 
 
 def test_covered_components_never_include_the_crossings_own_source(tmp_path: Path) -> None:
@@ -1666,19 +1706,13 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     assert "1 additional trust boundary row(s)" in rendered
     # Every row is `detected` → no Source column; the footnote states it once.
     assert "| Source |" not in rendered
-    assert "source: derived from inspected repository evidence" in rendered
-    assert "only at a confirmed internet ingress" in rendered
+    assert "source evidence and provenance are retained in `security-assessment.yaml`" in rendered
+    assert "control effectiveness is not established" in rendered
     assert "raw risk" not in rendered
 
 
 def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
-    """The crossing cell carries the crossing, the mechanism and the folded-in
-    components — each exactly once.
-
-    It used to stack the `name` (itself `<from> → <to>: <mechanism>`), then
-    `from → to` again, then `_enforced at: <the same mechanism>_`, so the
-    crossing appeared twice and the enforcement twice (user 2026-07-31).
-    """
+    """The crossing, enforcement point and covered components each appear once."""
     rows = [
         {
             **_canonical_boundary(1, "external → C-01 admin API: expressJwt on /admin routes"),
@@ -1696,7 +1730,7 @@ def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     # The name's head is the crossing — kept because its qualifier is what tells
     # two rows over the same component pair apart. Emitted once, bolded.
-    assert "**external → C-01 admin API**" in rendered
+    assert "external → C-01 admin API" in rendered
     assert rendered.count("external → C-01") == 1
     # The mechanism is the enforcement point, stated once, WITHOUT the italic
     # wrapper (a later pass backticks the identifiers inside it, and markdown
@@ -1747,7 +1781,7 @@ def test_trust_boundary_cell_never_synthesizes_a_missing_enforcement_point(tmp_p
     assert "Express static file serving" not in rendered
     assert "Sequelize ORM query construction" not in rendered
     assert "expressJwt on /admin routes" not in rendered
-    assert rendered.count("Control: none identified") == 2
+    assert rendered.count("Control: not identified") == 2
     # A row that HAS one still shows it, and no row emits a dangling label.
     assert "Control: security.isAuthorized() expressJwt middleware in server.ts" in rendered
     for line in rendered.splitlines():
@@ -1829,38 +1863,15 @@ def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> No
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    # Every exposure gets its rating from the shared contract, and the legend
-    # lists them in tier order. Values come from `_boundary_criticality`, never
-    # from a second copy of the scale here.
-    for exposure in ("internet-facing", "outbound", "internal", "review required", "inferred"):
-        glyph, word = criticality.rating_of(exposure)
-        assert f"{glyph} **{word}**" in rendered
-    legend = " · ".join(
-        f"{criticality.rating_of(e)[0]} {criticality.rating_of(e)[1]} ({compose._BOUNDARY_EXPOSURE_GLOSS[e]})"
-        for e in sorted(
-            ("review required", "internet-facing", "inferred", "internal", "outbound"),
-            key=criticality.tier_of,
-        )
-    )
-    assert f"_Exposure, most exposed first: {legend}._" in rendered
-    # Exposure lives in its own column — never restated in the Kind cell.
-    for line in rendered.splitlines():
-        if '<a id="tb-' not in line:
-            continue
-        for _glyph, word in (criticality.rating_of(e) for e in ("internet-facing", "internal", "outbound")):
-            assert line.count(f"**{word}**") <= 1, line
+    assert "| ID | Crossing | Required condition | Findings / open question |" in rendered
+    assert "Endpoints: unresolved" in rendered and "Crossing: inferred" in rendered
+    assert "C-01 → external" in rendered and "C-01 → C-02" in rendered
+    assert "Exposure" not in rendered and "**Broken**" not in rendered
+    assert rendered.count("control effectiveness is not established") == 5
 
 
 def test_trust_boundary_exposure_ignores_linked_finding_count(tmp_path: Path) -> None:
-    """The exposure rating is a REACHABILITY verdict, never a findings tally.
-
-    Only a fraction of findings carry a `boundary_refs[]` entry, so weighting the
-    rating by them would present a boundary as safer merely because nothing
-    happened to link to it — and would rate an unexamined boundary below an
-    examined one. Two boundaries with the same exposure and wildly different
-    linked-findings counts must rate identically; "Linked findings" stays its own
-    column.
-    """
+    """A finding count changes the evidence cell, not the crossing condition."""
     rows = [_canonical_boundary(1, "Busy entry"), _canonical_boundary(2, "Quiet entry")]
     threats = [
         {
@@ -1908,10 +1919,7 @@ def test_boundary_exposure_vocabulary_never_collides_with_finding_severity() -> 
 
 
 def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(tmp_path: Path) -> None:
-    """A column (or stacked sub-line) whose every row says the same thing carries
-    no information — juice-shop rendered nine identical `detected` / `confirmed` /
-    `resolved` cells, and 8% was too narrow for "detected" (user 2026-07-31).
-    Each collapses into the footnote instead."""
+    """Routine metadata stays in the canonical model instead of repeated table columns."""
     rows = [_canonical_boundary(i) for i in range(1, 4)]
     ctx = compose.RenderContext(
         output_dir=tmp_path,
@@ -1923,20 +1931,18 @@ def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
     # No Source column, and the Kind header does not name a status it no longer shows.
-    assert header == "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |"
+    assert header == "| ID | Crossing | Required condition | Findings / open question |"
     assert "detected" not in header
     body = rendered.split("| ID |", 1)[1].split("\n_Exposure", 1)[0]
     assert "confirmed" not in body and "resolved" not in body
-    assert (
-        "_All boundaries share source: derived from inspected repository evidence; "
-        "confidence: confirmed; status: resolved._" in rendered
-    )
+    assert "source evidence and provenance are retained in `security-assessment.yaml`" in rendered
+    assert all(row["confidence"] == "confirmed" and row["sources"] == ["detected"] for row in rows)
     assert "`detected`" not in rendered
     # The dropped column's vocabulary legend goes with it.
     assert "`repo-declared` = supplied by" not in rendered
 
 
-def test_trust_boundary_varying_provenance_keeps_the_source_column(tmp_path: Path) -> None:
+def test_trust_boundary_varying_provenance_is_retained_in_the_model(tmp_path: Path) -> None:
     rows = [
         _canonical_boundary(1),
         {**_canonical_boundary(2), "sources": ["repo-declared"]},
@@ -1950,15 +1956,14 @@ def test_trust_boundary_varying_provenance_keeps_the_source_column(tmp_path: Pat
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
-    assert header.endswith("| Assumption & verdict | Source | Linked findings |")
-    assert "| detected |" in rendered and "| repo-declared |" in rendered
-    assert "`repo-declared` = supplied by" in rendered
-    assert "stated once here instead of in a column: source" not in rendered
+    assert header.endswith("| Required condition | Findings / open question |")
+    assert "| Source |" not in rendered
+    assert "source evidence and provenance are retained in `security-assessment.yaml`" in rendered
+    assert [row["sources"] for row in rows] == [["detected"], ["repo-declared"]]
 
 
 def test_trust_boundary_exceptional_status_and_confidence_are_never_collapsed(tmp_path: Path) -> None:
-    """`unresolved` / `conflicted` / `inferred` are exactly the rows a reader must
-    not skim past, so a single deviating row keeps the sub-line on EVERY row."""
+    """Unresolved endpoints and inferred crossings remain visible in their own rows."""
     rows = [
         _canonical_boundary(1),
         {**_canonical_boundary(2), "resolution_status": "unresolved", "confidence": "inferred"},
@@ -1971,8 +1976,9 @@ def test_trust_boundary_exceptional_status_and_confidence_are_never_collapsed(tm
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    assert "**unresolved**" in rendered and "**resolved**" in rendered
-    assert "_inferred_" in rendered and "_confirmed_" in rendered
+    assert "Endpoints: unresolved" in rendered
+    assert "Crossing: inferred" in rendered
+    assert "Endpoints: resolved" not in rendered and "Crossing: confirmed" not in rendered
     # Provenance is still uniform and still collapses; status/confidence do not.
     assert "confidence `" not in rendered and "status `" not in rendered
 
@@ -1989,7 +1995,7 @@ def test_trust_boundary_uniform_but_exceptional_status_stays_visible(tmp_path: P
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    assert rendered.count("**unresolved**") == 2
+    assert rendered.count("Endpoints: unresolved") == 2
     assert "status `unresolved`" not in rendered
 
 
@@ -2011,7 +2017,8 @@ def test_trust_boundary_cells_emit_no_raw_markdown_emphasis_markers(tmp_path: Pa
     converted, count = qa._attack_surface_tables_to_html(f"{header}\n{separator}\n{row_line}\n")
     assert count == 1
     assert "**" not in converted
-    assert "<strong>" in converted and "<em>inferred</em>" in converted
+    assert "Crossing: inferred" in converted
+    assert "table-layout:fixed" in converted
 
 
 def test_trust_boundary_catalogue_is_ordered_by_id(tmp_path: Path) -> None:
@@ -2395,7 +2402,7 @@ def test_attack_tree_renders_single_lr_block() -> None:
     assert len(blocks) == 1
     assert blocks[0]["title"] is None
     src = blocks[0]["src"]
-    assert src.startswith("graph LR")
+    assert src.splitlines()[:2] == [compose._ATTACK_TREE_INIT, "graph LR"]
     assert "classDef goal" in src
     # Trimmed palette — the unused classes are gone.
     assert "classDef attacker" not in src and "classDef crit" not in src
@@ -2411,7 +2418,7 @@ def test_attack_tree_wide_still_single_block() -> None:
     blocks = compose._build_attack_tree_blocks(_attack_tree_data(8))
     assert len(blocks) == 1
     src = blocks[0]["src"]
-    assert src.startswith("graph LR")
+    assert src.splitlines()[:2] == [compose._ATTACK_TREE_INIT, "graph LR"]
     assert "graph TD" not in src
     assert "OR_A" in src and "OR_B" in src
     assert all(f"L_T{i:03d}" in src for i in range(8))
@@ -2537,77 +2544,109 @@ def test_canonical_formatter_leaves_standalone_span_and_prose_untouched() -> Non
     assert compose._codify_inline_identifiers("plain prose, no code") == "plain prose, no code"
 
 
-def test_curate_top_mitigations_floor_and_llm_order() -> None:
-    """Critical-floor always shown; LLM curates the extras within the soft max."""
-    floor = [{"id": "M-001"}, {"id": "M-002"}]
-    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}, {"id": "M-008"}, {"id": "M-009"}]
-    # LLM prefers M-008 then M-006; max 4 → floor(2) + 2 extras.
-    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-008", "M-006"], 3, 4)
-    assert [m["id"] for m in out] == ["M-001", "M-002", "M-008", "M-006"]
+def _root_cause_tree(unlinked: bool) -> dict:
+    """Two root causes over three Criticals, optionally one Critical without a weakness."""
+    nodes = [
+        {"id": "GOAL", "label": "4 Critical findings", "class": "goal"},
+        {"id": "W001", "label": "W-001 · Queries are concatenated", "class": "rootcause"},
+        {"id": "T011", "label": "T-011 SQL injection in report export", "class": "leaf", "detail": "export.py"},
+        {"id": "T012", "label": "T-012 SQL injection in search", "class": "leaf"},
+        {"id": "W004", "label": "W-004 · Code is built from input", "class": "rootcause"},
+        {"id": "T013", "label": "T-013 Template injection", "class": "leaf"},
+    ]
+    edges = [
+        {"from": "W001", "to": "GOAL"},
+        {"from": "T011", "to": "W001"},
+        {"from": "T012", "to": "W001"},
+        {"from": "W004", "to": "GOAL"},
+        {"from": "T013", "to": "W004"},
+    ]
+    if unlinked:
+        nodes += [
+            {"id": "UNLINKED", "label": "No root cause linked", "class": "unassigned"},
+            {"id": "T014", "label": "T-014 Admin route without login", "class": "leaf"},
+        ]
+        edges += [{"from": "UNLINKED", "to": "GOAL"}, {"from": "T014", "to": "UNLINKED"}]
+    fixes = [
+        {"weakness": "W-001", "recommendation": "use one parameterised query path.", "findings": ["T-011", "T-012"]},
+        {"weakness": "W-004", "recommendation": "render templates from data only", "findings": ["T-013"]},
+    ]
+    return {"mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges}, "fixes": fixes}
 
 
-def test_curate_top_mitigations_no_fragment_is_deterministic() -> None:
-    """No LLM order → extras in caller's deterministic order; clamped to max."""
-    floor = [{"id": "M-001"}]
-    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}, {"id": "M-008"}]
-    out = compose._curate_top_mitigations(floor, extras_sorted, [], 3, 3)
-    assert [m["id"] for m in out] == ["M-001", "M-006", "M-007"]
+def test_root_cause_overview_counts_causes_fixes_and_unlinked_findings() -> None:
+    overview = compose._root_cause_overview(_root_cause_tree(unlinked=True))
+    assert overview["summary"] == (
+        "3 of 4 Critical findings trace back to 2 root causes; fixing a root cause addresses every "
+        "finding linked to it. 1 has no root cause linked yet."
+    )
+    assert overview["fixes"][0] == {
+        "weakness": "W-001",
+        "anchor": "#w-001",
+        "recommendation": "Use one parameterised query path",
+        "findings": ["F-011", "F-012"],
+    }
+    assert overview["unlinked"] == ["F-014"]
 
 
-def test_curate_top_mitigations_floor_never_truncated() -> None:
-    """Coverage wins: a floor larger than max is shown in full (no truncation)."""
-    floor = [{"id": "M-001"}, {"id": "M-002"}, {"id": "M-003"}, {"id": "M-004"}]
-    extras_sorted = [{"id": "M-009"}]
-    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-009"], 3, 2)
-    assert [m["id"] for m in out] == ["M-001", "M-002", "M-003", "M-004"]  # extras dropped, floor intact
-
-
-def test_curate_top_mitigations_drops_unknown_and_floor_dupes() -> None:
-    """Unknown ids and floor ids listed by the LLM are ignored in the extras slot."""
-    floor = [{"id": "M-001"}]
-    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}]
-    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-001", "M-999", "M-007"], 3, 10)
-    # M-001 (floor dupe) + M-999 (unknown) ignored; M-007 first, then remaining M-006.
-    assert [m["id"] for m in out] == ["M-001", "M-007", "M-006"]
-
-
-def test_attack_tree_findings_pointer_from_leaves() -> None:
-    """The compact findings pointer is derived deterministically from the tree's
-    leaf nodes in declaration order: each leaf's id + title (label minus the id
-    prefix) + lowercased §8 anchor, deduped, no mitigations."""
-    data = _attack_tree_data(4)  # leaves L_T000..L_T003, labels "T-000 finding" ...
-    findings = compose._derive_attack_tree_findings(data)
-    # Visible ids normalise T-NNN → F-NNN (the §8 register's canonical id).
-    assert [f["id"] for f in findings] == ["F-000", "F-001", "F-002", "F-003"]
-    assert findings[0] == {"id": "F-000", "title": "finding", "anchor": "#f-000"}
-    # No mitigation data leaks into the pointer.
-    assert all("mitigation" not in f and "mitigations" not in f for f in findings)
-
-
-def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
-    """Capability/goal nodes are excluded; a repeated finding id appears once."""
-    data = {
+def test_root_cause_overview_without_unlinked_findings_or_weaknesses() -> None:
+    linked = compose._root_cause_overview(_root_cause_tree(unlinked=False))
+    assert linked["summary"].startswith("3 of 3 Critical findings trace back to 2 root causes;")
+    assert "no root cause linked" not in linked["summary"] and linked["unlinked"] == []
+    bare = {
         "mermaid": {
             "nodes": [
-                {"id": "G", "label": "Goal", "class": "goal"},
-                {"id": "OR_A", "label": "Cap", "class": "or_node"},
-                {"id": "L1", "label": "T-005 SQLi login bypass", "class": "leaf"},
-                {"id": "L2", "label": "T-005 dup", "class": "leaf"},
-                {"id": "L3", "label": "T-009 RCE via eval", "class": "leaf", "finding_ref": "T-009"},
+                {"id": "GOAL", "label": "2 Critical findings", "class": "goal"},
+                {"id": "UNLINKED", "label": "No root cause linked", "class": "unassigned"},
+                {"id": "T001", "label": "T-001 A", "class": "leaf"},
+                {"id": "T002", "label": "T-002 B", "class": "leaf"},
             ],
-            "edges": [],
+            "edges": [
+                {"from": "UNLINKED", "to": "GOAL"},
+                {"from": "T001", "to": "UNLINKED"},
+                {"from": "T002", "to": "UNLINKED"},
+            ],
         }
     }
-    findings = compose._derive_attack_tree_findings(data)
-    assert [f["id"] for f in findings] == ["F-005", "F-009"]
-    assert findings[0]["title"] == "SQLi login bypass"
+    overview = compose._root_cause_overview(bare)
+    assert overview["summary"] == (
+        "No weakness record links the 2 Critical findings to a root cause yet. "
+        "See the [§8 Findings Register](#8-findings-register)."
+    )
+    assert overview["fixes"] == [] and overview["unlinked"] == ["F-001", "F-002"]
+
+
+def test_root_cause_overview_names_criticals_left_out_by_the_node_cap() -> None:
+    data = _root_cause_tree(unlinked=False) | {"critical_count": 9}
+    assert compose._root_cause_overview(data)["summary"] == (
+        "3 of 9 Critical findings trace back to 2 root causes; fixing a root cause addresses every finding "
+        "linked to it. 6 more are listed only in the [§8 Findings Register](#8-findings-register)."
+    )
+
+
+def test_root_cause_tree_draws_attribution_without_and_or_labels() -> None:
+    src = compose._build_attack_tree_blocks(_root_cause_tree(unlinked=True))[0]["src"]
+    assert '    W001["W-001<br/>Queries are concatenated"]:::rootcause' in src
+    assert '    T011["F-011 — SQL injection in report export<br/>export.py"]:::leaf' in src
+    assert "    T011 --> W001" in src and "    W001 --> GOAL" in src and "    T014 --> UNLINKED" in src
+    assert '|"OR"|' not in src and '|"AND"|' not in src
+    assert "classDef rootcause" in src and "classDef unassigned" in src
+
+
+def test_root_cause_leaf_title_is_cut_at_a_word_boundary() -> None:
+    label = compose._attack_tree_node_label(
+        {
+            "label": "T-009 Sensitive Routes Registered Without Authentication Middleware",
+            "class": "leaf",
+            "detail": "a.ts",
+        }
+    )
+    assert label == "F-009 — Sensitive Routes Registered Without Authentication…<br/>a.ts"
 
 
 def test_is_bare_finding_ref_line() -> None:
     """The bare-finding-ref predicate matches the contracted compact contexts."""
     f = compose._is_bare_finding_ref_line
-    # Top Weaknesses proof run.
-    assert f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
     # Open team questions shared with the console — question first, refs trailing.
     assert f("- Which policy should own authorization? ([W-001](#w-001): [F-013](#f-013))")
     assert f(
@@ -2617,12 +2656,15 @@ def test_is_bare_finding_ref_line() -> None:
     assert f("- Unverified evidence: confirm or rule it out before scheduling the fix. ([F-014](#f-014))")
     # A question whose own text ends in a parenthetical is not a reference tail.
     assert not f("- Which policy should own authorization (per route or per service)?")
-    # Critical Attack Tree findings pointer.
-    assert f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
+    # Structural-fix list under Critical Findings by Root Cause.
+    assert f("- **[W-002](#w-002)** — Use one query path _(closes [F-003](#f-003), [F-004](#f-004))_")
+    assert f("- **No root cause linked** — [F-009](#f-009): see the [§8 Findings Register](#8-findings-register)")
     # Normal contexts keep their enrichment.
+    assert not f("- **[W-002](#w-002)** — Queries are concatenated. Proven by [F-003](#f-003).")
+    assert not f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
     assert not f("🔴 [F-005](#f-005) — OS Command Injection in a Verdict bullet")
     assert not f("| 🔴 [F-001](#f-001) — Insecure JWT | C-02 |")
-    # A §8 reference that is NOT the pointer line (no finding list) stays enriched.
+    assert not f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
     assert not f("See the [§8 Findings Register](#8-findings-register) for detail.")
 
 
@@ -2681,99 +2723,256 @@ def test_changelog_finding_refs_have_no_severity_dot(tmp_path: Path) -> None:
     assert "🔴 [F-002]" not in section and "🟠 [F-002]" not in section
 
 
-def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
-    """The Management Summary Top Mitigations section is a single ranked table
-    with a dedicated `Component` column (2026-05-29 update).
+def _remediation_slice(rendered: str) -> str:
+    return rendered.split("### Remediation Priorities", 1)[1].split("\n### ", 1)[0]
 
-    The earlier in-table divider-row form `| **↳ Component …** | | | | |`
-    rendered the component label jammed into the `#`/ID column with four empty
-    trailing cells — it looked displaced. The component label now lives in its
-    own column, printed once per group (blank on continuation rows), so the
-    table reads as grouped-by-component while every value sits in a real
-    column. Matches the sibling Top Findings table.
 
-    Layout (2026-06-03 — the dedicated `Priority` column was dropped; the
-    rollout priority now rides on the linked mitigation as a leading prefix.
-    2026-07-04 — fill-ramp restored: a single monochrome circle whose FILL is
-    the priority as a dark→light ramp, `●` … `○`):
-        | # | Component               | Mitigation                  | Addresses | Effort |
-        |---|---|---|---|---|
-        | 1 | **Express Backend (c-…)**  | ● [M-001](#m-001) — …      | ...       | ...    |
-        | 2 |                            | ● [M-002](#m-002) — …      | ...       | ...    |
-    """
+def _remediation_rows(rendered: str) -> list[str]:
+    return [ln for ln in _remediation_slice(rendered).splitlines() if ln.startswith("<tr><td")]
+
+
+def _with_model(out: Path, **fields) -> None:
+    yml_path = out / "threat-model.yaml"
+    data = yaml.safe_load(yml_path.read_text())
+    data.update(fields)
+    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def _fixture_mitigations(out: Path, extra: list[dict]) -> list[dict]:
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    return list(data["mitigations"]) + extra
+
+
+def test_remediation_priorities_group_fixes_under_their_root_cause(tmp_path: Path) -> None:
+    """Each root cause spans the rows of its fixes and names its lasting fix; a
+    Critical fix without a root cause still appears, in the trailing group."""
+    out = _prepare_output_dir(tmp_path)
+    _with_model(
+        out,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Queries are concatenated",
+                "severity": "Critical",
+                "instances": [{"id": "T-001"}, {"id": "T-002"}],
+                "structural_recommendation": "route every query through one parameterised path",
+            },
+            {
+                "id": "W-002",
+                "title": "Output is not encoded",
+                "severity": "High",
+                "instances": [{"id": "T-010"}],
+                "structural_recommendation": "encode output by default",
+            },
+        ],
+        mitigations=_fixture_mitigations(
+            out,
+            [
+                {
+                    "id": "M-004",
+                    "title": "Bind the report filter",
+                    "priority": "P2",
+                    "effort": "Low",
+                    "threat_ids": ["T-002"],
+                }
+            ],
+        ),
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _remediation_slice(rendered)
+    rows = _remediation_rows(rendered)
+
+    assert "<th>Root cause → lasting fix</th><th>Do first</th><th>Resolves</th><th>Effort</th>" in section
+    assert "](#" not in "\n".join(rows), "table cells are HTML; markdown would show raw"
+    w1 = next(i for i, r in enumerate(rows) if '<a href="#w-001">W-001</a>' in r)
+    assert 'rowspan="2"' in rows[w1]
+    assert "<em>→ route every query through one parameterised path</em>" in rows[w1]
+    assert '<a href="#m-001">M-001</a>' in rows[w1] and '<a href="#m-004">M-004</a>' in rows[w1 + 1]
+    assert '<a href="#f-001">F-001</a>' in rows[w1] and '<a href="#f-002">F-002</a>' in rows[w1]
+    w2 = next(i for i, r in enumerate(rows) if '<a href="#w-002">W-002</a>' in r)
+    assert '<a href="#m-003">M-003</a>' in rows[w2]
+    orphan = next(i for i, r in enumerate(rows) if "<em>No root cause linked</em>" in r)
+    assert '<a href="#m-002">M-002</a>' in rows[orphan]
+    assert w1 < w2 < orphan
+
+
+def test_remediation_priorities_cap_fixes_per_root_cause_but_keep_critical_ones(tmp_path: Path) -> None:
+    out = _prepare_output_dir(tmp_path)
+    extra = [
+        {"id": f"M-00{n}", "title": f"Harden step {n}", "priority": "P2", "effort": "Low", "threat_ids": ["T-010"]}
+        for n in (4, 5, 6)
+    ]
+    _with_model(
+        out,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Authorization is implemented route by route",
+                "severity": "Critical",
+                "instances": [{"id": "T-001"}, {"id": "T-003"}, {"id": "T-010"}],
+            }
+        ],
+        mitigations=_fixture_mitigations(out, extra),
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    rows = _remediation_rows(rendered)
+    group = "\n".join(rows)
+    assert 'rowspan="3"' in rows[0]
+    assert '<a href="#m-001">M-001</a>' in group and '<a href="#m-002">M-002</a>' in group
+    # Both Critical fixes stay; the cap leaves room for one more measure.
+    assert sum(f'<a href="#m-00{n}">' in group for n in (3, 4, 5, 6)) == 1
+    assert "3 more P1/P2 mitigations" in _remediation_slice(rendered)
+
+
+def test_remediation_priorities_keep_a_root_cause_without_any_fix(tmp_path: Path) -> None:
+    out = _prepare_output_dir(tmp_path)
+    _with_model(
+        out,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Build pipeline trusts mutable references",
+                "severity": "High",
+                "instances": [{"id": "T-050"}],
+                "structural_recommendation": "pin every reference to an immutable digest",
+            }
+        ],
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    row = next(r for r in _remediation_rows(rendered) if '<a href="#w-001">W-001</a>' in r)
+    assert "<em>→ pin every reference to an immutable digest</em>" in row
+    # No measure: the cells hold the placeholder dash (prose-normalised to "-").
+    assert row.endswith("<td>-</td><td>-</td></tr>")
+
+
+@pytest.mark.parametrize(
+    ("own_severity", "basis"),
+    [("High", "confirmed"), ("Medium", "observed-practice")],
+)
+def test_remediation_priorities_rank_a_cause_by_its_worst_finding(tmp_path: Path, own_severity, basis) -> None:
+    """A weakness's own severity counts confirmed instances only, so the cause
+    owning a Critical practice site can carry a lower heading. It must still
+    lead a design risk that resolves only Medium findings, and that design
+    risk's P3 measure is never offered as "do first"."""
+    out = _prepare_output_dir(tmp_path)
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    threats = data["threats"] + [{"t_id": "T-020", "title": "Unencoded label", "risk": "Medium"}]
+    _with_model(
+        out,
+        threats=threats,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Output is not encoded",
+                "severity": "High",
+                "severity_basis": "design-risk",
+                "observable_backing": {"practice_evidence": [{"id": "T-020"}]},
+                "structural_recommendation": "encode output by default",
+            },
+            {
+                "id": "W-002",
+                "title": "Keys live in source",
+                "severity": own_severity,
+                "severity_basis": basis,
+                "instances": [{"id": "T-010"}] if basis == "confirmed" else [],
+                "observable_backing": {"practice_evidence": [{"id": "T-003"}]},
+                "structural_recommendation": "load keys from a managed store",
+            },
+        ],
+        mitigations=_fixture_mitigations(
+            out,
+            [{"id": "M-004", "title": "Encode the label", "priority": "P3", "effort": "Low", "threat_ids": ["T-020"]}],
+        ),
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    rows = _remediation_rows(rendered)
+
+    w2 = next(i for i, r in enumerate(rows) if '<a href="#w-002">W-002</a>' in r)
+    w1 = next(i for i, r in enumerate(rows) if '<a href="#w-001">W-001</a>' in r)
+    assert w2 < w1
+    assert '<a href="#m-002">M-002</a>' in rows[w2]
+    assert ">M-004</a>" not in _remediation_slice(rendered)
+    assert rows[w1].endswith(">-</td><td>-</td><td>-</td></tr>")
+
+
+def test_remediation_priorities_without_root_causes_list_the_top_fixes(tmp_path: Path) -> None:
+    """Without a weakness register the table still lists the P1/P2 measures."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
+    rows = _remediation_rows(rendered)
+    assert "<em>No root cause linked</em>" in rows[0] and 'rowspan="3"' in rows[0]
+    for mid in ("M-001", "M-002", "M-003"):
+        assert any(f'<a href="#{mid.lower()}">{mid}</a>' in r for r in rows)
 
-    # Slice the Top Mitigations section out of the Management Summary.
-    ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
 
-    # Legacy headers from earlier layouts are gone.
-    assert "#### Prioritized Mitigations" not in ms_slice
-    assert "#### Follow-up Mitigations" not in ms_slice
-    assert "####" not in ms_slice, "Top Mitigations layout must not emit `####` sub-headers"
+@pytest.mark.parametrize("priority", ["P3", "P4"])
+def test_remediation_priorities_keep_lower_priority_fixes_without_root_causes(tmp_path, priority):
+    out = _prepare_output_dir(tmp_path)
+    measures = _fixture_mitigations(out, [])
+    for measure in measures:
+        measure["priority"] = priority
+    _with_model(out, weaknesses=[], mitigations=measures)
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _remediation_slice(rendered)
+    assert _remediation_rows(rendered)
+    assert "No mitigation is recorded" not in section
+    assert "#7-weakness-register" not in section
+    assert all(f">{m.get('id') or m['m_id']}</a>" in section for m in measures)
+    assert {m["priority"] for m in yaml.safe_load((out / "threat-model.yaml").read_text())["mitigations"]} == {priority}
 
-    # Canonical 5-column pipe-table header — the dedicated Priority column was
-    # dropped (2026-06-03); priority now rides on the linked mitigation prefix.
-    assert "| # | Component | Mitigation | Addresses | Effort |" in ms_slice
 
-    import re as _re
+def test_remediation_priorities_empty_register_retains_table_contract(tmp_path):
+    out = _prepare_output_dir(tmp_path)
+    _with_model(out, weaknesses=[], mitigations=[])
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _remediation_slice(rendered)
+    assert "No mitigation is recorded" in section
+    assert "<th>Root cause → lasting fix</th>" in section
+    assert not _remediation_rows(rendered)
 
-    # The retired in-table divider-row form must NOT appear (regression guard).
-    assert not _re.search(
-        r"^\|\s*\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|",
-        ms_slice,
-        flags=_re.MULTILINE,
-    ), "in-table `↳ Component — N item(s)` divider row is retired (2026-05-29)"
-    # No `↳` group glyph anywhere in the section any more.
-    assert "↳" not in ms_slice, "component grouping no longer uses the ↳ glyph"
 
-    # Priority now rides on the linked mitigation as a single monochrome circle
-    # whose FILL is the priority as a dark→light ramp (2026-07-04 user request —
-    # ●◕◑○) rather than a dedicated bold column cell. Assert the ramp prefix renders.
-    assert _re.search(r"[●◕◑○]\s+\[M-", ms_slice), "expected a `● [M-NNN]` fill-ramp priority prefix"
-    assert "● [M-001](#m-001)" in ms_slice
-    assert "● [M-002](#m-002)" in ms_slice
-    assert "◕ [M-003](#m-003)" in ms_slice
-
-    # The Component column carries a label on the first row of each group,
-    # linked to the component anchor exactly like the Architecture Assessment
-    # "Affected components" cell: `[C-NN](#c-nn) — Name` (or the unlinked
-    # "Cross-cutting" sentinel when a mitigation maps to no component).
-    data_rows = [
-        ln
-        for ln in ms_slice.splitlines()
-        if _re.match(r"^\|\s*\*\*\d+\*\*\s*\|", ln)  # rows whose # cell is **N**
-    ]
-    assert data_rows, "expected at least one numbered data row"
-    first_cells = [c.strip() for c in data_rows[0].split("|")]
-    # cells: ['', '**1**', '[C-NN](#c-nn) — Name', 'P1 · <mitigation>', ...]
-    # (Priority column dropped 2026-06-03 — Component shifted from index 3 to 2.)
-    comp_cell = first_cells[2]
-    assert _re.match(r"^\[C-\d+\]\(#c-\d+\)\s+—\s+.+", comp_cell) or comp_cell == "Cross-cutting", (
-        f"first row's Component cell must be a `[C-NN](#c-nn) — Name` link "
-        f"(matching Architecture Assessment) or 'Cross-cutting', got {comp_cell!r}"
-    )
+def test_figure1_intro_does_not_link_an_absent_boundary_catalog():
+    facts = {"components": 1, "layers": 1, "external_services": 0, "scenarios": 0}
+    assert "#trust-boundaries" not in compose._figure1_intro("Records", facts, has_boundaries=False)
+    assert "#trust-boundaries" in compose._figure1_intro("Records", facts, has_boundaries=True)
 
 
 def test_top_mitigations_put_declared_business_context_first_within_a_priority(tmp_path: Path) -> None:
     """Declared context reorders inside a priority and names the asset; it never
     lifts a P2 above a P1 (FE-7)."""
     out = _prepare_output_dir(tmp_path)
-    yml_path = out / "threat-model.yaml"
-    data = yaml.safe_load(yml_path.read_text())
-    data["business_context_trace"] = {"status": "applied", "declared_asset_names": ["Order History"]}
-    data["assets"] = [{"name": "Order History", "classification": "Restricted", "linked_threats": ["T-003", "T-010"]}]
-    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    _with_model(
+        out,
+        business_context_trace={"status": "applied", "declared_asset_names": ["Order History"]},
+        assets=[{"name": "Order History", "classification": "Restricted", "linked_threats": ["T-003", "T-010"]}],
+    )
 
     rendered, _ = compose.render(CONTRACT, out)
-    ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
-    rows = [ln for ln in ms_slice.splitlines() if ln.startswith("| **")]
+    rows = _remediation_rows(rendered)
 
-    order = [next(m for m in ("M-001", "M-002", "M-003") if f"[{m}]" in row) for row in rows]
+    order = [next(m for m in ("M-001", "M-002", "M-003") if f">{m}</a>" in row) for row in rows]
     assert order.index("M-002") < order.index("M-001") < order.index("M-003")
-    marked = next(row for row in rows if "[M-002]" in row)
-    assert "*Business-critical: Order History*" in marked
-    assert "Business-critical" not in next(row for row in rows if "[M-001]" in row)
+    marked = next(row for row in rows if ">M-002</a>" in row)
+    assert "<em>Business-critical: Order History</em>" in marked
+    assert "Business-critical" not in next(row for row in rows if ">M-001</a>" in row)
+
+
+@pytest.mark.parametrize(("reached", "marked"), [({"T-001", "T-002", "T-003", "T-010"}, False), ({"T-001"}, True)])
+def test_unnamed_business_context_marker_appears_only_when_it_distinguishes(tmp_path: Path, reached, marked) -> None:
+    """The unnamed marker explains why a measure leads its priority. When the
+    declared context reaches every measure it orders nothing, so no row
+    carries it; when it reaches only some, those rows keep it."""
+    out = _prepare_output_dir(tmp_path)
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    for threat in data["threats"]:
+        if threat["t_id"] in reached:
+            threat["business_context_basis"] = ["impact_if_compromised"]
+    _with_model(out, threats=data["threats"], business_context_trace={"status": "applied"})
+
+    rendered, _ = compose.render(CONTRACT, out)
+    row = next(row for row in _remediation_rows(rendered) if ">M-001</a>" in row)
+
+    assert ("<em>Declared business context</em>" in row) is marked
 
 
 # ---------------------------------------------------------------------------
@@ -5998,21 +6197,16 @@ def test_authored_paths_release_build_time_findings_to_the_supply_chain_path(tmp
 
 @pytest.mark.parametrize("registration", [True, False])
 @pytest.mark.parametrize("access", [True, False])
-@pytest.mark.parametrize("fallback", [True, False])
-def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(
-    tmp_path, monkeypatch, registration, access, fallback
-):
+def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(tmp_path, registration, access):
     ctx = _fig1_ctx(tmp_path)
     ctx.yaml_data["meta"]["open_user_registration"] = registration
     ctx.yaml_data["external_entities"] = [
         {"id": key, "name": name, "kind": "legitimate-role", **({"access": slug} if access else {})}
         for key, name, slug in (("ext-reader", "Reader", "internet-anon"), ("ext-editor", "Editor", "internet-user"))
     ]
-    if fallback:
-        monkeypatch.setattr("renderers.figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
     md = light_images(compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX))
     note = "Anonymous and authenticated regular users share one card because self-registration is open."
-    assert (note in md) is (registration and access and not fallback)
+    assert (note in md) is (registration and access)
     if note in md:
         assert md.index(note) > md.index("](figure1.svg)")
         assert "Individual flows may still require login." in md
@@ -6116,10 +6310,11 @@ def test_render_figure1_svg_default_is_file_reference(tmp_path: Path) -> None:
 
 
 def test_figure_basename_for_md_derives_from_stem() -> None:
-    assert compose._figure_basename_for_md("threat-model.md") == "threat-model.figure1.svg"
+    # The figure carries the published name the report is delivered under.
+    assert compose._figure_basename_for_md("threat-model.md") == "security-assessment.figure1.svg"
     assert (
         compose._figure_basename_for_md("threat-model-juice-shop-quick.md")
-        == "threat-model-juice-shop-quick.figure1.svg"
+        == "security-assessment-juice-shop-quick.figure1.svg"
     )
     assert compose._figure_basename_for_md("analysis-model.md") == "analysis-model.figure1.svg"
 
@@ -6140,7 +6335,7 @@ def test_render_figure1_svg_custom_basename(tmp_path: Path) -> None:
 
 
 def test_render_figure1_svg_embed_via_skill_config(tmp_path: Path) -> None:
-    # `/create-threat-model --embed-figures` persists embed_figures to
+    # `/appsec-analyzer --embed-figures` persists embed_figures to
     # .skill-config.json; compose honours it without a CLI flag (renderer path).
     out = tmp_path / "out"
     out.mkdir()
@@ -6200,32 +6395,27 @@ def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> Non
     assert 'data-legend-section="notation"' in (out / "figure1.svg").read_text(encoding="utf-8")
 
 
-def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: Path, monkeypatch) -> None:
+def test_render_figure1_svg_stops_when_the_dfd_builder_raises(tmp_path: Path, monkeypatch) -> None:
     def boom(*_a, **_k):
         raise KeyError("pts")
 
     monkeypatch.setattr("renderers.figure1_dfd.check_diagram", boom)
     out = tmp_path / "out"
     out.mkdir()
-    ctx = _fig1_ctx(out)
-    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert md.startswith("Architecture tiers top-to-bottom")
-    assert (out / "figure1.svg").is_file()
-    assert [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram builder failed (KeyError")]
+    with pytest.raises(compose.FigureError, match=r"builder failed \(KeyError"):
+        compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert not (out / "figure1.svg").exists()
 
 
-def test_render_figure1_svg_falls_back_when_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
+def test_render_figure1_svg_stops_when_the_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "renderers.figure1_dfd.check_diagram", lambda *_a, **_k: ("<svg>bad</svg>", ["edge df-001 crosses node api"])
     )
     out = tmp_path / "out"
     out.mkdir()
-    ctx = _fig1_ctx(out)
-    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert md.startswith("Architecture tiers top-to-bottom")
-    assert "bad" not in (out / "figure1.svg").read_text(encoding="utf-8")
-    warns = [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram failed its self-check")]
-    assert warns and "edge df-001 crosses node api" in warns[0]
+    with pytest.raises(compose.FigureError, match="edge df-001 crosses node api"):
+        compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert not (out / "figure1.svg").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -6658,43 +6848,21 @@ def test_sec7_rewrite_dedupes_within_cell_and_ignores_prose():
     assert "[F-015 — evidence prose](#f-015)" in out
 
 
-def test_ms_top_weaknesses_table_and_ordering():
+def test_ms_top_weaknesses_rank_by_severity_and_top_up_short_lists():
     class _Ctx:
         yaml_data = {
             "weaknesses": [
-                {
-                    "id": "W-003",
-                    "title": "Object-Level Ownership Check",
-                    "severity": "Critical",
-                    "severity_basis": "confirmed",
-                    "instances": [{"id": "T-008"}],
-                },
-                {
-                    "id": "W-007",
-                    "title": "Weak Cryptography safeguards in auth",
-                    "severity": "Medium",
-                    "severity_basis": "observed-practice",
-                    "observable_backing": {"practice_evidence": [{"id": "T-027"}]},
-                },
+                {"id": "W-007", "severity": "Medium", "severity_basis": "observed-practice"},
+                {"id": "W-003", "severity": "Critical", "severity_basis": "confirmed"},
+                {"id": "W-009", "severity": "Low"},
             ]
         }
 
-        @staticmethod
-        def severity_emoji(s):
-            return {"critical": "🔴", "medium": "🟡"}.get(s, "")
-
-    out = compose._render_ms_top_weaknesses(_Ctx())
-    assert out.startswith("### Top Weaknesses")
-    # Bullet form (2026-07-14): "- 🔴 **[W-003](#w-003) — Title** (Critical) — …".
-    assert "**[W-003](#w-003) — Object-Level Ownership Check**" in out
-    assert "[F-008](#f-008)" in out
-    # Critical sorts above Medium.
-    assert out.index("W-003") < out.index("W-007")
-    # Title's " safeguards in ..." tail is stripped.
-    assert "Weak Cryptography**" in out
+    # Fewer than three High-or-worse root causes: the list is topped up in rank order.
+    assert [w["id"] for w in compose._ms_top_weaknesses(_Ctx())] == ["W-003", "W-007", "W-009"]
 
 
-def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
+def test_ms_open_questions_follow_remediation_priorities(monkeypatch) -> None:
     finding = {
         "id": "T-001",
         "title": "Object owner not checked",
@@ -6731,7 +6899,7 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
                     "heading": "### Security Posture & Top Threats",
                     "fragment_type": "computed",
                 },
-                "mitigations": {"heading": "### Top Mitigations", "fragment_type": "computed"},
+                "mitigations": {"heading": "### Remediation Priorities", "fragment_type": "computed"},
                 "operational_strengths": {
                     "heading": "### Operational Strengths",
                     "fragment_type": "computed",
@@ -6759,12 +6927,17 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
         # The rendered shape is what keeps the enrichment passes off the block.
         assert compose._is_bare_finding_ref_line(report_line)
+        # The question is italic; its impact line beneath stays upright.
+        assert re.match(r"- _[^_]+\?_( \(|$)", report_line), report_line
+    for impact_line in [line for line in report_questions.splitlines() if line.startswith("  ")]:
+        assert not impact_line.strip().startswith("_"), impact_line
 
     monkeypatch.setattr(compose, "_render_by_id", lambda _ctx, _env, _sid, section: section["heading"])
     monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")
     management_summary = compose._render_management_summary(_Ctx(), None, {})
     assert (
-        management_summary.index("### Top Weaknesses")
+        management_summary.index("### Verdict")
+        < management_summary.index("### Remediation Priorities")
         < management_summary.index("### Open Questions for the Team")
         < management_summary.index("### Security Posture & Top Threats")
     )
@@ -6860,25 +7033,13 @@ def _crossref_ctx(tmp_path: Path) -> compose.RenderContext:
     )
 
 
-def test_control_domain_names_the_crossings_that_depend_on_it(tmp_path: Path) -> None:
-    """§6 grades a control class across the codebase, a leg grades one crossing.
-    Both were derivable and neither referenced the other, so the report stated
-    the same gap twice with no path between it."""
+def test_control_domain_preserves_anchors_without_inferred_dependencies(tmp_path: Path) -> None:
     ctx = _crossref_ctx(tmp_path)
-    frag = (
-        "### 6.4 Authorization Controls\n\nControl prose.\n\n"
-        "### 6.9 Cryptography Secrets and Data Protection\n\nOther prose.\n"
-    )
+    frag = "### 6.4 Authorization Controls\n\nControl prose.\n\n### 6.9 Cryptography Secrets and Data Protection\n\nOther prose.\n"
     out = compose._inject_boundary_leg_crossrefs(ctx, frag)
     assert '<a id="ctrl-authorization-controls"></a>' in out
-    crossing, _mechanism = compose._boundary_crossing_and_mechanism(ctx.yaml_data["trust_boundaries"][0])
-    assert (
-        f"**Dependent crossings:**\n\n- [tb-1](#tb-1) — {crossing} (assumption not confirmed)\n  - [F-008](#f-008)"
-    ) in out
-    # The injected block must not swallow the blank line before the prose, or
-    # markdown folds them into one paragraph.
-    assert "[F-008](#f-008)\n\nControl prose." in out
-    # Crypto is not a condition of a crossing — no leg, and so no claim.
+    assert "\n\nControl prose." in out
+    assert "Dependent crossings" not in out and "[tb-1]" not in out
     assert "ctrl-cryptography" not in out
 
 
@@ -6895,12 +7056,12 @@ def test_leg_line_links_back_to_its_control_domain(tmp_path: Path) -> None:
 
 
 def test_control_domain_without_a_dependent_crossing_says_so(tmp_path: Path) -> None:
-    """Silence would read as "not checked". The anchor is emitted either way so
-    the §1 back-link never dangles."""
+    """An absent dependency is not evidence that no dependency exists."""
     ctx = _crossref_ctx(tmp_path)
     out = compose._inject_boundary_leg_crossrefs(ctx, "### 6.10 File Parser and Outbound Request Controls\n\nProse.\n")
     assert '<a id="ctrl-file-parser-and-outbound-request-controls"></a>' in out
-    assert "No trust boundary in this model depends on this control class." in out
+    assert "No trust boundary" not in out
+    assert "Dependent crossings" not in out and "Prose." in out
 
 
 def test_control_domain_crossref_is_idempotent(tmp_path: Path) -> None:
@@ -6959,30 +7120,20 @@ def _leg_catalog(tmp_path: Path) -> str:
     return _catalog(tmp_path, rows, threats, ["C-01"])
 
 
-def test_verdict_column_names_no_finding_ids(tmp_path: Path) -> None:
-    """Every id the table prints must be a link the reader can follow.
-
-    The verdict column used to enumerate bare, unlinked ids for an in-doubt leg.
-    They were not links and appeared in no other column, so the table looked
-    like it contradicted itself (user 2026-08-02). The count survives; the ids
-    do not.
-    """
+def test_boundary_evidence_cell_links_only_findings_that_reference_the_crossing(tmp_path: Path) -> None:
     rendered = _leg_catalog(tmp_path)
-    verdict_cell = next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')).split(" | ")[4]
-    assert "F-00" not in verdict_cell
-    assert "T-00" not in verdict_cell
-    # What the ids carried — that the condition fails more than once — stays.
-    assert "related" in verdict_cell
+    cell = compose._split_table_row(next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')))[
+        3
+    ]
+    assert "Gap evidenced:" in cell
+    assert "[F-001](#f-001)" in cell and "[F-002](#f-002)" in cell
+    assert "F-003" not in cell and "F-004" not in cell
 
 
 def test_linked_findings_are_grouped_under_the_condition_they_break(tmp_path: Path) -> None:
-    """The evidence column carries the leg label, so it meets the verdict column.
-
-    Without it the two columns describe the same crossing twice and never meet:
-    the reader cannot tell which finding broke which condition.
-    """
+    """Explicit links retain their condition labels in the combined evidence cell."""
     rendered = _leg_catalog(tmp_path)
-    links_cell = next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')).split(" | ")[5]
+    links_cell = next(line for line in rendered.splitlines() if line.startswith('| <a id="tb-1"')).split(" | ")[3]
     assert "_Authentication_<br>🔴 [F-001](#f-001)" in links_cell
     assert "_Authorization_<br>🟠 [F-002](#f-002)" in links_cell
     # Group order follows the canonical leg order, as the verdict lines do.
@@ -7001,23 +7152,19 @@ def test_unattributable_link_is_labelled_not_left_bare(tmp_path: Path) -> None:
     threats = [{"id": "T-009", "component": "C-01", "risk": "High", "boundary_refs": [{"boundary_id": "tb-1"}]}]
     links_cell = next(
         line for line in _catalog(tmp_path, rows, threats, ["C-01"]).splitlines() if line.startswith('| <a id="tb-1"')
-    ).split(" | ")[5]
-    assert links_cell.startswith("_Unattributed_<br>")
+    ).split(" | ")[3]
+    assert "_Unattributed_<br>" in links_cell
     assert "[F-009](#f-009)" in links_cell
 
 
 def test_boundary_vocabulary_is_explained_after_the_table_not_before_it(tmp_path: Path) -> None:
-    """The lead says what the table is; the verdict words are reference material.
-
-    As one block up front the definitions ran to a screen the reader had to hold
-    in memory before seeing a row (user 2026-08-02).
-    """
+    """A short introduction precedes the table and its provenance note follows it."""
     rendered = _leg_catalog(tmp_path)
     lead = rendered.split("\n\n")[1]
     assert len(lead.split()) < 70, lead
     for word in ("broken", "in doubt", "not examined", "related"):
         assert word not in lead
-    legend_at = rendered.index("_Verdict per condition —")
+    legend_at = rendered.index("Crossing types, source evidence and provenance")
     assert legend_at > rendered.rindex('| <a id="tb-1"')
 
 
@@ -7061,7 +7208,7 @@ def test_in_process_crossing_renders_the_data_interpretation_condition(tmp_path:
         }
     ]
     rendered = _catalog(tmp_path, [row], threats, ["C-01", "C-02"])
-    assert "Query construction: **broken**" in rendered
+    assert "Gap evidenced:" in rendered
     assert "_Query construction_<br>🔴 [F-004](#f-004)" in rendered
 
 
@@ -7331,7 +7478,15 @@ def test_section8_names_its_basis_when_it_differs_from_the_summary(tmp_path: Pat
     model = yaml.safe_load(model_path.read_text())
     if fold:
         model["threats"][0]["evidence_tier"] = "insecure-practice"
-        model["weaknesses"] = [{"id": "W-001", "kind": "implementation", "severity": "High"}]
+        site = model["threats"][0].get("id") or model["threats"][0].get("t_id")
+        model["weaknesses"] = [
+            {
+                "id": "W-001",
+                "kind": "implementation",
+                "severity": "High",
+                "observable_backing": {"practice_evidence": [{"id": site}]},
+            }
+        ]
         model_path.write_text(yaml.safe_dump(model, sort_keys=False))
     rendered, _ = compose.render(CONTRACT, out)
 
@@ -7352,3 +7507,19 @@ def test_no_strength_cluster_claims_to_address_ssrf() -> None:
     )
     entries = clusters.get("clusters", clusters) if isinstance(clusters, dict) else clusters
     assert all("CWE-918" not in (c.get("addresses_cwes") or []) for c in entries)
+
+
+def test_external_boundary_elevations_use_the_ids_triage_recorded(tmp_path):
+    """TB-9: the flag already carries delivered IDs; an overlapping renumber
+    sidecar must not translate them a second time."""
+    flag = {
+        "type": "severity_reconciliation",
+        "threat_ids": ["T-001"],
+        "source": "triage_compute_ranking.py:external_boundary:tb-2",
+    }
+    (tmp_path / ".triage-flags.json").write_text(json.dumps({"flags": [flag]}), encoding="utf-8")
+    (tmp_path / ".trust-boundary-renumber.json").write_text(
+        json.dumps({"schema_version": 1, "mapping": {"tb-2": "tb-3", "tb-3": "tb-2"}}), encoding="utf-8"
+    )
+    compose._external_boundary_elevations_cached.cache_clear()
+    assert compose._external_boundary_elevations_cached(str(tmp_path)) == {"T-001": ("tb-2",)}

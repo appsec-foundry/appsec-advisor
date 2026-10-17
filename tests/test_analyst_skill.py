@@ -56,3 +56,19 @@ def test_the_skill_never_widens_authority_or_invents_answers():
 def test_the_skill_offers_the_manifesto_profile_only_as_an_explicit_addition():
     assert "tmm/threat-modeling-manifesto@1.0.0" in HELP
     assert "Do not add packages" in SKILL
+
+
+def test_hypothesis_and_context_options_are_exposed_without_implicit_scope():
+    for flag in (
+        "--hypothesis",
+        "--revision",
+        "--path",
+        "--requirements",
+        "--requirements-required",
+        "--threat-model",
+        "--threat-model-required",
+    ):
+        assert flag in SKILL and flag in HELP
+    assert "ask for any missing revision or paths" in SKILL
+    assert "Do not silently turn it into a design question" in SKILL
+    assert "Not confirmed never means disproved or safe" in HELP

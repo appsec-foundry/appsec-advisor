@@ -327,6 +327,8 @@ _GUARD_NAME_RE = re.compile(
 )
 #: A registration call is short; the cap only bounds an unbalanced one.
 _MOUNT_SCOPE_CAP = 4000
+#: Earlier guard registrations recorded per route (MR-19); the closest-preceding few suffice.
+MAX_GUARD_LINES = 8
 
 
 def _mount_middleware(text: str, head: re.Match) -> str:
@@ -350,6 +352,70 @@ def _mount_middleware(text: str, head: re.Match) -> str:
         elif depth == 1 and scope.startswith("=>", i):
             return scope[:i]
     return scope
+
+
+_PATH_PARAM_RE = re.compile(r"/:\w")
+_JS_LOCAL_IMPORT_RE = re.compile(
+    r"""\bimport\s+(?:(?P<default>[\w$]+)\s*,?\s*)?(?:\{(?P<named>[^}]*)\})?\s*from\s*['"]\.\.?/"""
+    r"""|\b(?:const|let|var)\s+(?:(?P<name>[\w$]+)|\{(?P<destructured>[^}]*)\})\s*=\s*require\(\s*['"]\.\.?/"""
+)
+
+
+def _local_imports(text: str) -> set[str]:
+    """Names this file binds from a relative module import or require."""
+    names: set[str] = set()
+    for m in _JS_LOCAL_IMPORT_RE.finditer(text):
+        names.update(n for n in (m.group("default"), m.group("name")) if n)
+        for part in (m.group("named") or m.group("destructured") or "").split(","):
+            local = re.split(r"\s+as\s+|:", part.strip())[-1].strip()
+            if local:
+                names.add(local)
+    return names
+
+
+def _terminal_mounts(text: str, verbs: list[re.Match]) -> list[re.Match]:
+    """`use` mounts that end the request at a repository handler, such as
+    `app.use('/files/:name', serveFiles())`, so the inventory lists them as routes.
+
+    A mount counts only when its path addresses an object (a path parameter),
+    its last argument calls or names a function imported from a relative
+    module, that function is no guard, and no other registration in the file
+    lies below its path. Prefix mounts, guards and package middleware such as
+    `express.static` stay guard-only (`_record_mount`).
+    """
+    mounts = [m for m in _MOUNT_HEAD_RE.finditer(text) if m.group("verb") == "use"]
+    paths = [m.group("path") for m in (*verbs, *mounts)]
+    local = _local_imports(text)
+    found = []
+    for m in mounts:
+        path = m.group("path")
+        if not _PATH_PARAM_RE.search(path):
+            continue
+        base = path.rstrip("/")
+        if any(other != path and other.startswith(base + "/") for other in paths):
+            continue
+        scope = _strip_literals(
+            _call_scope(
+                text, m.start("open"), m.start("open"), min(len(text), m.start("open") + _MOUNT_SCOPE_CAP), "//"
+            )
+        )
+        args, depth, start = [], 0, 1
+        for i, ch in enumerate(scope):
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+                if depth == 0:
+                    args.append(scope[start:i])
+                    break
+            elif ch == "," and depth == 1:
+                args.append(scope[start:i])
+                start = i + 1
+        last = args[-1].strip() if len(args) >= 2 else ""
+        callee = last.split("(", 1)[0].strip()
+        if callee in local and not (_GUARD_NAME_RE.search(callee) or _AUTHZ_GUARD_NAME_RE.search(callee)):
+            found.append(m)
+    return found
 
 
 # HTTP verbs that change state — an unauthenticated one is a missing-auth
@@ -541,6 +607,7 @@ class RouteCandidate:
     authn_handler_evidence: list[dict] = field(default_factory=list)
     handler_module: str | None = None
     operation_permission_present: bool = False
+    guard_lines: list[int] = field(default_factory=list)
 
 
 def _detect_management_surface(path: str) -> bool:
@@ -680,13 +747,15 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
         if signals != ("unknown", "unknown"):
             pathless_guards.append((use.start(), use.group("obj"), signals))
 
-    registrations = list(_JS_ROUTE_RE.finditer(text))
+    verbs = list(_JS_ROUTE_RE.finditer(text))
+    registrations = sorted(verbs + _terminal_mounts(text, verbs), key=lambda match: match.start())
     for index, m in enumerate(registrations):
-        method = m.group("method").upper()
+        method = (m.group("method") if "method" in m.re.groupindex else "all").upper()
         route = m.group("path")
         n = text.count("\n", 0, m.start()) + 1
         limit = registrations[index + 1].start() if index + 1 < len(registrations) else len(text)
         authn, authz = _scan_auth_text(_call_scope(text, m.start(), m.start("open"), limit, "//"))
+        guard_lines: list[int] = []
         # Prefix and exact guards belong only to this object and earlier registrations.
         for mount in _MOUNT_HEAD_RE.finditer(text, 0, m.start()):
             if mount.group("obj") != m.group("obj"):
@@ -697,6 +766,8 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
             if not _guarded(candidate, prefixes, exact):
                 continue
             middleware = _mount_middleware(text, mount)
+            if _GUARD_NAME_RE.search(middleware) or _AUTHZ_GUARD_NAME_RE.search(middleware):
+                guard_lines.append(text.count("\n", 0, mount.start()) + 1)
             if authn == "unknown" and _GUARD_NAME_RE.search(middleware):
                 authn = "middleware_present"
             if authz == "unknown" and _AUTHZ_GUARD_NAME_RE.search(middleware):
@@ -716,6 +787,7 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
                 authn_signal=authn,
                 authz_signal=authz,
                 management_surface=_detect_management_surface(route),
+                guard_lines=guard_lines[:MAX_GUARD_LINES],
             )
         )
 
@@ -1273,6 +1345,8 @@ def _serialize_route(i: int, r: RouteCandidate) -> dict:
             ordered["authn_handler_evidence"] = d["authn_handler_evidence"]
     if d["handler_module"]:
         ordered["handler_module"] = d["handler_module"]
+    if d["guard_lines"]:
+        ordered["guard_lines"] = d["guard_lines"]
     return ordered
 
 

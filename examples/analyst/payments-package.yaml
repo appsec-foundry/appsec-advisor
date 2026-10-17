@@ -8,7 +8,7 @@
 schema_version: 1
 kind: questions
 id: example/payments
-version: 1.0.0
+version: 1.1.0
 title: Payment flow questions
 provenance:
   source: Example organization AppSec team
@@ -17,16 +17,30 @@ questions:
   - id: refund-bound
     topic: business_integrity
     applies_when: [business_operation]
-    asks: Can a refund, chargeback, or credit exceed the amount originally captured for the same order?
+    asks: Where reimbursement is limited to the captured amount, can repeated or concurrent refunds, chargebacks, or credits exceed that limit for the same order?
     purpose: Unbounded refunds move money out without a conventional vulnerability.
-    evidence: [refund handler, server-side amount lookup, idempotency keys]
+    evidence: [captured amount and applicable refund limit, cumulative refund calculation, transaction and idempotency controls]
     requirement_refs: [PAY-REFUND-1]
-    negative_tests: [A refund above the captured amount is refused.]
+    negative_tests: [Where reimbursement is limited to the captured amount, repeated or concurrent refunds exceeding the remaining allowance are refused.]
   - id: price-source
     topic: business_integrity
     applies_when: [business_operation, untrusted_input]
-    asks: Is every price, discount, and currency recomputed on the server rather than taken from the client?
+    asks: Where the server determines the payable amount, can client-supplied price, discount, or currency values change that amount without an authorized pricing decision?
     purpose: Client-supplied prices let a buyer set their own price.
-    evidence: [checkout handler, pricing service calls]
+    evidence: [authoritative pricing expectation, checkout amount calculation, pricing service or signed quote validation]
     requirement_refs: [PAY-PRICE-1]
     negative_tests: [A manipulated price in the request does not change the charged amount.]
+  - id: approval-separation
+    topic: authorization
+    applies_when: [business_operation, changed_permission]
+    asks: Where policy requires different initiator and approver identities, can a payment initiator approve the same payment?
+    purpose: Self-approval lets one actor bypass required independent approval and authorize an improper payout.
+    evidence: [applicable separation policy and process scope, initiator and approver identity sources, rejecting approval controls]
+    negative_tests: [An initiator approving the same payment is refused where policy requires separation.]
+  - id: approved-recipient-binding
+    topic: business_integrity
+    applies_when: [business_operation, changed_permission]
+    asks: Where approval is bound to a payment recipient, can a later recipient change be executed without renewed approval?
+    purpose: Reusing approval for another recipient lets an actor redirect an authorized payout.
+    evidence: [applicable approval binding and process scope, recipient update path, approval invalidation and execution checks]
+    negative_tests: [A changed recipient cannot receive the payment under the previous recipient's approval.]

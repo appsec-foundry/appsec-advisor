@@ -48,7 +48,7 @@ def test_decision_register_requires_approval_through_an_absolute_path():
 
 
 def test_catalog_approval_is_left_to_the_specification_guard():
-    assert requirements_hook.decide(payload(path="specs/requirements.md")) is None
+    assert requirements_hook.decide(payload(path="requirements.md")) is None
 
 
 def test_governed_file_carries_its_requirements():
@@ -110,8 +110,8 @@ def test_a_shell_write_to_a_held_file_requires_user_approval(command):
 @pytest.mark.parametrize(
     "command",
     [
-        "grep REQ- specs/requirements.md",
-        "cat > specs/requirements.md",
+        "grep REQ- requirements.md",
+        "cat > requirements.md",
         "wc -l docs/internal/decisions.md",
         "python3 scripts/check_specs.py",
         "echo hello > /tmp/note.txt",
@@ -136,7 +136,7 @@ def test_a_shell_write_to_a_governed_file_carries_its_requirements(command):
 
 
 def test_a_shell_write_to_an_ungoverned_file_is_left_alone():
-    assert requirements_hook.decide(bash("sed -i 's/a/b/' scripts/runtime/agent_logger.py")) is None
+    assert requirements_hook.decide(bash("sed -i 's/a/b/' CHANGELOG.md")) is None
 
 
 def test_a_read_only_command_naming_a_governed_file_is_left_alone():

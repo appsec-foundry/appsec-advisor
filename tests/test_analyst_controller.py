@@ -80,6 +80,11 @@ def response(prompt: str, **overrides) -> dict:
         "limitations": [],
     }
     reply.update(overrides)
+    if "question_coverage" not in overrides:
+        asked = {q.get("question_ref") for q in reply["questions"]}
+        for entry in reply["question_coverage"]:
+            if entry["question_ref"] in asked:
+                entry.update(status="needs_answer", note="The scope needs clarification.")
     return reply
 
 
@@ -227,6 +232,82 @@ def test_design_requests_never_produce_findings(repo, state_root):
     assert ctl.run(inv, Fake(lambda p: response(p, findings=[removed_check_finding()]))).state == "failed"
 
 
+@pytest.mark.parametrize("mode", ["design", "review", "hypothesis"])
+@pytest.mark.parametrize("package_id", ["example/requests", "example/reservations"])
+def test_question_applicability_reaches_each_mode_without_expanding_scope(repo, state_root, tmp_path, mode, package_id):
+    question = {
+        "id": "independent-approval",
+        "topic": "authorization",
+        "applies_when": ["business_operation", "changed_permission"],
+        "asks": "Where policy requires separate identities, can the creator approve the same request?",
+        "purpose": "Self-approval bypasses an evidenced independent-approval requirement.",
+        "evidence": ["applicable approval policy", "creator and approver identity binding"],
+        "negative_tests": ["The creator cannot approve the same request where separation is required."],
+    }
+    path = tmp_path / "workflow-questions.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "questions",
+                "id": package_id,
+                "version": "1.0.0",
+                "title": "Conditional approval investigation",
+                "provenance": {"source": "Synthetic integration case", "revision": "1"},
+                "questions": [question],
+            }
+        )
+    )
+    selection = [Selection(str(path), "explicit")]
+    if mode == "design":
+        inv = ctl.Invocation(
+            mode="design",
+            scope={"kind": "design", "source": "text"},
+            repo_root=repo,
+            state_root=state_root,
+            env={},
+            design_text="Design a request approval operation.",
+            packages=selection,
+        )
+    elif mode == "hypothesis":
+        inv = hypothesis(repo, state_root, packages=selection)
+    else:
+        inv = review(repo, state_root, packages=selection)
+
+    def observe(prompt):
+        data = envelope(prompt)
+        delivered = next(q for q in data["questions"] if q["ref"] == f"{package_id}:{question['id']}")
+        assert delivered == {
+            "ref": f"{package_id}:{question['id']}",
+            **{k: v for k, v in question.items() if k != "id"},
+        }
+        assert {f["path"] for f in data["files"]} == (set() if mode == "design" else {"export.js"})
+        return hypothesis_response(prompt, "not_confirmed") if mode == "hypothesis" else response(prompt)
+
+    assert ctl.run(inv, Fake(observe)).state == "complete"
+
+
+def test_context_applicability_preserves_catalog_constraints_and_legacy_contexts():
+    from validators.validate_analyst import _schema, schema_errors
+
+    catalog = json.loads((ROOT / "schemas" / "analyst-catalog.schema.json").read_text())
+    package_signals = catalog["properties"]["questions"]["items"]["properties"]["applies_when"]
+    context_signals = _schema("context")["properties"]["questions"]["items"]["properties"]["applies_when"]
+    assert context_signals == {k: v for k, v in package_signals.items() if k != "description"}
+    legacy = {
+        "schema_version": 1,
+        "job_id": "aj-" + "a" * 32,
+        "sources": [],
+        "requirements": [],
+        "business_context": None,
+        "threat_model": None,
+        "questions": [{"ref": "example/workflow:approval", "asks": "Can the creator approve?"}],
+        "criteria": [],
+        "question_selection": {"omitted": [], "required_complete": True},
+    }
+    assert schema_errors("context", legacy) == []
+
+
 def test_an_empty_scope_completes_without_a_model_call(repo, state_root):
     (repo / "export.js").write_text(BASE_CODE)
     fake = Fake()
@@ -266,7 +347,7 @@ def test_evidence_requests_are_served_from_the_frozen_view(repo, state_root):
     fake = Fake(
         lambda p: response(
             p,
-            evidence_requests=[{"path": "auth.js", "reason": "middleware"}, {"path": "missing.js", "reason": "absent"}],
+            evidence_requests=[{"path": "auth.js", "reason": "middleware"}],
         ),
         lambda p: response(p),
     )
@@ -275,7 +356,7 @@ def test_evidence_requests_are_served_from_the_frozen_view(repo, state_root):
     second = {f["path"]: f["change"] for f in envelope(fake.prompts[1])["files"] if f["side"] == "proposed"}
     assert second["auth.js"] == "context" and "missing.js" not in second
     result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
-    assert any("outside the captured view" in item for item in result["limitations"])
+    assert result["coverage"]["evidence_requests"][0]["status"] == "admitted"
 
 
 def test_an_escaping_evidence_request_invalidates_the_reply(repo, state_root):
@@ -448,6 +529,50 @@ def test_an_invalid_organization_profile_rejects_the_analysis(repo, state_root, 
     outcome = ctl.run(review(repo, state_root, env=env), Fake())
     assert (outcome.state, outcome.job_id) == ("rejected", None)
     assert "organization profile is invalid" in outcome.report
+
+
+def opus_banned_profile(tmp_path: Path) -> dict:
+    env = org_profile(tmp_path, {})
+    path = Path(env["APPSEC_ADVISOR_ORG_PROFILE"])
+    profile = yaml.safe_load(path.read_text())
+    profile.pop("analyst")
+    profile.setdefault("policy", {})["disable_opus"] = True
+    profile.pop("requirements")
+    path.write_text(yaml.safe_dump(profile))
+    return env
+
+
+def test_an_organization_opus_ban_refuses_an_opus_host_model(repo, state_root, tmp_path):
+    fake = Fake(lambda p: response(p))
+    outcome = ctl.run(review(repo, state_root, env=opus_banned_profile(tmp_path), model="opus"), fake)
+    assert (outcome.exit_code, outcome.state, outcome.job_id) == (2, "rejected", None)
+    assert "Opus is disabled" in outcome.report and fake.prompts == []
+
+
+def test_the_environment_opus_ban_also_matches_a_full_release_id(repo, state_root):
+    fake = Fake(lambda p: response(p))
+    invocation = review(repo, state_root, env={"APPSEC_DISABLE_OPUS": "true"}, model="claude-opus-5-5")
+    outcome = ctl.run(invocation, fake)
+    assert (outcome.state, fake.prompts) == ("rejected", [])
+
+
+def test_an_opus_ban_leaves_other_models_and_unbanned_opus_running(repo, state_root, tmp_path):
+    banned = ctl.run(review(repo, state_root, env=opus_banned_profile(tmp_path)), Fake(lambda p: response(p)))
+    assert banned.state == "complete"
+    allowed = ctl.run(review(repo, state_root, model="opus"), Fake(lambda p: response(p)))
+    assert allowed.state == "complete"
+
+
+def test_a_resumed_job_rechecks_the_opus_ban_before_its_model_call(repo, state_root, tmp_path, monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(ctl.time, "monotonic", clock)
+    question = {"asks": "Who may export?", "why": "Scope of access.", "affects": "export.js", "required": True}
+    fake = Fake(lambda p: response(p, questions=[question]), lambda p: response(p))
+    first = ctl.run(review(repo, state_root, model="opus"), fake, interactive=True)
+    assert first.state == "awaiting_answers"
+    env = opus_banned_profile(tmp_path)
+    done = ctl.answer(first.job_id, repo, None, fake, state_root, inline_answers={"q-001": "Assigned."}, env=env)
+    assert (done.exit_code, done.state) == (2, "rejected") and len(fake.prompts) == 1
 
 
 def test_configuring_the_organization_profile_starts_nothing(tmp_path):
@@ -627,3 +752,653 @@ def test_an_output_directory_that_becomes_assessment_state_keeps_the_result_priv
     outcome = ctl.run(review(repo, state_root, output_dir=out), Fake(poison))
     assert outcome.state == "failed"
     assert not (out / "analyst-result.json").exists()
+
+
+@pytest.mark.parametrize("limited", ["evidence_rounds", "host_calls"])
+@pytest.mark.parametrize("path", ["policy.js", "access/rules.py"])
+def test_unfulfilled_evidence_cannot_complete(repo, state_root, monkeypatch, limited, path):
+    original = ctl.load_limits
+
+    def bounded():
+        limits = original()
+        limits[limited] = 0 if limited == "evidence_rounds" else 1
+        return limits
+
+    monkeypatch.setattr(ctl, "load_limits", bounded)
+    fake = Fake(lambda p: response(p, evidence_requests=[{"path": path, "reason": "Required policy evidence"}]))
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert (outcome.state, outcome.exit_code) == ("incomplete", 2)
+    assert result["terminal_reason"] == "limit_exhausted"
+    assert result["coverage"]["required_complete"] is False
+    assert result["coverage"]["evidence_requests"][0]["status"] == "limit_exhausted"
+    assert path in outcome.report and "Required policy evidence" in outcome.report
+
+
+@pytest.mark.parametrize(
+    "path,content", [("missing.js", None), ("large.js", "a" * 66000), ("binary.bin", "\x00binary")]
+)
+def test_rejected_evidence_is_reported_as_incomplete(repo, state_root, path, content):
+    if content is not None:
+        (repo / path).write_text(content)
+        git(repo, "add", path)
+        git(repo, "commit", "-q", "-m", "context")
+    fake = Fake(lambda p: response(p, evidence_requests=[{"path": path, "reason": "Required context"}]))
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "incomplete" and len(fake.prompts) == 1
+    assert result["coverage"]["evidence_requests"][0]["status"] == "rejected"
+    assert path in outcome.report
+
+
+@pytest.mark.parametrize("question_index", [0, 2])
+def test_needs_answer_without_a_question_is_rejected(repo, state_root, question_index):
+    def inconsistent(p):
+        reply = response(p)
+        reply["question_coverage"][question_index]["status"] = "needs_answer"
+        return reply
+
+    outcome = ctl.run(review(repo, state_root), Fake(inconsistent))
+    assert outcome.state == "failed" and outcome.exit_code == 2
+
+
+def test_optional_question_does_not_block_complete_analysis(repo, state_root):
+    question = {
+        "question_ref": "appsec/core:authz-scope",
+        "asks": "Which role name is intended?",
+        "why": "Naming the proposed remediation.",
+        "affects": "export.js",
+        "required": False,
+    }
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, questions=[question])))
+    assert outcome.state == "complete" and len(outcome.questions) == 1
+    assert "optional" in outcome.report
+
+
+@pytest.mark.parametrize(
+    "path,guard,operation",
+    [
+        ("handler.py", "require_owner()", "return records.read()"),
+        ("jobs/send.py", "check_project_access()", "return reports.export()"),
+    ],
+)
+def test_removed_control_can_introduce_a_finding(repo, state_root, path, guard, operation):
+    target = repo / path
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(f"def handle():\n    {guard}\n    {operation}\n")
+    git(repo, "add", path)
+    git(repo, "commit", "-q", "-m", "protected operation")
+    target.write_text(f"def handle():\n    {operation}\n")
+    proposed = {"side": "proposed", "path": path, "line_start": 2, "line_end": 2, "excerpt": operation}
+    baseline = {"side": "baseline", "path": path, "line_start": 2, "line_end": 2, "excerpt": guard}
+    finding = removed_check_finding(
+        change_relationship="introduced", evidence=[proposed], comparison=[baseline, proposed]
+    )
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, findings=[finding])))
+    assert outcome.state == "complete" and "introduced by the change" in outcome.report
+    # The same operation, cited in both versions without the removed guard, is not change evidence.
+    unchanged = dict(baseline, line_start=3, line_end=3, excerpt=operation)
+    finding["comparison"] = [unchanged, proposed]
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, findings=[finding])))
+    assert outcome.state == "failed"
+
+
+def hypothesis(repo, state_root, paths=None, **kwargs):
+    return ctl.Invocation(
+        mode="hypothesis",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": paths or ["export.js"]},
+        hypothesis="Can a caller read another customer record?",
+        repo_root=repo,
+        state_root=state_root,
+        env={},
+        **kwargs,
+    )
+
+
+def hypothesis_response(prompt, status="supported", **overrides):
+    source = next(f for f in envelope(prompt)["files"] if f["path"] == "export.js")
+    excerpt = source["numbered_lines"].splitlines()[0].split("| ", 1)[1]
+    assessment = {
+        "status": status,
+        "explanation": "The inspected route establishes the bounded conclusion.",
+        "evidence": [{"side": "proposed", "path": "export.js", "line_start": 1, "line_end": 1, "excerpt": excerpt}],
+        "next_action": "Verify the authorization behavior with the system owner.",
+    }
+    return response(prompt, hypothesis_assessment=assessment, **overrides)
+
+
+@pytest.mark.parametrize(
+    "status,expected", [("supported", "complete"), ("not_confirmed", "complete"), ("unresolved", "incomplete")]
+)
+def test_hypothesis_check_reports_evidenced_conclusion(repo, state_root, status, expected):
+    fake = Fake(lambda p: hypothesis_response(p, status))
+    outcome = ctl.run(hypothesis(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == expected
+    assert result["hypothesis_assessment"]["status"] == status
+    inputs = envelope(fake.prompts[0])
+    assert len(inputs["files"]) == 1 and inputs["files"][0]["change"] == "context"
+    assert "requireSupport" in inputs["files"][0]["numbered_lines"]  # committed version, not the dirty worktree
+    assert inputs["hypothesis"] == result["hypothesis"]
+    assert result["objects"]["head"] in outcome.report and "export.js" in outcome.report
+    assert "does not mean disproved or safe" in outcome.report
+    assert not (job_root(state_root, repo, outcome.job_id) / "source").exists()
+
+
+@pytest.mark.parametrize(
+    "malformed", ["missing", "no_evidence", "invented_quote", "blank_quote", "outside_scope", "change_claim"]
+)
+def test_hypothesis_claims_need_valid_scoped_evidence(repo, state_root, malformed):
+    def reply(p):
+        r = hypothesis_response(p)
+        if malformed == "missing":
+            r.pop("hypothesis_assessment")
+        elif malformed == "no_evidence":
+            r["hypothesis_assessment"]["evidence"] = []
+        elif malformed == "invented_quote":
+            r["hypothesis_assessment"]["evidence"][0]["excerpt"] = "invented_call()"
+        elif malformed == "blank_quote":
+            r["hypothesis_assessment"]["evidence"][0]["excerpt"] = "   "
+        elif malformed == "outside_scope":
+            r["hypothesis_assessment"]["evidence"][0]["path"] = "auth.js"
+        else:
+            r["findings"] = [removed_check_finding()]
+        return r
+
+    outcome = ctl.run(hypothesis(repo, state_root), Fake(reply))
+    assert outcome.state == "failed"
+    assert "Supported by code" not in outcome.report
+
+
+def test_hypothesis_cannot_expand_authorized_paths(repo, state_root):
+    fake = Fake(
+        lambda p: hypothesis_response(
+            p, "unresolved", evidence_requests=[{"path": "auth.js", "reason": "Check middleware"}]
+        )
+    )
+    outcome = ctl.run(hypothesis(repo, state_root), fake)
+    assert outcome.state == "incomplete" and len(fake.prompts) == 1
+    assert "outside the captured view" in outcome.report
+    assert all(f["path"] != "auth.js" for f in envelope(fake.prompts[0])["files"])
+
+
+def _directory_reply(path: str):
+    def reply(prompt):
+        source = next(f for f in envelope(prompt)["files"] if f["path"] == path)
+        excerpt = source["numbered_lines"].splitlines()[0].split("| ", 1)[1]
+        assessment = {
+            "status": "supported",
+            "explanation": "The inspected route establishes the bounded conclusion.",
+            "evidence": [{"side": "proposed", "path": path, "line_start": 1, "line_end": 1, "excerpt": excerpt}],
+            "next_action": "Verify the authorization behavior with the system owner.",
+        }
+        return response(prompt, hypothesis_assessment=assessment)
+
+    return reply
+
+
+@pytest.mark.parametrize(
+    ("folder", "unreadable", "content"),
+    [("api", ".env", b"SESSION_SECRET=x\n"), ("server/routes", "logo.png", b"\x00\x01png")],
+)
+def test_an_exclusion_inside_a_selected_directory_narrows_but_does_not_stop_the_check(
+    repo, state_root, folder, unreadable, content
+):
+    area = repo / folder
+    area.mkdir(parents=True)
+    (area / "records.js").write_text("app.get('/records/:id', (req, res) => res.json(db.find(req.params.id)))\n")
+    (area / unreadable).write_bytes(content)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "area")
+    fake = Fake(_directory_reply(f"{folder}/records.js"))
+    outcome = ctl.run(hypothesis(repo, state_root, [folder]), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "complete" and len(fake.prompts) == 1
+    assert any("does not cover them" in note for note in result["limitations"])
+    assert f"{folder}/{unreadable}" in outcome.report
+
+
+def test_a_named_path_that_is_not_admitted_stops_the_check_before_the_model(repo, state_root):
+    (repo / "api").mkdir()
+    (repo / "api" / "records.js").write_text("module.exports = {}\n")
+    (repo / "api" / ".env").write_text("SESSION_SECRET=x\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "area")
+    fake = Fake()
+    outcome = ctl.run(hypothesis(repo, state_root, ["api/records.js", "api/.env"]), fake)
+    assert outcome.state == "incomplete" and fake.prompts == []
+    assert "selected hypothesis path was not admitted" in outcome.report
+
+
+@pytest.mark.parametrize("paths", [["absent"], ["."], ["../outside"], ["/tmp"], ["src//api"], ["export.js/"]])
+def test_hypothesis_invalid_or_missing_scope_never_calls_the_model(repo, state_root, paths):
+    fake = Fake()
+    outcome = ctl.run(hypothesis(repo, state_root, paths), fake)
+    assert outcome.state in ("rejected", "incomplete") and outcome.exit_code == 2
+    assert fake.prompts == []
+
+
+def test_hypothesis_required_question_resumes_the_same_snapshot(repo, state_root):
+    q = {
+        "question_ref": "appsec/core:authz-scope",
+        "asks": "Which accounts may support access?",
+        "why": "Determines the authorized scope.",
+        "affects": "export.js",
+        "required": True,
+    }
+    fake = Fake(
+        lambda p: hypothesis_response(p, "unresolved", questions=[q]), lambda p: hypothesis_response(p, "not_confirmed")
+    )
+    first = ctl.run(hypothesis(repo, state_root), fake)
+    assert first.state == "awaiting_answers"
+    (repo / "export.js").write_text("changed after capture\n")
+    done = ctl.answer(
+        first.job_id, repo, None, fake, state_root, inline_answers={first.questions[0]["id"]: "Only assigned accounts."}
+    )
+    assert done.state == "complete"
+    assert envelope(fake.prompts[0])["files"] == envelope(fake.prompts[1])["files"]
+
+
+def test_last_evidence_round_reports_remaining_work(repo, state_root):
+    for path in ("policy_a.py", "policy_b.py", "policy_c.py"):
+        (repo / path).write_text("def check():\n    return True\n")
+        git(repo, "add", path)
+    git(repo, "commit", "-q", "-m", "three evidence sources")
+
+    def first(p):
+        return response(p, evidence_requests=[{"path": "policy_a.py", "reason": "Resolve the first policy"}])
+
+    def second(p):
+        return response(p, evidence_requests=[{"path": "policy_b.py", "reason": "Resolve its delegate"}])
+
+    def third(p):
+        return response(p, evidence_requests=[{"path": "policy_c.py", "reason": "Resolve the final decision"}])
+
+    fake = Fake(first, second, third)
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "incomplete" and len(fake.prompts) == 3
+    assert [e["status"] for e in result["coverage"]["evidence_requests"]] == ["admitted", "admitted", "limit_exhausted"]
+    assert "policy_c.py" in outcome.report
+
+
+def test_partially_admitted_evidence_stays_incomplete(repo, state_root):
+    fake = Fake(
+        lambda p: response(
+            p,
+            evidence_requests=[
+                {"path": "auth.js", "reason": "Check the middleware"},
+                {"path": "missing.js", "reason": "Check its required policy"},
+            ],
+        )
+    )
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "incomplete" and len(fake.prompts) == 1
+    assert [e["status"] for e in result["coverage"]["evidence_requests"]] == ["admitted", "rejected"]
+    assert "missing.js" in outcome.report
+
+
+STEP_HYPOTHESIS = (
+    "Abuse case AC-T-002 (technical attack chain, plugin): Export of another customer's records.\n"
+    "- Step 1: Export route skips ownership. The handler returns any record.\n"
+    "- Step 2: Support role is trusted. The role comes from the request."
+)
+
+
+def _step_reply(steps):
+    def reply(prompt):
+        r = hypothesis_response(prompt, "supported")
+        loc = r["hypothesis_assessment"]["evidence"][0]
+        r["hypothesis_assessment"]["steps"] = steps(loc)
+        return r
+
+    return reply
+
+
+@pytest.mark.parametrize(
+    ("steps", "state"),
+    [
+        (
+            lambda loc: [
+                {"step": 1, "status": "supported", "note": "No owner check.", "evidence": [loc]},
+                {"step": 2, "status": "unresolved", "note": "Role source not in scope.", "evidence": []},
+            ],
+            "complete",
+        ),
+        (lambda loc: [{"step": 1, "status": "supported", "note": "No owner check.", "evidence": [loc]}], "failed"),
+        (
+            lambda loc: [
+                {"step": 1, "status": "supported", "note": "x", "evidence": [dict(loc, excerpt="invented()")]},
+                {"step": 2, "status": "unresolved", "note": "y", "evidence": []},
+            ],
+            "failed",
+        ),
+    ],
+    ids=["every-step-answered", "a-listed-step-missing", "a-step-quote-invented"],
+)
+def test_a_chain_hypothesis_needs_one_evidenced_verdict_per_listed_step(repo, state_root, steps, state):
+    invocation = ctl.Invocation(
+        mode="hypothesis",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["export.js"]},
+        hypothesis=STEP_HYPOTHESIS,
+        repo_root=repo,
+        state_root=state_root,
+        env={},
+    )
+    outcome = ctl.run(invocation, Fake(_step_reply(steps)))
+    assert outcome.state == state
+    if state == "complete":
+        assert "| 1 | SUPPORTED | Export route skips ownership |" in outcome.report
+        assert (
+            "| 2 | NOT SETTLED | Support role is trusted | no code cited | Role source not in scope\\. |"
+            in outcome.report
+        )
+
+
+# --- Focus question, surrounding code, threat-model links, and exploration ---
+
+THREAT_MODEL = {
+    "meta": {"generated": "2026-10-01"},
+    "components": [
+        {"id": "C-01", "name": "Export", "paths": ["export.js"]},
+        {"id": "C-02", "name": "Billing", "paths": ["billing/**"]},
+    ],
+    "threats": [
+        {"id": "T-002", "component": "C-02", "title": "Invoice tampering", "risk": "Critical"},
+        {
+            "id": "T-001",
+            "component": "C-01",
+            "title": "Export leaks records",
+            "risk": "High",
+            "evidence": [{"file": "auth.js", "line": 1}],
+            "mitigation_ids": ["M-001"],
+        },
+    ],
+    "mitigations": [{"id": "M-001", "title": "Check the support role", "threat_ids": ["T-001"], "priority": "P1"}],
+    "trust_boundaries": [],
+}
+
+
+@pytest.fixture
+def modeled(tmp_path, monkeypatch):
+    """A threat model the projection accepts; its own validation is covered by the context tests."""
+    import contexts.build_analyst_context as bc
+
+    monkeypatch.setattr(bc, "validate_threat_model_output", lambda data: (True, []))
+    path = tmp_path / "threat-model.yaml"
+    path.write_text(yaml.safe_dump(THREAT_MODEL))
+    return path
+
+
+def test_a_focus_question_reaches_the_model_and_the_report(repo, state_root):
+    fake = Fake(lambda p: response(p))
+    outcome = ctl.run(review(repo, state_root, question="Can support export other customers?"), fake)
+    assert envelope(fake.prompts[0])["question"] == "Can support export other customers?"
+    assert outcome.state == "complete" and "Question: Can support export other customers?" in outcome.report
+
+
+def test_a_focus_question_outside_a_review_is_rejected(repo, state_root):
+    inv = ctl.Invocation(
+        mode="design",
+        scope={"kind": "design", "source": "text"},
+        repo_root=repo,
+        state_root=state_root,
+        env={},
+        design_text="Plan an export.",
+        question="Is it safe?",
+    )
+    assert ctl.run(inv, Fake()).state == "rejected"
+
+
+def test_review_admits_relatively_imported_files_before_the_first_call(repo, state_root):
+    (repo / "export.js").write_text("const auth = require('./auth')\n" + CHANGED_CODE)
+    fake = Fake(lambda p: response(p))
+    outcome = ctl.run(review(repo, state_root), fake)
+    files = {f["path"]: f["change"] for f in envelope(fake.prompts[0])["files"]}
+    assert files.get("auth.js") == "context"
+    assert r"imported by changed file export\.js" in outcome.report
+
+
+def test_a_python_relative_import_is_admitted_and_a_package_import_is_not(tmp_path, state_root):
+    repo = tmp_path / "py"
+    (repo / "app").mkdir(parents=True)
+    git(repo, "init", "-q", "-b", "main")
+    (repo / "app" / "views.py").write_text("x = 1\n")
+    (repo / "app" / "guard.py").write_text("def check():\n    return True\n")
+    (repo / "app" / "requests.py").write_text("y = 2\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "base")
+    (repo / "app" / "views.py").write_text("from .guard import check\nimport requests\nx = 2\n")
+    fake = Fake(lambda p: response(p))
+    ctl.run(review(repo, state_root), fake)
+    files = {f["path"] for f in envelope(fake.prompts[0])["files"]}
+    assert "app/guard.py" in files and "app/requests.py" not in files
+
+
+def test_threat_model_evidence_of_a_touched_component_is_admitted(repo, state_root, modeled):
+    fake = Fake(lambda p: response(p))
+    outcome = ctl.run(review(repo, state_root, threat_model_path=modeled), fake)
+    data = envelope(fake.prompts[0])
+    assert data["threat_model"]["focus_components"] == ["C-01"]
+    assert [t["id"] for t in data["threat_model"]["threats"]] == ["F-001", "F-002"]
+    assert "auth.js" in {f["path"] for f in data["files"]}
+    assert r"threat model evidence for F\-001" in outcome.report
+
+
+def test_related_threats_must_name_delivered_threat_model_findings(repo, state_root, modeled):
+    scenario = {
+        "title": "Bulk export",
+        "description": "Any user exports all.",
+        "next_action": "Bind exports.",
+        "related_threats": ["F-001"],
+    }
+    recommendation = {
+        "title": "Enforce the support role server-side",
+        "rationale": "Closes the export path.",
+        "trade_off": "One more lookup per request.",
+        "related_threats": ["F-001"],
+    }
+    ok = ctl.run(
+        review(repo, state_root, threat_model_path=modeled),
+        Fake(lambda p: response(p, scenarios=[scenario], recommendations=[recommendation])),
+    )
+    assert ok.state == "complete" and "## Recommendations" in ok.report and "r-001" in ok.report
+    assert "F\\-001" in ok.report or "`F-001`" in ok.report
+    wrong = dict(scenario, related_threats=["F-099"])
+    bad = ctl.run(review(repo, state_root, threat_model_path=modeled), Fake(lambda p: response(p, scenarios=[wrong])))
+    assert bad.state == "failed"
+
+
+def test_the_result_names_the_model_it_ran(repo, state_root, tmp_path):
+    out = tmp_path / "out"
+    ctl.run(review(repo, state_root, output_dir=out), Fake(lambda p: response(p)))
+    assert json.loads((out / "analyst-result.json").read_text())["costs"]["model"] == "sonnet"
+
+
+def explore_design(repo, state_root, **kwargs):
+    kwargs.setdefault("env", {})
+    return ctl.Invocation(
+        mode="design",
+        scope={"kind": "design", "source": "text"},
+        repo_root=repo,
+        state_root=state_root,
+        design_text="Let support staff export customer data.",
+        explore=True,
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def explorable(repo):
+    (repo / ".env").write_text("TOKEN=abc\n")
+    (repo / "config.js").write_text("const key = 'AKIAABCDEFGHIJKLMNOP';\nmodule.exports = {}\n")
+    git(repo, "add", "-f", ".env", "config.js")
+    git(repo, "commit", "-q", "-m", "config")
+    return repo
+
+
+def test_an_exploring_design_reads_only_the_redacted_copy_and_cites_it(explorable, state_root, tmp_path):
+    seen = {}
+
+    def explore(prompt, should_stop=None):
+        data = envelope(prompt)
+        root = next(state_root.rglob("explore"))
+        seen["files"] = sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+        seen["config"] = (root / "config.js").read_text()
+        assert data["explore"] is True and data["files"] == []
+        contradicted = {
+            "statement": "Exports are limited to the support role.",
+            "status": "contradicted",
+            "evidence": [
+                {
+                    "side": "proposed",
+                    "path": "auth.js",
+                    "line_start": 1,
+                    "line_end": 1,
+                    "excerpt": "module.exports.requireSupport = (req, res, next) => next();",
+                }
+            ],
+        }
+        return response(prompt, assumptions=[contradicted])
+
+    out = tmp_path / "out"
+    outcome = ctl.run(explore_design(explorable, state_root, output_dir=out), Fake(explore), interactive=True)
+    assert outcome.state == "complete", outcome.report
+    assert ".env" not in seen["files"] and "auth.js" in seen["files"]
+    assert "AKIA" not in seen["config"]
+    assert "repository exploration" in outcome.report and "auth.js" in outcome.report
+    result = json.loads((out / "analyst-result.json").read_text())
+    assert result["coverage"]["exploration"]["files"] == len(seen["files"])
+    assert not list(state_root.rglob("explore")), "the copy is removed with the job's temporaries"
+
+
+def test_an_exploring_citation_that_does_not_match_the_copy_fails(explorable, state_root):
+    wrong = {
+        "statement": "Support role enforced.",
+        "status": "supported",
+        "evidence": [
+            {
+                "side": "proposed",
+                "path": "auth.js",
+                "line_start": 1,
+                "line_end": 1,
+                "excerpt": "requireSupport checks req.user.role",
+            }
+        ],
+    }
+    outcome = ctl.run(explore_design(explorable, state_root), Fake(lambda p: response(p, assumptions=[wrong])))
+    assert outcome.state == "failed"
+
+
+def test_a_design_without_exploration_still_rejects_code_backed_assumptions(repo, state_root):
+    inv = ctl.Invocation(
+        mode="design",
+        scope={"kind": "design", "source": "text"},
+        repo_root=repo,
+        state_root=state_root,
+        env={},
+        design_text="Plan an export.",
+    )
+    claim = {
+        "statement": "Support role enforced.",
+        "status": "supported",
+        "evidence": [{"side": "proposed", "path": "auth.js", "line_start": 1, "line_end": 1, "excerpt": "x"}],
+    }
+    assert ctl.run(inv, Fake(lambda p: response(p, assumptions=[claim]))).state == "failed"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "interactive"),
+    [({"ci": True}, False), ({}, False)],
+)
+def test_exploration_is_refused_outside_an_interactive_session(repo, state_root, kwargs, interactive):
+    fake = Fake()
+    outcome = ctl.run(explore_design(repo, state_root, **kwargs), fake, interactive=interactive)
+    assert (outcome.state, outcome.job_id, fake.prompts) == ("rejected", None, [])
+
+
+def test_exploration_is_refused_for_a_hypothesis_check(repo, state_root):
+    outcome = ctl.run(hypothesis(repo, state_root, explore=True), Fake(), interactive=True)
+    assert outcome.state == "rejected"
+
+
+def test_an_organization_can_forbid_exploration(repo, state_root, tmp_path):
+    env = org_profile(tmp_path, {"allow_exploration": False})
+    path = Path(env["APPSEC_ADVISOR_ORG_PROFILE"])
+    profile = yaml.safe_load(path.read_text())
+    profile.pop("requirements")
+    path.write_text(yaml.safe_dump(profile))
+    outcome = ctl.run(explore_design(repo, state_root, env=env), Fake(), interactive=True)
+    assert outcome.state == "rejected" and "forbids repository exploration" in outcome.report
+
+
+def test_an_exploring_review_keeps_change_attribution(repo, state_root):
+    fake = Fake(lambda p: response(p, findings=[removed_check_finding()]))
+    outcome = ctl.run(review(repo, state_root, explore=True), fake, interactive=True)
+    assert outcome.state == "complete" and envelope(fake.prompts[0])["explore"] is True
+
+
+def _removal_repo(tmp_path: Path, name: str, before: str, after: str) -> Path:
+    repo = tmp_path / f"removal-{name.replace('/', '-')}"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    (repo / name).write_text(before)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "base")
+    (repo / name).write_text(after)
+    return repo
+
+
+def _loc(side, path, line, excerpt):
+    return {"side": side, "path": path, "line_start": line, "line_end": line, "excerpt": excerpt}
+
+
+@pytest.mark.parametrize(
+    ("name", "before", "after", "removed", "kept"),
+    [
+        (
+            "app.js",
+            "const app = express()\napp.use(csrf())\napp.use('/notes', notes)\n",
+            "const app = express()\napp.use('/notes', notes)\n",
+            (2, "app.use(csrf())"),
+            (2, "app.use('/notes', notes)"),
+        ),
+        (
+            "service/views.py",
+            "@login_required\ndef export(request):\n    return dump(request)\n",
+            "def export(request):\n    return dump(request)\n",
+            (1, "@login_required"),
+            (1, "def export(request):"),
+        ),
+    ],
+)
+def test_a_removed_control_is_accepted_with_proposed_code_in_the_evidence(
+    tmp_path, state_root, name, before, after, removed, kept
+):
+    repo = _removal_repo(tmp_path, name, before, after)
+    finding = removed_check_finding(
+        change_relationship="introduced",
+        evidence=[_loc("proposed", name, *kept)],
+        comparison=[_loc("baseline", name, *removed)],
+    )
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, findings=[finding])))
+    assert outcome.state == "complete", outcome.report
+
+
+def test_an_unchanged_baseline_line_does_not_prove_a_removal(tmp_path, state_root):
+    repo = _removal_repo(
+        tmp_path,
+        "app.js",
+        "const app = express()\napp.use(csrf())\napp.use('/notes', notes)\n",
+        "const app = express()\napp.use('/notes', notes)\n",
+    )
+    finding = removed_check_finding(
+        change_relationship="introduced",
+        evidence=[_loc("proposed", "app.js", 2, "app.use('/notes', notes)")],
+        comparison=[_loc("baseline", "app.js", 1, "const app = express()")],
+    )
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, findings=[finding])))
+    assert outcome.state == "failed"
+    assert "needs proposed evidence and a cited addition or removal" in outcome.report.replace("\\", "")

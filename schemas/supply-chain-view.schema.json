@@ -19,7 +19,7 @@
         "properties": {
           "id": {"$ref": "#/$defs/id"},
           "column": {"enum": ["sources", "build", "artifacts", "execution"]},
-          "kind": {"enum": ["repository", "package", "github_action", "base_image", "remote_script", "ci", "artifact", "execution"]},
+          "kind": {"enum": ["repository", "package", "github_action", "base_image", "remote_script", "ci_include", "ci", "artifact", "execution"]},
           "label": {"$ref": "#/$defs/text"},
           "detail": {"type": "string", "maxLength": 300},
           "manifest_detail": {"type": "string", "maxLength": 200},
@@ -30,7 +30,24 @@
           "pushed": {"type": "boolean"},
           "owner": {"$ref": "#/$defs/id"},
           "channels": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
-          "sources": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/source"}}
+          "sources": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/source"}},
+          "boundaries": {
+            "description": "Catalogue trust boundaries whose evidence lies in this element's own sources. Existence confidence only; the control verdict stays in the report catalogue.",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "confidence", "crossing", "evidence"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^tb-\\d+$"},
+                "confidence": {"enum": ["confirmed", "inferred", "unknown"]},
+                "crossing": {"description": "ingress enters the build, egress leaves it toward a release target; Figure 1b draws the boundary at that column border.", "enum": ["ingress", "egress"]},
+                "evidence": {"$ref": "#/$defs/source"}
+              }
+            }
+          }
         }
       }
     },

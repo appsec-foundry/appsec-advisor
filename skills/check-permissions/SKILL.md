@@ -1,6 +1,6 @@
 ---
 name: check-permissions
-description: Preflight the Claude Code permission allow-list for the AppSec plugin. Reports which Bash/Write/Edit/Read rules from data/required-permissions.yaml are missing from the user's settings.json, so unattended /appsec-advisor:create-threat-model runs do not block on prompts. Read-only by default; --update merges missing entries into a chosen scope.
+description: Preflight the Claude Code permission allow-list for the AppSec plugin. Reports which Bash/Write/Edit/Read rules from data/required-permissions.yaml are missing from the user's settings.json, so unattended /appsec-advisor:appsec-analyzer runs do not block on prompts. Read-only by default; --update merges missing entries into a chosen scope.
 ---
 
 You are running a preflight check that tells the user which Claude Code permission rules are still needed for unattended AppSec runs, and optionally writes them into their settings.json. This skill does **not** analyze code, dispatch agents, or modify repository content. It only reads / writes `settings.json` files.
@@ -19,8 +19,10 @@ Recognized flags:
 Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `PLUGIN_DIR`, `SCOPE`,
 `UPDATE_MODE`, `JSON_MODE`. Default `REPO_ROOT` by resolving the git
 repository root (so that the skill works correctly even when invoked from a
-subdirectory such as `docs/security`); default `OUTPUT_DIR` to
-`$REPO_ROOT/docs/security`; default `SCOPE` to `local`.
+subdirectory such as `docs/security`); leave `OUTPUT_DIR` empty unless
+`--output` is given, so `check_permissions.py` uses the repository's assessment
+directory `<data dir>/appsec-advisor/assessments/<repo-name>-<hash8>`; default
+`SCOPE` to `local`.
 
 ### Reject unknown arguments (hard fail)
 
@@ -35,7 +37,7 @@ Error: unknown argument '<TOKEN>'
 
 /appsec-advisor:check-permissions accepts only:
   --repo <path>        Repository to inspect (default: git repo root of cwd)
-  --output <path>      Output directory (default: <repo>/docs/security)
+  --output <path>      Output directory (default: the repo's assessment directory)
   --plugin-dir <path>  Plugin install directory (default: $CLAUDE_PLUGIN_ROOT)
   --scope <scope>      Settings scope: local | user | project (default: local)
   --update             Merge missing permission entries into settings.json
@@ -62,7 +64,7 @@ fi
 Delegate to the Python helper that owns the formatting and JSON merging:
 
 ```bash
-ARGS="--repo-root $REPO_ROOT --output-dir $OUTPUT_DIR --plugin-dir $CLAUDE_PLUGIN_ROOT --scope $SCOPE"
+ARGS="--repo-root $REPO_ROOT ${OUTPUT_DIR:+--output-dir $OUTPUT_DIR} --plugin-dir $CLAUDE_PLUGIN_ROOT --scope $SCOPE"
 [ "$UPDATE_MODE" = "true" ] && ARGS="$ARGS --update"
 [ "$JSON_MODE"  = "true" ] && ARGS="$ARGS --json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_permissions.py" $ARGS

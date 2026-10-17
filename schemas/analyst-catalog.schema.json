@@ -69,6 +69,7 @@
             ]
           },
           "applies_when": {
+            "description": "Applicability hints interpreted within the admitted scope: planned operations in design, the selected change in review, and inspected behavior in hypothesis mode. They neither require a diff nor establish a business expectation or authorize additional source access.",
             "type": "array",
             "minItems": 1,
             "maxItems": 8,
@@ -91,12 +92,15 @@
             }
           },
           "asks": {
+            "description": "One independently assessable security question. Name the invariant and any condition whose applicability must be established from admitted evidence or declared expectations.",
             "$ref": "#/$defs/text"
           },
           "purpose": {
+            "description": "The plausible abuse and concrete consequence of violating the invariant.",
             "$ref": "#/$defs/text"
           },
           "evidence": {
+            "description": "The expectation sources, implementation paths, and effective controls needed to assess the question; these hints do not select read paths.",
             "type": "array",
             "minItems": 1,
             "maxItems": 6,
@@ -116,6 +120,7 @@
             }
           },
           "negative_tests": {
+            "description": "Representative attacker actions that a protected implementation must reject or neutralize under the stated expectation.",
             "type": "array",
             "maxItems": 4,
             "items": {

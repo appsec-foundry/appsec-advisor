@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Stamp a finished threat model's deliverables with a shared random postfix so
-several models can be copied into one directory without overwriting each other.
+"""Stamp a finished assessment's deliverables with a shared random postfix so
+several assessments can be copied into one directory without overwriting each other.
 
-Copies ``threat-model.{md,yaml,figure*.svg,pdf,html,sarif.json}`` and
+Copies ``security-assessment.{md,yaml,figure*.svg,pdf,html,sarif.json}`` and
 ``pentest-tasks.yaml`` (whichever exist) to their ``-<slug>`` stamped names and
 rewrites copied figure/pentest references inside the copied Markdown so they
-point at the stamped files. The originals are left untouched — this only
-produces an extra, collision-proof copy set.
+point at the stamped files. A directory holding the legacy ``threat-model.*``
+set is stamped under that name instead. The originals are left untouched — this
+only produces an extra, collision-proof copy set.
 
 Re-runnable: a deliverable whose stamped copy is already up to date is left
 alone, so a later run picks up only what was exported since the last one. A
@@ -35,30 +36,33 @@ import shutil
 import sys
 from pathlib import Path
 
+from shared.artifact_names import PUBLISHED_STEM, artifact_stem
+
 _SLUG_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 # Deliverables to stamp, in display order. Figure SVGs are discovered at runtime
 # because the renderer may emit Figure 1, Figure 2, or a future numbered figure.
 # `pentest-tasks.yaml` is a first-class deliverable too, so it is stamped
-# alongside the others (its own prefix — it is not a `threat-model.*` file).
-_STATIC_BASENAMES = [
-    "threat-model.md",
-    "threat-model.yaml",
-    "threat-model.pdf",
-    "threat-model.html",
-    "threat-model.sarif.json",
-    "threat-model.threatdragon.json",
-    "pentest-tasks.yaml",
-]
+# alongside the others (its own prefix — it is not an assessment-stem file).
+_STATIC_SUFFIXES = [".md", ".yaml", ".pdf", ".html", ".sarif.json", ".threatdragon.json"]
 
-# Known deliverable prefixes, longest-first so the match is unambiguous.
-_STAMP_PREFIXES = ("threat-model", "pentest-tasks")
+# Known deliverable prefixes; none is a prefix of another, so the match is unambiguous.
+_STAMP_PREFIXES = ("security-assessment", "threat-model", "pentest-tasks")
+
+
+def _stem(src_dir: Path) -> str:
+    """The naming set ``src_dir`` holds; the published one when it holds none."""
+    return artifact_stem(src_dir) or PUBLISHED_STEM
+
+
+def _static_basenames(stem: str) -> list[str]:
+    return [*(stem + suffix for suffix in _STATIC_SUFFIXES), "pentest-tasks.yaml"]
 
 
 def _stamped_name(basename: str, slug: str) -> str:
     """Insert ``-<slug>`` after the deliverable prefix.
 
-    ``threat-model.figure1.svg`` → ``threat-model-<slug>.figure1.svg``
+    ``security-assessment.figure1.svg`` → ``security-assessment-<slug>.figure1.svg``
     ``pentest-tasks.yaml``       → ``pentest-tasks-<slug>.yaml``
     """
     for prefix in _STAMP_PREFIXES:
@@ -69,25 +73,27 @@ def _stamped_name(basename: str, slug: str) -> str:
 
 
 def _figure_basenames(src_dir: Path) -> list[str]:
-    return sorted(p.name for p in src_dir.glob("threat-model.figure*.svg") if p.is_file())
+    return sorted(p.name for p in src_dir.glob(f"{_stem(src_dir)}.figure*.svg") if p.is_file())
 
 
 def _deliverable_basenames(src_dir: Path) -> list[str]:
-    return [*_STATIC_BASENAMES[:2], *_figure_basenames(src_dir), *_STATIC_BASENAMES[2:]]
+    static = _static_basenames(_stem(src_dir))
+    return [*static[:2], *_figure_basenames(src_dir), *static[2:]]
 
 
 def _orphaned_copies(src_dir: Path, dest_dir: Path, slug: str) -> list[Path]:
     """Stamped copies of this slug whose unstamped deliverable is gone."""
+    stem = _stem(src_dir)
     orphans = [
         dest_dir / _stamped_name(basename, slug)
-        for basename in _STATIC_BASENAMES
-        if basename != "threat-model.md"
+        for basename in _static_basenames(stem)
+        if basename != f"{stem}.md"
         and (dest_dir / _stamped_name(basename, slug)).is_file()
         and not (src_dir / basename).is_file()
     ]
-    stamped_prefix = f"threat-model-{slug}"
+    stamped_prefix = f"{stem}-{slug}"
     for copy in sorted(dest_dir.glob(f"{stamped_prefix}.figure*.svg")):
-        if copy.is_file() and not (src_dir / ("threat-model" + copy.name[len(stamped_prefix) :])).is_file():
+        if copy.is_file() and not (src_dir / (stem + copy.name[len(stamped_prefix) :])).is_file():
             orphans.append(copy)
     return orphans
 
@@ -143,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    md_src = src_dir / "threat-model.md"
+    report = f"{_stem(src_dir)}.md"
+    md_src = src_dir / report
     if not md_src.is_file():
         print(f"ERROR: {md_src} not found — render the model first.", file=sys.stderr)
         return 2
@@ -154,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         orphan.unlink()
     stamped: list[tuple[Path, bool]] = []  # (stamped path, written by this run)
     for basename in _deliverable_basenames(src_dir):
-        if basename == "threat-model.md":
+        if basename == report:
             continue  # written last: it names the deliverables stamped alongside it
         src = src_dir / basename
         if not src.is_file():
@@ -166,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.copy2(src, dst)
         stamped.append((dst, True))
 
-    md_dst = dest_dir / _stamped_name("threat-model.md", slug)
+    md_dst = dest_dir / _stamped_name(report, slug)
     # A deliverable stamped only now — PDF and HTML are exported after an
     # earlier stamp — can change which files the Markdown must point at, so a
     # copy that is merely newer than the report is not reason enough to keep it.

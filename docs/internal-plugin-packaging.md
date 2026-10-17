@@ -247,7 +247,7 @@ plugin_surface:
       - check-permissions
       - clean-run-state
       - fix-run-issues
-      - threat-model-health
+      - security-assessment-health
   hooks:
     include:
       - agent-logger
@@ -259,8 +259,8 @@ Use denylists when you want to keep the upstream surface except for a small numb
 plugin_surface:
   skills:
     exclude:
-      - publish-threat-model
-      - export-threat-model
+      - authnz-review
+      - export-security-assessment
   hooks:
     exclude:
       - security-coach

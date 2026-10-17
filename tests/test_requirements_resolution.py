@@ -424,8 +424,8 @@ class TestSkillApplicability:
         """Requirements audit links must target rendered F-NNN anchors, not
         internal T-NNN ids."""
         content = (PLUGIN_DIR / "skills" / "audit-security-requirements" / "save-reports.md").read_text()
-        assert "[F-NNN · Risk](docs/security/threat-model.md#f-nnn)" in content
-        assert "[T-NNN · Risk](docs/security/threat-model.md#t-nnn)" not in content
+        assert "[F-NNN · Risk](<report>#f-nnn)" in content
+        assert "#t-nnn" not in content
 
     def test_check_skill_uses_shared_org_profile_requirements_resolvers(self):
         """The standalone audit skill must not bypass org-profile requirements
@@ -450,57 +450,10 @@ class TestSkillApplicability:
         assert "only open requirements (`FAIL` and `PARTIAL`)" in markdown
         assert "Do not include `PASS` or\n`UNVERIFIABLE` requirement entries" in markdown
 
-    def test_create_skill_supports_both_flags(self):
-        """Verify create-threat-model help defines --requirements and --no-requirements."""
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
-        content = skill_md.read_text()
-        assert "--requirements" in content
-        assert "--no-requirements" in content
-
 
 # ---------------------------------------------------------------------------
 # Context-resolver contract
 # ---------------------------------------------------------------------------
-
-
-class TestContextResolverContract:
-    """
-    Verify the context-resolver agent definition documents
-    the correct loading paths.
-    """
-
-    def test_context_resolver_has_path_a_and_b(self):
-        agent_md = PLUGIN_DIR / "agents" / "appsec-context-resolver.md"
-        content = agent_md.read_text()
-        assert "Path A" in content, "Context-resolver must document Path A (URL override)"
-        assert "Path B" in content, "Context-resolver must document Path B (config URL)"
-
-    def test_context_resolver_accepts_requirements_url_override(self):
-        agent_md = PLUGIN_DIR / "agents" / "appsec-context-resolver.md"
-        content = agent_md.read_text()
-        assert "REQUIREMENTS_URL_OVERRIDE" in content
-
-    def test_context_resolver_skip_when_check_false(self):
-        agent_md = PLUGIN_DIR / "agents" / "appsec-context-resolver.md"
-        content = agent_md.read_text()
-        assert "CHECK_REQUIREMENTS=false" in content.lower() or "skipped" in content.lower()
-
-    def test_qa_reviewer_treats_skipped_requirements_as_disabled(self):
-        agent_md = PLUGIN_DIR / "agents" / "appsec-qa-reviewer.md"
-        content = agent_md.read_text()
-        assert '"skipped"' in content
-        assert 'source:` is not `"disabled"`, `"skipped"`, or `"unavailable"`' in content
-
-    def test_orchestrator_passes_url_override(self):
-        runtime_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
-        content = runtime_md.read_text()
-        assert "REQUIREMENTS_URL_OVERRIDE" in content
-
-    def test_phase8b_uses_canonical_requirements_fragment_name(self):
-        renderer_md = PLUGIN_DIR / "agents" / "appsec-threat-renderer.md"
-        content = renderer_md.read_text()
-        assert ".fragments/requirements-compliance.md" in content
-        assert ".fragments/requirements_compliance.md" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -510,10 +463,3 @@ class TestContextResolverContract:
 
 class TestDeprecatedAliases:
     """The old flags should be documented as deprecated in user help."""
-
-    def test_deprecated_aliases_documented(self):
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
-        content = skill_md.read_text()
-        assert "Deprecated" in content or "deprecated" in content
-        assert "--with-requirements" in content
-        assert "--ignore-requirements" in content

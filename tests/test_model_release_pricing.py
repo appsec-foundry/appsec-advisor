@@ -18,7 +18,6 @@ sys.path.insert(0, str(SCRIPTS))
 
 import runtime.agent_lifecycle as lifecycle  # noqa: E402
 import runtime.cost_running_total as crt  # noqa: E402
-import runtime.record_stage_stats as rec  # noqa: E402
 import runtime.verify_run_costs as vrc  # noqa: E402
 
 _AGENT_TYPE = "appsec-advisor:appsec-stride-analyzer-v2"
@@ -179,53 +178,3 @@ def test_the_logged_usage_line_is_priced_by_its_release(tmp_path: Path) -> None:
     )
     result = crt.aggregate_subagent_usage(tmp_path / ".agent-run.log")
     assert result["subagent_cost"] == pytest.approx(_output_price("opus-5"))
-
-
-def _record_stats(output_dir: Path, *extra: str) -> dict:
-    argv = [
-        "runtime/record_stage_stats.py",
-        str(output_dir),
-        "--stage",
-        "1",
-        "--name",
-        "stride",
-        "--agent",
-        _AGENT_TYPE,
-        "--model",
-        "opus",
-        "--duration-ms",
-        "1",
-        "--tool-uses",
-        "1",
-        "--tokens",
-        "5",
-        "--subagent-type",
-        _AGENT_TYPE,
-        "--since-iso",
-        "2000-01-01T00:00:00Z",
-        *extra,
-    ]
-    assert rec.main(argv) == 0
-    return json.loads((output_dir / ".stage-stats.jsonl").read_text(encoding="utf-8").splitlines()[-1])
-
-
-@pytest.mark.parametrize("resolved, expected", [("claude-opus-5", "claude-opus-5"), ("", None)])
-def test_stage_row_records_the_release_its_dispatches_ran_on(tmp_path: Path, resolved: str, expected) -> None:
-    events = lifecycle.register_call(tmp_path, _identity("toolu_d"))
-    events += lifecycle.record_call_usage(tmp_path, "toolu_d", {"output_tokens": 5}, resolved_model=resolved)
-    lifecycle.append_events(tmp_path, events)
-    row = _record_stats(tmp_path)
-    assert row["model"] == "opus"
-    assert row.get("resolved_model") == expected
-
-
-def test_accumulated_stage_row_keeps_every_reported_release(tmp_path: Path) -> None:
-    events = lifecycle.register_call(tmp_path, _identity("toolu_e"))
-    events += lifecycle.record_call_usage(tmp_path, "toolu_e", {"output_tokens": 5}, resolved_model="claude-opus-5")
-    lifecycle.append_events(tmp_path, events)
-    _record_stats(tmp_path, "--accumulate", "--accumulation-id", "wave-1")
-    events = lifecycle.register_call(tmp_path, {**_identity("toolu_f"), "job_id": "second"})
-    events += lifecycle.record_call_usage(tmp_path, "toolu_f", {"output_tokens": 5}, resolved_model="claude-opus-4-8")
-    lifecycle.append_events(tmp_path, events)
-    row = _record_stats(tmp_path, "--accumulate", "--accumulation-id", "wave-2")
-    assert row["resolved_model"] == "claude-opus-4-8,claude-opus-5"

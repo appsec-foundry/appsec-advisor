@@ -25,7 +25,9 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
+import fnmatch
 import hashlib
+import json
 import os
 import stat
 from pathlib import Path
@@ -43,10 +45,29 @@ FALLBACK_CATALOG = PLUGIN_ROOT / "data" / "appsec-bestpractices-baseline.yaml"
 MAX_SOURCE_BYTES = {"requirements": 512 * 1024, "business_context": 64 * 1024, "threat_model": 2 * 1024 * 1024}
 MAX_REQUIREMENTS = 300
 MAX_REQUIREMENT_TEXT = 1000
-THREAT_FIELDS = ("id", "title", "component", "stride", "risk", "_status", "cwe")
+THREAT_FIELDS = ("id", "title", "component", "stride", "risk", "_status", "cwe", "controls_in_place", "mitigation_ids")
 COMPONENT_FIELDS = ("id", "name", "description", "paths", "sensitive_data")
-BOUNDARY_FIELDS = ("id", "name", "from", "to", "assumption", "assumption_verdict")
-QUESTION_FIELDS = ("ref", "topic", "asks", "purpose", "evidence", "requirement_refs", "negative_tests")
+BOUNDARY_FIELDS = (
+    "id",
+    "name",
+    "from",
+    "to",
+    "assumption",
+    "assumption_verdict",
+    "enforcement_point",
+    "covers_components",
+)
+MITIGATION_FIELDS = ("id", "title", "priority", "threat_ids")
+ACTOR_FIELDS = ("id", "label", "access")
+CONTROL_FIELDS = ("domain", "control", "effectiveness", "linked_threats")
+# The projection is bounded by size, not item counts, so a large model keeps
+# the entries most relevant to the analyzed change instead of the first ones.
+MAX_PROJECTION_BYTES = 96 * 1024
+MAX_FIELD_CHARS = 300
+MAX_EVIDENCE_FILES = 5
+RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+SECTION_CAPS = {"components": 200, "trust_boundaries": 200}
+QUESTION_FIELDS = ("ref", "topic", "applies_when", "asks", "purpose", "evidence", "requirement_refs", "negative_tests")
 
 
 class ContextContractError(Exception):
@@ -122,7 +143,99 @@ def _requirements(path: Path | None, required: bool) -> tuple[dict, list[dict]]:
     return record, entries
 
 
-def _threat_model(path: Path | None, required: bool) -> tuple[dict | None, dict | None]:
+def public_id(raw: object) -> str:
+    """The finding id a reader sees: the report renders the model's ``T-NNN`` as ``F-NNN``."""
+    text = str(raw)
+    return "F-" + text[2:] if text.startswith("T-") else text
+
+
+def _matches(path: str, pattern: str) -> bool:
+    pattern = str(pattern)
+    if pattern.endswith("/"):
+        return path.startswith(pattern)
+    return path == pattern or fnmatch.fnmatch(path, pattern) or path.startswith(pattern.rstrip("/") + "/")
+
+
+def _clip(item: dict, fields: tuple[str, ...]) -> dict:
+    out = {}
+    for key in fields:
+        if key in item and item[key] not in (None, "", []):
+            value = item[key]
+            out[key] = value[:MAX_FIELD_CHARS] if isinstance(value, str) else value
+    return out
+
+
+def _project(data: dict, focus_paths: list[str]) -> dict:
+    """Relevance-ordered, size-bounded projection of a validated threat model.
+
+    Components whose paths cover a focus path come first, then their threats,
+    boundaries, and mitigations; the rest follows by risk. Entries that do not
+    fit ``MAX_PROJECTION_BYTES`` are counted in ``omitted``.
+    """
+    components = [c for c in data.get("components") or [] if isinstance(c, dict)]
+    focus = [
+        str(c.get("id"))
+        for c in components
+        if any(_matches(fp, pattern) for fp in focus_paths for pattern in c.get("paths") or [])
+    ]
+    focus_set = set(focus)
+
+    def rank_threat(t: dict) -> tuple:
+        return (str(t.get("component")) not in focus_set, RISK_ORDER.get(str(t.get("risk")), 4), str(t.get("id")))
+
+    threats = []
+    for t in sorted((t for t in data.get("threats") or [] if isinstance(t, dict)), key=rank_threat):
+        entry = _clip(t, THREAT_FIELDS)
+        entry["id"] = public_id(t.get("id"))
+        files = [str(e.get("file")) for e in t.get("evidence") or [] if isinstance(e, dict) and e.get("file")]
+        if files:
+            entry["files"] = list(dict.fromkeys(files))[:MAX_EVIDENCE_FILES]
+        threats.append(entry)
+    focus_threats = {t["id"] for t in threats if str(t.get("component")) in focus_set}
+    mitigations = []
+    for m in data.get("mitigations") or []:
+        if isinstance(m, dict):
+            entry = _clip(m, MITIGATION_FIELDS)
+            entry["threat_ids"] = [public_id(x) for x in m.get("threat_ids") or []]
+            mitigations.append(entry)
+    mitigations.sort(key=lambda m: not set(m["threat_ids"]) & focus_threats)
+    boundaries = [_clip(b, BOUNDARY_FIELDS) for b in data.get("trust_boundaries") or [] if isinstance(b, dict)]
+    boundaries.sort(key=lambda b: not set(map(str, b.get("covers_components") or [])) & focus_set)
+    sections = {
+        "components": sorted(
+            (_clip(c, COMPONENT_FIELDS) for c in components), key=lambda c: str(c.get("id")) not in focus_set
+        ),
+        "threats": threats,
+        "trust_boundaries": boundaries,
+        "mitigations": mitigations,
+        "actors": [_clip(a, ACTOR_FIELDS) for a in data.get("actors") or [] if isinstance(a, dict)],
+        "security_controls": [
+            _clip(c, CONTROL_FIELDS) for c in data.get("security_controls") or [] if isinstance(c, dict)
+        ],
+    }
+    projection = {"generated": str((data.get("meta") or {}).get("generated", ""))[:64], "focus_components": focus}
+    projection.update({name: [] for name in sections})
+    omitted: dict[str, int] = {}
+    budget = MAX_PROJECTION_BYTES - len(json.dumps(projection))
+    # Round-robin keeps every section represented when the budget runs out.
+    queues = {name: list(items) for name, items in sections.items()}
+    while any(queues.values()):
+        for name, queue in queues.items():
+            if not queue:
+                continue
+            item = queue.pop(0)
+            size = len(json.dumps(item, ensure_ascii=False)) + 2
+            if size <= budget and len(projection[name]) < SECTION_CAPS.get(name, 500):
+                projection[name].append(item)
+                budget -= size
+            else:
+                omitted[name] = omitted.get(name, 0) + 1
+    if omitted:
+        projection["omitted"] = omitted
+    return projection
+
+
+def _threat_model(path: Path | None, required: bool, focus_paths: list[str]) -> tuple[dict | None, dict | None]:
     if path is None:
         return None, None
     record, body = _load("threat_model", path, "caller", required)
@@ -133,21 +246,23 @@ def _threat_model(path: Path | None, required: bool) -> tuple[dict | None, dict 
         valid, _errors = validate_threat_model_output(data)
     except yaml.YAMLError:
         valid = False
+    from shared.assessment_sources import is_portable_model, single_repository_only
+
+    if valid and is_portable_model(data):
+        # Its locations belong to several checkouts; the analysis reads one.
+        raise ContextError(
+            single_repository_only(
+                "the threat analyst",
+                f"Rerun without {path.name} (--isolated) or with a single-repository model of this repository",
+            ),
+            required=True,
+        )
     if not valid:
         if required:
             raise ContextError(f"required threat model {path.name} is invalid", required=True)
         return dict(record, status="invalid"), None
 
-    def pick(items, fields):
-        return [{k: item[k] for k in fields if k in item} for item in items or []]
-
-    projection = {
-        "generated": str((data.get("meta") or {}).get("generated", ""))[:64],
-        "components": pick(data.get("components"), COMPONENT_FIELDS)[:200],
-        "threats": pick(data.get("threats"), THREAT_FIELDS)[:500],
-        "trust_boundaries": pick(data.get("trust_boundaries"), BOUNDARY_FIELDS)[:200],
-    }
-    return record, projection
+    return record, _project(data, focus_paths)
 
 
 def build(
@@ -160,8 +275,9 @@ def build(
     threat_model_required: bool = False,
     business_context_required: bool = False,
     feature: dict | None = None,
+    focus_paths: list[str] | None = None,
 ) -> dict:
-    """Build the context document of one job."""
+    """Build the context document of one job; ``focus_paths`` order the threat-model projection."""
     sources = []
     record, requirements = _requirements(requirements_path, requirements_required)
     sources.append(record)
@@ -185,7 +301,7 @@ def build(
         sources.append(record)
         business_text = body.decode("utf-8", "replace") if body is not None else None
 
-    record, model = _threat_model(threat_model_path, threat_model_required)
+    record, model = _threat_model(threat_model_path, threat_model_required, focus_paths or [])
     if record is not None:
         sources.append(record)
     if feature is not None:

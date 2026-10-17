@@ -78,9 +78,9 @@ def _make_source(root):
         encoding="utf-8",
     )
     # a skill with the entry command and an upstream namespace leak
-    smk = root / "skills" / "create-threat-model"
+    smk = root / "skills" / "appsec-analyzer"
     smk.mkdir()
-    (smk / "SKILL.md").write_text("Run appsec-advisor:create-threat-model now.\n", encoding="utf-8")
+    (smk / "SKILL.md").write_text("Run appsec-advisor:appsec-analyzer now.\n", encoding="utf-8")
     _write_internal_kernel(root)
     other = root / "skills" / "publish-threat-model"
     other.mkdir()
@@ -98,8 +98,8 @@ def _make_source(root):
     (root / "scripts" / "node_modules" / "tool" / "index.js").write_text("excluded\n", encoding="utf-8")
     (root / "scripts" / ".coverage-data").mkdir()
     (root / "scripts" / ".coverage-data" / ".coverage").write_text("excluded\n", encoding="utf-8")
-    (root / "skills" / "create-threat-model" / "docs").mkdir()
-    (root / "skills" / "create-threat-model" / "docs" / "runtime.md").write_text(
+    (root / "skills" / "appsec-analyzer" / "docs").mkdir()
+    (root / "skills" / "appsec-analyzer" / "docs" / "runtime.md").write_text(
         "excluded\n",
         encoding="utf-8",
     )
@@ -157,7 +157,7 @@ def test_copy_source_applies_excludes(tmp_path):
     assert not (build / "scripts" / "docs").exists()
     assert not (build / "scripts" / "node_modules").exists()
     assert not (build / "scripts" / ".coverage-data").exists()
-    assert not (build / "skills" / "create-threat-model" / "docs").exists()
+    assert not (build / "skills" / "appsec-analyzer" / "docs").exists()
     assert not (build / "data" / "appsec-requirements-fallback.yaml").exists()
     assert not (build / ".agent-run.log").exists()
     assert not (build / ".appsec-progress.json").exists()
@@ -581,12 +581,12 @@ def test_no_skills_block_adds_nothing(tmp_path):
 
 
 def test_a_name_colliding_with_an_upstream_skill_aborts(tmp_path):
-    """Replacing create-threat-model would change what its command does."""
+    """Replacing appsec-analyzer would change what its command does."""
     build = tmp_path / "build"
     org_profile_with_skills(build)
-    (build / "skills" / "create-threat-model").mkdir(parents=True)
-    (build / "skills" / "create-threat-model" / "SKILL.md").write_text("upstream", encoding="utf-8")
-    write_org_skill(build, "create-threat-model")
+    (build / "skills" / "appsec-analyzer").mkdir(parents=True)
+    (build / "skills" / "appsec-analyzer" / "SKILL.md").write_text("upstream", encoding="utf-8")
+    write_org_skill(build, "appsec-analyzer")
     with pytest.raises(SystemExit):
         pkg.overlay_org_skills(build)
 
@@ -636,8 +636,8 @@ def test_added_skills_are_recorded_as_org_owned(tmp_path):
     build = tmp_path / "build"
     org_profile_with_skills(build)
     write_org_skill(build, "acme-release-check")
-    (build / "skills" / "create-threat-model").mkdir(parents=True)
-    (build / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    (build / "skills" / "appsec-analyzer").mkdir(parents=True)
+    (build / "skills" / "appsec-analyzer" / "SKILL.md").write_text("x", encoding="utf-8")
     _write_internal_kernel(build)
     pkg.apply_package_surface_policy(build, {}, None)
     skills = json.loads((build / pkg.SURFACE_MANIFEST).read_text())["skills"]
@@ -650,8 +650,8 @@ def test_the_package_policy_can_exclude_an_added_skill(tmp_path):
     build = tmp_path / "build"
     org_profile_with_skills(build)
     write_org_skill(build, "acme-release-check")
-    (build / "skills" / "create-threat-model").mkdir(parents=True)
-    (build / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    (build / "skills" / "appsec-analyzer").mkdir(parents=True)
+    (build / "skills" / "appsec-analyzer" / "SKILL.md").write_text("x", encoding="utf-8")
     _write_internal_kernel(build)
     policy = {"plugin_surface": {"skills": {"exclude": ["acme-release-check"]}}}
     pkg.apply_package_surface_policy(build, policy, None)
@@ -846,7 +846,7 @@ def test_read_name_list_ok():
 # ---------------------------------------------------------------------------
 
 
-AVAIL = {"create-threat-model", "publish-threat-model", "other"}
+AVAIL = {"appsec-analyzer", "publish-threat-model", "other"}
 
 
 def test_resolve_keep_block_none_keeps_all():
@@ -887,14 +887,12 @@ def test_resolve_keep_exclude_subset():
 
 def test_resolve_keep_required_missing():
     with pytest.raises(SystemExit):
-        pkg._resolve_keep_set({"include": ["other"]}, AVAIL, "skills", required={"create-threat-model"})
+        pkg._resolve_keep_set({"include": ["other"]}, AVAIL, "skills", required={"appsec-analyzer"})
 
 
 def test_resolve_keep_required_present():
-    keep = pkg._resolve_keep_set(
-        {"include": ["create-threat-model"]}, AVAIL, "skills", required={"create-threat-model"}
-    )
-    assert keep == {"create-threat-model"}
+    keep = pkg._resolve_keep_set({"include": ["appsec-analyzer"]}, AVAIL, "skills", required={"appsec-analyzer"})
+    assert keep == {"appsec-analyzer"}
 
 
 # ---------------------------------------------------------------------------
@@ -909,7 +907,7 @@ def test_available_skills_no_dir(tmp_path):
 def test_available_skills_found(tmp_path):
     src = _make_source(tmp_path / "src")
     assert pkg._available_skills(src) == {
-        "create-threat-model",
+        "appsec-analyzer",
         "internal-threat-analysis-kernel",
         "publish-threat-model",
     }
@@ -974,8 +972,8 @@ def test_available_hook_ids_skips_malformed(tmp_path):
 
 def test_apply_skill_policy_removes(tmp_path):
     src = _make_source(tmp_path / "src")
-    result = pkg.apply_skill_policy(src, {"skills": {"include": ["create-threat-model"]}})
-    assert result["included"] == ["create-threat-model", "internal-threat-analysis-kernel"]
+    result = pkg.apply_skill_policy(src, {"skills": {"include": ["appsec-analyzer"]}})
+    assert result["included"] == ["appsec-analyzer", "internal-threat-analysis-kernel"]
     assert result["removed"] == ["publish-threat-model"]
     assert not (src / "skills" / "publish-threat-model").exists()
 
@@ -999,8 +997,8 @@ def test_apply_skill_policy_does_not_require_kernel_without_dependent_agent(tmp_
     (src / "agents" / "appsec-stride-analyzer-v2.md").unlink()
     (src / "skills" / "internal-threat-analysis-kernel" / "SKILL.md").unlink()
     (src / "skills" / "internal-threat-analysis-kernel").rmdir()
-    result = pkg.apply_skill_policy(src, {"skills": {"include": ["create-threat-model"]}})
-    assert result["included"] == ["create-threat-model"]
+    result = pkg.apply_skill_policy(src, {"skills": {"include": ["appsec-analyzer"]}})
+    assert result["included"] == ["appsec-analyzer"]
 
 
 def test_apply_skill_policy_fails_when_dependent_agent_has_no_kernel(tmp_path, capsys):
@@ -1019,7 +1017,7 @@ def test_packaged_readme_does_not_advertise_internal_kernel(tmp_path):
         "acme",
         {
             "skills": {
-                "included": ["create-threat-model", "internal-threat-analysis-kernel"],
+                "included": ["appsec-analyzer", "internal-threat-analysis-kernel"],
             },
             "hooks": {"included": []},
         },
@@ -1281,8 +1279,8 @@ def test_write_surface_manifest_includes_mcp_servers(tmp_path):
 def test_rewrite_namespace(tmp_path):
     src = _make_source(tmp_path / "src")
     pkg.rewrite_namespace(src, "acme")
-    txt = (src / "skills" / "create-threat-model" / "SKILL.md").read_text()
-    assert "acme:create-threat-model" in txt
+    txt = (src / "skills" / "appsec-analyzer" / "SKILL.md").read_text()
+    assert "acme:appsec-analyzer" in txt
     assert "appsec-advisor:" not in txt
 
 
@@ -1307,7 +1305,7 @@ def test_check_namespace_leaks_no_roots(tmp_path):
 def test_rewrite_namespace_skips_non_utf8(tmp_path):
     src = _make_source(tmp_path / "src")
     # a .md text-suffixed file with invalid utf-8 bytes is skipped silently
-    bad = src / "skills" / "create-threat-model" / "binary.md"
+    bad = src / "skills" / "appsec-analyzer" / "binary.md"
     bad.write_bytes(b"\xff\xfe appsec-advisor:leak")
     pkg.rewrite_namespace(src, "acme")
     # untouched (still contains raw bytes, not rewritten)
@@ -1317,7 +1315,7 @@ def test_rewrite_namespace_skips_non_utf8(tmp_path):
 def test_check_namespace_leaks_skips_non_utf8(tmp_path):
     src = _make_source(tmp_path / "src")
     pkg.rewrite_namespace(src, "acme")
-    bad = src / "skills" / "create-threat-model" / "binary.md"
+    bad = src / "skills" / "appsec-analyzer" / "binary.md"
     bad.write_bytes(b"\xff\xfe appsec-advisor:leak")
     # the undecodable file is skipped, so no leak is reported
     pkg.check_namespace_leaks(src)
@@ -1330,14 +1328,12 @@ def test_rewrite_namespace_covers_scripts_sh_and_py(tmp_path):
     # headless wrapper dispatched the upstream namespace — a broken headless run.
     build = tmp_path / "b"
     (build / "scripts").mkdir(parents=True)
-    (build / "scripts" / "run-headless.sh").write_text(
-        'PROMPT="/appsec-advisor:create-threat-model"\n', encoding="utf-8"
-    )
+    (build / "scripts" / "run-headless.sh").write_text('PROMPT="/appsec-advisor:appsec-analyzer"\n', encoding="utf-8")
     (build / "scripts" / "helper.py").write_text('HINT = "/appsec-advisor:fix-run-issues"\n', encoding="utf-8")
     pkg.rewrite_namespace(build, "acme")
     sh = (build / "scripts" / "run-headless.sh").read_text()
     py = (build / "scripts" / "helper.py").read_text()
-    assert "appsec-advisor:" not in sh and "acme:create-threat-model" in sh
+    assert "appsec-advisor:" not in sh and "acme:appsec-analyzer" in sh
     assert "appsec-advisor:" not in py and "acme:fix-run-issues" in py
 
 
@@ -1348,9 +1344,7 @@ def test_check_namespace_leaks_covers_scripts(tmp_path):
     (build / "scripts").mkdir(parents=True)
     (build / "skills").mkdir()
     (build / "agents").mkdir()
-    (build / "scripts" / "run-headless.sh").write_text(
-        'PROMPT="/appsec-advisor:create-threat-model"\n', encoding="utf-8"
-    )
+    (build / "scripts" / "run-headless.sh").write_text('PROMPT="/appsec-advisor:appsec-analyzer"\n', encoding="utf-8")
     with pytest.raises(SystemExit):
         pkg.check_namespace_leaks(build)
 

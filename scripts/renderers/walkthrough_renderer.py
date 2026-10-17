@@ -10,7 +10,7 @@ no repair loop, no QA-fixer pass.
 §3 is a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …).
 The §3.1 "Attack Chain Overview" cross-finding view (graph LR kill-chains)
 was retired — the cross-finding/strategic picture is the standalone
-`## Critical Attack Tree` section above §1, so attack paths are not narrated
+`## Critical Findings by Root Cause` section above §1, so attack paths are not narrated
 in two competing places.
 
 Contract (see `data/sections-contract.yaml → sections.attack_walkthroughs`):
@@ -1054,6 +1054,15 @@ def _normalize_actor_voice(steps: list[str]) -> list[str]:
     return out
 
 
+def _component_display(threat: dict) -> str:
+    """The finding's component as readers know it: its name, else its identifier."""
+    for key in ("component_name", "component"):
+        value = " ".join(str(threat.get(key) or "").split())
+        if value:
+            return value
+    return ""
+
+
 def render_attack_steps(threat: dict, template: dict) -> list[str]:
     """Attacker-voice, chronological steps for §3.
 
@@ -1148,7 +1157,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     mapping = {
         "file": (evidence.get("file") or "<unknown>"),
         "line": str(evidence.get("line") or "?"),
-        "component": (threat.get("component") or "the application").strip() or "the application",
+        "component": _component_display(threat) or "the application",
         "cwe": (threat.get("cwe") or "").strip() or "the weakness class",
         "title": _short_title(threat.get("title") or "", 120),
         "tid": _to_fid(str(threat.get("id") or "")),
@@ -1313,7 +1322,7 @@ def render_sequence_diagram(
         # terminators/entities in sequence diagrams).
         "weakness": _short_title(re.sub(r"[;#]", "", title_without_locator(threat.get("title") or "")), 70)
         or "the weakness executes",
-        "component": (threat.get("component") or "the application").strip() or "the application",
+        "component": _component_display(threat) or "the application",
         "file": (evidence.get("file") or "<unknown>"),
         "line": str(evidence.get("line") or "?"),
         "excerpt": _excerpt(evidence),
@@ -1357,7 +1366,7 @@ def render_detection_signals(threat: dict, template: dict) -> list[str]:
         return []
     evidence = (threat.get("evidence") or [{}])[0] or {}
     mapping = {
-        "component": (threat.get("component") or "the application").strip(),
+        "component": _component_display(threat) or "the application",
         "file": evidence.get("file") or "<unknown>",
         "line": str(evidence.get("line") or "?"),
         "cwe": (threat.get("cwe") or "").strip() or "the weakness class",
@@ -1442,7 +1451,7 @@ def render_cross_references(
 
 
 # ---------------------------------------------------------------------------
-# (§3.1 Attack Chain Overview was retired — the Critical Attack Tree above
+# (§3.1 Attack Chain Overview was retired — Critical Findings by Root Cause above
 # §1 is the single cross-finding/strategic view. The deterministic chain
 # catalogue, its label helpers, and the per-chain renderer were removed with
 # it; §3 now renders only the per-finding walkthroughs below.)
@@ -1638,8 +1647,8 @@ def render_attack_walkthroughs_md(
             f"by severity, chain relevance, and threat-category diversity, with "
             f"Access Control and LLM Abuse represented when present. Each walkthrough "
             f"has attack steps, a focused sequence diagram, and the primary "
-            f"mitigation. How weaknesses combine toward the worst-case goal is "
-            f"in the [Critical Attack Tree](#critical-attack-tree); every other "
+            f"mitigation. Which root cause each Critical traces back to is in "
+            f"[Critical Findings by Root Cause](#critical-findings-by-root-cause); every other "
             f"Critical, plus full per-finding context (severity rationale, "
             f"assets, detection signals), is in the "
             f"[§8 Findings Register](#8-findings-register)."
@@ -1648,16 +1657,16 @@ def render_attack_walkthroughs_md(
         out.append(
             "This section walks through how the highest-risk findings are "
             "exploited — one short walkthrough per Critical, each with attack "
-            "steps, a focused sequence diagram, and the primary mitigation. How "
-            "weaknesses combine toward the worst-case goal is in the "
-            "[Critical Attack Tree](#critical-attack-tree); full per-finding "
+            "steps, a focused sequence diagram, and the primary mitigation. Which "
+            "root cause each Critical traces back to is in "
+            "[Critical Findings by Root Cause](#critical-findings-by-root-cause); full per-finding "
             "context (severity rationale, assets, detection signals) is in the "
             "[§8 Findings Register](#8-findings-register)."
         )
     out.append("")
 
     # §3.1+ per-finding walkthroughs (the cross-finding chain overview was
-    # retired — the Critical Attack Tree above §1 is the single strategic view).
+    # retired — Critical Findings by Root Cause above §1 is the single strategic view).
     for i, threat in enumerate(picks, start=1):
         block = _render_walkthrough_block(
             threat,

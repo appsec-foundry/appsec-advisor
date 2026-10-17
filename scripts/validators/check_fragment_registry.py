@@ -44,6 +44,10 @@ _SIDECAR_ONLY_TYPES = frozenset(
     {
         "components",
         "data-flows",
+        "components-v2",
+        "data-flows-v2",
+        "trust-boundaries-v3",
+        "trust-boundary-candidates-v2",
         "assets",
         "trust-boundaries",
         "trust-boundary-candidates",

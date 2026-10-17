@@ -24,7 +24,7 @@ Two related Stage-1 drift modes addressed:
 
 Idempotent. Empty changes set when yaml is already canonical.
 
-Hooked into the create-threat-model skill's auto-emitter pass between
+Hooked into the appsec-analyzer skill's auto-emitter pass between
 ``model/enforce_yaml_invariants.py`` (stride/cwe drift) and ``model/emit_meta_findings.py``,
 i.e. after Stage 1's yaml write and before any fragment pre-generation —
 the renderer must see a taxonomy-clean yaml on its first read.
@@ -296,6 +296,8 @@ _DOMAIN_TEXT_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("dependency",), "Operations Runtime and Supply Chain Controls"),
     (("supply", "chain"), "Operations Runtime and Supply Chain Controls"),
     (("runtime",), "Operations Runtime and Supply Chain Controls"),
+    (("network",), "Operations Runtime and Supply Chain Controls"),
+    (("infrastructure",), "Operations Runtime and Supply Chain Controls"),
     (("llm",), "Real-time and Not Applicable Controls"),
     (("ai",), "Real-time and Not Applicable Controls"),
     (("agentic",), "Real-time and Not Applicable Controls"),
@@ -597,8 +599,8 @@ def _resolve_from_catalog(controls: list) -> list[dict]:
     catalog control carries a deterministic domain key; without this pass a
     domain such as "Supply Chain" matches no heading and the control is dropped
     from §6. A control that matches neither goes to ``_resolve_from_domain_text``;
-    only what that pass cannot place either reaches the QA gate
-    ``check_controls_reach_section6``.
+    only what that pass cannot place either stops the build gate
+    ``controls_reach_section6`` (validators/assert_completeness.py).
     """
     titles = _section_titles()
     by_rule, by_name, sections = _catalog_domain_keys()

@@ -665,8 +665,9 @@ def _check_final_boundary_links(data: dict) -> list[str]:
             if boundary is None:
                 errors.append(f"{prefix}.boundary_id targets no canonical trust boundary")
                 continue
-            if boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
-                errors.append(f"{prefix}.boundary_id must target a resolved, confirmed trust boundary")
+            # Any confidence (TB-14): an inferred boundary must stay refutable.
+            if boundary.get("resolution_status") != "resolved":
+                errors.append(f"{prefix}.boundary_id must target a resolved trust boundary")
             if not is_adjacent(ref.get("origin_component_id"), boundary):
                 errors.append(f"{prefix}.origin_component_id is not adjacent to the referenced boundary")
     return errors
@@ -1428,6 +1429,8 @@ def _check_export_trace_invariants(data: dict) -> list[str]:
                 errors.append(f"abuse_case_analysis {case_id}: unverified_steps do not match step flags")
             if case.get("verification_complete") != (not unverified_steps):
                 errors.append(f"abuse_case_analysis {case_id}: verification_complete does not match step flags")
+            if case.get("combined_risk") is None and (case.get("source") != "descriptive" or matched_findings):
+                errors.append(f"abuse_case_analysis {case_id}: only an unlinked descriptive case may be unrated")
     return errors
 
 
@@ -1444,7 +1447,18 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     """
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
-    errors = _schema_errors("threat_model_output", data)
+    if isinstance(data.get("meta"), dict) and data["meta"].get("schema_version") == 2:
+        from shared.assessment_sources import presentation_model
+
+        try:
+            # The v2 schema retains the legacy field constraints. Run the
+            # unchanged relational gates on a namespaced read-only view.
+            data = presentation_model(data)
+        except ValueError as exc:
+            return False, [str(exc)]
+        errors = []
+    else:
+        errors = _schema_errors("threat_model_output", data)
     from shared._severity_policy import policy_errors
 
     errors.extend(policy_errors(data.get("threats") or []))

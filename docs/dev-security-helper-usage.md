@@ -175,7 +175,7 @@ By default, the skill:
 - resolves the active requirements source
 - builds a three-dot diff against the upstream default branch
 - dispatches `appsec-reviewer`
-- writes `docs/security/.requirements-verification.json`
+- writes `.requirements-verification.json` to the application's private directory (`<data dir>/appsec-advisor/assessments/<repo-name>-<hash8>`) outside the repository, or to `--output <dir>`
 - exits `0` unless `--gate` is set and the gate fails
 
 Common runs:
@@ -202,8 +202,10 @@ Saved reports:
 
 `--save` writes:
 
-- `docs/security/appsec-requirements-change-report.md`
-- `docs/security/appsec-requirements-change-report.json`
+- `appsec-requirements-change-report.md`
+- `appsec-requirements-change-report.json`
+
+in the same directory as the verdict.
 
 ## appsec-reviewer-cli
 
@@ -218,7 +220,7 @@ appsec-reviewer-cli review --diff origin/main --output security-review.md
 By default, the CLI:
 
 - invokes `/appsec-advisor:verify-requirements` headlessly
-- writes `docs/security/.requirements-verification.json`
+- writes `.requirements-verification.json` to the application's private directory (`<data dir>/appsec-advisor/assessments/<repo-name>-<hash8>`)
 - renders the requested Markdown report
 - exits `0` unless `--fail-on` is set and the gate fails
 
@@ -342,8 +344,8 @@ Outputs:
 
 - Hook: no review artifact; optional hook telemetry as described in [security-coach-skill.md](security-coach-skill.md).
 - Agent: `.requirements-verification.json` in its configured output directory.
-- Skill: `docs/security/.requirements-verification.json`; optional saved reports under `docs/security/`.
-- CLI: requested Markdown report and `docs/security/.requirements-verification.json`.
+- Skill: `.requirements-verification.json` and optional saved reports in the application's private directory, or in `--output <dir>`.
+- CLI: requested Markdown report and `.requirements-verification.json` in the application's private directory.
 
 Exit codes:
 
@@ -396,7 +398,7 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 
 - `appsec-reviewer-cli: CLAUDE_PLUGIN_ROOT could not be resolved`: set `CLAUDE_PLUGIN_ROOT` to the plugin root and add `$CLAUDE_PLUGIN_ROOT/scripts` to `PATH`.
 - `Claude Code CLI not found`: install Claude Code and make sure `claude` is on `PATH`.
-- `no verdict produced`: the headless Claude run did not complete or did not write `docs/security/.requirements-verification.json`. Re-run the equivalent `/appsec-advisor:verify-requirements --base <ref>` interactively to see the underlying error.
+- `no verdict produced`: the headless Claude run did not complete or did not write `.requirements-verification.json` to the application's private directory. Re-run the equivalent `/appsec-advisor:verify-requirements --base <ref>` interactively to see the underlying error.
 - `build-verify-diff: git diff failed`: fetch the base ref and verify that `git diff <ref>...HEAD` works locally.
 - Explicit requirements source cannot be loaded: fix the URL/path or remove `--requirements`. Explicit sources fail closed; only the zero-config path falls back to the bundled best-practices baseline.
 - `No changes to verify.`: the resolved diff is empty. Use `--staged` for staged-only checks or pass a different `--base` / `--diff` ref.
@@ -416,9 +418,10 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 | `--org-profile <path>` | Use this org profile for source resolution. |
 | `--preset <name>` | Use a preset from the active org profile. |
 | `--no-org-profile` | Ignore packaged or environment-pointed org profiles. |
-| `--md` | Also save `docs/security/appsec-requirements-change-report.md`. |
-| `--json` | Also save `docs/security/appsec-requirements-change-report.json`. |
-| `--save` | Save both Markdown and JSON reports under `docs/security/`. |
+| `--md` | Also save `appsec-requirements-change-report.md`. |
+| `--json` | Also save `appsec-requirements-change-report.json`. |
+| `--save` | Save both Markdown and JSON reports. |
+| `--output <dir>` | Write reports and the verdict to `<dir>` instead of the application's private directory outside the repository. |
 
 ### `appsec-reviewer-cli review`
 

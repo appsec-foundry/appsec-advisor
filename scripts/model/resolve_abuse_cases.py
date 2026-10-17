@@ -3,12 +3,16 @@
 
 Merges three sources into one validated list of abuse-case definitions:
 
-  1. the plugin standard library (``data/abuse-cases/default-library.yaml``)
-     unless the org profile sets ``abuse_cases.inherit_defaults: false``;
+  1. the plugin standard library (``data/abuse-cases/technical.yaml``
+     and ``business.yaml``) unless the org profile sets
+     ``abuse_cases.inherit_defaults: false``;
   2. org-specific case files matched by ``abuse_cases.add`` (a glob relative to
      the org-profile directory), validated against
      ``schemas/abuse-cases.schema.yaml``;
-  3. minus any ids listed in ``abuse_cases.disable``.
+  3. repo-local files under ``<repo>/docs/security/abuse-cases/`` or the
+     legacy ``<repo>/.appsec/abuse-cases/``, and explicit
+     per-scan files, both bounded by ``data/abuse-case-limits.yaml``;
+  4. minus any ids listed in ``abuse_cases.disable``.
 
 Consumed by ``scripts/model/match_abuse_cases.py`` (deterministic matcher) and by
 ``scripts/validators/validate_org_profile.py`` (semantic validation of the org glob).
@@ -28,15 +32,26 @@ if not __package__:
 
 import argparse
 import json
+import os
+import stat
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LIBRARY = PLUGIN_ROOT / "data" / "abuse-cases" / "default-library.yaml"
+DEFAULT_LIBRARY = PLUGIN_ROOT / "data" / "abuse-cases" / "technical.yaml"
+# The technical and the generic business abuse cases; both are defaults.
+LIBRARY_FILES = ("technical.yaml", "business.yaml")
 ABUSE_CASE_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-cases.schema.yaml"
+LIMITS_FILE = PLUGIN_ROOT / "data" / "abuse-case-limits.yaml"
+LIMITS_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-case-limits.schema.json"
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+CASE_FILE_SUFFIXES = (".yaml", ".yml")
+# A rejection reason quotes validator messages, which can echo file content.
+_MAX_REASON_CHARS = 300
 
 
 def _load_yaml(path: Path) -> Any:
@@ -44,8 +59,60 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(f)
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects a key repeated in one mapping.
+
+    Plain YAML keeps the last value, so a repeated key would silently replace
+    what the author wrote first.
+    """
+
+
+def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode) -> dict:
+    seen: set = set()
+    for key_node, _value in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
+        key = loader.construct_object(key_node, deep=True)
+        try:
+            repeated = key in seen
+        except TypeError:
+            continue
+        if repeated:
+            raise yaml.constructor.ConstructorError(None, None, f"duplicate key {str(key)[:60]!r}", key_node.start_mark)
+        seen.add(key)
+    return loader.construct_mapping(node, deep=True)
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
+def _load_case_yaml(text: str | bytes) -> Any:
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 — SafeLoader subclass
+
+
 def _load_schema() -> dict:
     return _load_yaml(ABUSE_CASE_SCHEMA)
+
+
+def load_limits(path: Path = LIMITS_FILE) -> dict[str, int]:
+    """Return the enforced abuse-case limits as ``{name: value}``."""
+    import jsonschema
+
+    data = _load_yaml(path)
+    jsonschema.Draft202012Validator(json.loads(LIMITS_SCHEMA.read_text(encoding="utf-8"))).validate(data)
+    return {name: entry["value"] for name, entry in data["limits"].items()}
+
+
+def _read_bounded(path: Path, max_bytes: int) -> bytes:
+    """Read a regular, non-symlink file of at most ``max_bytes``."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("not a regular file")
+        body = handle.read(max_bytes + 1)
+    if len(body) > max_bytes:
+        raise ValueError(f"exceeds the case file size limit of {max_bytes // 1024} KiB")
+    return body
 
 
 def _schema_errors(doc: Any, schema: dict, label: str) -> list[str]:
@@ -54,11 +121,32 @@ def _schema_errors(doc: Any, schema: dict, label: str) -> list[str]:
     except ImportError:
         return [f"{label}: jsonschema not installed; cannot validate abuse cases"]
     validator = jsonschema.Draft202012Validator(schema)
+    cases = doc.get("abuse_cases") if isinstance(doc, dict) else None
     out = []
     for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.path)):
-        loc = "/".join(str(p) for p in err.path) or "<root>"
+        parts = [str(p) for p in err.path]
+        # Name the case an author recognizes, not only its list position.
+        if len(parts) >= 2 and parts[0] == "abuse_cases" and isinstance(cases, list):
+            index = int(parts[1])
+            case_id = cases[index].get("id") if index < len(cases) and isinstance(cases[index], dict) else None
+            if isinstance(case_id, str):
+                parts[1] = f"{parts[1]} ({case_id})"
+        loc = "/".join(parts) or "<root>"
         out.append(f"{label}: {loc}: {err.message}")
     return out
+
+
+def _version_errors(doc: dict, label: str) -> list[str]:
+    """Reject unknown file versions and descriptive cases in version-1 files."""
+    version = doc.get("schema_version", 1)
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(str(v) for v in SUPPORTED_SCHEMA_VERSIONS)
+        return [f"{label}: schema_version {version!r} is not supported; supported versions: {supported}"]
+    if version == 1:
+        for case in doc.get("abuse_cases") or []:
+            if isinstance(case, dict) and case.get("kind") == "descriptive":
+                return [f"{label}: {case.get('id')}: descriptive cases require schema_version: 2"]
+    return []
 
 
 def _check_grants_requires(case: dict, label: str) -> list[str]:
@@ -78,17 +166,25 @@ def _check_grants_requires(case: dict, label: str) -> list[str]:
     return errors
 
 
-def _load_case_file(path: Path, schema: dict) -> tuple[list[dict], list[str]]:
-    """Load one library/org file (`{abuse_cases: [...]}`), validate, return
-    (cases, errors)."""
+def _load_case_file(path: Path, schema: dict, max_bytes: int | None = None) -> tuple[list[dict], list[str]]:
+    """Load one case file (`{abuse_cases: [...]}`), validate, return
+    (cases, errors). ``max_bytes`` bounds untrusted repository input; such a
+    file must be a regular file, not a symlink."""
     label = path.name
     try:
-        doc = _load_yaml(path)
-    except (OSError, yaml.YAMLError) as exc:
+        if max_bytes is None:
+            doc = _load_case_yaml(path.read_text(encoding="utf-8"))
+        else:
+            doc = _load_case_yaml(_read_bounded(path, max_bytes))
+    except ValueError as exc:
+        return [], [f"{label}: {exc}"]
+    except OSError:
+        return [], [f"{label}: unreadable or a symbolic link"]
+    except yaml.YAMLError as exc:
         return [], [f"{label}: cannot parse: {exc}"]
     if not isinstance(doc, dict):
         return [], [f"{label}: top-level must be a mapping with 'abuse_cases'"]
-    errors = _schema_errors(doc, schema, label)
+    errors = _version_errors(doc, label) or _schema_errors(doc, schema, label)
     cases = doc.get("abuse_cases") or []
     if not errors:
         for case in cases:
@@ -96,33 +192,106 @@ def _load_case_file(path: Path, schema: dict) -> tuple[list[dict], list[str]]:
     return (cases if not errors else []), errors
 
 
-REPO_LOCAL_SUBDIR = Path(".appsec") / "abuse-cases"
+def descriptive_steps(case: dict) -> list[str]:
+    """A descriptive case's steps; an open case has one step, its check."""
+    return list(case.get("steps") or ([case["check"]] if case.get("check") else []))
 
 
-def resolve_abuse_cases(
+def case_chain(case: dict) -> list[dict]:
+    """Return a case's chain steps; descriptive steps become prose-only steps.
+
+    Downstream consumers (verifier context, report, canonical YAML) iterate
+    one step shape. A descriptive step carries no probe, grant, or finding
+    classification, and every step is required.
+    """
+    if case.get("kind") != "descriptive":
+        return list(case.get("chain") or [])
+    return [
+        {"step": index, "label": text, "description": text, "required": True}
+        for index, text in enumerate(descriptive_steps(case), start=1)
+    ]
+
+
+# Repository case directories in precedence order: the documented location
+# beside the other team-maintained security inputs, then the legacy one.
+REPO_LOCAL_SUBDIRS = (Path("docs") / "security" / "abuse-cases", Path(".appsec") / "abuse-cases")
+
+
+def _reason(errors: list[str]) -> str:
+    text = "; ".join(errors)
+    return text if len(text) <= _MAX_REASON_CHARS else text[: _MAX_REASON_CHARS - 1] + "…"
+
+
+def _repo_local_files(root: Path, subdir: Path, max_files: int, admitted: int = 0) -> tuple[list[Path], list[dict]]:
+    """Return (admissible files, rejections) for ``<root>/<subdir>``.
+
+    The directory and every file must stay inside the repository. Symbolic
+    links are not followed; files beyond the count limit, which ``admitted``
+    files from earlier locations already use, are rejected by name.
+    """
+    repo_dir = root / subdir
+    rel_dir = subdir.as_posix()
+    if not repo_dir.exists() and not repo_dir.is_symlink():
+        return [], []
+    try:
+        repo_dir.resolve(strict=True).relative_to(root)
+    except (OSError, ValueError):
+        return [], [{"path": rel_dir, "reason": "directory resolves outside the repository"}]
+    if repo_dir.is_symlink() or not repo_dir.is_dir():
+        return [], [{"path": rel_dir, "reason": "not a directory inside the repository"}]
+    files: list[Path] = []
+    rejected: list[dict] = []
+    for path in sorted(p for p in repo_dir.iterdir() if p.suffix in CASE_FILE_SUFFIXES):
+        rel = f"{rel_dir}/{path.name}"
+        if path.is_symlink():
+            rejected.append({"path": rel, "reason": "symbolic links are not admitted"})
+        elif admitted + len(files) >= max_files:
+            rejected.append({"path": rel, "reason": f"exceeds the limit of {max_files} repository case files"})
+        else:
+            files.append(path)
+    return files, rejected
+
+
+def resolve_abuse_case_sources(
     org_profile: dict | None,
     profile_dir: Path | None,
     plugin_root: Path = PLUGIN_ROOT,
     repo_root: Path | None = None,
     extra_case_files: list[Path] | None = None,
-) -> tuple[list[dict], list[str]]:
-    """Return (active_cases, errors).
+    limits: dict[str, int] | None = None,
+    origins: dict[str, str] | None = None,
+    derived_case_file: Path | None = None,
+) -> tuple[list[dict], list[str], list[dict]]:
+    """Return (active_cases, errors, rejected_repo_files).
+
+    When ``origins`` is a dict, it receives ``{case id: origin}`` with origin
+    ``library``, ``org``, ``repo``, ``derived``, or ``explicit``. Only
+    ``explicit`` cases came from this invocation's own arguments.
+    ``derived_case_file`` holds the admitted model-derived cases of this run
+    (``derive_abuse_cases.py admit``); a problem with it rejects that file only.
 
     Sources, in load order:
       1. plugin standard library (unless ``inherit_defaults: false``);
       2. org-profile cases matched by ``abuse_cases.add`` (glob relative to
          ``profile_dir``);
-      3. **repo-local** cases under ``<repo_root>/.appsec/abuse-cases/*.yaml``
-         — a zero-config layer that needs no org profile, mirroring the
+      3. **repo-local** cases under ``<repo_root>/docs/security/abuse-cases/``,
+         then the legacy ``<repo_root>/.appsec/abuse-cases/`` —
+         a zero-config layer that needs no org profile, mirroring the
          known-threats convention so a single repository can ship its own
          scenarios checked into version control;
+      4. explicit per-scan files below ``repo_root``;
       minus any ids in ``abuse_cases.disable``.
 
-    ``org_profile`` is the parsed profile dict (or None when no profile is
-    active). ``profile_dir`` is the directory the profile lives in. ``repo_root``
-    is the target repository root (or None to skip the repo-local layer).
+    Library, org, and explicit-file problems are ``errors``: the operator
+    chose those inputs, so the caller fails closed. A repo-local file that is
+    invalid, oversized, a symlink, or reuses a loaded id is rejected on its
+    own and listed in ``rejected_repo_files`` as ``{path, reason}``; every
+    other case stays active, so one broken repository file cannot remove the
+    library from a run.
     """
     schema = _load_schema()
+    limits = limits or load_limits()
+    max_bytes = limits["case_file_kib"] * 1024
     cfg = (org_profile or {}).get("abuse_cases") or {}
     inherit = cfg.get("inherit_defaults", True)
     disabled = set(cfg.get("disable") or [])
@@ -130,32 +299,74 @@ def resolve_abuse_cases(
 
     cases: list[dict] = []
     errors: list[str] = []
+    rejected: list[dict] = []
     loaded_paths: set[Path] = set()
+    origin_of: dict[str, str] = {}
 
-    library = plugin_root / "data" / "abuse-cases" / "default-library.yaml"
-    if inherit and library.exists():
-        lib_cases, lib_errors = _load_case_file(library, schema)
-        cases += lib_cases
-        errors += lib_errors
+    def _reserved(path: Path, file_cases: list[dict]) -> list[str]:
+        # Only the deriver mints MODEL-AC ids, so the prefix marks a case as
+        # model-derived and a copied derived case cannot collide with a run's own.
+        return [
+            f"{path.name}: abuse-case id {case.get('id')!r} uses the MODEL-AC prefix reserved for model-derived cases"
+            for case in file_cases
+            if str(case.get("id")).startswith("MODEL-AC-")
+        ]
+
+    def _admit(file_cases: list[dict], origin: str) -> None:
+        cases.extend(file_cases)
+        for case in file_cases:
+            origin_of.setdefault(case.get("id"), origin)
+
+    for name in LIBRARY_FILES:
+        library = plugin_root / "data" / "abuse-cases" / name
+        if inherit and library.exists():
+            lib_cases, lib_errors = _load_case_file(library, schema)
+            _admit(lib_cases, "library")
+            errors += lib_errors + _reserved(library, lib_cases)
 
     if profile_dir is not None and add_glob:
         for path in sorted(profile_dir.glob(add_glob)):
             file_cases, file_errors = _load_case_file(path, schema)
-            cases += file_cases
-            errors += file_errors
+            _admit(file_cases, "org")
+            errors += file_errors + _reserved(path, file_cases)
 
-    # Repo-local layer — zero-config, no org profile required. Any *.yaml under
-    # <repo_root>/.appsec/abuse-cases/ is loaded and validated. The org
-    # profile's `disable` list (below) still applies to repo-local ids, and a
-    # duplicate id across layers is reported as an authoring error.
+    # Every id loaded so far, disabled or not: a repository file reusing one
+    # would otherwise shadow or be shadowed by a trusted definition.
+    known_ids = {case.get("id") for case in cases}
+
     if repo_root is not None:
-        repo_dir = Path(repo_root) / REPO_LOCAL_SUBDIR
-        if repo_dir.is_dir():
-            for path in sorted(repo_dir.glob("*.yaml")):
-                file_cases, file_errors = _load_case_file(path, schema)
-                cases += file_cases
-                errors += file_errors
-                loaded_paths.add(path.resolve())
+        root = Path(repo_root).resolve()
+        files: list[tuple[Path, str]] = []
+        for subdir in REPO_LOCAL_SUBDIRS:
+            found, dir_rejected = _repo_local_files(root, subdir, limits["repo_case_files"], len(files))
+            files += [(path, f"{subdir.as_posix()}/{path.name}") for path in found]
+            rejected += dir_rejected
+        for path, rel in files:
+            file_cases, file_errors = _load_case_file(path, schema, max_bytes)
+            ids = [case.get("id") for case in file_cases]
+            clash = sorted({cid for cid in ids if cid in known_ids or ids.count(cid) > 1})
+            if not file_errors and clash:
+                file_errors = [f"{path.name}: duplicate abuse-case id {cid!r}" for cid in clash]
+            file_errors = file_errors or _reserved(path, file_cases)
+            if file_errors:
+                rejected.append({"path": rel, "reason": _reason(file_errors)})
+                continue
+            _admit(file_cases, "repo")
+            known_ids.update(ids)
+            loaded_paths.add(path.resolve())
+
+    if derived_case_file is not None and derived_case_file.is_file():
+        file_cases, file_errors = _load_case_file(derived_case_file, schema, max_bytes)
+        ids = [case.get("id") for case in file_cases]
+        if not file_errors and any(not str(cid).startswith("MODEL-AC-") for cid in ids):
+            file_errors = [f"{derived_case_file.name}: a derived case must use a MODEL-AC id"]
+        if not file_errors and any(case.get("kind") != "descriptive" for case in file_cases):
+            file_errors = [f"{derived_case_file.name}: a derived case must be descriptive"]
+        if file_errors:
+            rejected.append({"path": derived_case_file.name, "reason": _reason(file_errors)})
+        else:
+            _admit(file_cases, "derived")
+            known_ids.update(ids)
 
     # Explicit per-scan files are constrained to the target repository. They
     # are untrusted data, not arbitrary host-file reads. Unlike the automatic
@@ -173,7 +384,7 @@ def resolve_abuse_cases(
                 except ValueError:
                     errors.append(f"explicit abuse-case file {path!s} resolves outside the repository")
                     continue
-                if candidate.suffix not in {".yaml", ".yml"} or not candidate.is_file():
+                if candidate.suffix not in CASE_FILE_SUFFIXES or not candidate.is_file():
                     errors.append(f"explicit abuse-case file {path!s} is not a readable YAML file")
                     continue
                 # Naming a file the repo-local layer already picked up is a
@@ -181,9 +392,9 @@ def resolve_abuse_cases(
                 if candidate in loaded_paths:
                     continue
                 loaded_paths.add(candidate)
-                file_cases, file_errors = _load_case_file(candidate, schema)
-                cases += file_cases
-                errors += file_errors
+                file_cases, file_errors = _load_case_file(candidate, schema, max_bytes)
+                _admit(file_cases, "explicit")
+                errors += file_errors + _reserved(candidate, file_cases)
 
     # Apply disable + detect duplicate ids (org override wins is NOT supported —
     # a duplicate id is an authoring error, surfaced rather than silently merged).
@@ -199,28 +410,478 @@ def resolve_abuse_cases(
         seen[cid] = case.get("title", "")
         active.append(case)
 
+    if origins is not None:
+        origins.update({cid: origin_of[cid] for cid in seen})
+    return active, errors, rejected
+
+
+def resolve_abuse_cases(
+    org_profile: dict | None,
+    profile_dir: Path | None,
+    plugin_root: Path = PLUGIN_ROOT,
+    repo_root: Path | None = None,
+    extra_case_files: list[Path] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Return (active_cases, errors) — see ``resolve_abuse_case_sources``.
+
+    Rejected repo-local files are left out of the active set; callers that
+    must report them use ``resolve_abuse_case_sources``.
+    """
+    active, errors, _rejected = resolve_abuse_case_sources(
+        org_profile, profile_dir, plugin_root, repo_root, extra_case_files
+    )
     return active, errors
+
+
+_ORIGIN_LABEL = {
+    "library": "plugin",
+    "org": "organization",
+    "repo": "repository",
+    "explicit": "per-scan file",
+    "derived": "model-derived",
+}
+
+
+_VERDICT_LABEL = {
+    "fully_viable": "confirmed",
+    "partially_blocked": "partly blocked",
+    "mitigated": "mitigated",
+    "inconclusive": "unresolved",
+}
+_VERDICT_MEANING = {
+    "confirmed": "this case applies to the code.",
+    "partly blocked": "this case partly applies; a control blocks part of it.",
+    "mitigated": "a control in the code blocks this case.",
+    "does not apply": "every step was checked and the code has no such operation.",
+    "unresolved": "the code neither confirms nor rules it out. This is not a safe result.",
+}
+
+
+def held_result(chain_verdict: str, step_verdicts: list[str]) -> str | None:
+    """How a checked case holds — ``mitigated`` or ``does not apply`` — or ``None`` while it is open.
+
+    A refuted step caps the chain verdict at ``inconclusive`` (AC-6), yet a case
+    whose every step was decided as blocked or refuted leaves nothing open. The
+    §9 report and the abuse-case list both read this, so a case never appears
+    settled in one and unresolved in the other.
+    """
+    verdicts = set(step_verdicts)
+    if chain_verdict == "mitigated" or ("blocked" in verdicts and verdicts <= {"blocked", "refuted"}):
+        return "mitigated"
+    if verdicts == {"refuted"}:
+        return "does not apply"
+    return None
+
+
+def _recorded_label(case: dict) -> str:
+    steps = [s for s in case.get("steps") or [] if isinstance(s, dict)]
+    held = held_result(str(case.get("chain_verdict")), [str(s.get("verdict")) for s in steps])
+    label = held or _VERDICT_LABEL.get(str(case.get("chain_verdict")), "unresolved")
+    if case.get("verification_complete") is False and label != "unresolved":
+        label += " (incomplete)"
+    return label
+
+
+MAX_THREAT_MODEL_BYTES = 2 * 1024 * 1024
+
+
+def assessment_model(repo_root: Path | None) -> Path | None:
+    """The model file of the repository's assessment (decision AS-1); ``None`` when it cannot be located."""
+    from shared.artifact_names import ArtifactSetError, model_path
+    from shared.assessment_location import LocationError, locate
+
+    if repo_root is None:
+        return None
+    try:
+        return model_path(locate(repo_root)[0])
+    except (LocationError, ArtifactSetError, OSError):
+        return None
+
+
+def load_threat_model(repo_root: Path | None) -> dict | None:
+    """The repository's assessment model as untrusted data, read bounded; ``None`` without one."""
+    path = assessment_model(repo_root)
+    if path is None:
+        return None
+    try:
+        if path.stat().st_size > MAX_THREAT_MODEL_BYTES:
+            return None
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def derived_cases(data: dict | None) -> list[dict]:
+    """The model-derived cases a threat model records, rebuilt as descriptive cases.
+
+    Only a derived case keeps its check in the model; a case without one can be
+    listed but not checked again.
+    """
+    analysis = (data or {}).get("abuse_case_analysis")
+    if not isinstance(analysis, dict) or analysis.get("status") != "completed":
+        return []
+    found = []
+    for record in analysis.get("cases") or []:
+        if not isinstance(record, dict) or not str(record.get("id") or "").startswith("MODEL-AC-"):
+            continue
+        case = {
+            "id": str(record["id"]),
+            "kind": "descriptive",
+            "title": " ".join(str(record.get("title") or "").split()),
+        }
+        if isinstance(record.get("check"), str) and record["check"].strip():
+            case["check"] = " ".join(record["check"].split())
+            patterns = [str(p) for p in record.get("path_patterns") or [] if isinstance(p, str)]
+            if patterns:
+                case["scope_qualifier"] = {"path_patterns": patterns}
+        found.append(case)
+    return found
+
+
+def recorded_outcomes(repo_root: Path | None) -> dict | None:
+    """What the repository's threat model records about each abuse case.
+
+    Returns ``None`` without a readable model. Only verdict words from a fixed
+    vocabulary and plain ids and titles are taken from it.
+    """
+    from shared.assessment_sources import is_portable_model
+
+    data = load_threat_model(repo_root)
+    if data is None:
+        return None
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    analysis = data.get("abuse_case_analysis") if isinstance(data.get("abuse_case_analysis"), dict) else {}
+    outcomes: dict[str, str] = {}
+    if analysis.get("status") == "completed":
+        for case in [c for c in analysis.get("cases") or [] if isinstance(c, dict)]:
+            outcomes[str(case.get("id") or "")] = _recorded_label(case)
+        for row in analysis.get("catalog_evaluated") or []:
+            if isinstance(row, dict) and row.get("id"):
+                outcomes.setdefault(str(row["id"]), "not applicable")
+        for row in analysis.get("not_performed") or []:
+            if isinstance(row, dict) and row.get("id"):
+                outcomes.setdefault(str(row["id"]), "not checked")
+    return {
+        "date": str(meta.get("generated") or "")[:10],
+        "checked": analysis.get("status") == "completed",
+        "outcomes": outcomes,
+        "derived": derived_cases(data),
+        "combined": is_portable_model(data),
+    }
+
+
+def render_case_list(
+    cases: list[dict],
+    origins: dict[str, str],
+    rejected: list[dict],
+    profile_path: Path | None,
+    profile_source: str,
+    recorded: dict | None = None,
+    repo_name: str = "",
+) -> str:
+    """One line per active case: id, origin, kind, title, and, when the
+    repository has a threat model, the outcome it records for the case.
+    Rejected repository files are listed after the cases, because a scan would
+    skip them too. The organization profile is named only when one is active,
+    and two footer lines say how to check one case and where to add one."""
+    header = f"ABUSE CASES{f' in {repo_name}' if repo_name else ''} — {len(cases)} active"
+    if profile_path:
+        header += f" · organization profile: {profile_path} ({profile_source})"
+    if recorded is not None:
+        when = f" of {recorded['date']}" if recorded["date"] else ""
+        header += f" · threat model{when}" + ("" if recorded["checked"] else ": abuse cases were not checked")
+    else:
+        header += " · no security assessment for this repository"
+    lines = [header]
+    rows = [(c, _ORIGIN_LABEL.get(origins.get(str(c.get("id") or ""), ""), "unknown")) for c in cases]
+    known = {str(c.get("id") or "") for c in cases}
+    if recorded is not None:
+        rows += [(c, "model-derived") for c in recorded["derived"] if c["id"] not in known]
+    for case, origin in rows:
+        cid = str(case.get("id") or "")
+        kind = "business" if case.get("kind") == "descriptive" else "technical"
+        title = " ".join(str(case.get("title") or "").split())
+        result = ""
+        if recorded is not None:
+            result = f"{recorded['outcomes'].get(cid, 'not checked'):<22} "
+        lines.append(f"  {cid:<14} {origin:<14} {kind:<10} {result}{title}")
+    for item in rejected:
+        lines.append(f"  REJECTED {item['path']}: {item['reason']}")
+    lines += [
+        "",
+        # A combined threat model cannot serve as context for a single-repository check.
+        "Check one:  /appsec-advisor:analyze-threats --abuse-case <ID>"
+        + (" --isolated" if recorded and recorded.get("combined") else "")
+        + " [--model opus]",
+        "Details:    /appsec-advisor:abuse-cases <ID>",
+        "Add your own:  YAML file in docs/security/abuse-cases/ (format: docs/security-assessment.md)",
+    ]
+    if recorded is None:
+        lines.append("Results per case:  create a threat model with /appsec-advisor:appsec-analyzer")
+    return "\n".join(lines)
+
+
+def _line(value: object, limit: int = 200) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _display_id(raw: str) -> str:
+    return "F-" + raw[2:] if raw.startswith("T-") else raw
+
+
+def _wrap(text: str, indent: str = "  ") -> list[str]:
+    return textwrap.wrap(text, width=100, initial_indent=indent, subsequent_indent=indent) or [indent.rstrip()]
+
+
+def _record_for(analysis: dict, cid: str) -> dict | None:
+    return next((c for c in analysis.get("cases") or [] if isinstance(c, dict) and str(c.get("id")) == cid), None)
+
+
+def _cited(step: dict) -> str:
+    ev = step.get("evidence") if isinstance(step.get("evidence"), dict) else {}
+    parts = []
+    if ev.get("file"):
+        parts.append(f"{_line(ev['file'])}:{ev['line']}" if ev.get("line") else _line(ev["file"]))
+    if step.get("finding_id"):
+        parts.append(f"finding {_line(step['finding_id'])}")
+    return " · ".join(parts)
+
+
+def render_case_detail(
+    case: dict, origin: str, data: dict | None, repo_name: str, report: Path | None = None, source: str = ""
+) -> str:
+    """One case in sections: what it checks, the result the threat model
+    records with how and where it applies, the steps, mitigations, open
+    questions, and where to go next. Strings from the model are clipped and
+    wrapped; nothing in it is executed or followed."""
+    cid = str(case.get("id") or "")
+    business = case.get("kind") == "descriptive"
+    out = [
+        f"{cid} · {_line(case.get('title'))}",
+        f"{'Business abuse case' if business else 'Technical abuse case'} · {origin}",
+        "",
+    ]
+
+    out.append("WHAT IT CHECKS")
+    if business:
+        for step in descriptive_steps(case):
+            out += _wrap(_line(step, 400))
+        for item in case.get("exclusions") or []:
+            out += _wrap(f"Out of scope: {_line(item, 300)}")
+    elif case.get("goal"):
+        out += _wrap(f"Attacker goal: {_line(case['goal'], 300)}")
+    out.append("")
+
+    analysis = (data or {}).get("abuse_case_analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    record = _record_for(analysis, cid) if data is not None else None
+    generated = str(((data or {}).get("meta") or {}).get("generated") or "")[:10]
+    source = (source or "security assessment") + (f", {generated}" if generated else "")
+    definition_steps = {s.get("step"): s for s in case.get("chain") or [] if isinstance(s, dict)}
+    recorded_steps = [st for st in (record or {}).get("steps") or [] if isinstance(st, dict)]
+
+    if data is None:
+        out += [f"RESULT: NOT CHECKED — no security assessment for {repo_name or 'this repository'}", ""]
+    elif record is None:
+        skipped = next(
+            (
+                r
+                for key in ("catalog_evaluated", "not_performed")
+                for r in analysis.get(key) or []
+                if isinstance(r, dict) and str(r.get("id")) == cid
+            ),
+            None,
+        )
+        state = (
+            "NOT APPLICABLE"
+            if skipped is not None and skipped in (analysis.get("catalog_evaluated") or [])
+            else "NOT CHECKED"
+        )
+        out += [f"RESULT: {state}  ({source})"]
+        if skipped is not None and skipped.get("reason"):
+            out += _wrap(f"Reason: {_line(skipped['reason'], 300)}")
+        out.append("")
+    else:
+        label = _recorded_label(record)
+        risk = f"risk {_line(record['combined_risk'])} · " if record.get("combined_risk") else ""
+        meaning = _VERDICT_MEANING.get(label.split(" (")[0], _VERDICT_MEANING["unresolved"])
+        out += [f"RESULT: {label.upper()} — {meaning}", f"  ({risk}{source})", ""]
+
+        threats = {
+            _display_id(str(t.get("id"))): t for t in (data.get("threats") or []) if isinstance(t, dict) and t.get("id")
+        }
+        found = [_line(f) for f in record.get("matched_finding_ids") or []]
+        lead = next((threats[_display_id(f)] for f in found if _display_id(f) in threats), {})
+        if lead and label.split(" (")[0] in ("confirmed", "partly blocked"):
+            if lead.get("scenario"):
+                out += ["HOW", *_wrap(_line(lead["scenario"], 600)), ""]
+            if lead.get("impact_description"):
+                out += ["IMPACT", *_wrap(_line(lead["impact_description"], 400)), ""]
+
+        if business and len(recorded_steps) <= 1:
+            step = recorded_steps[0] if recorded_steps else {}
+            out += ["WHERE", f"  {_cited(step) or 'no code cited'}"]
+            for c in step.get("controls_found") or []:
+                out += _wrap(f"Control found: {_line(c, 300)}")
+            if lead.get("controls_in_place") and not step.get("controls_found"):
+                out += _wrap(f"Existing control, not sufficient: {_line(lead['controls_in_place'], 300)}")
+            out.append("")
+        else:
+            rows = []
+            for step in recorded_steps:
+                n = step.get("step")
+                title = _line((definition_steps.get(n) or {}).get("label")) or _line(step.get("outcome"), 160)
+                cited = _cited(step).replace(" · finding ", " (") + (
+                    ")" if step.get("finding_id") and step.get("evidence") else ""
+                )
+                rows.append(
+                    (str(n), (_line(step.get("verdict")) or "not verified").upper(), _line(title, 48), cited, step)
+                )
+            widths = [max(len(h), *(len(r[k]) for r in rows)) for k, h in enumerate(("#", "Result", "Step"))]
+            out.append("STEPS")
+            out.append(f"  {'#':<{widths[0]}}  {'Result':<{widths[1]}}  {'Step':<{widths[2]}}  Where")
+            for n, verdict, title, cited, step in rows:
+                out.append(f"  {n:<{widths[0]}}  {verdict:<{widths[1]}}  {title:<{widths[2]}}  {cited}".rstrip())
+                for c in step.get("controls_found") or []:
+                    out += _wrap(f"control found: {_line(c, 300)}", " " * (6 + widths[0] + widths[1]))
+            out.append("")
+
+        if found:
+            out.append("FINDINGS")
+            for fid in found:
+                t = threats.get(_display_id(fid)) or {}
+                risk_text = f" ({_line(t.get('risk'))})" if t.get("risk") else ""
+                out.append(f"  {fid}  {_line(t.get('title')) or 'not in the register'}{risk_text}")
+            out.append("")
+        mitigations = {str(m.get("id")): m for m in (data.get("mitigations") or []) if isinstance(m, dict)}
+        blocking = [str(m) for m in record.get("blocking_mitigation_ids") or []]
+        if blocking:
+            out.append("MITIGATIONS")
+            out += [f"  {_line(m)}  {_line((mitigations.get(m) or {}).get('title')) or 'not listed'}" for m in blocking]
+            out.append("")
+        questions = [q for q in record.get("open_questions") or [] if isinstance(q, str) and q.strip()]
+        if questions:
+            out.append("OPEN QUESTIONS")
+            for q in questions:
+                out += _wrap(_line(q, 300))
+            out.append("")
+
+    out.append("NEXT")
+    if record is not None and report is not None:
+        out.append(f"  Report:         {report.as_posix()}#{cid.lower()}")
+    found = [_line(f) for f in (record or {}).get("matched_finding_ids") or []]
+    if found:
+        out.append(f"  Finding:        /appsec-advisor:ask-security-assessment --id {found[0]}")
+        out.append(f"  Fix or accept:  /appsec-advisor:triage-security-assessment, then pick {', '.join(found)}")
+    if data is None:
+        out.append("  Threat model:   /appsec-advisor:appsec-analyzer")
+    out.append(_check_hint(cid, case, data))
+    return "\n".join(out)
+
+
+def _check_hint(cid: str, case: dict, data: dict | None) -> str:
+    """How to check this case again, or why it cannot be checked on its own."""
+    from shared.assessment_sources import is_portable_model
+
+    if cid.startswith("MODEL-AC-") and not case.get("check"):
+        return "  Check again:    a new thorough run; this threat model does not record the derived check"
+    if is_portable_model(data):
+        if cid.startswith("MODEL-AC-"):
+            return "  Check again:    a new thorough run; a combined threat model cannot serve as context"
+        return f"  Check again:    /appsec-advisor:analyze-threats --abuse-case {cid} --isolated [--model opus]"
+    return f"  Check again:    /appsec-advisor:analyze-threats --abuse-case {cid} [--model opus]"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resolve the active abuse-case set.")
     parser.add_argument("--org-profile", default=None, help="path to org-profile.yaml")
     parser.add_argument("--plugin-root", default=None)
-    parser.add_argument("--repo-root", default=None, help="target repo root; loads <repo>/.appsec/abuse-cases/*.yaml")
-    parser.add_argument("--list-ids", action="store_true", help="print active ids only")
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
+    )
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument(
+        "--list-ids", action="store_true", help="validate and print active ids only; uses the active org profile"
+    )
+    output.add_argument("--show", metavar="ID", help="one case: its definition and the result the threat model records")
+    output.add_argument(
+        "--list",
+        action="store_true",
+        help="print each active case with its origin, kind, and title; uses the active org profile",
+    )
+    parser.add_argument(
+        "--no-org-profile",
+        action="store_true",
+        help="with --list, --show, or --list-ids, ignore the active org profile",
+    )
     args = parser.parse_args(argv)
 
     plugin_root = Path(args.plugin_root) if args.plugin_root else PLUGIN_ROOT
     repo_root = Path(args.repo_root) if args.repo_root else None
     profile: dict | None = None
     profile_dir: Path | None = None
-    if args.org_profile:
-        p = Path(args.org_profile)
-        profile = _load_yaml(p)
-        profile_dir = p.parent
+    profile_path: Path | None = Path(args.org_profile) if args.org_profile else None
+    profile_source = "cli" if profile_path else "none"
+    # The validation command must see the profile a run would use: its ids
+    # and `disable` list decide whether a repository file is accepted.
+    if (args.list or args.show or args.list_ids) and not profile_path:
+        from runtime.resolve_org_profile import discover_active_profile
 
-    cases, errors = resolve_abuse_cases(profile, profile_dir, plugin_root, repo_root)
-    if errors:
+        profile_path, profile_source = discover_active_profile(None, args.no_org_profile, plugin_root)
+    if profile_path:
+        profile = _load_yaml(profile_path)
+        profile_dir = profile_path.parent
+
+    origins: dict[str, str] = {}
+    cases, errors, rejected = resolve_abuse_case_sources(profile, profile_dir, plugin_root, repo_root, origins=origins)
+    if args.show:
+        for e in errors:
+            sys.stderr.write(f"ERROR: {e}\n")
+        case = next((c for c in cases if str(c.get("id")) == args.show), None)
+        data = load_threat_model(repo_root)
+        if case is None and data is not None:
+            recorded = recorded_outcomes(repo_root) or {"derived": []}
+            case = next((c for c in recorded["derived"] if c["id"] == args.show), None)
+            origins[args.show] = "derived"
+        if errors or case is None:
+            if case is None:
+                sys.stderr.write(
+                    f"ERROR: unknown abuse case ID {args.show}; list them with /appsec-advisor:abuse-cases\n"
+                )
+            return 1
+        origin = _ORIGIN_LABEL.get(origins.get(args.show, ""), "unknown")
+        model = assessment_model(repo_root)
+        report = model.with_suffix(".md") if model is not None else None
+        report = report if report is not None and report.is_file() else None
+        source = model.name if data is not None and model is not None else ""
+        print(render_case_detail(case, origin, data, repo_root.name if repo_root else "", report, source))
+        return 0
+    if args.list:
+        for e in errors:
+            sys.stderr.write(f"ERROR: {e}\n")
+        if errors:
+            return 1
+        print(
+            render_case_list(
+                cases,
+                origins,
+                rejected,
+                profile_path,
+                profile_source,
+                recorded_outcomes(repo_root),
+                repo_root.name if repo_root else "",
+            )
+        )
+        return 0
+    # As a validation command every problem fails, including a repository
+    # file that a scan would only reject on its own.
+    for item in rejected:
+        sys.stderr.write(f"REJECTED: {item['path']}: {item['reason']}\n")
+    if errors or rejected:
         for e in errors:
             sys.stderr.write(f"ERROR: {e}\n")
         return 1

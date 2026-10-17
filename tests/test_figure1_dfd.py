@@ -109,10 +109,26 @@ def test_in_process_trust_changes_remain_boundaries(transition, detail):
     assert problems == []
     root = ET.fromstring(svg)
     assert "internal interface</text>" not in svg
-    assert "tb-8" in _boundary_lines(root)[1]
+    # The overview is a network view; the detail view keeps the in-process line.
+    assert ("tb-8" in _boundary_lines(root).get(1, [])) is detail
     assert "3 trust boundaries" in svg
     assert (root.find(".//{*}g[@data-boundary-marker='tb-8']") is not None) is detail
     assert (transition[0] in svg) is detail
+
+
+@pytest.mark.parametrize("surface", ["in-process", "network"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_a_data_access_crossing_draws_the_application_to_data_line(surface, detail):
+    """TB-13 and RA-15: a crossing into a store is drawn between the application
+    and data columns in the overview as well, in process or over the network,
+    while another in-process trust change stays out of the overview."""
+    model, paths, taxonomy = _model()
+    row = next(t for t in model["trust_boundaries"] if t["id"] == "tb-8")
+    row.update(surface=surface, transition=["data-access"], kind="process" if surface == "in-process" else "network")
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=detail)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert "tb-8" in _boundary_lines(root).get(1, [])
 
 
 @pytest.mark.parametrize("endpoints", [("external", "app1", "df-004"), ("app0", "db0", "df-005")])
@@ -828,6 +844,40 @@ def test_legend_uses_diagram_width_and_stays_below_all_nodes(name):
     assert F.check_diagram(model, paths, taxonomy)[1] == []
 
 
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [
+        (1075, (3, 345.0)),  # three standard blocks miss by 15 px: narrower blocks, no wide gap
+        (1010, (3, 323.3)),
+        (3 * F.LEGEND_W + 2 * F.LEGEND_GAP + 40, (3, F.LEGEND_W)),  # wide figures keep the standard block
+        (3 * F.LEGEND_MIN_W + 2 * F.LEGEND_GAP - 1, (2, F.LEGEND_W)),  # below the minimum: two columns
+        (200, (1, F.LEGEND_W)),
+    ],
+)
+def test_legend_layout_prefers_three_narrower_columns_over_a_wide_gap(width, expected):
+    columns, block = F._legend_layout(width, 5)
+    assert (columns, round(block, 1)) == expected
+    assert F._legend_layout(width, 1)[0] == 1
+
+
+def test_three_legend_columns_that_fit_only_narrower_leave_standard_gaps():
+    width = 1075
+    columns, block_width = F._legend_layout(width, 3)
+    blocks = []
+    for key in ("notation", "scenarios", "authentication"):
+        block = F._Canvas()
+        block.rect(0, 0, block_width, F.LEGEND_HEAD)
+        block.maxy = 200
+        blocks.append((key, block))
+    canvas = F._Canvas()
+    F._place_legend(canvas, blocks, width, 0, block_width)
+    lefts = sorted(box[0] for box in canvas.legend_boxes)
+    assert len(lefts) == columns == 3
+    assert all(round(b - a - block_width, 6) == F.LEGEND_GAP for a, b in zip(lefts, lefts[1:]))
+    assert max(box[2] for box in canvas.legend_boxes) <= F.MARGIN + width + 1e-6
+    assert F._check_geometry({}, [], canvas, []) == []
+
+
 def test_legend_balances_heights_and_keeps_small_assets_with_boundaries():
     sections = [
         ("notation", 317),
@@ -1453,6 +1503,21 @@ def test_classified_roles_carry_the_project_name_and_privileged_roles_stay_disti
     svg, state = F._build(model, scenarios, actors, detail=False)
     assert "Application users and administrators" not in svg and "Application users" in svg
     assert "Browser" not in " ".join(n["name"] for n in state["nodes"].values())
+
+
+@pytest.mark.parametrize("project", ["Combined system (2 repositories)", "Order Gateway"])
+def test_a_combined_assessment_never_prefixes_roles_with_its_system_name(project):
+    model, paths, taxonomy, ids = _role_access_model(registration=False)
+    model["meta"]["project"] = project
+    model["meta"]["source_repositories"] = [{"label": "edge", "head": "a" * 40}, {"label": "api", "head": "b" * 40}]
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    names = [state["nodes"][key]["name"] for key in ids]
+    assert names == ["Visitor", "User"]
+    # One selected repository keeps the product-name prefix.
+    model["meta"]["source_repositories"] = model["meta"]["source_repositories"][:1]
+    _, state = F._build(model, scenarios, actors, detail=False)
+    assert [state["nodes"][key]["name"] for key in ids] == [f"{project} Visitor", f"{project} User"]
 
 
 def test_declared_roles_keep_their_declared_names_and_are_never_folded():
@@ -2433,6 +2498,38 @@ def test_legend_content_has_clearance_below_header():
     assert center_y - 9 - float(header.get("height")) >= 8
     title, description = authentication.findall("{*}text")[1:3]
     assert float(description.get("y")) - float(description.get("font-size")) - float(title.get("y")) >= 4
+
+
+@pytest.mark.parametrize("prefix", ["archive", "shipment"])
+def test_category_example_sits_with_its_own_caption_and_severity_key_aligns(prefix):
+    """The category example is visually closer to its caption than to the
+    STRIDE caption above or the severity key below, and the severity dots start
+    on the symbol column like every other sample."""
+    model = _routing_model(["application", "data"], [(0, 1)], prefix)
+    svg, _ = F._build(model, [], [], detail=False)
+    notation = ET.fromstring(svg).find("{*}g[@data-legend-section='notation']")
+    texts = {t.text: t for t in notation.findall(".//{*}text")}
+
+    def baseline(prefix_text):
+        return float(next(t for s, t in texts.items() if s and s.startswith(prefix_text)).get("y"))
+
+    stride_caption = baseline("STRIDE-per-element")
+    example = texts["Unsafe Query Construction (SQLi)"]
+    example_y, example_top = float(example.get("y")), float(example.get("y")) - float(example.get("font-size"))
+    caption = texts["All Critical · High fills to 5 · +N = omitted High categories"]
+    caption_y = float(caption.get("y"))
+    caption_top = caption_y - float(caption.get("font-size"))
+    dot = next(c for c in notation.findall(".//{*}circle") if c.get("fill") == F.SEV_COL["Critical"])
+    dot_top = float(dot.get("cy")) - float(dot.get("r"))
+
+    own_gap = caption_top - example_y
+    assert own_gap < example_top - stride_caption
+    assert own_gap < dot_top - caption_y
+    assert dot_top > caption_y > example_y
+    example_marker = next(
+        r for r in notation.findall(".//{*}rect") if r.get("width") == "6.0" and float(r.get("y")) == example_y - 7
+    )
+    assert float(dot.get("cx")) - float(dot.get("r")) == float(example_marker.get("x"))
 
 
 @pytest.mark.parametrize("prefix", ["shipment", "measurement"])
@@ -3660,13 +3757,16 @@ def test_capability_labels_require_known_values_and_evidence():
         assert "".join(more[0].itertext()).strip().endswith("+1")
         assert "MFA verifier" in more[0].find(f"{_SVG}title").text
         notation = " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
+        # Every section header spans the same block width, also after a section draws a pill.
+        heads = {float(g.find(f"{_SVG}rect").get("width")) for g in root.findall("{*}g[@data-legend-section]")}
+        assert len(heads) == 1 and min(heads) >= F.LEGEND_MIN_W
         assert "Security-relevant capabilities / service roles" in notation
         assert "LLM + tools = model calls with executable application tools" in notation
         flat = " ".join(notation.split())
         assert "Most security-critical functions always shown" in flat
         assert "most critical first, then most severe linked finding" in flat
         assert "+N = further labels" in flat
-        assert "a missing label does not mean absence" in notation
+        assert "a missing label does not mean absence" in flat
         further = " ".join(root.find("{*}g[@data-legend-section='capability-notes']").itertext())
         assert "Further capabilities" in further and ": MFA verifier" in further
     assert model == before
@@ -3883,3 +3983,165 @@ def test_readme_example_is_legible_at_page_width_and_names_the_scanned_project()
     plugin = json.loads((REPO / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["name"]
     header = next(t.text for t in root.iter(f"{_SVG}text") if t.text and " components · " in t.text)
     assert re.sub(r"[^a-z0-9]", "", plugin.lower()) not in re.sub(r"[^a-z0-9]", "", header.lower())
+
+
+def _local_markers(root):
+    return {
+        g.get("data-boundary-local"): g.get("data-boundary-ids").split()
+        for g in root.iter(f"{_SVG}g")
+        if g.get("data-boundary-local") is not None
+    }
+
+
+@pytest.mark.parametrize(
+    ("pair", "axes", "guarded"),
+    [
+        (("app0", "app2"), {"kind": "identity"}, "app2"),
+        (("app2", "app1"), {"kind": "tenant"}, "app1"),
+    ],
+)
+def test_overview_marks_a_same_column_trust_change_on_the_guarded_node(pair, axes, guarded):
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [_resolved(*pair, 1, **axes)]
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert _boundary_lines(root) == {}
+    assert _local_markers(root) == {guarded: ["tb-1"]}
+    text = _visible_text(root)
+    assert "TRUST CHANGE" in text and "trust change within a column" in text
+    # The overview still names no boundary IDs and no control verdict.
+    assert not re.search(r"\btb-\d+\b", text) and "refuted" not in text
+    assert model == before
+
+
+def test_inferred_trust_change_says_so_in_text():
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [
+        _resolved("app0", "app2", 1, kind="identity"),
+        _resolved("app1", "app2", 2, kind="privilege", confidence="inferred"),
+    ]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert _local_markers(root) == {"app2": ["tb-1", "tb-2"]}
+    assert "2 TRUST CHANGES · 1 INFERRED" in _visible_text(root)
+
+
+def _roles_entering_the_client(roles):
+    from tests.test_figure1_security import auth
+
+    model, paths, taxonomy = _model(app=2, stores=1, flows=False, xss=True)
+    model["external_entities"] = [
+        {
+            "id": f"ext-role-{i}",
+            "kind": "legitimate-role",
+            "name": f"Role {i}",
+            "access": "internet-user" if i == 1 else "internet-priv-user",
+            "description": "Uses the application",
+        }
+        for i in range(1, roles + 1)
+    ]
+    model["data_flows"] = [
+        {
+            "id": f"df-{i:03d}",
+            "from": "external",
+            "from_entity": f"ext-role-{i}",
+            "to": "spa",
+            "interaction": True,
+            "label": "Uses UI",
+            "protocol": "UI",
+        }
+        for i in range(1, roles + 1)
+    ] + [
+        {
+            "id": f"df-{10 + i:03d}",
+            "from": "spa",
+            "to": f"app{i}",
+            "label": "Application requests",
+            "protocol": "HTTPS",
+            "authentication": auth("bearer"),
+        }
+        for i in range(2)
+    ]
+    return model, paths, taxonomy
+
+
+@pytest.mark.parametrize("roles", [2, 3])
+@pytest.mark.parametrize("pair", [("external", "spa"), ("spa", "external")])
+@pytest.mark.parametrize("confidence", ["confirmed", "inferred"])
+def test_human_interactions_enter_the_client_left_of_its_trust_change_marker(roles, pair, confidence):
+    """Several roles entering a client with a local trust change keep the overview (live run: Admin role)."""
+    model, paths, taxonomy = _roles_entering_the_client(roles)
+    model["trust_boundaries"] = [_resolved(*pair, 1, confidence=confidence)]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert _local_markers(ET.fromstring(svg)) == {"spa": ["tb-1"]}
+
+
+def test_human_interactions_spread_over_the_whole_client_top_without_a_marker():
+    model, paths, taxonomy = _roles_entering_the_client(2)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == [] and _local_markers(ET.fromstring(svg)) == {}
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    client = state["nodes"]["spa"]
+    entries = sorted(e["pts"][-1][0] for e in state["edges"] if e.get("ui_top_entry"))
+    assert entries == [client["x"] + client["w"] * k / 3 for k in (1, 2)]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _resolved("app0", "app2", 1, **_INTERNAL),  # internal interface, not a boundary
+        _resolved("external", "app1", 1),  # shown by its column line
+        # In-process trust changes stay in the detail view and the catalogue.
+        _resolved("app0", "app0", 1, kind="privilege", surface="in-process", transition=["privilege"]),
+        _resolved("app0", "app2", 1, kind="identity", surface="in-process", transition=["identity"]),
+    ],
+)
+def test_no_local_marker_where_a_line_or_no_network_trust_change_applies(row):
+    model, paths, taxonomy = _model(intra=True, exposed=("app1",))
+    model["trust_boundaries"] = [row]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert _local_markers(ET.fromstring(svg)) == {}
+
+
+def test_local_marker_audit_rejects_missing_or_unbacked_markers():
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [_resolved("app0", "app2", 1, kind="identity")]
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    canvas = state["canvas"]
+    args = (state["d"], state["nodes"], state["edges"], state["chips"], state["boundaries"], canvas)
+    assert F._audit(*args) == []
+    original = list(canvas.o)
+    canvas.o = [line.replace('data-boundary-local="app2"', 'data-removed="app2"') for line in original]
+    assert any("do not match" in p for p in F._audit(*args))
+    canvas.o = [line.replace('data-boundary-local="app2"', 'data-boundary-local="app1"') for line in original]
+    problems = F._audit(*args)
+    assert any("tb-1: trust-change marker on app1" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    ("boundary", "origins"),
+    [("tb-1", ("app0", "spa")), ("tb-8", ("app0", "db0"))],
+)
+def test_a_finding_citing_one_boundary_from_two_origins_counts_once(boundary, origins):
+    yaml_data, paths, taxonomy = _model()
+    finding = next(t for t in yaml_data["threats"] if t["component"] == "app0")
+    finding["boundary_refs"] = [{"boundary_id": boundary, "origin_component_id": origin} for origin in origins]
+    single = copy.deepcopy(yaml_data)
+    next(t for t in single["threats"] if t["id"] == finding["id"])["boundary_refs"] = finding["boundary_refs"][:1]
+    assert F.build_figure1_dfd_svg(yaml_data, paths, taxonomy) == F.build_figure1_dfd_svg(single, paths, taxonomy)
+
+
+def test_two_findings_on_one_boundary_still_count_twice():
+    yaml_data, paths, taxonomy = _model()
+    one = copy.deepcopy(yaml_data)
+    for t in one["threats"]:
+        if t["component"] == "app0" and t["id"] != one["threats"][2]["id"]:
+            t["boundary_refs"] = []
+    assert F.build_figure1_dfd_svg(yaml_data, paths, taxonomy) != F.build_figure1_dfd_svg(one, paths, taxonomy)

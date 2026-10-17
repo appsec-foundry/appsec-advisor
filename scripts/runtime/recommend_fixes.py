@@ -306,6 +306,62 @@ def _recommend_high_token_usage(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_abuse_case_file_rejected(issue: dict, output_dir: Path) -> dict:
+    """A repository abuse-case file failed validation and was left out.
+
+    Every other case still ran, so the run is usable; the scenario the file
+    describes was not checked until its author fixes the file.
+    """
+    path = (issue.get("evidence") or {}).get("path") or "the repository case file"
+    return {
+        "category": "user_action",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": f"{path} was rejected; its scenarios were not checked in this run.",
+        "rationale": (
+            "The resolver rejects a repository case file that is invalid, oversized, a symbolic link, "
+            "or reuses an existing case id, and keeps every other case. The reason names the file, "
+            "case id, and field to fix."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": path,
+                "details": "Fix the named field, then validate with scripts/model/resolve_abuse_cases.py --repo-root <repo>.",
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_abuse_case_not_verified(issue: dict, output_dir: Path) -> dict:
+    """Matched abuse-case candidates never reached a verifier.
+
+    Stage 1d stopped after matching, so §9 lists these candidates as not
+    verified. The cause is in the Stage-1d receipts and the event log.
+    """
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": "Abuse-case verification stopped after matching; the listed candidates have no verdict.",
+        "rationale": (
+            "The matcher writes its candidate set before any verifier runs. A candidate without a verdict "
+            "means the Stage-1d dispatch aborted or was skipped, so its outcome is unknown, not negative."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": "Find the prepare-abuse abort or STAGE1D_ROUTE_SPENT event, fix its cause, then re-run.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_abuse_case_inconclusive(issue: dict, output_dir: Path) -> dict:
     """A verifier could not settle one step of an abuse-case chain.
 
@@ -573,8 +629,8 @@ def _recommend_contract_gate_drift(issue: dict, output_dir: Path) -> dict:
             },
             {
                 "type": "rerun",
-                "target": "/appsec-advisor:create-threat-model --rerender",
-                "details": "Recompose from the existing fragments when the drift is real (a fragment was edited or a renderer/contract change landed).",
+                "target": "/appsec-advisor:appsec-analyzer",
+                "details": "Run a new assessment when the drift is real (a fragment was edited or a renderer/contract change landed); recomposing from existing fragments is not available.",
             },
         ],
         "verification": [],
@@ -602,7 +658,7 @@ def _recommend_inline_shortcut_unresolved(issue: dict, output_dir: Path) -> dict
             },
             {
                 "type": "rerun",
-                "target": "/appsec-advisor:create-threat-model --rebuild",
+                "target": "/appsec-advisor:appsec-analyzer --rebuild",
                 "details": "A contract-compliant Phase-11 output is reachable from the on-disk artifacts; if this reproduces, file a plugin bug.",
             },
         ],
@@ -947,6 +1003,53 @@ def _recommend_injected_component_without_flows(issue: dict, output_dir: Path) -
     }
 
 
+def _recommend_component_without_flows(issue: dict, output_dir: Path) -> dict:
+    """The architecture analyst modelled a runtime component but connected nothing to it."""
+    component = issue.get("component_id") or "the component"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "medium",
+        "summary": f"{component} has no data flow, so no trust boundary or exposure derives from it.",
+        "rationale": (
+            "Trust-boundary signals are derived from data flows. A runtime component without any "
+            "flow stays outside every boundary however it is reached."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".data-flows.json",
+                "details": f"Check which callers and outbound calls the code evidences for {component}.",
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_egress_without_flow(issue: dict, output_dir: Path) -> dict:
+    """An evidenced outbound call reached the analyst but no flow models it."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": "An evidenced outbound call has no data flow to an external service, so it has no trust boundary.",
+        "rationale": (
+            "The architecture analyst receives `.dispatch-context/architecture/egress.json` before it writes "
+            "flows and must model each destination as a flow to `external`."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".data-flows.json",
+                "details": "Compare the destinations in egress.json with the flows that leave their owning components.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_topology_workload_unmodelled(issue: dict, output_dir: Path) -> dict:
     """The component inventory left deployed workloads unaccounted for."""
     return {
@@ -1194,6 +1297,8 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "privileged_role_unevidenced": _recommend_privileged_role_unevidenced,
     "business_context_unmapped": _recommend_business_context_unmapped,
     "injected_component_without_flows": _recommend_injected_component_without_flows,
+    "component_without_flows": _recommend_component_without_flows,
+    "egress_without_flow": _recommend_egress_without_flow,
     "topology_workload_unmodelled": _recommend_topology_workload_unmodelled,
     "topology_workloads_not_delivered": _recommend_topology_workloads_not_delivered,
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,
@@ -1218,6 +1323,8 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "high_token_usage": _recommend_high_token_usage,
     "cost_accounting_failed": _recommend_cost_accounting_failed,
     "abuse_case_inconclusive": _recommend_abuse_case_inconclusive,
+    "abuse_case_file_rejected": _recommend_abuse_case_file_rejected,
+    "abuse_case_not_verified": _recommend_abuse_case_not_verified,
     "tool_error": _recommend_tool_error,
     "orchestration_gate_warn": _recommend_orchestration_gate_warn,
     "config_scan_invalid": _recommend_config_scan_invalid,

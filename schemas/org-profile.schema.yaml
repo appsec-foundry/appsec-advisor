@@ -165,7 +165,7 @@ properties:
 
       Two things are refused rather than resolved quietly. A name that collides
       with an upstream skill aborts the build, because replacing, say,
-      `create-threat-model` would change what its command does without anyone
+      `appsec-analyzer` would change what its command does without anyone
       deciding to. And frontmatter that would not pass for an upstream skill
       aborts too: `name` must match the directory, `description` must be
       non-empty and at most 1024 characters, and no other keys are allowed.
@@ -477,6 +477,11 @@ properties:
         $ref: "#/$defs/analyst_packages"
       default_packages:
         $ref: "#/$defs/analyst_packages"
+      allow_exploration:
+        type: boolean
+        description: >-
+          false refuses --explore, which lets an interactive analysis read a
+          redacted copy of the tracked files. Absent means allowed.
 
   skill_toggles:
     type: object
@@ -541,8 +546,8 @@ properties:
     additionalProperties: false
     description: |
       Controls which abuse-case scenarios (AC-NNN) are evaluated against the
-      repository. The plugin standard library
-      (data/abuse-cases/default-library.yaml) is activated unless
+      repository. The plugin's technical and business abuse cases
+      (data/abuse-cases/technical.yaml and business.yaml) are activated unless
       inherit_defaults is false; org-specific cases are loaded from the glob in
       `add` (relative to the profile directory) and validated against
       schemas/abuse-cases.schema.yaml.
@@ -554,7 +559,7 @@ properties:
         type: array
         items:
           type: string
-          pattern: "^(AC-T|AC|ORG-AC)-[0-9]{3,}$"
+          pattern: "^(AC-T|AC-B|AC|ORG-AC)-[0-9]{3,}$"
       add:
         type: string
         default: "abuse-cases/*.yaml"

@@ -8,7 +8,7 @@ definitions and compact runtimes that dispatch sub-agents with these model
 parameters. Touching any of:
 
     * scripts/runtime/resolve_config.py                  (source of truth)
-    * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
+    * skills/appsec-analyzer/SKILL.md            (must mention the flag)
     * scripts/orchestrator/orchestration_controller.py        (must own role routing)
     * docs/model-selection.md                    (user-facing model choices)
 
@@ -24,10 +24,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-SKILL_MD = ROOT / "skills" / "create-threat-model" / "SKILL.md"
-SKILL_FULL_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
-SKILL_RERENDER_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
-HELP_TXT = ROOT / "skills" / "create-threat-model" / "HELP.txt"
+SKILL_MD = ROOT / "skills" / "appsec-analyzer" / "SKILL.md"
 MODEL_SELECTION_MD = ROOT / "docs" / "model-selection.md"
 RESOLVE_CONFIG_PY = ROOT / "scripts" / "runtime/resolve_config.py"
 CONTROLLER_PY = ROOT / "scripts" / "orchestrator/orchestration_controller.py"
@@ -46,10 +43,8 @@ def _load_resolver():
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
-    """Concatenated live routing, runtime, and help surfaces."""
-    return "\n".join(
-        path.read_text() for path in (SKILL_MD, SKILL_FULL_RUNTIME_MD, SKILL_RERENDER_RUNTIME_MD, HELP_TXT)
-    )
+    """The appsec-analyzer skill, which documents the assessment flags."""
+    return SKILL_MD.read_text()
 
 
 @pytest.fixture(scope="module")
@@ -192,8 +187,8 @@ class TestDefaultCoupling:
         # recall). The `standard` quality buy-back (2026-07-05) upgrades the
         # aggregation/judgment stages triage + merger to Sonnet 5.
         assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-sonnet-5"
-        assert out["merger_model"] == "claude-sonnet-5"
+        assert out["triage_model"] == "claude-sonnet-5-5"
+        assert out["merger_model"] == "claude-sonnet-5-5"
 
     def test_standard_opus_still_opt_in(self):
         rc = _load_resolver()
@@ -254,7 +249,7 @@ class TestPerStageModelFlags:
         # per-stage flag (the flag wins over the buy-back).
         assert out["stride_model"] == "claude-sonnet-4-6"
         assert out["triage_model"] == "opus"
-        assert out["merger_model"] == "claude-sonnet-5"
+        assert out["merger_model"] == "claude-sonnet-5-5"
 
     def test_all_three_flags_independent(self):
         rc = _load_resolver()
@@ -281,7 +276,7 @@ class TestPerStageModelFlags:
         ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy"])
         out = rc.resolve_reasoning_model(ns, "standard")
         # standard buy-back: triage upgraded to Sonnet 5 (STRIDE stays 4.6).
-        assert out["triage_model"] == "claude-sonnet-5"
+        assert out["triage_model"] == "claude-sonnet-5-5"
 
     def test_triage_flag_label_reflects_override(self):
         rc = _load_resolver()
@@ -296,11 +291,6 @@ class TestPerStageModelFlags:
 
 
 class TestOrchestratorHandoff:
-    def test_skill_passes_all_three_vars_to_orchestrator(self, skill_text):
-        """The live runtime must bind all three centrally resolved model values."""
-        for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
-            assert var in skill_text, f"SKILL Stage 1 handoff must pass {var} to the orchestrator"
-
     def test_controller_accepts_all_three_config_keys(self):
         text = CONTROLLER_PY.read_text()
         for key in ("stride_model", "triage_model", "merger_model"):

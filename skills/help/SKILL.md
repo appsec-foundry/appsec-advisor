@@ -10,7 +10,7 @@ description: >-
   commands that fit its state — and, with --all, the full command reference
   with flags, files, and the configuration and coach state in effect. Read-only — it prints
   guidance and does not scan, analyze, or write anything. For a question about the model's CONTENT ("what are the critical
-  findings?") use ask-threat-model instead; this skill explains the tools, not
+  findings?") use ask-security-assessment instead; this skill explains the tools, not
   the results.
 ---
 
@@ -28,13 +28,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/appsec_status.py" --repo-root <repo
 
 Adjust the *Quick start* with it:
 
-1. Keep the *Threat model* section for whether `docs/security/threat-model.yaml` exists, and drop the other.
+1. Keep the *Threat model* section for whether `security-assessment.yaml` or `threat-model.yaml` exists in `paths.output_dir`, and drop the other.
 2. Keep the one *Secure coding baseline* section matching `versions.baseline.loaded_status`: `missing` → *missing*; `outdated` → *outdated*; `installed` or `newer` → *loaded*; `other` or `invalid` → *mismatched*. Fill `<id>` and `<scope>` from `loaded_id` and `loaded_scopes`. Drop the section when `versions.baseline.enabled` is false or the status is `switched_off` or empty.
 3. Fill `<coach state>` from `capsules.coach.state`. Keep the *coach active* bullet when the state is `active`, otherwise the *coach inactive* bullet. Drop the *Coding coach* section when the state is `not packaged`.
 
 Adjust the *Full reference* with it:
 
-1. If `docs/security/threat-model.yaml` is missing, drop the *Work with the model* section — there is nothing to ask about or triage yet.
+1. If neither `security-assessment.yaml` nor `threat-model.yaml` exists in `paths.output_dir`, drop the *Work with the model* section — there is nothing to ask about or triage yet.
 2. When `org_profile.active` is true, replace the `config.json` bullet under *Configuration* with one bullet naming the organization (`id`), the active `preset`, and that scan defaults come from that profile.
 3. Under *Coding coach*, print the coach's real state and note from `capsules.coach`. When the state is `not packaged`, drop the section — the package does not ship the hook.
 
@@ -54,21 +54,21 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Threat model · none yet
 
-- `/appsec-advisor:create-threat-model` — full scan, writes the model to `docs/security/`
-- `/appsec-advisor:create-threat-model --quick` — faster first look, less depth
+- `/appsec-advisor:appsec-analyzer` — full scan, writes the model to the repository's assessment directory
+- `/appsec-advisor:appsec-analyzer --quick` — faster first look, less depth
 - `/appsec-advisor:security-score` — 0–100 score in seconds, no model needed
 
 [model present]
 
-### Threat model · in `docs/security/`
+### Threat model · present
 
-- `/appsec-advisor:show-threat-model` — summary, P1–P3 backlog, freshness
-- `/appsec-advisor:review-threat-model` — fix or accept findings, P1 first
+- `/appsec-advisor:show-security-assessment` — summary, P1–P3 backlog, freshness
+- `/appsec-advisor:triage-security-assessment` — fix or accept findings, P1 first
 - *what are the critical findings?* — ask in plain language; answers cite finding IDs
 
 ### Threat Analyst
 
-- `/appsec-advisor:analyze-threats <feature>` — threats in a planned feature, before coding
+- `/appsec-advisor:analyze-threats <feature>` — threats and recommended controls for a planned feature
 - `/appsec-advisor:analyze-threats --worktree` — threats in your current changes
 
 ### Security requirements
@@ -122,7 +122,7 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Create a threat model
 
-- `/appsec-advisor:create-threat-model` — full scan, writes the model to `docs/security/`
+- `/appsec-advisor:appsec-analyzer` — full scan, writes the model to the repository's assessment directory
   - `--quick` — faster first look, less depth
   - `--thorough` — deeper, for a release review or audit
   - `--full` — reassess everything, keep the report history
@@ -134,8 +134,8 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Work with the model
 
-- `/appsec-advisor:show-threat-model` — summary, P1–P3 backlog, freshness
-- `/appsec-advisor:review-threat-model` — fix or accept findings, P1 first
+- `/appsec-advisor:show-security-assessment` — summary, P1–P3 backlog, freshness
+- `/appsec-advisor:triage-security-assessment` — fix or accept findings, P1 first
 - Ask in plain language — answers come from the model and cite finding IDs
   - *what are the critical findings?*
   - *is there a fix for F-003?*
@@ -150,6 +150,8 @@ Advisory analysis of a planned feature or a selected change, only when you ask. 
   - `--worktree` — review uncommitted changes, including untracked files
   - `--staged` — review staged changes
   - `--base <commit> --head <commit>` — review a branch against its merge base
+  - `--question <text>` — with a review: answer a concrete question about the change
+  - `--explore` — let the analysis read a redacted copy of the tracked files (interactive only)
   - `--feature <file>` — reuse answers saved in a reviewed feature file
   - `--package <ref>` — add a question package, e.g. the Threat Modeling Manifesto
   - `--help` — list every flag
@@ -185,20 +187,19 @@ A prompt hook that adds matching guidance, and your requirements when a catalog 
 ### Other commands
 
 - `/appsec-advisor:status` — whether a scan is running
-- `/appsec-advisor:threat-model-health` — whether the stored model is consistent
+- `/appsec-advisor:security-assessment-health` — whether the stored model is consistent
 - `/appsec-advisor:authnz-review` — authentication and authorization review, no model needed
+- `/appsec-advisor:abuse-cases` — defined technical and business abuse cases with their origin
 - `/appsec-advisor:security-score` — 0–100 score in seconds, no model needed
 - `/appsec-advisor:repo-profile` — size, stack, and layout
-- `/appsec-advisor:export-threat-model` — PDF, HTML, SARIF
-- `/appsec-advisor:publish-threat-model` — commit the report to version control
+- `/appsec-advisor:export-security-assessment` — PDF, HTML, SARIF
 - `/appsec-advisor:report-error` — report a plugin issue
 
 ### Files
 
-- Written by every run, in `docs/security/`
-  - `threat-model.md` — the report
-  - `threat-model.yaml` — the model every command reads
-  - `threat-model-changelog.md` — what changed between runs
+- Written by every run, in the repository's assessment directory outside the checkout
+  - `security-assessment.md` — the report
+  - `security-assessment.yaml` — the model every command reads, with what changed between runs
 - Read when present; none of them can suppress a finding the code supports
   - `docs/security/business-context.md` — critical flows, sensitive data, scope
   - `docs/known-threats.yaml` — prior findings, re-checked each run

@@ -386,6 +386,22 @@ properties:
           type: array
           items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}
 
+  boundary_traceability_gaps:
+    description: Verified findings whose own evidence line is cited by an adjacent confirmed trust boundary but could not be linked to exactly one boundary condition; absent when none. A gap is not a statement that the boundary's control works.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [finding_id, origin_component_id, candidate_boundary_ids, reason]
+      properties:
+        finding_id: {type: string, minLength: 1, maxLength: 64}
+        origin_component_id: {type: string, maxLength: 128}
+        candidate_boundary_ids:
+          type: array
+          minItems: 1
+          items: {type: string, pattern: "^tb-\\d+$"}
+        reason: {type: string, minLength: 1, maxLength: 160}
+
   weaknesses:
     # P1 (weakness-class evidence model) — the unified register's PARENT rows.
     # Produced by the model/merge_threats.py reconciler: grouping key

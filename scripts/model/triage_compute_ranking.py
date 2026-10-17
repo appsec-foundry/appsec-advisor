@@ -868,10 +868,13 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     for ch in verified_chains:
         for k in ch.get("keystones") or []:
             role_by_id[k] = "keystone"
-            verified_membership.setdefault(k, []).append(ch["id"])
+            # Several steps of one chain may bind the same finding.
+            if ch["id"] not in verified_membership.setdefault(k, []):
+                verified_membership[k].append(ch["id"])
         for c in ch.get("contributors") or []:
             role_by_id.setdefault(c, "contributor")
-            verified_membership.setdefault(c, []).append(ch["id"])
+            if ch["id"] not in verified_membership.setdefault(c, []):
+                verified_membership[c].append(ch["id"])
 
     # 6c — effective severity per finding
     eff_by_id: dict[str, str] = {}

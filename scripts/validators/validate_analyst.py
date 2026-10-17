@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
 from collections import Counter
+from difflib import SequenceMatcher
 from functools import cache
 from pathlib import Path
 
@@ -52,6 +54,7 @@ REQUIRED_OBJECTS = {
     "commits": frozenset({"head", "base"}),
     "staged": frozenset({"head"}),
     "worktree": frozenset({"head"}),
+    "hypothesis": frozenset({"head"}),
 }
 _STRUCTURAL_KEYWORDS = frozenset({"required", "additionalProperties"})
 
@@ -87,6 +90,16 @@ def validate_request(data: object) -> list[str]:
     scope = data["scope"]
     if (data["mode"] == "design") != (scope["kind"] == "design"):
         errors.append(f"request: mode {data['mode']} does not match scope {scope['kind']}")
+    if (data["mode"] == "hypothesis") != (scope["kind"] == "hypothesis"):
+        errors.append("request: hypothesis mode does not match scope")
+    if (data["mode"] == "hypothesis") != ("hypothesis" in data):
+        errors.append("request: hypothesis text is required exactly in hypothesis mode")
+    if "question" in data and data["mode"] != "review":
+        errors.append("request: a focus question applies only to a review")
+    if data.get("explore") and data["mode"] == "hypothesis":
+        errors.append("request: a hypothesis check never explores beyond its selected paths")
+    if scope["kind"] == "hypothesis" and any(posixpath.normpath(p) != p or p.endswith("/") for p in scope["paths"]):
+        errors.append("request: hypothesis paths must be canonical repository-relative paths")
     paths = {"repository/root": data["repository"]["root"], "output_dir": data["output_dir"]}
     if "feature" in data:
         paths["feature/path"] = data["feature"]["path"]
@@ -164,9 +177,10 @@ def validate_snapshot(data: object, request: dict | None = None) -> list[str]:
     if missing:
         errors.append(f"snapshot: scope {kind} requires objects {sorted(missing)}")
     if kind == "design":
-        if set(objects) != {"design_sha256"}:
+        # An exploring design (REQ-ANA-011) freezes HEAD and admits cited files as context.
+        if not set(objects) <= {"design_sha256", "head"}:
             errors.append("snapshot: a design scope carries no source objects")
-        if data["admitted"]:
+        if any(entry["side"] != "proposed" or entry["change"] != "context" for entry in data["admitted"]):
             errors.append("snapshot: a design scope admits no source files")
     elif "design_sha256" in objects:
         errors.append("snapshot: a review scope carries no design hash")
@@ -193,6 +207,19 @@ def _snapshot_against_request(data: dict, request: dict) -> list[str]:
         errors.append("snapshot: a merge-base comparison requires objects/merge_base")
     if scope["kind"] == "design" and data["objects"].get("design_sha256") != scope["content_sha256"]:
         errors.append("snapshot: design_sha256 does not match the request")
+    if (
+        scope["kind"] == "design"
+        and not request.get("explore")
+        and (set(data["objects"]) != {"design_sha256"} or data["admitted"])
+    ):
+        errors.append("snapshot: a design scope without exploration reads no repository source")
+    if scope["kind"] == "hypothesis" and any(
+        entry["side"] != "proposed"
+        or entry["change"] != "context"
+        or not any(entry["path"] == p or entry["path"].startswith(p + "/") for p in scope["paths"])
+        for entry in data["admitted"]
+    ):
+        errors.append("snapshot: hypothesis evidence must stay in the selected source scope")
     limits, admitted = request["limits"], data["admitted"]
     if len(admitted) > limits["admitted_files"]:
         errors.append("snapshot: admitted files exceed limits/admitted_files")
@@ -227,23 +254,35 @@ def _location_errors(location: dict, admitted: dict, source_dir: Path, label: st
     if location["line_end"] > len(lines):
         return [f"{label}: line range exceeds the file"]
     cited = _normalize("\n".join(lines[location["line_start"] - 1 : location["line_end"]]))
-    if _normalize(location["excerpt"]) not in cited:
+    if not _normalize(location["excerpt"]) or _normalize(location["excerpt"]) not in cited:
         return [f"{label}: excerpt does not occur at the cited lines"]
     return []
 
 
-def _is_new_code(location: dict, admitted: dict, source_dir: Path) -> bool:
-    """Whether a proposed-state excerpt is absent from the file's baseline version."""
-    entry = admitted.get(("proposed", location["path"]))
-    if location["side"] != "proposed" or entry is None or entry["change"] not in _CHANGED:
+def _is_changed_code(location: dict, admitted: dict, source_dir: Path) -> bool:
+    """Whether the cited lines intersect an insertion, deletion, or replacement."""
+    side, path = location["side"], location["path"]
+    entry = admitted.get((side, path))
+    if entry is None or entry["change"] not in _CHANGED | {"deleted"}:
         return False
-    if ("baseline", location["path"]) not in admitted:
-        return entry["change"] == "added"
+    if entry["change"] == "added":
+        return side == "proposed"
+    if entry["change"] == "deleted":
+        return side == "baseline"
+    if not all((s, path) in admitted for s in ("baseline", "proposed")):
+        return False
     try:
-        baseline = (source_dir / "baseline" / location["path"]).read_text(encoding="utf-8", errors="replace")
+        before, after = [
+            (source_dir / s / path).read_text(encoding="utf-8", errors="replace").splitlines()
+            for s in ("baseline", "proposed")
+        ]
     except OSError:
         return False
-    return _normalize(location["excerpt"]) not in _normalize(baseline)
+    for tag, i, j, a, b in SequenceMatcher(None, before, after).get_opcodes():
+        start, end = (i, j) if side == "baseline" else (a, b)
+        if tag != "equal" and start < end and location["line_start"] <= end and location["line_end"] > start:
+            return True
+    return False
 
 
 def _relationship_errors(finding: dict, admitted: dict, source_dir: Path, label: str) -> list[str]:
@@ -251,8 +290,15 @@ def _relationship_errors(finding: dict, admitted: dict, source_dir: Path, label:
     locations = finding["evidence"] + finding["comparison"]
     sides = {loc["side"] for loc in finding["comparison"]}
     if relationship == "introduced":
-        if not any(_is_new_code(loc, admitted, source_dir) for loc in locations):
-            return [f"{label}: 'introduced' needs evidence from code that the change added"]
+        proposed = any(loc["side"] == "proposed" for loc in finding["evidence"])
+        added = any(loc["side"] == "proposed" and _is_changed_code(loc, admitted, source_dir) for loc in locations)
+        # A removed control is proven by its removed baseline lines in the
+        # comparison; the affected proposed code may sit in either list.
+        removed = any(
+            loc["side"] == "baseline" and _is_changed_code(loc, admitted, source_dir) for loc in finding["comparison"]
+        )
+        if not proposed or not (added or removed):
+            return [f"{label}: 'introduced' needs proposed evidence and a cited addition or removal"]
     elif relationship in ("worsened", "mitigated"):
         if sides != {"baseline", "proposed"}:
             return [
@@ -261,6 +307,27 @@ def _relationship_errors(finding: dict, admitted: dict, source_dir: Path, label:
     elif relationship == "unchanged_preexisting" and not finding["comparison"]:
         return [f"{label}: 'unchanged_preexisting' needs comparison evidence"]
     return []
+
+
+_DECLARED_STEP = re.compile(r"^- Step (\d+):", re.M)
+
+
+def declared_steps(hypothesis: str) -> list[int]:
+    """Step numbers a hypothesis lists as ``- Step N:`` lines (an abuse-case chain)."""
+    return [int(n) for n in _DECLARED_STEP.findall(hypothesis)]
+
+
+def _step_errors(assessment: dict, hypothesis: str, label: str) -> list[str]:
+    """Each listed step is answered exactly once, and a step verdict cites code."""
+    declared = declared_steps(hypothesis)
+    given = [s["step"] for s in assessment.get("steps") or []]
+    errors = []
+    if sorted(given) != sorted(declared):
+        errors.append(f"{label}: hypothesis steps must be answered exactly once each: expected {declared}, got {given}")
+    for step in assessment.get("steps") or []:
+        if step["status"] != "unresolved" and not step["evidence"]:
+            errors.append(f"{label}: step {step['step']} needs source evidence for its verdict")
+    return errors
 
 
 def validate_response(response: object, request: dict, snapshot: dict, context: dict, source_dir: Path) -> list[str]:
@@ -275,18 +342,42 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
     criteria = {c["ref"] for c in context["criteria"]}
     delivered = [q["ref"] for q in context["questions"]]
     design = request["mode"] == "design"
+    explore = bool(request.get("explore"))
+    hypothesis = request["mode"] == "hypothesis"
+    assessment = response.get("hypothesis_assessment")
+    if hypothesis != (assessment is not None):
+        errors.append("response: hypothesis_assessment is required exactly in hypothesis mode")
+    if assessment is not None:
+        if assessment["status"] != "unresolved" and not assessment["evidence"]:
+            errors.append("response: a hypothesis conclusion requires source evidence")
+        for i, location in enumerate(assessment["evidence"]):
+            errors += _location_errors(location, admitted, source_dir, f"response: hypothesis_assessment/{i}")
+        if assessment["status"] == "not_confirmed" and response["findings"]:
+            errors.append("response: a not-confirmed hypothesis cannot carry findings")
+        errors += _step_errors(assessment, request.get("hypothesis") or "", "response")
+        for step in assessment.get("steps") or []:
+            for i, location in enumerate(step["evidence"]):
+                errors += _location_errors(
+                    location, admitted, source_dir, f"response: hypothesis_assessment/step {step['step']}/{i}"
+                )
 
     if design and response["findings"]:
         errors.append("response: a design analysis reports scenarios and assumptions, not findings")
+    if design and response["evidence_requests"]:
+        errors.append("response: a design analysis reads no repository source")
     for i, finding in enumerate(response["findings"]):
         label = f"response: findings/{i}"
         for j, location in enumerate(finding["evidence"] + finding["comparison"]):
             errors += _location_errors(location, admitted, source_dir, f"{label}/location {j}")
-        errors += _relationship_errors(finding, admitted, source_dir, label)
+        if hypothesis:
+            if finding["change_relationship"] != "unknown" or finding["comparison"]:
+                errors.append(f"{label}: a hypothesis check makes no change attribution")
+        else:
+            errors += _relationship_errors(finding, admitted, source_dir, label)
     for i, assumption in enumerate(response["assumptions"]):
         label = f"response: assumptions/{i}"
         evidence = assumption.get("evidence", [])
-        if assumption["status"] in ("supported", "contradicted") and (design or not evidence):
+        if assumption["status"] in ("supported", "contradicted") and ((design and not explore) or not evidence):
             errors.append(f"{label}: '{assumption['status']}' needs evidence from a reviewed change")
         for j, location in enumerate(evidence):
             errors += _location_errors(location, admitted, source_dir, f"{label}/location {j}")
@@ -295,7 +386,20 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
             errors += _location_errors(
                 location, admitted, source_dir, f"response: requirement_observations/{i}/location {j}"
             )
-    cited = [ref for item in response["findings"] + response["scenarios"] for ref in item.get("requirement_refs", [])]
+    recommendations = response.get("recommendations", [])
+    threat_ids = {t["id"] for t in (context.get("threat_model") or {}).get("threats", [])}
+    related = {
+        ref
+        for item in response["findings"] + response["scenarios"] + recommendations
+        for ref in item.get("related_threats", [])
+    }
+    if related - threat_ids:
+        errors.append(f"response: {len(related - threat_ids)} related threat(s) are not in the delivered threat model")
+    cited = [
+        ref
+        for item in response["findings"] + response["scenarios"] + recommendations
+        for ref in item.get("requirement_refs", [])
+    ]
     cited += [o["requirement_ref"] for o in response["requirement_observations"]]
     if set(cited) - requirement_ids:
         errors.append(f"response: {len(set(cited) - requirement_ids)} cited requirement(s) were not delivered")
@@ -309,7 +413,17 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
         errors.append("response: question_coverage must list every delivered question exactly once")
     if any(q.get("question_ref") not in (None, *delivered) for q in response["questions"]):
         errors.append("response: a question names an undelivered catalog entry")
+    errors += _question_consistency(response)
     return errors
+
+
+def _question_consistency(response: dict) -> list[str]:
+    coverage = response.get("question_coverage", [])
+    needed = {q["question_ref"] for q in coverage if q["status"] == "needs_answer"}
+    asked = {q["question_ref"] for q in response["questions"] if q.get("question_ref")}
+    if needed != asked:
+        return ["response: needs_answer coverage and referenced questions must agree"]
+    return []
 
 
 def validate_result(result: object) -> list[str]:
@@ -323,4 +437,35 @@ def validate_result(result: object) -> list[str]:
         errors.append("result: a complete result cannot leave required questions open")
     if result["mode"] == "design" and result["findings"]:
         errors.append("result: a design result carries no findings")
+    if "question" in result and result["mode"] != "review":
+        errors.append("result: a focus question applies only to a review")
+    errors += _question_consistency(
+        {"question_coverage": result["coverage"]["question_coverage"], "questions": result["questions"]}
+    )
+    if result["state"] == "complete" and any(
+        e["status"] != "admitted" for e in result["coverage"].get("evidence_requests", [])
+    ):
+        errors.append("result: a complete result cannot leave requested evidence unresolved")
+    if result["mode"] == "hypothesis":
+        if not result.get("hypothesis"):
+            errors.append("result: hypothesis text is required")
+        assessment = result.get("hypothesis_assessment")
+        if assessment:
+            if assessment["status"] != "unresolved" and not assessment["evidence"]:
+                errors.append("result: a hypothesis conclusion requires source evidence")
+            if assessment["status"] == "not_confirmed" and result["findings"]:
+                errors.append("result: a not-confirmed hypothesis cannot carry findings")
+            errors += _step_errors(assessment, result.get("hypothesis") or "", "result")
+            step_locations = [loc for st in assessment.get("steps") or [] for loc in st["evidence"]]
+            for location in assessment["evidence"] + step_locations:
+                if location["side"] != "proposed" or not any(
+                    location["path"] == p or location["path"].startswith(p + "/") for p in result["scope"]["paths"]
+                ):
+                    errors.append("result: hypothesis evidence must stay in the selected source scope")
+        if result["state"] == "complete" and (
+            not assessment or assessment["status"] == "unresolved" or not assessment["evidence"]
+        ):
+            errors.append("result: a complete hypothesis check requires an evidenced conclusion")
+    elif "hypothesis" in result or "hypothesis_assessment" in result:
+        errors.append("result: hypothesis fields require hypothesis mode")
     return errors

@@ -19,7 +19,7 @@ SONNET = vrc.PRICING_MODELS["sonnet-4-6"]
 
 
 def test_pricing_table_uses_current_haiku_4_5_rates():
-    assert vrc.PRICING_TABLE_VERSION == "2026-08-05"
+    assert vrc.PRICING_TABLE_VERSION == "2026-10-08"
     assert vrc.PRICING_MODELS["haiku-4-5"] == {
         "input": 1.00,
         "output": 5.00,

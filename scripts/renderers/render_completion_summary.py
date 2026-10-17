@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Render the Completion Summary block for create-threat-model.
+"""Render the Completion Summary block for appsec-analyzer.
 
-Replaces ~350 lines of Bash-heredoc prose in ``skills/create-threat-model/
-SKILL.md``. The skill now calls this script instead of walking the LLM
-through each extraction step, which:
+The controller calls this script instead of having a model walk through each
+extraction step, which:
 
   1. removes ~7 k tokens from the skill's inlined context on every run,
   2. makes the summary rendering unit-testable,
@@ -79,14 +78,16 @@ from pathlib import Path
 from typing import Any, Optional
 
 import model.stamp_threat_model as stamp_threat_model  # Owns which deliverables get stamped.
-import runtime.completion_relay as completion_relay  # Records the summary for the closing Stop hook.
+import runtime.completion_relay as completion_relay  # Records the summary for the hooks that show it.
 import runtime.run_timing as run_timing
 from shared._atomic_io import atomic_write_text
+from shared.artifact_names import REPORT, ArtifactSetError, report_path
 
 import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup  # See extract_metrics().
 import renderers.summarize_threat_model as summarize_threat_model  # Shares the worst-case table with the model summary.
 import renderers.team_questions as _team_questions
+from renderers.term_style import Style
 
 BANNER_WIDTH = 62
 RULE = "═" * BANNER_WIDTH
@@ -115,6 +116,14 @@ def _load_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _report(output_dir: Path) -> Path:
+    """The report of the naming set ``output_dir`` holds; the published name when it holds both or none."""
+    try:
+        return report_path(Path(output_dir))
+    except ArtifactSetError:
+        return Path(output_dir) / REPORT
 
 
 def _load_json_object(path: Path) -> dict[str, Any]:
@@ -1011,21 +1020,21 @@ def build_next_steps(
     # to be appended here ('…then Section 8 "Findings Register" for Critical
     # findings'), which made the entry twice as long as the two alternatives
     # under it for a pointer the Management Summary already links to.
-    lines.append(f'Open the report — {output_dir}/threat-model.md → start at "Management Summary"')
+    lines.append(f'Open the report — {_report(output_dir)} → start at "Management Summary"')
 
     # Triage — whenever the run surfaced findings, point at the consumer skill
     # that turns them into a prioritised, owned remediation plan. Runs later and
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
-        lines.append("Triage the findings — /appsec-advisor:review-threat-model")
+        lines.append("Triage the findings — /appsec-advisor:triage-security-assessment")
 
     # Asking is the non-mutating default exploration path and must stay visible
     # rather than sink into an easy-to-miss footer. Show the question, NOT
-    # `/appsec-advisor:ask-threat-model`: that skill routes itself from any
+    # `/appsec-advisor:ask-security-assessment`: that skill routes itself from any
     # natural-language query about the model ("the default surface for every
     # natural-language query", its own description), so naming the command
     # implies a step the reader does not have to take. The question IS the
-    # invocation. review-threat-model is the opposite case — a triage console
+    # invocation. triage-security-assessment is the opposite case — a triage console
     # with modes that has to be started — so it keeps its command.
     #
     # Architect review — only surface the dot-file when it contains actionable defects.
@@ -1097,8 +1106,9 @@ def build_follow_ups(output_dir: Path, metrics: dict, cfg: dict) -> list[str]:
 
     # Name the file and the class of tool, not three products: a reader has one
     # SARIF consumer and the list read as a menu to choose from.
-    if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
-        out.append("Upload threat-model.sarif.json to your SARIF consumer (code scanning, SonarQube, DefectDojo)")
+    sarif = _report(output_dir).with_suffix(".sarif.json")
+    if cfg.get("write_sarif") and sarif.is_file():
+        out.append(f"Upload {sarif.name} to your SARIF consumer (code scanning, SonarQube, DefectDojo)")
 
     # Sonnet-only run with significant Critical/High.
     if cfg.get("reasoning_model") == "sonnet" and (sev.get("Critical", 0) + sev.get("High", 0)) >= 3:
@@ -1570,11 +1580,11 @@ def _unpriced_token_lines(unpriced: int) -> list[str]:
 # — which is how a `--pdf --html --pentest-tasks` run printed "Assessment
 # complete" while producing none of the three (juice-shop 2026-08-18).
 _REQUESTABLE_DELIVERABLES: tuple[tuple[str, str, str], ...] = (
-    ("write_sarif", "SARIF", "threat-model.sarif.json"),
-    ("write_threatdragon", "Threat Dragon", "threat-model.threatdragon.json"),
+    ("write_sarif", "SARIF", "security-assessment.sarif.json"),
+    ("write_threatdragon", "Threat Dragon", "security-assessment.threatdragon.json"),
     ("write_pentest_tasks", "Pentest tasks", "pentest-tasks.yaml"),
-    ("write_pdf", "PDF", "threat-model.pdf"),
-    ("write_html", "HTML", "threat-model.html"),
+    ("write_pdf", "PDF", "security-assessment.pdf"),
+    ("write_html", "HTML", "security-assessment.html"),
 )
 
 
@@ -1589,9 +1599,15 @@ def missing_deliverables(output_dir: Path, cfg: dict) -> list[str]:
 
 def render_files(output_dir: Path, cfg: dict) -> list[str]:
     lines = ["", "Outputs"]
-    lines.append(f"  Report     : {output_dir}/threat-model.md")
+    report = output_dir / "security-assessment.md"
+    if not report.is_file() and (output_dir / "threat-model.md").is_file():
+        report = output_dir / "threat-model.md"
+    lines.append(f"  Report     : {report}")
     if cfg.get("write_yaml", True):
-        lines.append(f"  YAML       : {output_dir}/threat-model.yaml")
+        model = output_dir / "security-assessment.yaml"
+        if not model.is_file() and (output_dir / "threat-model.yaml").is_file():
+            model = output_dir / "threat-model.yaml"
+        lines.append(f"  YAML       : {model}")
     for key, label, basename in _REQUESTABLE_DELIVERABLES:
         if not cfg.get(key):
             continue
@@ -1618,10 +1634,10 @@ def render_files(output_dir: Path, cfg: dict) -> list[str]:
 
 # PDF and HTML need pandoc and a headless Chrome, which a sandboxed session may
 # not start. The summary prints the command itself so the closing message never
-# needs wording of its own (completion_relay rejects text after the summary).
+# needs wording of its own.
 _REEXPORT_SCRIPTS: dict[str, tuple[str, ...]] = {
-    "threat-model.pdf": ("exporters/export_pdf.py",),
-    "threat-model.html": ("exporters/export_html.py", "--require-mermaid"),
+    "security-assessment.pdf": ("exporters/export_pdf.py",),
+    "security-assessment.html": ("exporters/export_html.py", "--require-mermaid"),
 }
 
 
@@ -1633,7 +1649,10 @@ def _reexport_commands(output_dir: Path, absent: list[str]) -> list[str]:
         if script is None:
             continue
         argv = ["python3", str(scripts_dir / script[0]), *script[1:]]
-        argv += ["--input", str(output_dir / "threat-model.md"), "--output", str(output_dir / basename)]
+        report = output_dir / "security-assessment.md"
+        if not report.is_file() and (output_dir / "threat-model.md").is_file():
+            report = output_dir / "threat-model.md"
+        argv += ["--input", str(report), "--output", str(output_dir / basename)]
         if not lines:
             lines.append("    Export from a terminal (needs headless Chrome), or prefix with ! in the session:")
         lines.append(f"      {shlex.join(argv)}")
@@ -2006,38 +2025,35 @@ def render_next_steps(
 
 
 def render_security_notice(output_dir: Path) -> list[str]:
-    """Emit a security notice when threat-model.md is not git-ignored.
+    """Emit a security notice when the report is not git-ignored.
 
     Checks whether docs/security/ (or the actual output_dir) is covered by
     .gitignore in the nearest git root.  If the file would be tracked, warn
     the user.  Silently skipped when git is unavailable or outside a repo.
     """
+    report = _report(output_dir)
     try:
         import subprocess
 
         result = subprocess.run(
-            ["git", "check-ignore", "-q", str(output_dir / "threat-model.md")],
+            ["git", "check-ignore", "-q", str(report)],
             capture_output=True,
             cwd=str(output_dir),
         )
-        if result.returncode == 0:
-            # File is ignored — no notice needed.
+        # 1 means not ignored; 0 is ignored, and 128 is no repository or a git error.
+        if result.returncode != 1:
             return []
     except Exception:
         return []
 
     lines = [""]
     lines.append("Security Notice")
-    lines.append("  Warning: threat-model.md is NOT git-ignored and may be committed.")
+    lines.append(f"  Warning: {report.name} is NOT git-ignored and may be committed.")
     lines.append("  Threat reports contain sensitive vulnerability details,")
     lines.append("  attack vectors, and architecture weaknesses.")
-    # "docs/security/**", not "docs/security/". git cannot re-include a file
-    # whose parent directory is excluded, so the plain directory form would
-    # leave publish-threat-model unable to lift the deliverable back out.
     lines.append("  Add docs/security/** to .gitignore to keep them out of git.")
-    lines.append("  To publish deliberately (private repo, policy permits it):")
-    lines.append("    /appsec-advisor:publish-threat-model")
-    lines.append("  The publish skill runs pre-flight checks and patches .gitignore.")
+    lines.append("  Share results through an explicit export instead:")
+    lines.append("    /appsec-advisor:export-security-assessment")
     return lines
 
 
@@ -2190,6 +2206,8 @@ def render_run_overview(
         scope = "security-relevant delta from previous threat-model.yaml"
     elif mode == "rebuild":
         scope = "fresh full repository assessment"
+    elif mode == "rerender":
+        scope = "report re-rendered from the existing assessment, no re-analysis"
     if change:
         mode = f"{mode} (delta: +{change['added_n']} / ~{change['changed_n']} / -{change['resolved_n']})"
 
@@ -2288,6 +2306,80 @@ def render_summary(
     lines.extend(render_log_files(output_dir))
 
     return "\n".join(lines) + "\n"
+
+
+_SEVERITY_ROLE = {"Critical": "critical", "High": "high", "Medium": "medium", "Low": "low"}
+_SEVERITY_COUNT_RE = re.compile(r"\b(\d+) (Critical|High|Medium|Low)\b")
+_FIELD_RE = re.compile(r"^(  \S[^:]{0,20}?\s*:)( .*)?$")
+_FINDING_ID_RE = re.compile(r"\b[FTW]-\d{3}\b")
+_FIELD_INDENT = " " * len(f"  {'':<12}: ")
+
+
+def _style_inline(text: str, st: Style) -> str:
+    text = _SEVERITY_COUNT_RE.sub(
+        lambda m: st(m.group(0), _SEVERITY_ROLE[m.group(2)], *(("bold",) if m.group(2) == "Critical" else ())), text
+    )
+    text = text.replace("(unproven)", st("(unproven)", "warn"))
+    return _FINDING_ID_RE.sub(lambda m: st(m.group(0), "bold"), text)
+
+
+def _severity_bars(field_lines: list[str], st: Style) -> list[str]:
+    """One bar per reported severity under the ``Threats`` field."""
+    counts = [(sev, int(n)) for n, sev in _SEVERITY_COUNT_RE.findall(" ".join(field_lines))]
+    top = max((n for _, n in counts), default=0)
+    if not top:
+        return []
+    return [
+        f"{_FIELD_INDENT}{st(f'{sev.lower():<9}', _SEVERITY_ROLE[sev])}{n:>3}  "
+        f"{st('▪' * max(1, round(16 * n / top)) if n else '', _SEVERITY_ROLE[sev])}"
+        for sev, n in counts
+    ]
+
+
+def style_summary(text: str, st: Style) -> str:
+    """The completion summary in terminal colour, for the headless console.
+
+    Applied when the summary is printed, never to the recorded text: the same
+    record reaches interactive sessions as a hook message, which shows escape
+    sequences literally. Works on the line shapes this module produces —
+    section headings at column 0, ``_summary_field`` rows, ``Warning:`` and
+    ``Note:`` lines — and adds severity bars under ``Threats``. Every word of
+    the plain text stays, including ``(unproven)`` (REQ-MOD-009).
+    """
+    if not st.enabled:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() and set(line.strip()) <= {"═", "-", "─"}:
+            out.append(st(line, "muted"))
+        elif i == 0 and line.strip():
+            out.append(st(f"✓ {line}", "ok", "bold"))
+        elif line and not line.startswith(" "):
+            out.append(st(line, "accent", "bold"))
+        elif line.lstrip().startswith("Warning:"):
+            out.append(st(line, "warn"))
+        elif line.lstrip().startswith("Note:"):
+            out.append(st(line, "muted"))
+        elif m := _FIELD_RE.match(line):
+            if m.group(1).strip().startswith("Threats"):
+                field = [line]
+                while i + 1 < len(lines) and lines[i + 1].startswith(_FIELD_INDENT) and lines[i + 1].strip():
+                    i += 1
+                    field.append(lines[i])
+                out.append(st(m.group(1), "muted") + _style_inline(m.group(2) or "", st))
+                out.extend(_style_inline(f, st) for f in field[1:])
+                out.extend(_severity_bars(field, st))
+            else:
+                out.append(st(m.group(1), "muted") + _style_inline(m.group(2) or "", st))
+        elif line.startswith("  - "):
+            out.append(f"  {st('-', 'muted')} {_style_inline(line[4:], st)}")
+        else:
+            out.append(_style_inline(line, st))
+        i += 1
+    return "\n".join(out)
 
 
 def render_dry_run(output_dir: Path, repo_root: Path) -> str:
@@ -2613,8 +2705,8 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
 
 # Mirrors orchestration_controller._YAML_DERIVED_EXPORTS. Keep the two in sync.
 _YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
-    ("write_sarif", "exporters/export_sarif.py", "threat-model.sarif.json"),
-    ("write_threatdragon", "exporters/export_threat_dragon.py", "threat-model.threatdragon.json"),
+    ("write_sarif", "exporters/export_sarif.py", "security-assessment.sarif.json"),
+    ("write_threatdragon", "exporters/export_threat_dragon.py", "security-assessment.threatdragon.json"),
 )
 
 
@@ -2638,7 +2730,9 @@ def _export_deliverables_if_configured(output_dir: Path) -> None:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = output_dir / "security-assessment.yaml"
+    if not yaml_path.is_file():
+        yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
         return
     for key, script, basename in _YAML_DERIVED_EXPORTS:
@@ -2738,7 +2832,7 @@ def _bool_pair(
 
 
 _RUN_CHOICES = {
-    "mode": ("full", "incremental", "rebuild", "dry-run"),
+    "mode": ("full", "incremental", "rebuild", "rerender", "dry-run"),
     "reasoning_model": ("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
     "assessment_depth": ("quick", "standard", "thorough"),
 }
@@ -2883,8 +2977,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_print:
         summary = render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root)
         print(summary, end="")
-        # The reader gets the orchestrator's closing message, not this stdout;
-        # the outermost Stop holds that message to this record.
+        # The host collapses this stdout; the plugin's hooks show the reader
+        # this record instead.
         completion_relay.persist(args.output_dir, summary)
     return 0
 

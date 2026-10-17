@@ -1,0 +1,11 @@
+{
+  "mapping": {
+    "tb-1": "tb-8",
+    "tb-2": "tb-6",
+    "tb-3": "tb-2",
+    "tb-6": "tb-3",
+    "tb-7": "tb-1",
+    "tb-8": "tb-7"
+  },
+  "schema_version": 1
+}

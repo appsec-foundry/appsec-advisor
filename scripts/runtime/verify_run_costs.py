@@ -58,7 +58,7 @@ import runtime.event_log as event_log  # noqa: E402
 # ---------------------------------------------------------------------------
 # Pricing models (USD per 1M tokens)
 # ---------------------------------------------------------------------------
-PRICING_TABLE_VERSION = "2026-08-05"
+PRICING_TABLE_VERSION = "2026-10-08"
 
 PRICING_MODELS: dict[str, dict[str, float]] = {
     "sonnet-4-6": {
@@ -99,6 +99,26 @@ PRICING_MODELS: dict[str, dict[str, float]] = {
         "output": 25.00,
         "cache_write": 6.25,
         "cache_read": 0.50,
+    },
+    "sonnet-5-5": {
+        "input": 2.00,
+        "output": 10.00,
+        "cache_write": 2.50,
+        "cache_read": 0.10,
+    },
+    "opus-5-5": {
+        "input": 4.00,
+        "output": 20.00,
+        "cache_write": 5.00,
+        "cache_read": 0.20,
+    },
+    # Haiku 5.5 charges five times these rates for prompts above 100,000
+    # tokens. The table carries the lower tier, so such a prompt is under-priced.
+    "haiku-5-5": {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_write": 0.125,
+        "cache_read": 0.01,
     },
 }
 

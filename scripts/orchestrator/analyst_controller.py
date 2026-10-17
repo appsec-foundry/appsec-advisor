@@ -32,6 +32,7 @@ if not __package__:
 
 import hashlib
 import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -40,8 +41,9 @@ from pathlib import Path
 from contexts import analyst_questions as aq
 from contexts.build_analyst_context import ContextContractError, ContextError
 from contexts.build_analyst_context import build as build_context
-from contexts.build_analyst_snapshot import SnapshotError, admit_context, capture
+from contexts.build_analyst_snapshot import SnapshotError, admit_context, capture, export_view, view_paths
 from contexts.resolve_analyst_catalog import CatalogError, Selection, load_limits, resolve, select_questions
+from contexts.select_analyst_context import select as select_context
 from renderers.render_analyst_report import render
 from runtime import analyst_state as st
 from runtime.analyst_host import (
@@ -55,7 +57,7 @@ from runtime.analyst_host import (
 )
 from runtime.resolve_org_profile import resolve as resolve_org_profile
 from validators.secret_scan import scan_text
-from validators.validate_analyst import validate_response, validate_result
+from validators.validate_analyst import validate_request, validate_response, validate_result
 
 EXIT_OK = 0
 EXIT_NOT_COMPLETE = 2
@@ -78,6 +80,22 @@ REQUEST_LIMITS = (
 )
 
 
+def _scope_notes(request: dict, snapshot: dict) -> list[str]:
+    """A hypothesis read only part of a selected directory when files in it were excluded."""
+    if request["mode"] != "hypothesis" or not snapshot.get("excluded") or not snapshot.get("admitted"):
+        return []
+    return ["Files excluded inside the selected directories were not read; the conclusion does not cover them."]
+
+
+def _redacted(snapshot: dict) -> list[dict]:
+    """Admitted files with redacted secret values, both sides merged per path."""
+    lines: dict[str, set[int]] = {}
+    for entry in snapshot.get("admitted", []):
+        if entry.get("redacted_lines"):
+            lines.setdefault(entry["path"], set()).update(entry["redacted_lines"])
+    return [{"path": path, "lines": sorted(found)} for path, found in sorted(lines.items())]
+
+
 class AdmissionError(Exception):
     """The invocation is rejected before any job state or model call."""
 
@@ -93,6 +111,9 @@ class Invocation:
     repo_root: Path
     output_dir: Path | None = None
     design_text: str | None = None
+    hypothesis: str | None = None
+    question: str | None = None
+    explore: bool = False
     feature_path: Path | None = None
     packages: list[Selection] = field(default_factory=list)
     ci: bool = False
@@ -128,15 +149,20 @@ def _plugin_version() -> str:
         return "unknown"
 
 
-def _org_inputs(repo: Path, env: dict | None) -> tuple[list[Selection], dict | None]:
-    """Packages and requirements source the active organization profile requires.
+def _org_profile(repo: Path, env: dict | None) -> dict:
+    """The effective organization profile.
 
     An active profile that fails validation rejects the analysis: its required
-    inputs are unknown, so no analysis can claim to honor them.
+    inputs and policies are unknown, so no analysis can claim to honor them.
     """
     effective, errors = resolve_org_profile(None, None, False, str(repo), PLUGIN_ROOT, env)
     if errors:
         raise AdmissionError("organization profile is invalid: " + "; ".join(errors))
+    return effective
+
+
+def _org_inputs(effective: dict) -> tuple[list[Selection], dict | None]:
+    """Packages and requirements source the active organization profile requires."""
     block = effective.get("analyst") or {}
     selections = [Selection(spec, "org_required") for spec in block.get("required", [])]
     selections += [Selection(spec, "org_default") for spec in block.get("default", [])]
@@ -144,7 +170,24 @@ def _org_inputs(repo: Path, env: dict | None) -> tuple[list[Selection], dict | N
     return selections, source if source and source.get("enabled") else None
 
 
-def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None, dict | None]:
+def _check_model_policy(model: str, effective: dict, env: dict | None) -> None:
+    """Refuse an Opus host model when the organization or environment forbids Opus (MD-6).
+
+    The same sources as the assessment ceiling apply: ``policy.disable_opus``
+    or ``APPSEC_DISABLE_OPUS``. The analyst refuses instead of downgrading, so
+    a result never names a model other than the one requested.
+    """
+    env = env if env is not None else dict(os.environ)
+    banned = bool((effective.get("defaults") or {}).get("disable_opus")) or env.get(
+        "APPSEC_DISABLE_OPUS", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
+    if banned and "opus" in model.lower():
+        raise AdmissionError(
+            "Opus is disabled by policy.disable_opus or APPSEC_DISABLE_OPUS; run the analysis without --model opus"
+        )
+
+
+def _admit(inv: Invocation, limits: dict, interactive: bool) -> tuple[dict, dict, dict, dict | None, dict | None]:
     """Validate an invocation; return (request, resolved, selection, feature, org requirements source)."""
     repo = inv.repo_root
     if not repo.is_absolute() or not repo.is_dir() or not (repo / ".git").exists():
@@ -154,13 +197,28 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
         errors = st.check_output_dir(inv.output_dir, repo, inv.state_root)
         if errors:
             raise AdmissionError("; ".join(errors))
-    if inv.mode not in ("design", "review") or (inv.mode == "design") != (inv.scope.get("kind") == "design"):
+    if inv.mode not in ("design", "review", "hypothesis") or (inv.mode == "design") != (
+        inv.scope.get("kind") == "design"
+    ):
         raise AdmissionError("mode and scope do not match")
+    if (inv.mode == "hypothesis") != (inv.scope.get("kind") == "hypothesis"):
+        raise AdmissionError("hypothesis mode and scope do not match")
     if inv.ci and inv.scope["kind"] in ("staged", "worktree"):
         raise AdmissionError("CI reviews require an explicit commit comparison")
     if inv.design_text is not None and scan_text(inv.design_text):
         raise AdmissionError("the design text contains a secret; describe the design without the value")
-    org_packages, org_requirements = _org_inputs(repo, inv.env)
+    if inv.hypothesis is not None and scan_text(inv.hypothesis):
+        raise AdmissionError("the hypothesis contains a secret; describe it without the value")
+    if inv.question is not None and (inv.mode != "review" or scan_text(inv.question)):
+        raise AdmissionError("a focus question applies only to a review and must not contain a secret")
+    effective = _org_profile(repo, inv.env)
+    _check_model_policy(inv.model, effective, inv.env)
+    if inv.explore:
+        if inv.ci or not interactive or inv.mode == "hypothesis":
+            raise AdmissionError("repository exploration is interactive only and does not apply to a hypothesis check")
+        if (effective.get("analyst") or {}).get("allow_exploration") is False:
+            raise AdmissionError("the organization profile forbids repository exploration")
+    org_packages, org_requirements = _org_inputs(effective)
     try:
         resolved = resolve([*org_packages, *inv.packages], limits, repo_root=repo, ci=inv.ci)
     except CatalogError as exc:
@@ -187,6 +245,15 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
     }
     if feature is not None:
         request["feature"] = {"path": str(inv.feature_path.resolve()), "sha256": feature["sha256"]}
+    if inv.hypothesis is not None:
+        request["hypothesis"] = inv.hypothesis
+    if inv.question is not None:
+        request["question"] = inv.question
+    if inv.explore:
+        request["explore"] = True
+    if inv.mode == "hypothesis" or inv.hypothesis is not None:
+        if validate_request(dict(request, job_id="aj-" + "0" * 32, requested_at=st.utc_now())):
+            raise AdmissionError("invalid hypothesis, revision, or source paths")
     selection = select_questions(resolved, limits["selected_questions"])
     return request, resolved, selection, feature, org_requirements
 
@@ -222,7 +289,9 @@ class _Run:
         default_factory=lambda: {"host_calls": 0, "evidence_rounds": 0, "question_rounds": 0, "transport_retries": 0}
     )
     fingerprint: str = ""
-    limitations: list[str] = field(default_factory=list)
+    evidence_requests: list[dict] = field(default_factory=list)
+    context_selection: list[dict] = field(default_factory=list)
+    exploration: dict | None = None
     usd: float = 0.0
     deadline: float = 0.0
 
@@ -259,19 +328,39 @@ class _Run:
                 "sources": context.get("sources", []),
                 "omitted_questions": context.get("question_selection", {}).get("omitted", []),
                 "question_coverage": response.get("question_coverage", []),
-                "required_complete": bool(context and context["question_selection"]["required_complete"]),
+                "evidence_requests": self.evidence_requests,
+                "redacted": _redacted(snapshot),
+                **({"context_selection": self.context_selection} if self.context_selection else {}),
+                **({"exploration": self.exploration} if self.exploration is not None else {}),
+                "required_complete": bool(context and context["question_selection"]["required_complete"])
+                and not any(e["status"] != "admitted" for e in self.evidence_requests)
+                and not any(q["required"] for q in questions or [])
+                and not (self.request["mode"] == "hypothesis" and state != "complete"),
             },
             "summary": response.get("summary", ""),
             "findings": _number(response.get("findings", []), "f"),
             "scenarios": _number(response.get("scenarios", []), "s"),
+            "recommendations": _number(response.get("recommendations", []), "r"),
             "assumptions": _number(response.get("assumptions", []), "a"),
             "requirement_observations": response.get("requirement_observations", []),
             "methodology_observations": response.get("methodology_observations", []),
             "questions": questions or [],
-            "limitations": [*response.get("limitations", []), *self.limitations, *notes],
-            "costs": {"host_calls": self.counters["host_calls"], **({"usd": round(self.usd, 4)} if self.usd else {})},
+            "limitations": [*response.get("limitations", []), *_scope_notes(self.request, snapshot), *notes],
+            "costs": {
+                "host_calls": self.counters["host_calls"],
+                "model": self.request["host"]["model"],
+                **({"usd": round(self.usd, 4)} if self.usd else {}),
+            },
             "generated_at": st.utc_now(),
         }
+        if "question" in self.request:
+            result["question"] = self.request["question"]
+        if self.request["mode"] == "hypothesis":
+            result["hypothesis"] = self.request["hypothesis"]
+            if "hypothesis_assessment" in response:
+                result["hypothesis_assessment"] = dict(response["hypothesis_assessment"])
+                if state != "complete":
+                    result["hypothesis_assessment"]["status"] = "unresolved"
         output = Path(self.request["output_dir"])
         repo = Path(self.request["repository"]["root"])
         publish = output != repo
@@ -286,7 +375,7 @@ class _Run:
                 withheld = "The output directory became unusable; the result stays in the job directory."
                 publish = False
         if withheld:
-            empty = {k: [] for k in ("findings", "scenarios", "assumptions", "questions")}
+            empty = {k: [] for k in ("findings", "scenarios", "recommendations", "assumptions", "questions")}
             result = dict(
                 result,
                 **empty,
@@ -297,6 +386,8 @@ class _Run:
                 state="failed",
                 terminal_reason="validation_failure",
             )
+            result.pop("hypothesis_assessment", None)
+            result["coverage"] = dict(result["coverage"], question_coverage=[], required_complete=False)
             report = render(result)
         pending = [q["id"] for q in result["questions"] if q["required"]] if result["state"] == "incomplete" else []
         st.transition(
@@ -361,7 +452,7 @@ def run(inv: Invocation, transport_factory: TransportFactory, interactive: bool 
     """Run one analysis from admission to a published result or a question checkpoint."""
     limits = load_limits()
     try:
-        request, resolved, selection, feature, org_requirements = _admit(inv, limits)
+        request, resolved, selection, feature, org_requirements = _admit(inv, limits, interactive)
     except AdmissionError as exc:
         return Outcome(EXIT_NOT_COMPLETE, "rejected", None, f"Rejected before analysis: {exc}\n")
     repo = Path(request["repository"]["root"])
@@ -428,21 +519,88 @@ def _prepare(
             threat_model_path=inv.threat_model_path,
             threat_model_required=inv.threat_model_required,
             feature=delivered_feature,
+            focus_paths=sorted({e["path"] for e in current.snapshot["admitted"]}),
         )
     except ContextContractError:
         return current.finish("failed", "validation_failure", ["The analysis context violated its contract."])
     except ContextError as exc:
         return current.finish("incomplete", "required_input_missing", [f"{exc}."])
     st.write_artifact(job, "context.json", current.context)
+    all_limits = load_limits()
+    if inv.mode == "review" and current.snapshot["admitted"]:
+        _select_surrounding_code(current, all_limits["context_files"])
+    if request.get("explore"):
+        try:
+            current.exploration = export_view(request, job, current.snapshot, all_limits)
+        except SnapshotError as exc:
+            return current.finish("failed", "validation_failure", [f"The explore copy could not be written: {exc}."])
     current.fingerprint = _sha([request, current.snapshot, current.context])
     current.ensure_started()
     snapshot = current.snapshot
+    if inv.mode == "hypothesis":
+        # A named path that was not admitted is missing required evidence; an
+        # exclusion inside a selected directory only narrows what was read.
+        named = set(request["scope"]["paths"])
+        if not snapshot["admitted"] or any(e.get("path") in named for e in snapshot["excluded"]):
+            return current.finish(
+                "incomplete",
+                "required_input_missing",
+                [
+                    "A selected hypothesis path was not admitted; inspect the exclusions and narrow or correct the paths."
+                ],
+            )
     changed = snapshot["admitted"] or any(e["reason"] != "ignored" for e in snapshot["excluded"])
     if inv.mode == "review" and not changed and feature is None:
         return current.finish(
             "complete", "empty_scope", ["The selected scope contains no changes; no model call was made."]
         )
     return _analyze(current, [], transport_factory, interactive)
+
+
+def _select_surrounding_code(current: _Run, limit: int) -> None:
+    """Admit the files the change most likely depends on before the first model call."""
+    job, request = current.job, current.request
+    for candidate in select_context(
+        current.snapshot, view_paths(job), job.root / "source", current.context["threat_model"], limit
+    ):
+        try:
+            current.snapshot = admit_context(request, job, current.snapshot, candidate["path"])
+        except SnapshotError:
+            continue
+        if any(e["path"] == candidate["path"] and e["side"] == "proposed" for e in current.snapshot["admitted"]):
+            current.context_selection.append(candidate)
+    st.write_artifact(job, "snapshot.json", current.snapshot)
+
+
+def _cited_proposed_paths(payload: object) -> list[str]:
+    """Proposed-side paths an unvalidated reply cites; malformed entries are left to validation."""
+    if not isinstance(payload, dict):
+        return []
+    locations = []
+    for key, fields in (
+        ("findings", ("evidence", "comparison")),
+        ("assumptions", ("evidence",)),
+        ("requirement_observations", ("evidence",)),
+    ):
+        for item in payload.get(key) or []:
+            if isinstance(item, dict):
+                for name in fields:
+                    locations += [loc for loc in item.get(name) or [] if isinstance(loc, dict)]
+    return sorted(
+        {loc["path"] for loc in locations if loc.get("side") == "proposed" and isinstance(loc.get("path"), str)}
+    )
+
+
+def _admit_explored_citations(current: _Run, payload: object) -> None:
+    """Admit the files an exploring reply cites from the frozen view, so the usual receipt check applies."""
+    admitted = {e["path"] for e in current.snapshot["admitted"] if e["side"] == "proposed"}
+    for path in _cited_proposed_paths(payload):
+        if path not in admitted:
+            try:
+                current.snapshot = admit_context(current.request, current.job, current.snapshot, path)
+            except SnapshotError:
+                continue
+    st.write_artifact(current.job, "snapshot.json", current.snapshot)
 
 
 def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFactory, interactive: bool) -> Outcome:
@@ -465,7 +623,7 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
             reply = transport.invoke(
                 instructions(),
                 prompt,
-                response_schema(),
+                response_schema(request["mode"]),
                 timeout,
                 lambda: st.cancel_requested(job.root) or current.out_of_time(),
             )
@@ -479,28 +637,64 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
             current.counters["transport_retries"] += 1
             continue
         current.usd += reply.usd or 0.0
+        if request.get("explore"):
+            _admit_explored_citations(current, reply.payload)
         errors = validate_response(reply.payload, request, current.snapshot, current.context, source_dir)
         if errors:
-            note = f"The model reply failed validation ({len(errors)} problem(s)); nothing from it was published."
+            # Validator messages name locations and rules, never rejected values.
+            shown = "; ".join(errors[:3])[:900]
+            note = (
+                f"The model reply failed validation ({len(errors)} problem(s)): {shown}. Nothing from it was published."
+            )
             return current.finish("failed", "invalid_model_output", [note])
         wanted = reply.payload["evidence_requests"]
         rounds_left = current.counters["evidence_rounds"] < limits["evidence_rounds"]
-        if wanted and rounds_left and current.counters["host_calls"] < limits["host_calls"]:
-            granted = 0
+        if wanted:
+            can_read = rounds_left and current.counters["host_calls"] < limits["host_calls"]
+            unresolved = False
             for item in wanted:
-                try:
-                    current.snapshot = admit_context(request, job, current.snapshot, item["path"])
-                    granted += 1
-                except SnapshotError as exc:
-                    current.limitations.append(f"Requested evidence was not admitted: {exc}.")
-            if granted:
-                current.counters["evidence_rounds"] += 1
-                st.write_artifact(job, "snapshot.json", current.snapshot)
-                continue
+                receipt = dict(item, status="limit_exhausted", detail="No evidence round or model call remains.")
+                if can_read:
+                    try:
+                        current.snapshot = admit_context(request, job, current.snapshot, item["path"])
+                        admitted = any(
+                            e["path"] == item["path"] and e["side"] == "proposed" for e in current.snapshot["admitted"]
+                        )
+                        receipt.update(
+                            status="admitted" if admitted else "rejected",
+                            detail="Read from the frozen source view."
+                            if admitted
+                            else "Source admission excluded the requested file.",
+                        )
+                    except SnapshotError as exc:
+                        receipt.update(status="rejected", detail=str(exc))
+                current.evidence_requests.append(receipt)
+                unresolved |= receipt["status"] != "admitted"
+            st.write_artifact(job, "snapshot.json", current.snapshot)
+            if unresolved:
+                return current.finish(
+                    "incomplete",
+                    "required_input_missing" if can_read else "limit_exhausted",
+                    ["Requested evidence remains unavailable; the analysis is incomplete."],
+                    response=reply.payload,
+                    questions=aq.assign(reply.payload["questions"], current.receipts["fingerprint"]),
+                )
+            current.counters["evidence_rounds"] += 1
+            continue
         response = reply.payload
     st.write_artifact(job, "response.json", response)
     questions = aq.assign(response["questions"], current.receipts["fingerprint"])
-    st.write_artifact(job, "questions.json", {"questions": questions, "usd": current.usd})
+    st.write_artifact(
+        job,
+        "questions.json",
+        {
+            "questions": questions,
+            "usd": current.usd,
+            "evidence_requests": current.evidence_requests,
+            "context_selection": current.context_selection,
+            "exploration": current.exploration,
+        },
+    )
     required = [q for q in questions if q["required"]]
     if required and interactive and current.counters["question_rounds"] < limits["question_rounds"]:
         report = _question_report(job.job_id, questions)
@@ -514,6 +708,8 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
     if not current.context["question_selection"]["required_complete"]:
         note = ["Required questions exceeded the question limit."]
         return current.finish("incomplete", "limit_exhausted", note, response=response, questions=questions)
+    if request["mode"] == "hypothesis" and response["hypothesis_assessment"]["status"] == "unresolved":
+        return current.finish("incomplete", "required_input_missing", response=response, questions=questions)
     return current.finish("complete", "analysis_complete", response=response, questions=questions)
 
 
@@ -537,6 +733,7 @@ def answer(
     feature_sha256: str | None = None,
     feature_id: str | None = None,
     inline_answers: dict[str, str] | None = None,
+    env: dict | None = None,
 ) -> Outcome:
     """Resume a job waiting for answers.
 
@@ -556,9 +753,20 @@ def answer(
         st.release(job)
         name = state["state"] if state else "unknown"
         return Outcome(EXIT_NOT_COMPLETE, "rejected", job_id, f"Rejected: job is {name}, not waiting for answers\n")
-    current = _Run(job, st.read_artifact(root, "request.json"), st.read_artifact(root, "packages.json"), state_root)
+    request = st.read_artifact(root, "request.json")
+    try:
+        _check_model_policy(request["host"]["model"], _org_profile(repo_root.resolve(), env), env)
+    except AdmissionError as exc:
+        st.release(job)
+        return Outcome(EXIT_NOT_COMPLETE, "rejected", job_id, f"Rejected: {exc}\n")
+    current = _Run(job, request, st.read_artifact(root, "packages.json"), state_root)
     current.snapshot = st.read_artifact(root, "snapshot.json")
     current.context = st.read_artifact(root, "context.json")
+    saved_questions = st.read_artifact(root, "questions.json")
+    current.evidence_requests = saved_questions.get("evidence_requests", [])
+    current.context_selection = saved_questions.get("context_selection") or []
+    current.exploration = saved_questions.get("exploration")
+    current.usd = saved_questions.get("usd", 0.0)
     current.counters = dict(state["counters"])
     current.fingerprint = state["input_fingerprint"]
     current.start_clock()

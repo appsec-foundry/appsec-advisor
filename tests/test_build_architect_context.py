@@ -214,6 +214,35 @@ def test_policy_ceiling_is_visible_and_does_not_rerate_findings():
     assert packet["findings"][0]["finding"]["risk"] == "Medium"
 
 
+def test_selected_review_keeps_companion_policy_without_authorizing_other_findings():
+    rows = [finding(f"T-{i:03d}") for i in range(1, 4)]
+    for row, cwe in zip(rows, ("CWE-862", "CWE-522", "CWE-200")):
+        row["cwe"] = cwe
+    source = merged(*rows)
+    manifest = build(source, finding_ids=["T-003"])
+    packet = manifest["packets"][0]
+    assert [row["finding"]["t_id"] for row in packet["findings"]] == ["T-003"]
+    assert packet["findings"][0]["risk_ceiling"] == "Critical"
+    alone = {**rows[-1], "t_id": "T-001"}
+    assert build(merged(alone))["packets"][0]["findings"][0]["risk_ceiling"] == "High"
+    proposal = {
+        **{key: packet[key] for key in ("schema_version", "run_id", "packet_id", "input_sha256")},
+        "decisions": [decision("T-001")],
+    }
+    result, report = apply_review(
+        source,
+        {},
+        manifest,
+        {packet["packet_id"]: proposal},
+        run_id="run-test",
+        finding_ids=["T-003"],
+        **manifest["limits"],
+    )
+    assert result == source and not report["accepted"]
+    with pytest.raises(ReviewError, match="stale or altered"):
+        apply_review(source, {}, manifest, {}, run_id="run-test", **manifest["limits"])
+
+
 def test_packet_masks_credential_patterns_without_changing_canonical_source():
     source = merged()
     # Deliberately synthetic scanner probe, never a working credential.

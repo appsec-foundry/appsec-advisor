@@ -1,0 +1,78 @@
+{
+  "anti_patterns": [
+    {
+      "name": "Raw SQL string interpolation",
+      "description": "Login and search build SQL by concatenating request text instead of using bound parameters, so each route must be fixed individually and the pattern recurs.",
+      "affected_components": [
+        "C-01",
+        "C-09"
+      ],
+      "findings": [
+        {
+          "ref": "F-012",
+          "label": "SQL injection in login lookup"
+        },
+        {
+          "ref": "F-006",
+          "label": "SQL injection in product search"
+        }
+      ]
+    },
+    {
+      "name": "Missing server-side authorization layer",
+      "description": "Ownership and role checks are implemented route by route, with no central enforcement, so many routes omit them and a single fix will not close the gap.",
+      "affected_components": [
+        "C-01",
+        "C-09"
+      ],
+      "findings": [
+        {
+          "ref": "F-008",
+          "label": "Broken authorization"
+        },
+        {
+          "ref": "F-038",
+          "label": "Basket item IDOR"
+        },
+        {
+          "ref": "F-039",
+          "label": "Routes without authentication"
+        }
+      ]
+    },
+    {
+      "name": "SPA without BFF",
+      "description": "The Angular frontend keeps the session token in script-readable storage and no backend-for-frontend holds it server-side, so any script injection yields a reusable token.",
+      "affected_components": [
+        "C-05"
+      ],
+      "findings": [
+        {
+          "ref": "F-002",
+          "label": "Session token in script-readable storage"
+        },
+        {
+          "ref": "F-110",
+          "label": "Token in client storage"
+        }
+      ]
+    },
+    {
+      "name": "Secrets hardcoded in source",
+      "description": "Signing keys and other secrets are committed to the repository rather than a managed store, so repository access alone enables forged logins.",
+      "affected_components": [
+        "C-09"
+      ],
+      "findings": [
+        {
+          "ref": "F-020",
+          "label": "Hardcoded token signing key"
+        },
+        {
+          "ref": "F-046",
+          "label": "Hardcoded cookie signing secret"
+        }
+      ]
+    }
+  ]
+}

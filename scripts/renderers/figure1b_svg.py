@@ -16,7 +16,8 @@ of the sources and one lane above the zones.
 
 Gates: the geometry gate rejects crossing lines, lines through foreign boxes,
 texts or badges, badges touching arrowheads, overflowing text, attack routes
-over a foreign zone border and content outside the canvas. The legibility gate
+over a foreign zone border, boundary lines through boxes, texts, badges or
+along a flow, and content outside the canvas. The legibility gate
 rejects any text whose effective size at a supported display width falls below
 ``MIN_EFFECTIVE_PX``.
 """
@@ -57,6 +58,9 @@ ZTOP = 64
 BOX_TOP = 110
 ARROW = 10
 BADGE_R = 8
+BOUNDARY_INSET = 4  # boundary line distance left of the zone it leads into
+BOUNDARY_OVERHANG = 18  # boundary line reach beyond its outermost crossing flow
+INFERRED_STYLE = 'stroke-width="1.8" stroke-dasharray="2 4" stroke-opacity="0.55"'
 
 INK, MUTED, RED, FLOW, OK, NAVY = "#1f2a37", "#5b6675", "#9c3d3d", "#6b7a8c", "#3f8a4f", "#22344a"
 SEV = {"Critical": "#b03a3a", "High": "#d08a3a", "Medium": "#c9a43a", "Low": "#7a8a99", "Informational": "#9aa5b1"}
@@ -139,6 +143,7 @@ class Canvas:
         self.zones: dict[str, tuple[float, float, float, float]] = {}
         self.badges: dict[str, tuple[float, float, float, float]] = {}
         self.edges: list[dict[str, Any]] = []
+        self.boundaries: list[tuple[float, float, float]] = []  # (x, top, bottom) of each boundary line
         self.min_font = 99.0
 
     def text(
@@ -211,27 +216,57 @@ def _finding_lines(findings: list[dict], limit: int = 3) -> list[tuple[str, str,
     return lines
 
 
+def _referenced(view: dict) -> set[str]:
+    """Elements an attack entry or a highlighted path step points at."""
+    ids = {entry["element"] for entry in view["entries"]}
+    for step in (view.get("highlighted_path") or {}).get("steps") or []:
+        ids |= {step["from"], step["to"]}
+    return ids
+
+
+def _cap(items: list[dict], limit: int, rank) -> tuple[list[dict], list[str]]:
+    """Keep ``limit - 1`` items by ``rank`` (the last row says "+N more"), in their given order."""
+    if len(items) <= limit:
+        return items, []
+    keep = sorted(items, key=rank)[: limit - 1]
+    return [e for e in items if e in keep], [e["label"] for e in items if e not in keep]
+
+
 def _plan(view: dict) -> dict[str, Any]:
-    """Which boxes each column holds, with overflow aggregated into explicit "+N more" rows."""
+    """Which boxes each column holds, with overflow aggregated into explicit "+N more" rows.
+
+    A cap never drops an element an entry or the highlighted path points at: the arrow
+    would have no box to land on.
+    """
     elements = {e["id"]: e for e in view["elements"]}
     by_element: dict[str, list[dict]] = {}
     for finding in view["findings"]:
         by_element.setdefault(finding["element"], []).append(finding)
-    inputs = [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"]
+    referenced = _referenced(view)
+
+    def worst(element):
+        ranks = [list(SEV).index(f["severity"]) for f in by_element.get(element["id"], []) if f["severity"] in SEV]
+        return min(ranks, default=len(SEV))
+
     overflow: dict[str, list[str]] = {}
-    if len(inputs) > CAPS["upstream_rows"]:
-        keep = sorted(inputs, key=lambda e: -len(by_element.get(e["id"], [])))[: CAPS["upstream_rows"] - 1]
-        overflow["upstream"] = [e["label"] for e in inputs if e not in keep]
-        inputs = [e for e in inputs if e in keep]
-    cis = [e for e in view["elements"] if e["column"] == "build"]
-    cis.sort(key=lambda e: (e.get("coverage") != "full",))
-    if len(cis) > CAPS["ci"]:
-        overflow["ci"] = [e["label"] for e in cis[CAPS["ci"] - 1 :]]
-        cis = cis[: CAPS["ci"] - 1]
-    artifacts = [e for e in view["elements"] if e["column"] == "artifacts"]
-    if len(artifacts) > CAPS["artifacts"]:
-        overflow["artifacts"] = [e["label"] for e in artifacts[CAPS["artifacts"] - 1 :]]
-        artifacts = artifacts[: CAPS["artifacts"] - 1]
+    inputs, dropped = _cap(
+        [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"],
+        CAPS["upstream_rows"],
+        lambda e: (e["id"] not in referenced, worst(e), -len(by_element.get(e["id"], []))),
+    )
+    if dropped:
+        overflow["upstream"] = dropped
+    cis = sorted((e for e in view["elements"] if e["column"] == "build"), key=lambda e: e.get("coverage") != "full")
+    cis, dropped = _cap(cis, CAPS["ci"], lambda e: (e["id"] not in referenced, e.get("coverage") != "full"))
+    if dropped:
+        overflow["ci"] = dropped
+    artifacts, dropped = _cap(
+        [e for e in view["elements"] if e["column"] == "artifacts"],
+        CAPS["artifacts"],
+        lambda e: e["id"] not in referenced,
+    )
+    if dropped:
+        overflow["artifacts"] = dropped
     return {
         "elements": elements,
         "by_element": by_element,
@@ -257,6 +292,12 @@ def _box_lines(element: dict, findings: list[dict]) -> list[tuple[str, Any]]:
     for row in _finding_lines(findings):
         lines.append(("fact", row))
     return lines
+
+
+def _boundary_text(boundary: dict) -> str:
+    """Existence and confidence of a mapped boundary; its verdict stays in the catalogue."""
+    confidence = boundary.get("confidence")
+    return boundary["id"] + ("" if confidence == "confirmed" else f" · {confidence}")
 
 
 # ---- layout ------------------------------------------------------------------------------
@@ -353,7 +394,9 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     layout = _place(plan, x, widths)
     problems = list(layout["problems"])
     height_diagram = max(layout["bottom"] + 30, BOX_TOP + 160)
-    legend_svg, legend_height, legend_canvas = _legend(view, plan, actor, scenario_numbers, width)
+    borders = _boundary_borders(view, x)
+    classes = {_line_class(conf) for border in borders.values() for conf in border["confidence"].values()}
+    legend_svg, legend_height, legend_canvas = _legend(view, plan, actor, scenario_numbers, width, classes)
     height = round(height_diagram + 16 + legend_height + 20)
 
     cv.parts.append(
@@ -373,6 +416,8 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     systems = [e["label"] for e in plan["cis"] if e.get("coverage") != "none"]
     sources = [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"]
     channels = plan["elements"]["execution"].get("channels") or []
+    # Scoped to this view: one catalogue boundary counts once however many elements it marks.
+    mapped = len({b["id"] for e in view["elements"] for b in e.get("boundaries") or []})
     cv.text(20, 24, "Figure 1b — Supply Chain and Build", FONT["title"], weight="bold", fill=NAVY)
     subtitle = " · ".join(
         p
@@ -381,6 +426,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
             _count(len(systems), "CI system"),
             _count(len(sources), "upstream source type"),
             _count(len(channels), "delivery channel"),
+            f"{mapped} trust {'boundary' if mapped == 1 else 'boundaries'} mapped here" if mapped else "",
             f"{_count(shown, 'finding')} shown here",
         )
         if p
@@ -394,6 +440,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
         cv.zones[column] = (zx, ZTOP, zw, zh)
         cv.text(x[column] - 4, ZTOP + 17, title, FONT["zone"], weight="bold", fill=stroke)
         cv.text(x[column] - 4, ZTOP + 30, sub, FONT["zone_sub"], fill=MUTED, italic=True)
+    lines_at = len(cv.parts)  # boundary lines go under boxes and flows, drawn once the flows are routed
 
     for key, box in layout["boxes"].items():
         _draw_box(cv, key, box, plan, view)
@@ -401,9 +448,10 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
         _draw_actor(cv, actor, scenario_numbers, x["attacker"], widths["attacker"], layout)
 
     highlighted = {(s["from"], s["to"]): s["n"] for s in (view.get("highlighted_path") or {}).get("steps") or []}
-    _draw_edges(cv, view, plan, layout, highlighted, problems)
+    _draw_edges(cv, view, plan, layout, highlighted, problems, [border["x"] for border in borders.values()])
     if actor:
         _draw_entries(cv, view, layout, x, widths, problems)
+    _draw_boundaries(cv, view, borders, layout, lines_at)
 
     cv.parts.append(f'<g transform="translate(0,{height_diagram + 16:.1f})">{legend_svg}</g>')
     cv.min_font = min(cv.min_font, legend_canvas.min_font)
@@ -561,6 +609,106 @@ def _draw_box(cv, key, box, plan, view):
     _draw_lines(cv, key, x, y + 6, w, box["measured"])
 
 
+def _boundary_borders(view, x) -> dict[str, dict[str, Any]]:
+    """The column borders a mapped build boundary crosses: into the build, or out to the release artifacts.
+
+    Lines sit at these borders as in Figure 1a; the IDs go into the tooltip and
+    the report catalogue, never onto the drawing.
+    """
+    borders: dict[str, dict[str, Any]] = {}
+    for element in view["elements"]:
+        for boundary in element.get("boundaries") or []:
+            column = "build" if boundary["crossing"] == "ingress" else "artifacts"
+            border = borders.setdefault(column, {"x": x[column] - ZONE_PAD - BOUNDARY_INSET, "confidence": {}})
+            border["confidence"].setdefault(boundary["id"], boundary["confidence"])
+    return borders
+
+
+def _line_class(confidence: str) -> str:
+    return "confirmed" if confidence == "confirmed" else "inferred"
+
+
+def _crossing_ids(view, column) -> dict[tuple[str, str], set[str]]:
+    """Boundary IDs per flow across one border, keyed by the flow's element ids.
+
+    A boundary marks the flows of the element that names the supplier or the
+    release target. One carried only by the CI system marks that system's
+    flows across the border, except its checkout of the own repository.
+    """
+    crossing = "ingress" if column == "build" else "egress"
+    elements = {e["id"]: e for e in view["elements"]}
+    carried = {
+        eid: {b["id"] for b in e.get("boundaries") or [] if b["crossing"] == crossing} for eid, e in elements.items()
+    }
+    near_column, before = ("sources", "sources") if column == "build" else ("artifacts", "build")
+    on_near = set().union(*(ids for eid, ids in carried.items() if elements[eid]["column"] == near_column))
+    out: dict[tuple[str, str], set[str]] = {}
+    for edge in view["edges"]:
+        src, dst = elements.get(edge["from"]), elements.get(edge["to"])
+        if not src or not dst or src["column"] != before or dst["column"] != column:
+            continue
+        near, far = (src, dst) if column == "build" else (dst, src)
+        ids = set(carried[near["id"]])
+        if src["kind"] != "repository":
+            ids |= carried[far["id"]] - on_near
+        if ids:
+            out[(edge["from"], edge["to"])] = ids
+    return out
+
+
+def _y_at(points, x):
+    for (x1, y1), (x2, y2) in _segs(points):
+        if x1 != x2 and min(x1, x2) <= x <= max(x1, x2):
+            return y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+    return None
+
+
+def _draw_boundaries(cv, view, borders, layout, at):
+    """Draw each border's line over the flows its boundaries mark, confirmed and inferred apart.
+
+    The line spans only those flows, so a CI system or registry no boundary
+    names is not drawn as behind it. An inferred boundary keeps its own pale
+    line wherever it crosses, so the drawing never shows it as confirmed.
+    """
+    parts: list[str] = []
+    for column, border in borders.items():
+        bx, confidence = border["x"], border["confidence"]
+        spans: dict[str, list[float]] = {}
+        ids_by_class: dict[str, set[str]] = {}
+        flows = _crossing_ids(view, column)
+        for edge in cv.edges:
+            ids = flows.get(edge.get("elements"))
+            y = _y_at(edge["points"], bx) if ids else None
+            if y is None:
+                continue
+            for tid in ids:
+                spans.setdefault(_line_class(confidence[tid]), []).append(y)
+                ids_by_class.setdefault(_line_class(confidence[tid]), set()).add(tid)
+        for tid, conf in confidence.items():
+            if not any(tid in ids for ids in ids_by_class.values()):
+                # No drawn flow carries it: span the boxes that hold its evidence instead.
+                for element in view["elements"]:
+                    box = layout["boxes"].get(_box_of(element["id"], layout["boxes"]) or "")
+                    if box and tid in {b["id"] for b in element.get("boundaries") or []}:
+                        spans.setdefault(_line_class(conf), []).extend((box["y"] + 12, box["y"] + box["h"] - 12))
+                        ids_by_class.setdefault(_line_class(conf), set()).add(tid)
+        for cls in ("inferred", "confirmed"):
+            if cls not in spans:
+                continue
+            top, bottom = min(spans[cls]) - BOUNDARY_OVERHANG, max(spans[cls]) + BOUNDARY_OVERHANG
+            ids = sorted(ids_by_class[cls], key=lambda tid: int(tid.split("-")[1]))
+            title = ("Trust boundary crossing: " if cls == "confirmed" else "Inferred trust boundary crossing: ") + (
+                ", ".join(ids)
+            )
+            style = 'stroke-width="2.2" stroke-dasharray="6 5"' if cls == "confirmed" else INFERRED_STYLE
+            parts.append(
+                f"<g><title>{html.escape(title)}</title>"
+                f'<path d="M {bx:.1f} {top:.1f} V {bottom:.1f}" fill="none" stroke="{RED}" {style}/></g>'
+            )
+            cv.boundaries.append((bx, top, bottom))
+    cv.parts[at:at] = parts
+
+
 def _draw_actor(cv, actor, numbers, x, w, layout):
     h = 128
     cv.boxes["A2"] = (x, BOX_TOP, w, h)
@@ -666,7 +814,7 @@ def _route(edges, out_y, in_y, boxes, problems):
             e["points"] = [(sx, out_y[i]), (lane, out_y[i]), (lane, in_y[i]), (tx, in_y[i])]
 
 
-def _draw_edges(cv, view, plan, layout, highlighted, problems):
+def _draw_edges(cv, view, plan, layout, highlighted, problems, stops=()):
     boxes = layout["boxes"]
     drawable = []
     for edge in view["edges"]:
@@ -696,17 +844,33 @@ def _draw_edges(cv, view, plan, layout, highlighted, problems):
             cv.badge(key, points[0][0] + 16, points[0][1], str(edge["step"]), filled=False)
         elif edge["status"] == "unknown":
             cv.path(points, "#9aa5b1", 1.4, "flow", dash="5 4")
-            _edge_label(cv, points, edge["label"], key)
+            _edge_label(cv, points, edge["label"], key, stops)
         else:
             cv.path(points, FLOW, 1.5, "flow")
-            _edge_label(cv, points, edge["label"], key)
-        cv.edges.append({"key": key, "from": edge["src_box"], "to": edge["dst_box"], "points": points, "attack": False})
+            _edge_label(cv, points, edge["label"], key, stops)
+        cv.edges.append(
+            {
+                "key": key,
+                "from": edge["src_box"],
+                "to": edge["dst_box"],
+                "elements": (edge["from"], edge["to"]),
+                "points": points,
+                "attack": False,
+            }
+        )
 
 
-def _edge_label(cv, points, label, key):
+def _edge_label(cv, points, label, key, stops=()):
+    """Centre the label on the last horizontal run, left of any boundary line it crosses."""
     (ax, ay), (bx, by) = points[-2], points[-1]
-    if ay == by and label and text_width(label, FONT["label"]) + 8 <= abs(bx - ax):
-        cv.text((ax + bx) / 2, by - 6, label, FONT["label"], fill=MUTED, anchor="middle", owner=key)
+    lo, hi = sorted((ax, bx))
+    pad = 8
+    for stop in stops:
+        if lo < stop < hi:
+            # No arrowhead shares the run left of the line, so a narrower margin suffices.
+            hi, pad = stop - 2, 4
+    if ay == by and label and text_width(label, FONT["label"]) + pad <= hi - lo:
+        cv.text((lo + hi) / 2, by - 6, label, FONT["label"], fill=MUTED, anchor="middle", owner=key)
 
 
 def _box_of(element_id, boxes):
@@ -848,6 +1012,21 @@ def _geometry_gate(cv, width, height) -> list[str]:
         for px, py in e1["points"]:
             if not (0 <= px <= width and 0 <= py <= height):
                 problems.append(f"{e1['key']} leaves the canvas")
+    for bx, top, bottom in cv.boundaries:
+        line = ((bx, top), (bx, bottom))
+        for key, box in cv.boxes.items():
+            if _hits(line, box, 0):
+                problems.append(f"boundary line at x={bx:.0f} runs through box {key}")
+        for text, box, _owner in cv.texts:
+            if _hits(line, box):
+                problems.append(f"boundary line at x={bx:.0f} runs through text {text!r}")
+        for key, box in cv.badges.items():
+            if _hits(line, box):
+                problems.append(f"boundary line at x={bx:.0f} runs through badge {key}")
+        for edge in cv.edges:
+            for (ax, ay), (cx, cy) in _segs(edge["points"]):
+                if ax == cx and abs(ax - bx) < 3 and max(min(ay, cy), top) < min(max(ay, cy), bottom):
+                    problems.append(f"boundary line at x={bx:.0f} runs along {edge['key']}")
     for text, box, owner in cv.texts:
         if owner in cv.boxes and not _inside(box, cv.boxes[owner]):
             problems.append(f"text {text!r} overflows box {owner}")
@@ -870,7 +1049,7 @@ def _legibility_gate(cv, width) -> list[str]:
 # ---- legend ------------------------------------------------------------------------------
 
 
-def _legend(view, plan, actor, numbers, width):
+def _legend(view, plan, actor, numbers, width, boundaries=frozenset()):
     cv = Canvas()
     elements = plan["elements"]
     half = (width - 60) / 2
@@ -959,8 +1138,15 @@ def _legend(view, plan, actor, numbers, width):
         ("High", "High finding"),
         ("Medium", "Medium finding or decision"),
     ]
+    if "inferred" in boundaries:
+        rows.insert(4, ("inferred", "inferred trust boundary, existence not confirmed"))
+    if "confirmed" in boundaries:
+        rows.insert(4, ("boundary", "trust boundary crossed by these flows"))
     for sym, label in rows:
-        if sym == "flow":
+        if sym in {"boundary", "inferred"}:
+            style = 'stroke-width="2.2" stroke-dasharray="6 5"' if sym == "boundary" else INFERRED_STYLE
+            cv.parts.append(f'<path d="M {sx:.1f} {y - 4:.1f} H {sx + 44:.1f}" fill="none" stroke="{RED}" {style}/>')
+        elif sym == "flow":
             cv.path([(sx, y - 4), (sx + 44, y - 4)], FLOW, 1.5, "flow")
         elif sym == "unknown":
             cv.path([(sx, y - 4), (sx + 44, y - 4)], "#9aa5b1", 1.4, "flow", dash="5 4")
@@ -1002,55 +1188,55 @@ def _where(source: dict | None) -> str:
 
 
 def render_table(view: dict, actor: dict | None, scenario_numbers: list[str]) -> str:
-    """The same content as the figure, as Markdown tables (fallback when a gate fails)."""
+    """The figure as one table of the elements that carry a finding, an entry, a path step or a boundary.
+
+    Fallback when a gate fails; elements with none of these are named in one line below it.
+    """
     elements = {e["id"]: e for e in view["elements"]}
-    by_element: dict[str, list[str]] = {}
+    by_element: dict[str, list[dict]] = {}
     for finding in view["findings"]:
-        by_element.setdefault(finding["element"], []).append(finding["id"])
+        by_element.setdefault(finding["element"], []).append(finding)
+    entries: dict[str, list[str]] = {}
+    for index, entry in enumerate(view["entries"]):
+        target = "repository" if entry["entry"] == "repository" else entry["element"]
+        entries.setdefault(target, []).append(f"{ENTRY_LETTERS[index]} · {ENTRY_TITLES[entry['entry']]}")
+    referenced = _referenced(view)
+
+    def label(element_id):
+        return elements.get(element_id, {}).get("label", element_id)
+
     lines = []
     if actor:
         lines.append(f"Build-time attacker: **{actor_title(actor)}** {' '.join(scenario_numbers)}".rstrip())
         if goal := goal_text(actor):
             lines += ["", goal]
         lines.append("")
-    lines += ["| Column | Element | Detail | Findings | Evidence |", "|---|---|---|---|---|"]
-    for element in view["elements"]:
-        detail = "; ".join(
-            p
-            for p in (
-                element.get("detail"),
-                element.get("manifest_detail"),
-                "inventory only" if element.get("coverage") == "inventory-only" else "",
-                ", ".join(element.get("channels") or []),
-            )
-            if p
-        )
-        lines.append(
-            f"| {_cell(element['column'])} | {_cell(element['label'])} | {_cell(detail or '—')} | "
-            f"{_cell(', '.join(by_element.get(element['id'], [])) or '—')} | {_where((element.get('sources') or [None])[0])} |"
-        )
-    lines += ["", "| From | To | Status | Evidence |", "|---|---|---|---|"]
-    for edge in view["edges"]:
-        lines.append(
-            f"| {_cell(elements.get(edge['from'], {}).get('label', edge['from']))} | "
-            f"{_cell(elements.get(edge['to'], {}).get('label', edge['to']))} | {edge['status']} | {_where((edge.get('sources') or [None])[0])} |"
-        )
-    if view["entries"]:
-        lines += ["", "| Entry | Element | Severity | Findings |", "|---|---|---|---|"]
-        for index, entry in enumerate(view["entries"]):
-            lines.append(
-                f"| {ENTRY_LETTERS[index]} · {ENTRY_TITLES[entry['entry']]} | "
-                f"{_cell(elements.get(entry['element'], {}).get('label', entry['element']))} | {entry['severity']} | {', '.join(entry['findings'])} |"
-            )
     path = view.get("highlighted_path") or {}
     if path.get("steps"):
-        lines += ["", f"Path of {path['finding']}:", ""]
-        for step in path["steps"]:
-            lines.append(
-                f"{step['n']}. {elements.get(step['from'], {}).get('label', step['from'])} → "
-                f"{elements.get(step['to'], {}).get('label', step['to'])} ({_where(step.get('via'))})"
-            )
+        route = label(path["steps"][0]["from"]) + "".join(
+            f" → {label(step['to'])} ({_where(step.get('via'))})" for step in path["steps"]
+        )
+        lines += [f"Highlighted path of {path['finding']}: {route}", ""]
+    lines += ["| Stage | Element | Entry | Trust boundary | Findings |", "|---|---|---|---|---|"]
+    quiet = []
+    for element in view["elements"]:
+        findings = sorted(
+            by_element.get(element["id"], []),
+            key=lambda f: (list(SEV).index(f["severity"]) if f["severity"] in SEV else len(SEV), f["id"]),
+        )
+        boundaries = element.get("boundaries") or []
+        if not (findings or boundaries or element["id"] in entries or element["id"] in referenced):
+            quiet.append(element["label"])
+            continue
+        lines.append(
+            f"| {ZONES[element['column']][0]} | {_cell(element['label'])} | "
+            f"{_cell(', '.join(entries.get(element['id'], [])) or '—')} | "
+            f"{_cell(', '.join(_boundary_text(b) for b in boundaries) or '—')} | "
+            f"{', '.join(f['id'] for f in findings) or '—'} |"
+        )
+    if quiet:
+        lines += ["", "No findings, entry or boundary: " + ", ".join(quiet) + "."]
     unowned = by_element.get("unowned")
     if unowned:
-        lines += ["", "Findings without an evidenced CI owner: " + ", ".join(unowned)]
+        lines += ["", "Findings without an evidenced CI owner: " + ", ".join(f["id"] for f in unowned)]
     return "\n".join(lines)

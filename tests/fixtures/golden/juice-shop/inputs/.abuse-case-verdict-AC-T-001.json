@@ -1,0 +1,40 @@
+{
+  "abuse_case_id": "AC-T-001",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "          feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml(",
+        "file": "frontend/src/app/about/about.component.ts",
+        "line": 119
+      },
+      "matched_finding_id": "T-001",
+      "reason": "Feedback comment is interpolated into HTML and passed to bypassSecurityTrustHtml with no sanitizer, so stored attacker markup renders as trusted HTML.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "confirmed"
+    },
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "    if (localStorage.getItem('token')) {",
+        "file": "frontend/src/app/Services/basket.service.ts",
+        "line": 64
+      },
+      "matched_finding_id": null,
+      "reason": "Session token is read from localStorage, which injected script can read. No HttpOnly cookie control is visible.",
+      "state": "decided",
+      "step": 2,
+      "verdict": "confirmed"
+    },
+    {
+      "controls_found": [],
+      "evidence": null,
+      "matched_finding_id": null,
+      "reason": "The line shows an implicit-flow Google login (response_type=token, no PKCE). That is a different flow from replaying the stolen session token. Server-side acceptance or binding of a replayed token is not visible in the client code.",
+      "state": "decided",
+      "step": 3,
+      "verdict": "inconclusive"
+    }
+  ]
+}

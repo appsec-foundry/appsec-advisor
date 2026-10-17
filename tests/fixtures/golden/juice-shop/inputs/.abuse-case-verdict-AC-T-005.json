@@ -1,0 +1,31 @@
+{
+  "abuse_case_id": "AC-T-005",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "const privateKey = '[PEM PRIVATE KEY \u2014 REDACTED]'",
+        "file": "lib/insecurity.ts",
+        "line": 21
+      },
+      "matched_finding_id": "T-020",
+      "reason": "RS256 private signing key is hardcoded as a string literal in source code; no vault/KMS/env loading control present.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "confirmed"
+    },
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })",
+        "file": "lib/insecurity.ts",
+        "line": 54
+      },
+      "matched_finding_id": "T-018",
+      "reason": "authorize() signs tokens with the hardcoded privateKey and the verification path trusts the matching public key; a token forged with the leaked key would be accepted. No key rotation or binding control found.",
+      "state": "decided",
+      "step": 2,
+      "verdict": "confirmed"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 ---
 name: security-score
-description: Deterministic quick Security Score (0-100) for a repository, computed from the scanner layer alone — no agents, no LLM, no threat model, nothing written into the target repository. Reports the score together with how many rules applied, the finding tally, and the weakest control domains. Use for a fast indication or a per-commit trend; it is not a risk rating and does not replace /appsec-advisor:create-threat-model.
+description: Deterministic quick Security Score (0-100) for a repository, computed from the scanner layer alone — no agents, no LLM, no threat model, nothing written into the target repository. Reports the score together with how many rules applied, the finding tally, and the weakest control domains. Use for a fast indication or a per-commit trend; it is not a risk rating and does not replace /appsec-advisor:appsec-analyzer.
 ---
 
 You are printing a quick Security Score for a repository. This skill is **read-only** — do not analyze the repository yourself, do not write files, do not dispatch sub-agents. Run the script and present its output.
@@ -72,4 +72,4 @@ Summarising it is the failure this rule exists for.
 
 Nothing may be added after the block either: no summary of the number, no repetition of a note it already carries, no verdict such as "secure" or "at risk", no severities or mitigations of your own. None of that is in the data, and prose beside the block undoes the layout it was given.
 
-Two exceptions, both only when the user asks: name the covered languages — JavaScript/TypeScript, Python, Java/Spring, parts of .NET — when the verdict is `undetermined`, and point at `/appsec-advisor:create-threat-model` when they want the findings, severities, or mitigations behind a low score.
+Two exceptions, both only when the user asks: name the covered languages — JavaScript/TypeScript, Python, Java/Spring, parts of .NET — when the verdict is `undetermined`, and point at `/appsec-advisor:appsec-analyzer` when they want the findings, severities, or mitigations behind a low score.

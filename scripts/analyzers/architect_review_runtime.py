@@ -4,7 +4,8 @@ The review runs as controller-dispatched ``architect_reviewer`` agent jobs:
 ``advance_review`` plans per-component jobs, returns them wave by wave, and
 collects each job's proposal file once before applying all proposals in one
 transaction. Rebuilds and the final CLI gate validate the saved transaction
-and never dispatch, retry, or rewrite a report.
+and its optional post-abuse supplement; they never dispatch, retry, or rewrite
+a report.
 """
 
 from __future__ import annotations
@@ -96,11 +97,30 @@ def _validate(value: dict) -> None:
         registry = registry.with_resource(schema["$id"], Resource.from_contents(schema))
     if not Draft202012Validator(schema, registry=registry).is_valid(value):
         raise ReviewError("invalid architect runtime contract")
-    ids = [packet["packet_id"] for packet in value["manifest"]["packets"]]
-    if [job["packet_id"] for job in value["jobs"]] != ids:
-        raise ReviewError("architect job coverage differs from admitted packets")
-    if value["run_id"] != value["manifest"]["run_id"]:
-        raise ReviewError("architect run identity differs from admitted packets")
+    if "finding_ids" in value:
+        raise ReviewError("initial architect review must cover the complete input")
+    for transaction in review_transactions(value):
+        ids = [packet["packet_id"] for packet in transaction["manifest"]["packets"]]
+        if [job["packet_id"] for job in transaction["jobs"]] != ids:
+            raise ReviewError("architect job coverage differs from admitted packets")
+        if transaction["run_id"] != transaction["manifest"]["run_id"]:
+            raise ReviewError("architect run identity differs from admitted packets")
+    if supplement := value.get("supplement"):
+        original_ids = {row["t_id"] for row in value["input"]["threats"]}
+        new_ids = {row["t_id"] for row in supplement["input"]["threats"]} - original_ids
+        if (
+            value["phase"] != "complete"
+            or supplement["run_id"] != value["run_id"]
+            or supplement["finding_ids"] != sorted(new_ids)
+            or supplement["scoring_profile"] != value["scoring_profile"]
+            or _source_errors(supplement["input"], value)
+        ):
+            raise ReviewError("architect supplement changed its admitted scope or prior corrections")
+
+
+def review_transactions(value: dict | None) -> list[dict]:
+    """The initial review and, at most, its one post-abuse supplement."""
+    return [value, *([value["supplement"]] if "supplement" in value else [])] if value else []
 
 
 def _save(output_dir: Path, value: dict) -> None:
@@ -132,6 +152,7 @@ def _replay(value: dict) -> tuple[dict, dict]:
             value["proposals"],
             run_id=value["run_id"],
             output_dir=profile_dir,
+            finding_ids=value.get("finding_ids"),
             **LIMITS,
         )
 
@@ -143,12 +164,17 @@ def load_review(output_dir: Path) -> dict | None:
         return None
     value = _read(path)
     _validate(value)
+    for transaction in review_transactions(value):
+        _verify_transaction(transaction)
+    return value
+
+
+def _verify_transaction(value: dict) -> None:
     if value["phase"] != "complete":
         raise ReviewError("architect review has not completed its transaction")
     snapshot, application = _replay(value)
     if snapshot != value["snapshot"] or application != value["application"]:
         raise ReviewError("architect review transaction was altered")
-    return value
 
 
 def open_decisions(output_dir: Path) -> dict[str, dict]:
@@ -164,21 +190,22 @@ def open_decisions(output_dir: Path) -> dict[str, dict]:
         return {}
     if not value:
         return {}
-    rows = {
-        row["t_id"]: row
-        for row in value["application"]["outcomes"]
-        if row["status"] == "accepted" and "unresolved" in (row["assessment"], row["remediation"])
-    }
     result: dict[str, dict] = {}
-    for packet in value["proposals"].values():
-        for decision in packet.get("decisions") or []:
-            row = rows.get(decision.get("t_id"))
-            if row:
-                result[row["t_id"]] = {
-                    "assessment": row["assessment"],
-                    "remediation": row["remediation"],
-                    "reason": str(decision.get("reason") or "").strip(),
-                }
+    for transaction in review_transactions(value):
+        rows = {
+            row["t_id"]: row
+            for row in transaction["application"]["outcomes"]
+            if row["status"] == "accepted" and "unresolved" in (row["assessment"], row["remediation"])
+        }
+        for packet in transaction["proposals"].values():
+            for decision in packet.get("decisions") or []:
+                row = rows.get(decision.get("t_id"))
+                if row:
+                    result[row["t_id"]] = {
+                        "assessment": row["assessment"],
+                        "remediation": row["remediation"],
+                        "reason": str(decision.get("reason") or "").strip(),
+                    }
     return result
 
 
@@ -228,7 +255,7 @@ def job_output_path(component_id: str) -> str:
     return f"{JOB_DIR}/{component_id}.proposals.json"
 
 
-def _plan_dispatch(packets: list[dict], concurrency: int) -> list[dict]:
+def _plan_dispatch(packets: list[dict], concurrency: int, *, supplement: bool = False) -> list[dict]:
     """One job per component packet chunk, in waves of at most ``concurrency`` jobs.
 
     Chunks of one component share its job paths, so they land in successive
@@ -242,7 +269,9 @@ def _plan_dispatch(packets: list[dict], concurrency: int) -> list[dict]:
     for component in sorted(by_component):
         ids = by_component[component]
         earliest = 0
-        for chunk, start in enumerate(range(0, len(ids), JOB_PACKET_LIMIT), 1):
+        # Separate identities prevent a cached first-pass reply or stale proposal
+        # file from answering the supplement, while retaining the existing paths.
+        for chunk, start in enumerate(range(0, len(ids), JOB_PACKET_LIMIT), 501 if supplement else 1):
             wave = earliest
             while wave < len(wave_sizes) and wave_sizes[wave] >= concurrency:
                 wave += 1
@@ -311,12 +340,16 @@ def _collect(output_dir: Path, value: dict) -> None:
                 by_packet[packet_id]["status"] = "invalid" if document is not None or path.exists() else "missing"
 
 
-def advance_review(output_dir: Path, cfg: dict, *, concurrency: int = DEFAULT_CONCURRENCY) -> list[dict] | None:
-    """Advance the review before triage by one step.
+def advance_review(
+    output_dir: Path, cfg: dict, *, concurrency: int = DEFAULT_CONCURRENCY, post_abuse: bool = False
+) -> list[dict] | None:
+    """Advance the initial review or its single post-abuse supplement by one step.
 
     Returns the next wave's jobs for the controller to dispatch, or ``None``
     once the transaction is complete and published (or review is disabled).
     Re-entry collects returned jobs once and never dispatches a job twice.
+    Only the controller's post-abuse boundary may open the supplement, and it
+    selects only IDs absent from the initial input. Later arrivals stay unreviewed.
     """
     if not cfg.get("architect_review") or cfg.get("dry_run"):
         return None
@@ -330,49 +363,76 @@ def advance_review(output_dir: Path, cfg: dict, *, concurrency: int = DEFAULT_CO
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ReviewError("architect review is already running") from exc
-        return _advance_review(output_dir, cfg, concurrency)
+        return _advance_review(output_dir, cfg, concurrency, post_abuse=post_abuse)
     finally:
         os.close(descriptor)
 
 
-def _advance_review(output_dir: Path, cfg: dict, concurrency: int) -> list[dict] | None:
+def _new_transaction(
+    output_dir: Path, current: dict, cfg: dict, concurrency: int, finding_ids: list[str] | None = None
+) -> dict:
+    analyst = _read(output_dir / ".stride-analyst-context.json")
+    manifest = build_context(
+        current, analyst, run_id=cfg["run_id"], output_dir=output_dir, finding_ids=finding_ids, **LIMITS
+    )
+    return {
+        "schema_version": 1,
+        "run_id": cfg["run_id"],
+        "phase": "running",
+        "input": current,
+        "analyst_context": analyst,
+        "manifest": manifest,
+        "model": cfg.get("architect_model") or "sonnet",
+        "scoring_profile": _scoring_profile(output_dir),
+        "proposals": {},
+        "jobs": [{"packet_id": p["packet_id"], "status": "pending", "telemetry": {}} for p in manifest["packets"]],
+        "dispatch_jobs": _plan_dispatch(manifest["packets"], concurrency, supplement=finding_ids is not None),
+        "snapshot": None,
+        "application": None,
+        **({"finding_ids": finding_ids} if finding_ids is not None else {}),
+    }
+
+
+def _advance_review(output_dir: Path, cfg: dict, concurrency: int, *, post_abuse: bool = False) -> list[dict] | None:
     run_id = cfg.get("run_id")
     if not isinstance(run_id, str) or not run_id:
         raise ReviewError("architect review requires the controller run identity")
     current = _read(output_dir / ".threats-merged.json")
     path = output_dir / ARTIFACT
     if path.exists() or path.is_symlink():
-        value = _read(path)
-        _validate(value)
-        if value["run_id"] != run_id:
+        document = _read(path)
+        _validate(document)
+        if document["run_id"] != run_id:
             raise ReviewError("architect review belongs to another run")
-        if value["phase"] == "complete":
-            value = load_review(output_dir)
-            if fingerprint(current) == value["manifest"]["input_sha256"]:
-                atomic_write_json(output_dir / ".threats-merged.json", value["snapshot"])
-            elif _source_errors(current, value):
-                raise ReviewError("accepted architect source values changed")
-            return None
-        if fingerprint(current) != value["manifest"]["input_sha256"]:
-            raise ReviewError("architect source changed during the review")
     else:
-        analyst = _read(output_dir / ".stride-analyst-context.json")
-        manifest = build_context(current, analyst, run_id=run_id, output_dir=output_dir, **LIMITS)
-        value = {
-            "schema_version": 1,
-            "run_id": run_id,
-            "phase": "running",
-            "input": current,
-            "analyst_context": analyst,
-            "manifest": manifest,
-            "model": cfg.get("architect_model") or "sonnet",
-            "scoring_profile": _scoring_profile(output_dir),
-            "proposals": {},
-            "jobs": [{"packet_id": p["packet_id"], "status": "pending", "telemetry": {}} for p in manifest["packets"]],
-            "dispatch_jobs": _plan_dispatch(manifest["packets"], concurrency),
-            "snapshot": None,
-            "application": None,
-        }
+        if post_abuse:
+            raise ReviewError("architect supplement requires the initial review")
+        document = _new_transaction(output_dir, current, cfg, concurrency)
+    value = document
+    if not post_abuse and "supplement" in document:
+        # Re-entering the initial boundary must never republish its older
+        # snapshot or consume an in-flight supplement's proposals.
+        load_review(output_dir)
+        value = document["supplement"]
+    if post_abuse:
+        _verify_transaction(document)
+        if _source_errors(current, document):
+            raise ReviewError("accepted architect source values changed")
+        if "supplement" not in document:
+            original_ids = {row["t_id"] for row in document["input"]["threats"]}
+            new_ids = sorted({row["t_id"] for row in current["threats"]} - original_ids)
+            document["supplement"] = _new_transaction(output_dir, current, cfg, concurrency, new_ids)
+        value = document["supplement"]
+        _validate(document)
+    if value["phase"] == "complete":
+        _verify_transaction(value)
+        if fingerprint(current) == value["manifest"]["input_sha256"]:
+            atomic_write_json(output_dir / ".threats-merged.json", value["snapshot"])
+        elif any(_source_errors(current, transaction) for transaction in review_transactions(document)):
+            raise ReviewError("accepted architect source values changed")
+        return None
+    if fingerprint(current) != value["manifest"]["input_sha256"]:
+        raise ReviewError("architect source changed during the review")
     _collect(output_dir, value)
     pending = [job for job in value["dispatch_jobs"] if job["status"] == "pending"]
     if pending:
@@ -383,7 +443,7 @@ def _advance_review(output_dir: Path, cfg: dict, concurrency: int) -> list[dict]
             target.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_json(target, _job_file(value, job))
             job["status"] = "dispatched"
-        _save(output_dir, value)
+        _save(output_dir, document)
         return [
             {
                 "job_id": job["job_id"],
@@ -405,7 +465,7 @@ def _advance_review(output_dir: Path, cfg: dict, concurrency: int) -> list[dict]
     value["phase"] = "complete"
     # Save the transaction before publishing. Re-entry can finish publication
     # from these exact bytes without repeating any dispatch.
-    _save(output_dir, value)
+    _save(output_dir, document)
     atomic_write_json(output_dir / ".threats-merged.json", value["snapshot"])
     return None
 
@@ -414,8 +474,8 @@ def _excluded_for(row: dict, reason: str) -> bool:
     return row.get("status") == "unreviewed" and row.get("reason") == reason
 
 
-def review_coverage(value: dict | None) -> dict:
-    """Coverage fields of the status receipt, derived from the saved transaction.
+def review_coverage(value: dict | None, *, finding_ids: set[str] | None = None) -> dict:
+    """Coverage of both transactions, reconciled with delivered IDs when supplied.
 
     A finding the evidence verifier refuted, or one below the register severity
     floor, is not in the report, so it needs no semantic review: it is reported
@@ -426,13 +486,23 @@ def review_coverage(value: dict | None) -> dict:
     reviewer left ``unresolved`` is a review result, not a gap: it is counted as
     ``unresolved`` and its reason reaches the report as a manual-review card
     (``model/emit_review_mitigations.py``)."""
-    all_outcomes = value["application"]["outcomes"] if value else []
+    transactions = review_transactions(value)
+    all_outcomes = [row for transaction in transactions for row in transaction["application"]["outcomes"]]
     refuted = sum(_excluded_for(row, "refuted") for row in all_outcomes)
     below_floor = sum(_excluded_for(row, "below_report_floor") for row in all_outcomes)
     outcomes = [
         row for row in all_outcomes if not (_excluded_for(row, "refuted") or _excluded_for(row, "below_report_floor"))
     ]
-    dispatch = (value or {}).get("dispatch_jobs") or []
+    if finding_ids is not None:
+        by_id = {row["t_id"]: row for row in outcomes}
+        outcomes = [
+            by_id.get(
+                tid,
+                {"t_id": tid, "status": "unreviewed", "assessment": "unreviewed", "remediation": "unreviewed"},
+            )
+            for tid in sorted(finding_ids)
+        ]
+    dispatch = [job for transaction in transactions for job in transaction.get("dispatch_jobs") or []]
     reviewed = sum(row["status"] == "accepted" for row in outcomes)
     unresolved = sum(
         row["status"] == "accepted" and "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
@@ -470,12 +540,14 @@ def project_model(output_dir: Path, model: dict, merged: dict) -> dict:
     value = load_review(output_dir)
     if value is None:
         return model
-    if _source_errors(merged, value):
-        raise ReviewError("accepted architect source values changed before rebuild")
-    with _validation_directory(value) as profile_dir:
-        return project_reviewed_mitigations(
-            model, value["application"], merged_snapshot=value["snapshot"], output_dir=profile_dir
-        )
+    for transaction in review_transactions(value):
+        if _source_errors(merged, transaction):
+            raise ReviewError("accepted architect source values changed before rebuild")
+        with _validation_directory(transaction) as profile_dir:
+            model = project_reviewed_mitigations(
+                model, transaction["application"], merged_snapshot=transaction["snapshot"], output_dir=profile_dir
+            )
+    return model
 
 
 def verify_model(output_dir: Path, model: dict) -> dict | None:
@@ -489,7 +561,8 @@ def verify_model(output_dir: Path, model: dict) -> dict | None:
     value = load_review(output_dir)
     if value is None:
         return None
-    errors = _source_errors(_read(output_dir / ".threats-merged.json"), value)
+    merged = _read(output_dir / ".threats-merged.json")
+    errors = []
     from model.build_threat_model_yaml import build_threats
 
     cfg = _read(output_dir / ".skill-config.json") if (output_dir / ".skill-config.json").exists() else {}
@@ -498,14 +571,16 @@ def verify_model(output_dir: Path, model: dict) -> dict | None:
     )
     eligible_ids = {row["id"] for row in eligible}
     delivered_ids = {row["id"] for row in model.get("threats", [])}
-    if any(row["t_id"] in eligible_ids - delivered_ids for row in value["application"]["accepted"]):
-        errors.append("an accepted correction disappeared above the report floor")
-    with _validation_directory(value) as profile_dir:
-        errors.extend(
-            reviewed_mitigation_errors(
-                model, value["application"], merged_snapshot=value["snapshot"], output_dir=profile_dir
+    for transaction in review_transactions(value):
+        errors.extend(_source_errors(merged, transaction))
+        if any(row["t_id"] in eligible_ids - delivered_ids for row in transaction["application"]["accepted"]):
+            errors.append("an accepted correction disappeared above the report floor")
+        with _validation_directory(transaction) as profile_dir:
+            errors.extend(
+                reviewed_mitigation_errors(
+                    model, transaction["application"], merged_snapshot=transaction["snapshot"], output_dir=profile_dir
+                )
             )
-        )
     if errors:
         raise ReviewError("accepted architect corrections were lost downstream")
     return value
@@ -522,11 +597,16 @@ def main(argv: list[str] | None = None) -> int:
         value = verify_model(args.output_dir, model)
         cfg_path = args.output_dir / ".skill-config.json"
         cfg = _read(cfg_path) if cfg_path.exists() else {}
-        if value is None and cfg.get("architect_review") and cfg.get("mode", "full") in {"full", "rebuild"}:
+        if (
+            value is None
+            and cfg.get("architect_review")
+            and cfg.get("mode", "full") in {"full", "rebuild", "incremental"}
+        ):
             raise ReviewError("required architect review transaction is missing")
         # The gate verifies preservation; review completeness is reported
         # separately, so an unavailable review still closes with status pass.
-        status = {"status": "pass", "review_kind": "semantic", **review_coverage(value)}
+        ids = {row["id"] for row in model.get("threats", [])} if value else None
+        status = {"status": "pass", "review_kind": "semantic", **review_coverage(value, finding_ids=ids)}
         validate_status(status)
         atomic_write_json(args.output_dir / ".architect-status.json", status)
         reason = f" ({status['reason']})" if status.get("reason") else ""

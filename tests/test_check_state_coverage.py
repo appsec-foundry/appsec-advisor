@@ -302,7 +302,7 @@ def test_render_text_needs_stage2_banner(tmp_path: Path):
     }
     out = cs._render_text(report, None)
     assert "Stage 1 is complete" in out
-    assert "--rerender" in out
+    assert "/appsec-advisor:appsec-analyzer --resume" in out and "--rerender" not in out
 
 
 def test_render_text_clean_skipped(tmp_path: Path):

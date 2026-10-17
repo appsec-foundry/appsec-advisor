@@ -380,25 +380,25 @@ def test_main_usage_and_success_output(tmp_path: Path, capsys) -> None:
     assert "total=1 annotated=1" in capsys.readouterr().out
 
 
-def test_external_boundary_ids_are_translated_through_the_delivery_renumber(tmp_path: Path) -> None:
-    """Triage records the pre-renumber catalogue ids; the delivered yaml carries
-    the contiguous ones `build_threat_model_yaml.renumber_trust_boundaries`
-    assigned. The §8 severity line must name the delivered id."""
+def test_external_boundary_ids_are_named_as_triage_recorded_them(tmp_path: Path) -> None:
+    """Triage ranks the delivered yaml, so the flag carries delivered IDs. The
+    renumber sidecar maps catalogue IDs that overlap them; applying it again
+    named tb-3 for a finding raised by tb-2 (juice-shop 2026-10-08)."""
     out = _write(
         tmp_path,
         [{"id": "T-001", "risk": "Medium", "effective_severity": "High", "cwe": "CWE-400"}],
     )
-    _write_external_reconciliation(out, boundary_ids=("tb-37", "tb-40"))
+    _write_external_reconciliation(out, boundary_ids=("tb-2",))
     (out / ".trust-boundary-renumber.json").write_text(
-        json.dumps({"schema_version": 1, "mapping": {"tb-37": "tb-1", "tb-40": "tb-4"}}),
+        json.dumps({"schema_version": 1, "mapping": {"tb-1": "tb-2", "tb-2": "tb-3", "tb-3": "tb-1"}}),
         encoding="utf-8",
     )
 
     esr.emit(out)
 
     note = _reload(out)[0]["severity_rationale"]
-    assert "confirmed internet ingress tb-1, tb-4" in note
-    assert "tb-37" not in note
+    assert "confirmed internet ingress tb-2" in note
+    assert "tb-3" not in note
 
 
 def _flag(threat_id: str, reasons: str) -> dict:

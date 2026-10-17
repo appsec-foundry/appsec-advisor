@@ -46,36 +46,6 @@ def _read_cache(out: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_written_cache_is_consumed_by_estimator(tmp_path: Path):
-    """End-to-end contract: what the writer writes, the reader must consume.
-
-    This is the test whose absence let the 2026-07-27 key-name drift through —
-    writer and reader agreed on nothing and neither side complained.
-    """
-    import runtime.estimate_duration as estimate_duration
-
-    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
-    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
-
-    # `parametric_total` is the formula estimate, used only as a hang guard.
-    hit = estimate_duration._last_run_cache(tmp_path, "full", "standard", 90.0)
-    assert hit is not None, "estimator did not accept the cache the writer produced"
-    stages, source = hit
-    assert source == "last_run_cache"
-    assert abs(stages["total"] - 100.0) < 1.0
-
-
-def test_field_names_match_what_the_estimator_reads(tmp_path: Path):
-    """Pin the four canonical names against the reader's literals."""
-    src = (REPO_ROOT / "scripts" / "runtime/estimate_duration.py").read_text(encoding="utf-8")
-    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH):
-        assert f'"{key}"' in src, f"{key} is not read by runtime/estimate_duration.py"
-    assert prb.KEY_SECONDS == "last_run_seconds"
-    assert prb.KEY_MODE == "last_run_mode"
-    assert prb.KEY_DEPTH == "last_run_depth"
-    assert prb.KEY_ISO == "last_run_iso"
-
-
 def test_field_names_match_baseline_state_carry_forward():
     """`baseline/baseline_state.py` carries these forward on rewrite; a name that drifts
     apart from that list gets silently wiped by the next baseline write."""
@@ -205,24 +175,6 @@ def test_no_temp_file_left_behind(tmp_path: Path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_the_written_cost_is_consumed_by_the_projection(tmp_path: Path, monkeypatch):
-    """Writer and reader have to agree on the key, the same way they already do
-    for the duration. A misspelled name would leave the projection silently
-    falling back to the parametric floor."""
-    import runtime.project_run_cost as project_run_cost
-
-    monkeypatch.setattr(
-        prb,
-        "_run_cost_usd",
-        lambda _output_dir: 29.59,
-    )
-    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
-    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
-
-    assert _read_cache(tmp_path)[prb.KEY_COST] == 29.59
-    assert project_run_cost.last_run_cost(tmp_path, "full", "standard") == 29.59
-
-
 def test_a_total_that_is_only_a_lower_bound_is_not_written(tmp_path: Path, monkeypatch):
     """A floor total cannot be told apart from a complete one once it is in the
     cache, and the next run would refuse or admit on a number it misreads."""
@@ -319,16 +271,3 @@ def test_a_result_without_a_usable_cost_writes_nothing(tmp_path: Path):
         assert prb.persist_cost_from_result(tmp_path, result) is None
     assert prb.persist_cost_from_result(tmp_path, tmp_path / "absent.json") is None
     assert not (tmp_path / ".appsec-cache" / "baseline.json").exists()
-
-
-def test_the_written_cost_is_what_the_projection_reads(tmp_path: Path):
-    """The key name is the whole contract: a misspelled one is indistinguishable
-    from a missing one, which is how the duration cache silently died once."""
-    prb = _load()
-    import runtime.project_run_cost as project_run_cost
-
-    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
-    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
-    prb.persist_cost_from_result(tmp_path, _write_result(tmp_path / "result.json", _result_object(7.25)))
-
-    assert project_run_cost.last_run_cost(str(tmp_path), "full", "standard") == 7.25

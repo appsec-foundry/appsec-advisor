@@ -96,7 +96,7 @@ from pathlib import Path
 # or the YAML is missing — preserves pre-M3.6 behaviour for callers
 # without a checkpoint on disk.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from shared.artifact_names import report_path  # noqa: E402
 
 try:
     import runtime.phase_budgets as phase_budgets  # type: ignore  # noqa: E402
@@ -137,8 +137,8 @@ _CLEANUP_TARGETS: tuple[str, ...] = (
     # Stage 4 (architect) status + repair plan.
     ".architect-status.json",
     ".architect-repair-plan.json",
-    # Hook-side completion marker, and the printed-summary record the closing
-    # Stop reviews (runtime/completion_relay.py).
+    # Hook-side completion marker, and the printed-summary record a hook shows
+    # (runtime/completion_relay.py).
     ".assessment-summary-emitted",
     ".completion-summary.json",
     # Phase 1 prior-findings cache (regenerated on every fresh start).
@@ -274,8 +274,14 @@ def _resolve_threshold(output_dir: Path, checkpoint: dict | None) -> int:
     Reads phase from ``checkpoint`` (already parsed by caller) and depth
     from the optional ``.skill-config.json`` sidecar. Falls back to
     ``HEARTBEAT_STALE_SECONDS`` (the depth-agnostic default) when either
-    is absent or the YAML loader is unavailable.
+    is absent or the YAML loader is unavailable. A ``stale_after=`` the
+    holder wrote into the lock outranks both, as in ``runtime/acquire_lock.py``.
     """
+    from runtime.acquire_lock import _read_stale_after
+
+    own = _read_stale_after(output_dir / LOCK_FILE)
+    if own is not None:
+        return own
     if phase_budgets is None:  # pragma: no cover
         return HEARTBEAT_STALE_SECONDS
     phase = (checkpoint or {}).get("phase") if checkpoint else None
@@ -327,7 +333,7 @@ def classify(output_dir: Path) -> dict:
             cp_phase == "10b"
             and cp_status == "completed"
             and cp_render == "true"
-            and not (output_dir / "threat-model.md").exists()
+            and not report_path(output_dir).exists()
         ):
             needs_stage2 = True
 
@@ -555,7 +561,7 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
         lines.append("")
         lines.append("⚠ Stage 1 is complete (phase=10b need_render=true) but threat-model.md is missing.")
         lines.append("  Stage 2 (composition) was never dispatched — Phase 1–10b work is still on disk.")
-        lines.append("  → Run  /appsec-advisor:create-threat-model --rerender to validate and render it.")
+        lines.append("  → Run  /appsec-advisor:appsec-analyzer --resume to continue the run.")
         lines.append("  → Running --rebuild will discard all Phase 1–10b results. Use --rebuild --force to confirm.")
     for r in report["reasons"]:
         lines.append(f"    • {r}")

@@ -1,0 +1,484 @@
+{
+  "schema_version": 2,
+  "trust_boundaries": [
+    {
+      "assumption": "Request-derived values never become MarsDB query operators or selectors.",
+      "assumption_legs": [
+        {
+          "condition": "Request-derived values passed to reviewsCollection and ordersCollection are never interpreted as MarsDB query operators or selector objects.",
+          "leg": "data-interpretation"
+        }
+      ],
+      "confidence": "confirmed",
+      "covers_components": [
+        "component-1f61b207923dbaf5",
+        "component-790db1fed70651aa"
+      ],
+      "evidence": [
+        {
+          "file": "data/mongodb.ts",
+          "line": 9
+        },
+        {
+          "file": "data/mongodb.ts",
+          "line": 10
+        }
+      ],
+      "from": "component-1f61b207923dbaf5",
+      "id": "tb-1",
+      "kind": "process",
+      "name": "Express server to embedded MarsDB",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "in-process",
+      "to": "component-790db1fed70651aa",
+      "transition": [
+        "data-access"
+      ]
+    },
+    {
+      "assumption": "Every query reaches SQLite through Sequelize parameter binding, never concatenated raw SQL.",
+      "assumption_legs": [
+        {
+          "condition": "Request-derived values reach SQLite only as bound parameters, never as concatenated SQL text.",
+          "leg": "data-interpretation"
+        }
+      ],
+      "confidence": "inferred",
+      "covers_components": [
+        "component-290ae722e9565831",
+        "component-b213d5ab01236933"
+      ],
+      "enforcement_point": "Sequelize parameter binding",
+      "evidence": [
+        {
+          "file": "models/index.ts",
+          "line": 30
+        }
+      ],
+      "from": "component-290ae722e9565831",
+      "id": "tb-2",
+      "kind": "process",
+      "name": "App to SQLite: Sequelize parameter binding",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "in-process",
+      "to": "component-b213d5ab01236933",
+      "transition": [
+        "data-access"
+      ]
+    },
+    {
+      "assumption": "Every state-changing or user-specific API route is registered behind security.isAuthorized() before its handler runs.",
+      "assumption_legs": [
+        {
+          "condition": "Request bodies and parameters on /api and /rest routes are validated before reaching handlers, models or Sequelize queries.",
+          "leg": "validation"
+        },
+        {
+          "condition": "Every user-specific route (baskets, cards, addresses, wallet, chat) is registered behind security.isAuthorized() and verifies the JWT signature.",
+          "leg": "authentication"
+        },
+        {
+          "condition": "Each object reference (basket id, card id, address id, order) is checked against the authenticated user id before access.",
+          "leg": "authorization"
+        }
+      ],
+      "confidence": "confirmed",
+      "covers_components": [
+        "component-1f61b207923dbaf5"
+      ],
+      "enforcement_point": "security.isAuthorized() route middleware",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 356
+        },
+        {
+          "file": "server.ts",
+          "line": 382
+        },
+        {
+          "file": "server.ts",
+          "line": 638
+        },
+        {
+          "file": "server.ts",
+          "line": 310
+        },
+        {
+          "file": "server.ts",
+          "line": 311
+        }
+      ],
+      "from": "external",
+      "id": "tb-3",
+      "kind": "network",
+      "name": "Browser to API: security.isAuthorized() middleware",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "component-1f61b207923dbaf5",
+      "transition": []
+    },
+    {
+      "assumption": "Every /rest/web3 request is treated as attacker-controlled and authorized server-side regardless of the Angular client.",
+      "assumption_legs": [
+        {
+          "condition": "Bodies of /rest/web3 submitKey, walletNFTVerify and walletExploitAddress are validated before use.",
+          "leg": "validation"
+        },
+        {
+          "condition": "State-affecting /rest/web3 routes require a verified caller credential, not just a client-side guard.",
+          "leg": "authentication"
+        },
+        {
+          "condition": "Web3 route handlers check the caller's right to trigger NFT mint/unlock state before acting.",
+          "leg": "authorization"
+        }
+      ],
+      "confidence": "inferred",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/keys.service.ts",
+          "line": 16
+        },
+        {
+          "file": "frontend/src/app/Services/keys.service.ts",
+          "line": 25
+        },
+        {
+          "file": "routes/redirect.ts",
+          "line": 16
+        },
+        {
+          "file": "routes/nftMint.ts",
+          "line": 41
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 15
+        }
+      ],
+      "from": "external",
+      "id": "tb-4",
+      "kind": "network",
+      "name": "Internet to Web3 routes: no single control identified",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "component-6ffadbc3868c2a3b",
+      "transition": []
+    },
+    {
+      "assumption": "Every authenticated auth/session route is registered behind security.isAuthorized() so a valid RS256-signed JWT is required.",
+      "assumption_legs": [
+        {
+          "condition": "Login, reset-password, 2FA and address/card request bodies are validated before reaching handlers or queries.",
+          "leg": "validation"
+        },
+        {
+          "condition": "Every state-changing /rest/2fa and /rest/user route except login and reset is registered behind isAuthorized().",
+          "leg": "authentication"
+        },
+        {
+          "condition": "Address, card and 2FA operations are checked against the authenticated subject's identity before access.",
+          "leg": "authorization"
+        }
+      ],
+      "confidence": "inferred",
+      "covers_components": [
+        "component-dff0840e0f4855be"
+      ],
+      "enforcement_point": "isAuthorized expressJwt middleware",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 46
+        },
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 37
+        },
+        {
+          "file": "routes/login.ts",
+          "line": 34
+        }
+      ],
+      "from": "external",
+      "id": "tb-5",
+      "kind": "network",
+      "name": "Browser to auth API: isAuthorized JWT middleware",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "component-dff0840e0f4855be",
+      "transition": []
+    },
+    {
+      "assumption": "Workflows triggered by external pushes and pull requests run without access to release or publishing secrets.",
+      "assumption_legs": [
+        {
+          "condition": "Workflow steps never interpolate PR-controlled values (branch names, titles) into run: shell scripts unsanitized.",
+          "leg": "validation"
+        },
+        {
+          "condition": "Only pushes by repository collaborators trigger ci.yml with secrets; fork PRs run without secrets.",
+          "leg": "authentication"
+        },
+        {
+          "condition": "release.yml GITHUB_TOKEN write access is reachable only from v* tag pushes by authorized maintainers.",
+          "leg": "authorization"
+        }
+      ],
+      "confidence": "confirmed",
+      "enforcement_point": "GitHub Actions pull_request trigger",
+      "evidence": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 14
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 3
+        }
+      ],
+      "from": "external",
+      "id": "tb-6",
+      "kind": "build",
+      "name": "External code into CI: pull_request trigger",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "build-pipeline",
+      "to": "component-31ebe1b93ddf60d5",
+      "transition": [
+        "operator"
+      ]
+    },
+    {
+      "assumption": "Every Socket.IO event payload is treated as untrusted input and validated before it influences server state.",
+      "assumption_legs": [
+        {
+          "condition": "Payloads of 'notification received' and verify* events are type- and shape-checked before use in findIndex, match or contains.",
+          "leg": "validation"
+        },
+        {
+          "condition": "Socket connections are only accepted from callers the server has identified, since the connection handler performs no auth check.",
+          "leg": "authentication"
+        },
+        {
+          "condition": "Events that mutate the shared notifications cache are permitted only for the socket that owns the notification.",
+          "leg": "authorization"
+        }
+      ],
+      "confidence": "confirmed",
+      "enforcement_point": "Socket.IO CORS origin option",
+      "evidence": [
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 20
+        },
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 23
+        }
+      ],
+      "from": "external",
+      "id": "tb-7",
+      "kind": "network",
+      "name": "Internet to WebSocket channel: Socket.IO CORS origin check",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "component-8c3a32ee53769307",
+      "transition": []
+    },
+    {
+      "assumption": "Every state-changing API route is rejected unless the request carries a valid server-verified session token for the acting user.",
+      "assumption_legs": [
+        {
+          "condition": "Bodies sent to /api/Addresss, /api/Cards and /rest/2fa/verify are schema-checked server-side before use.",
+          "leg": "validation"
+        },
+        {
+          "condition": "Requests to /api/Addresss, /api/Cards and /rest/2fa/* are accepted only with a valid server-verified token.",
+          "leg": "authentication"
+        },
+        {
+          "condition": "Address and card ids in the path are checked against the authenticated user before read or modification.",
+          "leg": "authorization"
+        }
+      ],
+      "confidence": "inferred",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/address.service.ts",
+          "line": 30
+        },
+        {
+          "file": "frontend/src/app/Services/payment.service.ts",
+          "line": 30
+        },
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 37
+        }
+      ],
+      "from": "external",
+      "id": "tb-8",
+      "kind": "network",
+      "name": "Internet to auth and session API",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "component-dff0840e0f4855be",
+      "transition": []
+    },
+    {
+      "assumption": "The OAuth access token is returned only to a redirect URI registered for the client ID, and the token is sent only to Google endpoints.",
+      "assumption_legs": [
+        {
+          "condition": "The access token is never placed in URLs that leak it, since userinfo is called with access_token as a query string parameter.",
+          "leg": "egress-content"
+        },
+        {
+          "condition": "The authorization redirect and userinfo calls go only to accounts.google.com and www.googleapis.com, with redirect_uri limited to configured authorizedRedirects.",
+          "leg": "egress-destination"
+        },
+        {
+          "condition": "The token and profile returned by Google are treated as untrusted input and verified before they establish a local session.",
+          "leg": "response-trust"
+        }
+      ],
+      "confidence": "confirmed",
+      "enforcement_point": "Google OAuth redirect URI registration",
+      "evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 31
+        },
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 148
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 68
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "tb-9",
+      "kind": "third-party",
+      "name": "Google OAuth sign-in: redirect URI registration",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "external",
+      "transition": [
+        "operator"
+      ]
+    },
+    {
+      "assumption": "Only content that is safe to disclose to the LLM provider is placed in prompts, and model output is treated as untrusted.",
+      "assumption_legs": [
+        {
+          "condition": "User messages and the system prompt sent via createOpenAICompatible contain no secrets or data the caller may not disclose.",
+          "leg": "egress-content"
+        },
+        {
+          "condition": "application.chatBot.llmApiUrl points only to the intended trusted LLM endpoint.",
+          "leg": "egress-destination"
+        },
+        {
+          "condition": "Model output and tool-call arguments (e.g. generateCoupon discount) are validated server-side before being acted upon.",
+          "leg": "response-trust"
+        }
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        {
+          "file": "routes/chat.ts",
+          "line": 108
+        },
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 24
+        }
+      ],
+      "from": "component-1f61b207923dbaf5",
+      "id": "tb-10",
+      "kind": "network",
+      "name": "Chatbot to LLM provider egress",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "external",
+      "transition": []
+    },
+    {
+      "assumption": "Contract events received from the Alchemy RPC are treated as untrusted input before they drive challenge state.",
+      "assumption_legs": [
+        {
+          "condition": "Nothing from user requests is sent to the RPC beyond fixed contract addresses and event names.",
+          "leg": "egress-content"
+        },
+        {
+          "condition": "The WebSocket provider always connects to the hardcoded eth-sepolia.g.alchemy.com host with no request-derived URL component.",
+          "leg": "egress-destination"
+        },
+        {
+          "condition": "Minter and exploiter addresses from NFTMinted and ContractExploited events are only compared to stored sets before solving challenges.",
+          "leg": "response-trust"
+        }
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 18
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 20
+        }
+      ],
+      "from": "component-6ffadbc3868c2a3b",
+      "id": "tb-11",
+      "kind": "third-party",
+      "name": "Web3 surface to Alchemy Sepolia RPC",
+      "resolution_status": "resolved",
+      "sources": [
+        "detected"
+      ],
+      "surface": "network",
+      "to": "external",
+      "transition": [
+        "operator"
+      ]
+    }
+  ]
+}

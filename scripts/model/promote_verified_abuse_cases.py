@@ -8,7 +8,12 @@ a normal merged threat only when that verifier confirmed the specific step.
 
 The case author supplies the classification and remediation in
 ``chain[].finding``.  Keeping that metadata declarative prevents this script
-from guessing a CWE, severity, or fix from a regex match.  It updates both
+from guessing a CWE, severity, or fix from a regex match.
+
+A business (descriptive) case is promoted at its cited step when the chain is
+fully viable, or as an unproven finding when it is inconclusive, no step was
+blocked or refuted, and a decided step cites admitted code with no control
+found.  Its classification comes from the case's optional ``finding`` block.  It updates both
 abuse sidecars with the assigned T-ID, so triage, mitigation synthesis, and
 the §9 renderer consume the same binding.
 """
@@ -30,9 +35,11 @@ import sys
 from pathlib import Path
 
 import yaml
-from shared._finding_state import is_refuted
+from shared._finding_state import is_refuted, record_evidence
+from shared._register_titles import HEADING_SOFT_MAX, clamp_mitigation_title, clamp_title
 
 from model.finding_intake import apply_intake
+from model.match_abuse_cases import _configured_repo_root, _evidence_problem, _finding_file
 from model.merge_threats import _evidence_identity_key
 from model.reclassify_components import resolve_owner  # canonical registry resolver
 
@@ -91,6 +98,106 @@ def _metadata(step: dict) -> dict | None:
         "mitigation_title": mitigation_title,
         "remediation": str(finding.get("remediation") or "").strip(),
     }
+
+
+# A business case states no classification unless its author adds one.
+_DESCRIPTIVE_DEFAULTS = {
+    "cwe": "CWE-840",
+    "stride": "Elevation of Privilege",
+    "severity": "Medium",
+}
+_UNPROVEN_TIER = "insecure-practice"
+_CONFIRMED_TIER = "confirmed-exploitable"
+
+
+def _descriptive_promotion(case_match: dict, verdict: dict, live_ids: set) -> tuple[dict, str] | None:
+    """The step verdict a business case is promoted at and its tier, or None.
+
+    A fully viable case is confirmed at its first confirmed step. An
+    inconclusive case without a blocked or refuted step is an indication when
+    a decided step cites code that ``finalize`` admitted and names no control.
+    A case the verifier bound to a live finding is not promoted.
+    """
+    steps = [step for step in verdict.get("step_verdicts") or [] if isinstance(step, dict)]
+    # The verifier already bound the case to a live finding it cited; that
+    # finding carries the result, whatever weakness family the case defaults to.
+    if any(step.get("matched_finding_id") in live_ids for step in steps):
+        return None
+    chain = verdict.get("chain_verdict")
+    if chain == "fully_viable":
+        wanted, tier = "confirmed", _CONFIRMED_TIER
+    elif chain == "inconclusive" and not any(step.get("verdict") in {"blocked", "refuted"} for step in steps):
+        wanted, tier = "inconclusive", _UNPROVEN_TIER
+    else:
+        return None
+    for step in steps:
+        evidence = step.get("evidence")
+        if (
+            step.get("verdict") == wanted
+            and step.get("state") != "pending"
+            and (tier == _CONFIRMED_TIER or not step.get("controls_found"))
+            and isinstance(evidence, dict)
+            and evidence.get("file")
+        ):
+            return step, tier
+    return None
+
+
+def _descriptive_metadata(case: dict) -> dict:
+    declared = case.get("finding") if isinstance(case.get("finding"), dict) else {}
+    meta = {key: declared.get(key) or default for key, default in _DESCRIPTIVE_DEFAULTS.items()}
+    meta["title"] = clamp_title(str(case.get("title") or "Business abuse case"), HEADING_SOFT_MAX)
+    # Mitigations group by title, so a default names this case's rule rather
+    # than folding unrelated business findings into one mitigation.
+    meta["mitigation_title"] = clamp_mitigation_title(
+        str(declared.get("mitigation_title") or f"Prevent: {case.get('title') or case.get('id')}")
+    )
+    meta["remediation"] = ""
+    return meta
+
+
+_UNSETTLED_EVIDENCE = {None, "", "ambiguous", "unchecked"}
+
+
+def _verify_bound_findings(matches: list, verdict_by_case: dict, threats: list, repo_root: Path | None) -> list[str]:
+    """Verify findings whose bound step the abuse-case verifier confirmed (AC-11).
+
+    The cited excerpt must pass the same gate that admits descriptive
+    evidence, at the finding's own file. Only ambiguous or unchecked evidence
+    changes; the exploitability tier is left alone.
+    """
+    by_id: dict[str, dict] = {}
+    for threat in threats:
+        if isinstance(threat, dict):
+            for key in ("t_id", "f_id", "id"):
+                if threat.get(key):
+                    by_id.setdefault(str(threat[key]), threat)
+    verified: list[str] = []
+    for case_match in matches:
+        if not isinstance(case_match, dict):
+            continue
+        verdict = verdict_by_case.get(case_match.get("abuse_case_id"))
+        if not isinstance(verdict, dict):
+            continue
+        steps = {v.get("step"): v for v in verdict.get("step_verdicts") or [] if isinstance(v, dict)}
+        for step_match in case_match.get("step_matches") or []:
+            if not isinstance(step_match, dict):
+                continue
+            finding = by_id.get(str(step_match.get("matched_finding_id") or ""))
+            step_verdict = steps.get(step_match.get("step")) or {}
+            evidence = step_verdict.get("evidence")
+            if (
+                finding is None
+                or step_verdict.get("verdict") != "confirmed"
+                or finding.get("evidence_check") not in _UNSETTLED_EVIDENCE
+                or not isinstance(evidence, dict)
+                or evidence.get("file") != _finding_file(finding)
+                or _evidence_problem(evidence, repo_root)
+            ):
+                continue
+            record_evidence(finding, "verified", "llm-verified")
+            verified.append(str(finding.get("t_id") or finding.get("id")))
+    return verified
 
 
 def _component_for(file_path: str, components: list) -> tuple[str, str]:
@@ -180,6 +287,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         raise ValueError("abuse-case promotion sidecars have an unexpected shape")
 
     components = _registered_components(output_dir)
+    repo_root = _configured_repo_root(output_dir)
     verdict_by_case = {v.get("abuse_case_id"): v for v in verdicts if isinstance(v, dict)}
     existing = {
         (
@@ -191,6 +299,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         for t in threats
         if isinstance(t, dict) and t.get("abuse_case_id") and isinstance(t.get("evidence"), dict)
     }
+    live_ids = {t.get("t_id") for t in threats if isinstance(t, dict) and t.get("t_id") and not is_refuted(t)}
     promoted: list[str] = []
     skipped_metadata: list[str] = []
     bindings_changed = False
@@ -203,6 +312,39 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         if not case_id or not isinstance(verdict, dict):
             continue
         verdict_steps = {v.get("step"): v for v in verdict.get("step_verdicts") or [] if isinstance(v, dict)}
+        # (step match, step verdict, evidence, metadata, tier, scenario) per promotable step.
+        candidates: list[tuple[dict, dict, dict, dict, str, str]] = []
+        if case_match.get("kind") == "descriptive":
+            # The verifier binds a business case to the findings it cites; the
+            # match sidecar carries that binding to triage and the report, as
+            # the matcher's binding does for a technical case.
+            for step_match in case_match.get("step_matches") or []:
+                cited = (verdict_steps.get(step_match.get("step")) or {}).get("matched_finding_id")
+                if isinstance(step_match, dict) and cited in live_ids and step_match.get("matched_finding_id") != cited:
+                    step_match["matched_finding_id"] = cited
+                    step_match["match_basis"] = "finding"
+                    bindings_changed = True
+            promotion = _descriptive_promotion(case_match, verdict, live_ids)
+            step_match = (
+                next(
+                    (
+                        s
+                        for s in case_match.get("step_matches") or []
+                        if isinstance(s, dict) and s.get("step") == promotion[0].get("step")
+                    ),
+                    None,
+                )
+                if promotion
+                else None
+            )
+            if promotion and step_match is not None:
+                step_verdict, tier = promotion
+                case = case_match.get("case") if isinstance(case_match.get("case"), dict) else {}
+                # The verifier's reason names the code behavior; the check is the fallback.
+                scenario = str(step_verdict.get("reason") or step_match.get("label") or case.get("title") or "")
+                candidates.append(
+                    (step_match, step_verdict, step_verdict["evidence"], _descriptive_metadata(case), tier, scenario)
+                )
         for step_match in case_match.get("step_matches") or []:
             if not isinstance(step_match, dict) or step_match.get("match_basis") != "source_probe":
                 continue
@@ -210,10 +352,14 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             step_verdict = verdict_steps.get(step_no)
             if not isinstance(step_verdict, dict) or step_verdict.get("verdict") != "confirmed":
                 continue
+            # The verifier's location wins only when its excerpt is found there;
+            # otherwise the probe's own source hit stands, as for an omission.
             verifier_evidence = step_verdict.get("evidence")
             evidence = (
                 verifier_evidence
-                if isinstance(verifier_evidence, dict) and verifier_evidence.get("file")
+                if isinstance(verifier_evidence, dict)
+                and verifier_evidence.get("file")
+                and not _evidence_problem(verifier_evidence, repo_root)
                 else step_match.get("evidence") or {}
             )
             if not isinstance(evidence, dict) or not evidence.get("file"):
@@ -223,9 +369,14 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             if meta is None:
                 skipped_metadata.append(f"{case_id} step {step_no}")
                 continue
+            scenario = str((step or {}).get("description") or (step or {}).get("label") or meta["title"])
+            candidates.append((step_match, step_verdict, evidence, meta, _CONFIRMED_TIER, scenario))
+
+        for step_match, step_verdict, evidence, meta, tier, scenario in candidates:
+            step_no = step_match.get("step")
             key = (case_id, step_no, str(evidence.get("file")), evidence.get("line"))
             t_id = existing.get(key)
-            basis = "promoted_source_probe"
+            basis = "promoted_source_probe" if step_match.get("match_basis") == "source_probe" else "promoted"
             if not t_id:
                 # A finding already at the same code location and weakness family
                 # is the same finding: bind the step to it instead of promoting a
@@ -243,7 +394,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                 threat = {
                     "t_id": t_id,
                     "title": meta["title"],
-                    "scenario": str((step or {}).get("description") or (step or {}).get("label") or meta["title"]),
+                    "scenario": scenario,
                     "stride": meta["stride"],
                     "risk": meta["severity"],
                     "likelihood": meta["severity"],
@@ -252,20 +403,21 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                     "evidence": {"file": str(evidence["file"]), "line": evidence.get("line")},
                     "source": "source-scan",
                     "architectural_violation": False,
-                    "evidence_check": "verified",
-                    # The abuse-case verifier confirmed this step.
-                    "evidence_basis": "llm-verified",
+                    # The abuse-case verifier read this location; an indication
+                    # stays ambiguous like every other unproven finding.
+                    "evidence_check": "verified" if tier == _CONFIRMED_TIER else "ambiguous",
+                    "evidence_basis": "llm-verified" if tier == _CONFIRMED_TIER else "ambiguous",
                     "abuse_case_id": case_id,
                     "abuse_case_step": step_no,
                     "source_scan_ref": f"{case_id}:{step_no}",
                     "mitigation_title": meta["mitigation_title"],
                 }
-                # A verified abuse-case step claims a proven sink.
+                # A confirmed step claims a proven sink; an indication stays unproven.
                 apply_intake(
                     threat,
                     dispatch_component=component_id,
                     component_name=component_name,
-                    claimed_tier="confirmed-exploitable",
+                    claimed_tier=tier,
                 )
                 if meta["remediation"]:
                     threat["remediation"] = {"how": meta["remediation"], "effort": "Medium"}
@@ -283,11 +435,12 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             if isinstance(step, dict) and step.get("matched_finding_id")
         ]
 
-    if promoted or bindings_changed:
+    verified = _verify_bound_findings(matches, verdict_by_case, threats, repo_root)
+    if promoted or bindings_changed or verified:
         _write(merged_path, merged)
         _write(matches_path, matches_doc)
         _write(verdicts_path, verdicts_doc)
-    notes = [f"promoted {len(promoted)} confirmed source-probe finding(s)"]
+    notes = [f"promoted {len(promoted)} abuse-case finding(s); verified {len(verified)} bound finding(s)"]
     if promoted and not components:
         notes.append(
             "component registry unavailable (no threat-model.yaml) — promoted finding(s) "

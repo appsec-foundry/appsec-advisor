@@ -60,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from analyzers.architect_review_runtime import open_decisions  # noqa: E402
 from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
 from shared._finding_state import review_before_fix  # noqa: E402
+from shared._register_titles import clamp_mitigation_title  # noqa: E402
 
 from model.emit_finding_fix_mitigations import _threat_ids_with_real_mitigation, after_review_priority  # noqa: E402
 
@@ -332,6 +333,7 @@ def _synthesize_fix_mitigations(
             continue
 
         title, how = _resolve_remediation(t, iac_index)
+        title = clamp_mitigation_title(title)
         sev = t.get("risk") or "Medium"
         priority = _SEV_TO_PRI.get(sev, "P3")
         if review_before_fix(t, open_decisions.get(tid)):

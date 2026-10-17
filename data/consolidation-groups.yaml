@@ -11,9 +11,10 @@
 # component keeps its own finding. Every folded route remains an `instances[]`
 # entry on the survivor.
 #
-# SQL injection and XSS use require_shared_sink: the same CWE and component
-# alone do not establish one defect. Require the same source sink or an explicit
-# common control scope, and retain each instance's evidence and scenario.
+# SQL injection, XSS and IDOR use require_shared_sink: the same CWE and component
+# alone do not establish one defect. Require an explicit common control scope,
+# else the same data object (`object_ref`), else the same source sink, and retain
+# each instance's evidence and scenario.
 #
 # Matching: a threat joins the FIRST group whose `match_any` has an entry where
 # ALL present predicates hold. Predicates (all optional, AND within one entry):
@@ -31,6 +32,8 @@
 #        hatch for the severity-zone / distinct-flow exceptions (a field that is
 #        absent on the threat is a no-op).
 # title: the consolidated survivor's title (replaces per-file titles).
+# title_qualifier_field: a threat field whose value, shared by every member of
+#        a bucket, is appended in parentheses so survivors stay distinguishable.
 
 groups:
   # Tokens read without any signature check and verifiers that check a signature
@@ -81,10 +84,15 @@ groups:
       - cwe: [CWE-306, CWE-862, CWE-284]
         file_glob: ['**/registerWebsocketEvents.*', '**/* websocket*.*', '**/*socket*.*']
 
+  # Owner-ID and object-lookup sinks on different data objects are different
+  # fixes, and so are separate sinks with no resolvable object. Fold only the
+  # sinks that query the same object (object_ref), and name it in the title.
   - id: idor-object-authz
     title: "Insecure Direct Object Reference"
     scope: cross-component
     cross_component_scope_field: control_scope
+    require_shared_sink: true
+    title_qualifier_field: object_ref
     match_any:
       - cwe: [CWE-639]
 

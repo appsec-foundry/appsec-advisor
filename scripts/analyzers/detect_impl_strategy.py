@@ -32,10 +32,11 @@ from shared._atomic_io import atomic_write_json
 from shared._finding_state import is_refuted
 from shared._path_guard import is_safe_to_read, run_path_arg
 
-from analyzers.source_auth_scanner import _without_js_comments
+from analyzers.source_auth_scanner import _JS_LEXEME, _without_js_comments
 from analyzers.weakness_signals import production_path, validate_document
 
 _HERE = Path(__file__).resolve().parents[1]
+# Per weakness class: vetted libraries, bespoke source patterns and the central control they bypass.
 _CATALOG = _HERE.parent / "data" / "security-libraries.yaml"
 
 # Source extensions worth grepping for bespoke patterns (JS/TS ecosystems where
@@ -57,6 +58,8 @@ _EXCLUDE_DIRS = {
     "codefixes",
 }
 _MAX_FILE_BYTES = 2_000_000
+# Source sites kept per weakness class; a few sites show the practice, more add no signal.
+_BESPOKE_EVIDENCE_CAP = 5
 
 
 def _load_catalog() -> dict[str, Any]:
@@ -67,6 +70,11 @@ def _load_catalog() -> dict[str, Any]:
     except Exception:  # noqa: BLE001 — missing/broken catalog → no-op
         return {}
     return doc if isinstance(doc, dict) else {}
+
+
+# ================================================================ repository inputs
+# Production JS/TS sources and package.json files only: test, example and excluded directories are skipped, and
+# every file passes the path guard, so a symlink cannot pull in content from outside the repository.
 
 
 def _iter_source_files(repo_root: Path):
@@ -109,7 +117,9 @@ def collect_dependencies(repo_root: Path) -> set[str]:
     return deps
 
 
-_BESPOKE_EVIDENCE_CAP = 5
+# ================================================================ bespoke-pattern scan
+# Matches each catalog bespoke pattern against comment-free source. A match inside a string literal is data, not
+# code, and is skipped. Each class keeps its first sites in file walk order, up to _BESPOKE_EVIDENCE_CAP.
 
 
 def _sanitized_html_alias(text: str, match: re.Match) -> bool:
@@ -130,22 +140,28 @@ def _sanitized_html_alias(text: str, match: re.Match) -> bool:
     return bool(re.fullmatch(r"(?:DOMPurify\.sanitize|sanitizeHtml)\([^;\n]+\)", last[1].strip()))
 
 
+def _read_source(path: Path) -> str | None:
+    """The file without JS comments; ``None`` when it is too large or unreadable."""
+    try:
+        if path.stat().st_size > _MAX_FILE_BYTES:
+            return None
+        return _without_js_comments(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+
+
 def _scan_domains(repo_root: Path, domains: dict) -> dict[str, list[dict]]:
     """Read each production source once and retain bounded, deterministic sites."""
-    from analyzers.source_auth_scanner import _JS_LEXEME
-
     compiled = {
         name: [re.compile(pattern) for pattern in spec.get("bespoke_patterns", [])] for name, spec in domains.items()
     }
     evidence: dict[str, list[dict]] = {name: [] for name in domains}
     for path in _iter_source_files(repo_root):
-        try:
-            if path.stat().st_size > _MAX_FILE_BYTES:
-                continue
-            text = _without_js_comments(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
+        text = _read_source(path)
+        if text is None:
             continue
         literals = [(m.start(), m.end()) for m in _JS_LEXEME.finditer(text)]
+        rel = path.relative_to(repo_root).as_posix()
         for name, patterns in compiled.items():
             sites = evidence[name]
             if len(sites) >= _BESPOKE_EVIDENCE_CAP:
@@ -156,7 +172,7 @@ def _scan_domains(repo_root: Path, domains: dict) -> dict[str, list[dict]]:
                     continue
                 if name == "output_xss_csp" and _sanitized_html_alias(text, match):
                     continue
-                site = {"file": path.relative_to(repo_root).as_posix(), "line": text.count("\n", 0, match.start()) + 1}
+                site = {"file": rel, "line": text.count("\n", 0, match.start()) + 1}
                 if site not in sites:
                     sites.append(site)
                 if len(sites) >= _BESPOKE_EVIDENCE_CAP:
@@ -164,13 +180,9 @@ def _scan_domains(repo_root: Path, domains: dict) -> dict[str, list[dict]]:
     return evidence
 
 
-def _scan_bespoke(repo_root: Path, patterns: list[str]) -> tuple[bool, list[dict[str, Any]]]:
-    evidence = _scan_domains(repo_root, {"domain": {"bespoke_patterns": patterns}})["domain"]
-    return bool(evidence), evidence
-
-
-def _bespoke_hit(repo_root: Path, patterns: list[str]) -> bool:
-    return _scan_bespoke(repo_root, patterns)[0]
+# ================================================================ strategy per weakness class
+# The strategy names how a class is implemented: vetted library only, library plus bespoke code, bespoke code
+# only, or neither. The weakness reconciler reads it from .impl-strategy.json.
 
 
 def _classify(vetted_found: list[str], bespoke_hit: bool) -> str:
@@ -214,6 +226,11 @@ def build_strategy_map(repo_root: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
+# ================================================================ implementation design signals
+# One IMPL-STRATEGY signal per class with bespoke code and a catalogued central control. It describes a practice
+# at concrete sites (REQ-MOD-002), never the absence of a control across the application.
+
+
 def build_impl_design_signals(
     strategy_map: dict[str, dict[str, Any]], catalog: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
@@ -253,17 +270,32 @@ def build_impl_design_signals(
     return signals
 
 
-def emit_artifacts(repo_root: Path, out_dir: Path, threats: list[dict] | None = None) -> tuple[dict, list[dict]]:
-    """Write validated observations; each invocation replaces stale run state."""
-    strategies = build_strategy_map(repo_root)
+# ================================================================ reconciliation with findings and output
+# After triage the merger passes the findings. A site whose finding verification refuted (same CWE, file and
+# line) is dropped and the class is classified again; findings of the signal's CWE at its sites supply the
+# affected components and instance ids.
+
+
+def _evidence_items(threat: dict) -> list:
+    """A finding's evidence as a list; a single evidence mapping is accepted too."""
+    evidence = threat.get("evidence") or []
+    return [evidence] if isinstance(evidence, dict) else evidence
+
+
+def _refuted_sites(threats: list[dict] | None) -> set[tuple]:
+    """(cwe, file, line) of every evidence site of a refuted finding."""
     refuted = set()
     for threat in threats or []:
-        if not is_refuted(threat):
-            continue
-        evidence = threat.get("evidence") or []
-        if isinstance(evidence, dict):
-            evidence = [evidence]
-        refuted.update((threat.get("cwe"), e.get("file"), e.get("line")) for e in evidence if isinstance(e, dict))
+        if is_refuted(threat):
+            refuted.update(
+                (threat.get("cwe"), e.get("file"), e.get("line"))
+                for e in _evidence_items(threat)
+                if isinstance(e, dict)
+            )
+    return refuted
+
+
+def _drop_refuted_evidence(strategies: dict[str, dict[str, Any]], refuted: set[tuple]) -> None:
     domains = _load_catalog().get("domains") or {}
     for name, entry in strategies.items():
         if entry.get("bespoke_evidence"):
@@ -273,25 +305,33 @@ def emit_artifacts(repo_root: Path, out_dir: Path, threats: list[dict] | None = 
             ]
             entry["bespoke_hit"] = bool(entry["bespoke_evidence"])
             entry["strategy"] = _classify(entry["vetted_libs_found"], entry["bespoke_hit"])
+
+
+def _attach_findings(signal: dict[str, Any], threats: list[dict] | None) -> None:
+    """Set the components and ids of unrefuted findings with the signal's CWE at one of its sites."""
+    sites = {(e["file"], e["line"]) for e in signal["practice_evidence"]}
+    owners = set()
+    ids = []
+    for threat in threats or []:
+        if threat.get("cwe") != signal["cwe"] or is_refuted(threat):
+            continue
+        if not any((e.get("file"), e.get("line")) in sites for e in _evidence_items(threat) if isinstance(e, dict)):
+            continue
+        if component := threat.get("component_id") or threat.get("component"):
+            owners.add(component)
+        if tid := threat.get("t_id") or threat.get("id"):
+            ids.append(tid)
+    signal["affected_components"] = sorted(owners)
+    signal["instance_ids"] = sorted(set(ids))
+
+
+def emit_artifacts(repo_root: Path, out_dir: Path, threats: list[dict] | None = None) -> tuple[dict, list[dict]]:
+    """Write validated observations; each invocation replaces stale run state."""
+    strategies = build_strategy_map(repo_root)
+    _drop_refuted_evidence(strategies, _refuted_sites(threats))
     signals = build_impl_design_signals(strategies)
     for signal in signals:
-        sites = {(e["file"], e["line"]) for e in signal["practice_evidence"]}
-        owners = set()
-        ids = []
-        for threat in threats or []:
-            evidence = threat.get("evidence") or []
-            if isinstance(evidence, dict):
-                evidence = [evidence]
-            if threat.get("cwe") != signal["cwe"] or is_refuted(threat):
-                continue
-            if not any((e.get("file"), e.get("line")) in sites for e in evidence if isinstance(e, dict)):
-                continue
-            if component := threat.get("component_id") or threat.get("component"):
-                owners.add(component)
-            if tid := threat.get("t_id") or threat.get("id"):
-                ids.append(tid)
-        signal["affected_components"] = sorted(owners)
-        signal["instance_ids"] = sorted(set(ids))
+        _attach_findings(signal, threats)
     strategy_doc = {"version": 1, "strategies": strategies}
     signal_doc = {"version": 1, "design_signals": signals}
     validate_document(strategy_doc, "impl-strategy")

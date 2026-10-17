@@ -6,16 +6,12 @@ The shipped test_security_steering.py drives the whole module as a subprocess
 telemetry failure). These tests import the module's *functions* directly and
 exercise those branches. They pin current behavior only — no producer edits.
 
-Import note: the module has top-level code that reads stdin and calls
-sys.exit(0). All helper functions are defined *before* that block, so we feed a
-trivial stdin payload and swallow the SystemExit during import; the resulting
-module object still exposes every helper.
+The hook logic runs only under ``__main__``, so importing the module has no
+side effects.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import io
 import json
 import sys
 from pathlib import Path
@@ -26,27 +22,10 @@ REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "analyzers/security_steering.py"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
-def _load_module():
-    if str(SCRIPTS_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPTS_DIR))
-    real_stdin = sys.stdin
-    sys.stdin = io.StringIO('{"prompt": ""}')
-    try:
-        spec = importlib.util.spec_from_file_location("analyzers.security_steering", SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["analyzers.security_steering"] = module
-        try:
-            spec.loader.exec_module(module)
-        except SystemExit:
-            pass  # top-level _emit({}) on the empty prompt — expected
-    finally:
-        sys.stdin = real_stdin
-    return module
-
-
-ss = _load_module()
-
+import analyzers.security_steering as ss  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # _log / _verbose (line 93)
@@ -208,6 +187,24 @@ def test_load_config_defaults_when_no_file(tmp_path, monkeypatch):
     assert cfg["enabled"] is False
     assert cfg["code_keywords"] == set(ss._DEFAULT_CODE)
     assert cfg["topics"] == {}
+
+
+def test_load_config_applies_org_profile_when_no_file(tmp_path, monkeypatch):
+    """An unreadable steering_keywords.json must not hide the org profile:
+    activation and the org's own baseline still apply."""
+    root = tmp_path / "empty-plugin"
+    root.mkdir()
+    monkeypatch.setattr(ss, "_plugin_roots", lambda: [str(root)])
+    monkeypatch.setattr(
+        ss,
+        "_load_org_profile_coach",
+        lambda: {"enabled_by_default": True, "baseline": "Org baseline text"},
+    )
+    monkeypatch.delenv("APPSEC_COACH", raising=False)
+    cfg = ss._load_config()
+    assert cfg["_org_profile_security_coach"]["enabled_by_default"] is True
+    assert cfg["baseline"] == "Org baseline text"
+    assert cfg["code_keywords"] == set(ss._DEFAULT_CODE)
 
 
 def test_load_config_old_schema_code_action_strong(tmp_path, monkeypatch):
@@ -393,10 +390,22 @@ def test_assemble_requirement_missing_priority_uses_dash():
 # ---------------------------------------------------------------------------
 
 
-def test_log_coach_event_writes_line(tmp_path, monkeypatch):
+def _assessment_checkout(tmp_path, monkeypatch):
+    """A checkout in ``tmp_path`` whose external assessment directory exists; returns that directory."""
+    from shared.assessment_location import application_directory
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
     monkeypatch.chdir(tmp_path)
+    directory = application_directory(tmp_path)
+    directory.mkdir(parents=True)
+    return directory
+
+
+def test_log_coach_event_writes_line(tmp_path, monkeypatch):
+    directory = _assessment_checkout(tmp_path, monkeypatch)
     ss._log_coach_event(["auth", "_legacy"], ["SEC-1"], 42, "the prompt")
-    log = tmp_path / "docs" / "security" / ".hook-events.log"
+    log = directory / ".hook-events.log"
     assert log.is_file()
     content = log.read_text()
     assert "COACH_INJECTED" in content
@@ -404,21 +413,29 @@ def test_log_coach_event_writes_line(tmp_path, monkeypatch):
     assert "req_ids=SEC-1" in content
 
 
+def test_log_coach_event_never_creates_a_directory_in_the_checkout(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    monkeypatch.chdir(tmp_path)
+    ss._log_coach_event(["auth"], [], 0, "p")
+    assert not (tmp_path / "docs").exists() and not (tmp_path / "_data").exists()
+
+
 def test_log_coach_event_swallows_errors(monkeypatch):
-    """A makedirs failure must not raise (lines 410-411)."""
+    """A failing lookup must not raise."""
 
     def boom(*a, **k):
         raise OSError("read-only fs")
 
-    monkeypatch.setattr(ss.os, "makedirs", boom)
+    monkeypatch.setattr(ss, "_assessment_directory", boom)
     # Must not raise.
     ss._log_coach_event(["auth"], [], 0, "p")
 
 
 def test_log_coach_event_empty_topics_and_reqs(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    directory = _assessment_checkout(tmp_path, monkeypatch)
     ss._log_coach_event([], [], 0, "p")
-    content = (tmp_path / "docs" / "security" / ".hook-events.log").read_text()
+    content = (directory / ".hook-events.log").read_text()
     assert "topics=-" in content
     assert "req_ids=-" in content
 

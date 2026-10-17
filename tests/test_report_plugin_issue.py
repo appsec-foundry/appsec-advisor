@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import jsonschema
@@ -337,21 +336,6 @@ def test_normal_cleanup_preserves_support_draft_and_deferred_input(run):
     assert (run.output / ".run-issues.json").exists()
     assert (run.output / support.INPUT).exists()
     assert (run.output / support.DRAFT).exists()
-
-
-def test_skill_wires_two_consents_and_failure_offer():
-    root = Path(support.__file__).resolve().parents[2]
-    skill = (root / "skills/report-error/SKILL.md").read_text()
-    assert "REPORT_ERROR_CONSENT=true" in skill
-    assert "orchestrator/wait_agent_calls.py" in skill
-    assert "Repeat the identical command on exit 75" in skill
-    assert "On exit 1 or any other error, stop" in skill
-    assert "Earlier investigation consent does not answer this question" in skill
-    assert "--approved-sha256 <digest-from-approved-preview>" in skill
-    assert "never diagnose, prompt, or publish" in skill
-    completion = (root / "skills/create-threat-model/SKILL-thin-completion.md").read_text()
-    assert "--stage post-qa --keep-run-issues" in completion
-    assert "After termination, follow the same `report-error --offer`" in completion
 
 
 def test_known_open_defect_is_never_prepared(run):

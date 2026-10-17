@@ -1,0 +1,47 @@
+{
+  "severity": "red",
+  "opening": "This web shop lets anonymous internet users log in as any customer or administrator and read or change other customers' data. It is acceptable only as an isolated training target and must never hold real customer or payment data.",
+  "bullets_intro": "Security concerns behind this assessment:",
+  "bullets": [
+    {
+      "title": "Login bypass and database takeover",
+      "body": "SQL injection in login and product search lets unauthenticated visitors sign in as any user, including the administrator, and read database contents.",
+      "refs": [
+        "F-012",
+        "F-006"
+      ]
+    },
+    {
+      "title": "Customers can read and change others' records",
+      "body": "Missing ownership checks (IDOR) let any signed-in customer view or modify other customers' orders, baskets and accounts.",
+      "refs": [
+        "F-008",
+        "F-024",
+        "F-038"
+      ]
+    },
+    {
+      "title": "New accounts can make themselves administrators",
+      "body": "Registration accepts a role chosen by the caller (mass assignment), so anyone can create an account with administrator rights.",
+      "refs": [
+        "F-043"
+      ]
+    },
+    {
+      "title": "Forged logins for any account",
+      "body": "The token signing key is committed to the source code, so anyone with repository access can mint valid logins for any user.",
+      "refs": [
+        "F-020",
+        "F-018"
+      ]
+    },
+    {
+      "title": "Server takeover through code execution",
+      "body": "Profile handling runs attacker-supplied text as code on the server, exposing secrets, files and the database.",
+      "refs": [
+        "F-037"
+      ]
+    }
+  ],
+  "closing": "Until these gaps are closed, the shop should run only in an isolated environment with disposable data and no exposure to real customers."
+}

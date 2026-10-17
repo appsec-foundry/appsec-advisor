@@ -573,3 +573,41 @@ def test_absence_evidence_locates_the_searched_files_not_the_display_glob():
     uris = [row["physicalLocation"]["artifactLocation"]["uri"] for row in result["locations"]]
     assert uris == [".github/workflows/a.yml", ".github/workflows/b.yml"]
     assert all(row["physicalLocation"]["region"] == {"startLine": 1} for row in result["locations"])
+
+
+@pytest.mark.parametrize(
+    ("anchor", "searched"),
+    [("deploy/a.yml", ["deploy/a.yml", "deploy/b.yml"]), ("ci/main.yaml", ["ci/other.yaml", "ci/main.yaml"])],
+)
+def test_qualified_absence_hash_belongs_only_to_the_anchor_file(anchor, searched):
+    anchor_hash = "a" * 64
+    evidence = {
+        "file": anchor,
+        "line": 0,
+        "kind": "absence",
+        "searched_files": searched,
+        "repository_id": "repo-0123456789abcdef",
+        "sha256": anchor_hash,
+    }
+    threat = _make_threat(source="config-scan", evidence=[evidence])
+    result = export_sarif._build_result(threat, {}, {}, qualified=True)
+    rows = {
+        row["physicalLocation"]["artifactLocation"]["uri"]: row["physicalLocation"]["properties"]
+        for row in result["locations"]
+    }
+    assert set(rows) == set(searched)
+    assert rows[anchor] == {"repositoryId": "repo-0123456789abcdef", "sourceSha256": anchor_hash}
+    for uri in set(searched) - {anchor}:
+        assert rows[uri] == {"repositoryId": "repo-0123456789abcdef"}
+
+
+def test_single_root_absence_locations_carry_no_source_hash():
+    evidence = {"file": "a.yml", "line": 0, "kind": "absence", "searched_files": ["a.yml", "b.yml"], "sha256": "b" * 64}
+    result = export_sarif._build_result(_make_threat(source="config-scan", evidence=[evidence]), {}, {})
+    assert all("properties" not in row["physicalLocation"] for row in result["locations"])
+
+
+def test_qualified_non_absence_evidence_keeps_its_hash():
+    evidence = {"file": "app.py", "line": 3, "repository_id": "repo-0123456789abcdef", "sha256": "c" * 64}
+    result = export_sarif._build_result(_make_threat(evidence=[evidence]), {}, {}, qualified=True)
+    assert result["locations"][0]["physicalLocation"]["properties"]["sourceSha256"] == "c" * 64

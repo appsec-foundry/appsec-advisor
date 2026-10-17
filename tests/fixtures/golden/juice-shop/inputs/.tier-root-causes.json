@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "tier_root_causes": {
+    "data": [
+      "Sensitive data stored unencrypted at rest in the database file"
+    ],
+    "edge": [
+      "Server-provided data bound as trusted HTML, bypassing Angular sanitization",
+      "Session JWT held in script-readable browser storage",
+      "Secrets and credentials derived or embedded client-side",
+      "Sensitive values sent in URL query strings",
+      "Client-side guards treated as security boundaries"
+    ],
+    "server": [
+      "Ownership checks missing; client-supplied IDs trusted for object access",
+      "Auth middleware absent or inconsistently applied across routes",
+      "Request input concatenated into SQL, NoSQL, template and eval sinks",
+      "JWTs decoded without verification or algorithm allowlist",
+      "Hardcoded secrets and weak cryptography for tokens and passwords"
+    ]
+  }
+}

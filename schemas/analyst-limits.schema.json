@@ -38,7 +38,10 @@
         "packages",
         "package_kib",
         "answer_hours",
-        "result_days"
+        "result_days",
+        "context_files",
+        "explore_files",
+        "explore_kib"
       ],
       "patternProperties": {
         "^[a-z_]+$": {

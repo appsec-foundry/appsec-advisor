@@ -11,19 +11,12 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "runtime/resolve_config.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-
-def _run(*argv: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), *argv],
-        capture_output=True,
-        text=True,
-    )
+from test_resolve_config import _resolve_argv as _run  # noqa: E402
 
 
 def test_no_slug_is_none(tmp_path, monkeypatch):
@@ -66,28 +59,19 @@ def test_bare_slug_before_another_flag_is_not_consumed(tmp_path, monkeypatch):
 
 def test_invalid_slug_rejected(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    r = _run("--validate-only", "--quick", "--slug", "bad/slug")
+    r = _run("--quick", "--slug", "bad/slug")
     assert r.returncode != 0
     assert "slug" in r.stderr.lower()
 
 
 def test_overlong_slug_rejected(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    r = _run("--validate-only", "--quick", "--slug", "x" * 65)
+    r = _run("--quick", "--slug", "x" * 65)
     assert r.returncode != 0
 
 
 def test_empty_slug_rejected(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    r = _run("--validate-only", "--quick", "--slug=")
+    r = _run("--quick", "--slug=")
     assert r.returncode != 0
     assert "slug" in r.stderr.lower()
-
-
-def test_slug_persisted_to_skill_config(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    out = tmp_path / "out"
-    out.mkdir()
-    r = _run("--quick", "--slug", "modelA", "--output", str(out), "--emit-file")
-    assert r.returncode == 0
-    assert json.loads((out / ".skill-config.json").read_text())["slug"] == "modelA"

@@ -2355,6 +2355,96 @@ class TestRepairPlanStatusClassification:
         plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
         assert [a for a in plan["actions"] if a["type"] == "toc_closure"] == []
 
+    @staticmethod
+    def _dangling_finding_report(tmp_path: Path, finding: str) -> Path:
+        md = tmp_path / "threat-model.md"
+        anchor = finding.lower()
+        md.write_text(
+            "# Threat Model\n\n## 6. Security Architecture\n\n"
+            f"### 6.2 Session Controls\n\n- [{finding}](#{anchor}) — weak token generation.\n",
+            encoding="utf-8",
+        )
+        (tmp_path / ".fragments").mkdir(exist_ok=True)
+        return md
+
+    @staticmethod
+    def _toc_action(plan: dict) -> dict:
+        return next(a for a in plan["actions"] if a["type"] == "toc_closure")
+
+    def test_dangling_finding_link_names_the_authored_fragment(self, tmp_path):
+        """A link to an unpublished finding, authored into a fragment that
+        survives recompose, is repairable: the plan names that fragment."""
+        md = self._dangling_finding_report(tmp_path, "F-042")
+        (tmp_path / ".fragments" / "security-architecture.md").write_text(
+            "- [F-042](#f-042) — weak token generation.\n", encoding="utf-8"
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        toc = self._toc_action(plan)
+        assert toc["fragments_to_rewrite"] == [".fragments/security-architecture.md"]
+        assert toc["unresolved_issues"] == []
+        assert plan["actionable"] is True
+
+    def test_bare_finding_id_in_a_json_fragment_is_located(self, tmp_path):
+        """Variant: compose linkifies a bare ID, so the fragment carries no link.
+        A longer ID that merely ends in the same digits is not a match."""
+        md = self._dangling_finding_report(tmp_path, "F-077")
+        frags = tmp_path / ".fragments"
+        (frags / "ms-anti-patterns.json").write_text('{"patterns": [{"refs": ["F-077"]}]}', encoding="utf-8")
+        (frags / "security-architecture.md").write_text("Scanner rule SAF-077 only.\n", encoding="utf-8")
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        assert self._toc_action(plan)["fragments_to_rewrite"] == [".fragments/ms-anti-patterns.json"]
+
+    @pytest.mark.parametrize(
+        "fragments",
+        [
+            {},
+            {"attack-walkthroughs.md": "[F-042](#f-042)\n"},
+            {"attack-walkthroughs.md": "[F-042](#f-042)\n", "security-architecture.md": "[F-042](#f-042)\n"},
+        ],
+        ids=["no-fragment", "regenerated-only", "authored-and-regenerated"],
+    )
+    def test_defect_from_a_deterministic_producer_stays_unresolved(self, tmp_path, fragments):
+        """A fragment rebuilt on every compose, or no fragment at all, means a
+        deterministic producer emitted the link; naming a fragment would loop."""
+        md = self._dangling_finding_report(tmp_path, "F-042")
+        for name, text in fragments.items():
+            (tmp_path / ".fragments" / name).write_text(text, encoding="utf-8")
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        toc = self._toc_action(plan)
+        assert toc["fragments_to_rewrite"] == []
+        assert toc["unresolved_issues"] == ["unresolved TOC/link anchor: #f-042"]
+
+    @pytest.mark.parametrize(
+        ("check", "issue", "fragment_text"),
+        [
+            (
+                "heading_hygiene",
+                "heading length 104 chars exceeds 100-char hard limit — shorten the title (move the long "
+                "form to the body): `6.4.1 " + "Very long control heading " * 3 + "`",
+                "#### 6.3.1 " + "Very long control heading " * 3 + "\n",
+            ),
+            (
+                "xrefs",
+                "orphaned-threat-ref: T-031 referenced but no Findings Register row",
+                "See [T-031](#t-031).\n",
+            ),
+            (
+                "reference_format",
+                "ID inside link text: '[F-001 SQL injection](#f-001)'",
+                "- [F-001 SQL injection](#f-001)\n",
+            ),
+        ],
+    )
+    def test_other_blocking_reference_checks_resolve_their_fragment(self, tmp_path, check, issue, fragment_text):
+        (tmp_path / ".fragments").mkdir()
+        (tmp_path / ".fragments" / "security-architecture.md").write_text(fragment_text, encoding="utf-8")
+        assert qa._resolve_defect_owners(check, [issue], tmp_path) == (
+            [".fragments/security-architecture.md"],
+            [],
+        )
+        (tmp_path / ".fragments" / "security-architecture.md").write_text("Unrelated prose.\n", encoding="utf-8")
+        assert qa._resolve_defect_owners(check, [issue], tmp_path) == ([], [issue])
+
     def test_clean_md_end_to_end_returns_pass(self, tmp_path):
         """Smoke test: an MD with no contract violations returns status=pass
         through the full `build_repair_plan` pipeline."""
@@ -2385,7 +2475,7 @@ class TestTableSchemaDriftClassification:
         assert set(qa._TABLE_LABEL_TO_SECTION) == {
             "Top Threats",
             "Operational Strengths",
-            "Top Mitigations",
+            "Remediation Priorities",
         }
         assert "Top Findings" not in qa._TABLE_LABEL_TO_SECTION
         assert "Prioritized Mitigations" not in qa._TABLE_LABEL_TO_SECTION
@@ -2914,6 +3004,13 @@ class TestCrossReferenceLabellingInvariant:
         md = self._write_pair(tmp_path, "see T-001 in the report.\n")
         _, new_text = qa.linkify_anchors(md)
         assert "[T-001](#t-001) — SQL Injection in login endpoint" in new_text
+
+    @pytest.mark.parametrize("reference", ["F-001", "[F-001](#f-001)"])
+    def test_parenthetical_citation_keeps_its_id_without_expanding_the_title(self, tmp_path, reference):
+        md = self._write_pair(tmp_path, f"Input reaches the query ({reference}).\n\n- F-001\n")
+        _, result = qa.linkify_anchors(md)
+        assert result.startswith("Input reaches the query ([F-001](#f-001)).")
+        assert "- [F-001](#f-001) — SQL Injection in login endpoint" in result
 
     def test_linkify_bare_mnnn_appends_title(self, tmp_path):
         """Bare M-NNN in prose becomes `[M-NNN](#m-nnn) — <title>`."""
@@ -4093,7 +4190,11 @@ def test_trust_boundary_header_is_identical_in_all_three_modules():
     prose = _load("repairs.apply_prose_fixes")
     header = compose._BOUNDARY_ASSUMPTION_HEADER
     assert all(header in form for form in prose._TRUST_BOUNDARY_TABLE_HEADERS)
-    assert all(header in form for form in compose._FIXED_LAYOUT_TABLE_HEADERS if form[0] == "ID")
+    assert all(
+        header in form
+        for form in compose._FIXED_LAYOUT_TABLE_HEADERS
+        if form[:3] == ("ID", "Boundary / crossing", "Exposure")
+    )
     qa_forms = [spec[0] for spec in qa._FIXED_LAYOUT_SPECS if spec[0][:3] == ("ID", "Boundary / crossing", "Exposure")]
     assert qa_forms and all(header in form for form in qa_forms)
     # The prose exemption indexes the column by position, so the header's slot
@@ -4249,13 +4350,6 @@ def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
     assert 'style="color:' not in second  # no fragile colour span
 
 
-# ---------------------------------------------------------------------------
-# MS "Top Weaknesses" proof run stays BARE — the single weakness dot owns the
-# bullet's severity signal, so the finding refs must NOT pick up the global
-# severity-dot / title-suffix enrichment (user 2026-07-15). Every other
-# context still gets its dots + titles.
-# ---------------------------------------------------------------------------
-
 _TW_YAML = textwrap.dedent(
     """\
     threats:
@@ -4276,42 +4370,46 @@ def _write_tw_pair(path: Path, md_body: str) -> Path:
     return f
 
 
-def test_annotate_id_refs_skips_top_weaknesses_proof_dots(tmp_path: Path):
-    md = _write_tw_pair(
-        tmp_path,
-        "## Management Summary\n\n"
-        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
-        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
-        "Normal prose ref to [F-013](#f-013) elsewhere.\n",
-    )
+# ---------------------------------------------------------------------------
+# The Remediation Priorities table is raw HTML. Markdown is not parsed inside
+# it, so the QA link and dot passes must leave its anchors untouched.
+# ---------------------------------------------------------------------------
+
+_RP_YAML = textwrap.dedent(
+    """\
+    threats:
+      - id: T-013
+        title: Anonymous Attacker Obtains ADMIN Role
+        severity: critical
+    mitigations:
+      - id: M-001
+        title: Require the admin role server-side
+        priority: P1
+        threat_ids: [T-013]
+    """
+)
+
+_RP_ROW = (
+    '<tr><td rowspan="1">🔴 <a href="#w-001">W-001</a> - Endpoints reachable</td>'
+    '<td>● <a href="#m-001">M-001</a> - Require the admin role server-side</td>'
+    '<td>🔴 <a href="#f-013">F-013</a></td><td>Low</td></tr>'
+)
+
+
+def _write_rp_pair(path: Path) -> Path:
+    (path / "threat-model.yaml").write_text(_RP_YAML)
+    f = path / "threat-model.md"
+    f.write_text("## Management Summary\n\n" + _RP_ROW + "\n\nNormal prose ref to F-013 elsewhere.\n")
+    return f
+
+
+def test_qa_link_passes_leave_remediation_table_anchors_untouched(tmp_path: Path):
+    md = _write_rp_pair(tmp_path)
     qa._annotate_id_refs(md)
-    out = md.read_text()
-    tw_line = next(ln for ln in out.splitlines() if "_Proven by" in ln)
-    normal_line = next(ln for ln in out.splitlines() if "Normal prose" in ln)
-    # Proof run: bare, no severity dot injected before its F-refs.
-    assert "🔴 [F-013]" not in tw_line and "[F-013](#f-013)" in tw_line
-    # The weakness's own dot survives.
-    assert "🔴 **[W-001]" in tw_line
-    # A normal F-ref elsewhere DID get its severity dot.
-    assert "🔴 [F-013](#f-013)" in normal_line
-
-
-def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
-    md = _write_tw_pair(
-        tmp_path,
-        "## Management Summary\n\n"
-        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
-        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
-        "Normal prose ref to [F-014](#f-014) elsewhere.\n",
-    )
     _report, new_text = qa.linkify_anchors(md)
-    tw_line = next(ln for ln in new_text.splitlines() if "_Proven by" in ln)
+    assert _RP_ROW in new_text.splitlines()
     normal_line = next(ln for ln in new_text.splitlines() if "Normal prose" in ln)
-    # Proof run: no `— Title` suffix appended to its F-refs.
-    assert "Anonymous Attacker" not in tw_line
-    assert "H2 Database Console" not in tw_line
-    # A normal F-ref elsewhere DID get its title suffix.
-    assert "F-014](#f-014) — H2 Database Console" in normal_line
+    assert "[F-013](#f-013) — Anonymous Attacker Obtains ADMIN Role" in normal_line
 
 
 @pytest.mark.parametrize(
@@ -4333,16 +4431,15 @@ def test_qa_enrichment_keeps_open_question_refs_identical_to_console_refs(tmp_pa
     assert line in md.read_text(encoding="utf-8")
 
 
-def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
-    """The Critical Attack Tree findings pointer lists bare `[F-NNN]` ids; neither
-    the dot retrofit nor the title-suffix pass may decorate them (the tree above
-    already carries id + title). Guards against the double-title bug where a
-    space-separated (non-em-dash) title triggered a second appended title."""
+def test_enrichment_skips_the_root_cause_fix_list(tmp_path: Path):
+    """The structural-fix list under Critical Findings by Root Cause lists bare
+    `[F-NNN]` ids; neither the dot retrofit nor the title-suffix pass may
+    decorate them (the graph above already carries id + title)."""
     md = _write_tw_pair(
         tmp_path,
-        "## Critical Attack Tree\n\n"
-        "**Findings** (full detail in [§8 Findings Register](#8-findings-register)): "
-        "[F-013](#f-013) · [F-014](#f-014)\n\n"
+        "## Critical Findings by Root Cause\n\n"
+        "- **[W-001](#w-001)** — Use one query path _(closes [F-013](#f-013), [F-014](#f-014))_\n"
+        "- **No root cause linked** — [F-013](#f-013): see the [§8 Findings Register](#8-findings-register)\n\n"
         "Normal prose ref to [F-013](#f-013) elsewhere.\n",
     )
     # Title-suffix pass.
@@ -4351,12 +4448,13 @@ def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
     # Dot retrofit.
     qa._annotate_id_refs(md)
     out = md.read_text()
-    ptr = next(ln for ln in out.splitlines() if "**Findings** (full detail" in ln)
+    fixes = [ln for ln in out.splitlines() if ln.startswith("- **")]
     normal = next(ln for ln in out.splitlines() if "Normal prose" in ln)
-    # Pointer stays bare: no dot, no title, and (critically) no doubled title.
-    assert "🔴 [F-013]" not in ptr
-    assert "Anonymous Attacker" not in ptr
-    assert ptr.count("[F-013](#f-013)") == 1
+    assert len(fixes) == 2
+    for line in fixes:
+        assert "🔴 [F-013]" not in line
+        assert "Anonymous Attacker" not in line
+        assert line.count("[F-013](#f-013)") == 1
     # A normal ref elsewhere still gets its dot + title.
     assert "🔴 [F-013](#f-013) — Anonymous Attacker" in normal
 

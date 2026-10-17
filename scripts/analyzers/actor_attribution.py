@@ -102,13 +102,46 @@ def _active(actor: dict) -> bool:
 class _Inventory:
     """Component zones and tiers plus route registrations for one merged model."""
 
-    def __init__(self, components: list[dict], routes: dict | None):
+    def __init__(self, components: list[dict], routes: dict | None, flows: dict | None = None):
         rows = [c for c in components if isinstance(c, dict) and c.get("id")]
         self.zones = {c["id"]: {str(z) for z in c.get("deployment_zones") or []} for c in rows}
         self.tiers = {c["id"]: str(c.get("tier") or "") for c in rows}
         self.routes = [r for r in (routes or {}).get("routes") or [] if isinstance(r, dict)]
         self.root = Path(str((routes or {}).get("repo_root") or "")).resolve() if routes else None
         self._lines: dict[str, list[str]] = {}
+        self.access = self._flow_access(flows or {})
+
+    def _flow_access(self, document: dict) -> dict[str, set[str]]:
+        """Explicit internet-role accesses and one client-to-API hop; never backend transitivity.
+
+        These are access prerequisites, not deployment zones. A private peer,
+        unclassified role, outbound call or unevidenced flow proves no ingress.
+        """
+        roles = {
+            row["id"]: row["access"]
+            for row in document.get("external_entities") or []
+            if row.get("kind") == "legitimate-role"
+            and row.get("access") in load_rules()["internet_groups"]
+            and row.get("evidence")
+        }
+        flows = [row for row in document.get("data_flows") or [] if row.get("evidence")]
+        access: dict[str, set[str]] = {}
+        for row in flows:
+            group = roles.get(row.get("from_entity")) if row.get("from") == "external" else None
+            if group and row.get("to") in self.tiers and row.get("direction") != "response":
+                access.setdefault(row["to"], set()).add(group)
+        direct = {cid: set(groups) for cid, groups in access.items()}
+        for row in flows:
+            source, target = row.get("from"), row.get("to")
+            if (
+                self.tiers.get(source) == "client"
+                and self.tiers.get(target) == "application"
+                and str(row.get("protocol") or "").lower() in {"http", "https", "ws", "wss", "websocket"}
+                and source in direct
+                and row.get("direction") != "response"
+            ):
+                access.setdefault(target, set()).update(direct[source])
+        return access
 
     def finding_zones(self, threat: dict) -> set[str]:
         return set().union(*(self.zones.get(cid, set()) for cid in _components(threat)))
@@ -208,11 +241,32 @@ def _fallback(threat: dict, actors: list[dict], inventory: _Inventory) -> str | 
     return None
 
 
+def _flow_actor(threat: dict, actors: list[dict], inventory: _Inventory, open_registration: bool) -> str | None:
+    """Fill missing attribution from evidenced access without claiming anonymous access to protected routes."""
+    component = threat.get("component_id") or threat.get("component")
+    groups = set(inventory.access.get(component, ()))
+    routes = inventory.handler_routes(threat)
+    if "internet-anon" in groups and routes and all(route_authenticated(route) for route in routes):
+        groups.discard("internet-anon")
+        if inventory.access.get(component):
+            groups.add("internet-user")
+    if open_registration and "internet-user" in groups:
+        groups.add("internet-anon")
+    candidates = _ordered(actors, [g for g in load_rules()["internet_groups"] if g in groups])
+    return candidates[0]["id"] if candidates else None
+
+
 def reconcile_attribution(
-    threats: list[dict], components: list[dict], actors: list[dict], routes: dict | None = None
+    threats: list[dict],
+    components: list[dict],
+    actors: list[dict],
+    routes: dict | None = None,
+    *,
+    flows: dict | None = None,
+    open_registration: bool = False,
 ) -> list[dict]:
     """Correct attributions in place and return one record per changed finding."""
-    inventory = _Inventory(components, routes)
+    inventory = _Inventory(components, routes, flows)
     by_id = {a["id"]: a for a in actors if isinstance(a, dict) and a.get("id")}
     internet = set(load_rules()["internet_groups"])
     no_attacker = set(load_rules().get("no_attacker_cwes") or [])
@@ -240,7 +294,9 @@ def reconcile_attribution(
                     kept = [aid for aid in kept if aid not in anonymous]
                     added += [route_actor] if route_actor not in kept else []
         if not attackerless and not kept and not added:
-            fallback = _fallback(threat, list(by_id.values()), inventory)
+            fallback = _flow_actor(threat, list(by_id.values()), inventory, open_registration) or _fallback(
+                threat, list(by_id.values()), inventory
+            )
             added += [fallback] if fallback else []
         superseded = _superseded(kept + added, by_id)
         if not removed and not added and not superseded:
@@ -276,10 +332,19 @@ def reconcile_output_dir(out_dir: Path, threats: list[dict]) -> list[dict]:
         return data if isinstance(data, dict) else {}
 
     components = read(".components.json").get("components") or []
-    actors = read(".actors-resolved.json").get("resolved_actors") or []
+    resolved = read(".actors-resolved.json")
+    actors = resolved.get("resolved_actors") or []
     if not components or not actors:
         return []
-    return reconcile_attribution(threats, components, actors, read(".route-inventory.json") or None)
+    registration = resolved.get("open_registration_resolution") or {}
+    return reconcile_attribution(
+        threats,
+        components,
+        actors,
+        read(".route-inventory.json") or None,
+        flows=read(".data-flows.json"),
+        open_registration=registration.get("open") is True and registration.get("disputed") is False,
+    )
 
 
 def merge_corrections(existing: list[dict], new: list[dict]) -> list[dict]:

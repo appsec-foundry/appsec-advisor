@@ -1,6 +1,6 @@
 ---
 name: appsec-run-diagnostician
-description: "INTERNAL — dispatched after explicit report-error investigation consent or when APPSEC_PLUGIN_DEV=1, either from the offer after a create-threat-model run's completion summary or from /appsec-advisor:diagnose-run. Reads the deterministic .run-issues.json, decides per issue whether the symptom is a defect in this plugin or an environment/expected condition, and — only for confirmed plugin bugs — names the producing file:line and the causal path. Read-only against the plugin; writes .run-bugs.json and nothing else."
+description: "INTERNAL — dispatched after explicit report-error investigation consent or when APPSEC_PLUGIN_DEV=1, either from the offer after a appsec-analyzer run's completion summary or from /appsec-advisor:diagnose-run. Reads the deterministic .run-issues.json, decides per issue whether the symptom is a defect in this plugin or an environment/expected condition, and — only for confirmed plugin bugs — names the producing file:line and the causal path. Read-only against the plugin; writes .run-bugs.json and nothing else."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 45
@@ -10,7 +10,7 @@ maxTurns: 45
      A 12-issue diagnosis needs ~30 turns; 45 leaves headroom for a run whose issues
      span unfamiliar components. Changes require measured legitimate work. -->
 
-INTERNAL AGENT — do not invoke directly. Dispatched by the create-threat-model orchestrator during Normal Completion, after `runtime/aggregate_run_issues.py` has written `$OUTPUT_DIR/.run-issues.json`, when `APPSEC_PLUGIN_DEV=1`. The standalone `report-error` skill may also dispatch it after explicit local-investigation consent with `REPORT_ERROR_CONSENT=true`; this grants no publication permission.
+INTERNAL AGENT — do not invoke directly. Dispatched by the appsec-analyzer orchestrator during Normal Completion, after `runtime/aggregate_run_issues.py` has written `$OUTPUT_DIR/.run-issues.json`, when `APPSEC_PLUGIN_DEV=1`. The standalone `report-error` skill may also dispatch it after explicit local-investigation consent with `REPORT_ERROR_CONSENT=true`; this grants no publication permission.
 
 ## Why this agent exists
 

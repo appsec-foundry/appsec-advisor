@@ -2,7 +2,7 @@
 Tests for scripts/runtime/agent_logger.py
 
 The logger reads a hook event JSON from stdin and appends a line to
-docs/security/.hook-events.log in the current working directory.
+the output directory's .hook-events.log.
 We run it as a subprocess and inspect both exit code and log output.
 """
 
@@ -34,6 +34,18 @@ from runtime.agent_logger import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _output_dir_in_the_checkout(tmp_path, monkeypatch):
+    """Point every hook process of a test at ``<tmp_path>/docs/security``.
+
+    The logger writes only into an output directory it is given or can
+    resolve; these tests read their events from that directory.
+    """
+    output = tmp_path / "docs" / "security"
+    output.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("OUTPUT_DIR", str(output))
 
 
 # Variables that name the run a hook belongs to. The suite runs inside a Claude
@@ -181,8 +193,8 @@ class TestAgentReturn:
         event = make_post_tool_event(
             "Agent",
             {
-                "subagent_type": "appsec-advisor:appsec-qa-reviewer",
-                "description": "QA review",
+                "subagent_type": "appsec-advisor:appsec-threat-merger",
+                "description": "merge review",
                 "prompt": "REPO_ROOT=/tmp/repo",
                 "run_in_background": False,
             },
@@ -445,7 +457,7 @@ class TestAgentModel:
     def test_reads_model_from_agent_definition(self, monkeypatch):
         """Without override, model is read from agents/<name>.md frontmatter."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        result = _agent_model("appsec-advisor:appsec-qa-reviewer", {})
+        result = _agent_model("appsec-advisor:appsec-threat-merger", {})
         assert result == "sonnet"
 
     def test_reads_model_for_all_known_agents(self, monkeypatch):
@@ -858,20 +870,6 @@ class TestRobustness:
             cwd=str(tmp_path),
         )
         assert result.returncode == 0
-
-    def test_log_directory_created_automatically(self, tmp_path):
-        event = make_post_tool_event(
-            "Write",
-            {
-                "file_path": "/tmp/out.md",
-                "content": "hello",
-            },
-        )
-        # docs/security/ does NOT exist yet in tmp_path
-        assert not (tmp_path / "docs").exists()
-        rc, log = run_logger(event, tmp_path)
-        assert rc == 0
-        assert (tmp_path / "docs" / "security" / ".hook-events.log").exists()
 
     def test_multiple_events_appended_to_same_log(self, tmp_path):
         for i in range(3):

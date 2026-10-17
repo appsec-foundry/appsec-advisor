@@ -340,8 +340,8 @@ def _git(args: list[str], repo: Path) -> str | None:
 
 
 def _pin_repo(repo: Path) -> dict[str, Any]:
+    # The checkout location is a property of one machine; replay takes it from --repo.
     return {
-        "repo_path": str(repo),
         "commit_sha": _git(["rev-parse", "HEAD"], repo) or "unknown",
         "branch": _git(["rev-parse", "--abbrev-ref", "HEAD"], repo) or "unknown",
         "dirty": bool(_git(["status", "--porcelain"], repo)),
@@ -535,7 +535,7 @@ def replay(fixture: Path, stages: list[str], repo: Path | None) -> dict[str, Any
 
     if "scanner" in stages and meta.get("scanners"):
         scanner_golden = fixture / "scanner-golden"
-        repo_path = repo or (Path(meta["repo"]["repo_path"]) if meta.get("repo") else None)
+        repo_path = repo
         if not repo_path or not Path(repo_path).is_dir():
             results["stages"]["scanner"] = ["SKIPPED: source repo unavailable"]
         else:
@@ -577,7 +577,12 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("replay", help="Re-run the tail and diff against golden.")
     r.add_argument("--fixture", type=Path, required=True)
     r.add_argument("--stage", default="all", help="Comma list of yaml,md,sarif,scanner or 'all'.")
-    r.add_argument("--repo", type=Path, default=None, help="Override source repo for the scanner stage.")
+    r.add_argument(
+        "--repo",
+        type=Path,
+        default=None,
+        help="Source repo for the scanner stage (the fixture records only its commit).",
+    )
 
     ns = ap.parse_args(argv)
 

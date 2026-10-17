@@ -86,11 +86,14 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
+import fcntl
 import os
 import re
 import shutil
+import stat
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from runtime.event_log import format_line
@@ -119,6 +122,9 @@ HEARTBEAT_STALE_SECONDS = phase_budgets.default_heartbeat_stale_seconds() if pha
 # the phase-agnostic HEARTBEAT_STALE_SECONDS window.
 NEVER_HEARTBEATED_GRACE_SECONDS = 120
 _ACQUIRED_PREFIX = "acquired="
+# A holder that heartbeats on its own clock states after how many seconds
+# without a heartbeat it is dead; that outranks the phase budgets.
+_STALE_AFTER_PREFIX = "stale_after="
 
 # Hook-log line shape mirrors agent_logger._write so a HEARTBEAT line is
 # indistinguishable from any other event for downstream parsers. Session-ID
@@ -219,6 +225,7 @@ def _write_lock(
     heartbeat_ts: int,
     run_id: str = "",
     acquired_ts: int | None = None,
+    stale_after: int | None = None,
 ) -> None:
     body = f"{pid}\n{heartbeat_ts}\n"
     if run_id:
@@ -229,7 +236,15 @@ def _write_lock(
         # Labeled, so its meaning does not depend on whether a run id was
         # written above it.
         body += f"{_ACQUIRED_PREFIX}{acquired_ts}\n"
-    lock_path.write_text(body, encoding="utf-8")
+    if stale_after is not None:
+        body += f"{_STALE_AFTER_PREFIX}{stale_after}\n"
+    # Replace, never truncate in place: a concurrent reader of the run id must
+    # see the old or the new lock, not an empty file.
+    import threading
+
+    staged = lock_path.with_name(f".{lock_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    staged.write_text(body, encoding="utf-8")
+    os.replace(staged, lock_path)
 
 
 def _tail_lines(lock_path: Path) -> list[str]:
@@ -250,7 +265,7 @@ def read_run_id(lock_path: Path) -> str:
     if len(lines) < 3:
         return ""
     candidate = lines[2]
-    return "" if candidate.startswith(_ACQUIRED_PREFIX) else candidate
+    return "" if candidate.startswith((_ACQUIRED_PREFIX, _STALE_AFTER_PREFIX)) else candidate
 
 
 def current_run_id(fallback: str = "") -> str:
@@ -298,6 +313,18 @@ def lock_is_owned_by_this_run(lock_path: Path, session_id: str = "") -> bool:
     tests the heartbeat itself.
     """
     return run_id_matches(read_run_id(lock_path), session_id)
+
+
+def _read_stale_after(lock_path: Path) -> int | None:
+    """Return the holder's own ``stale_after=`` threshold, or None when it states none."""
+    for line in _tail_lines(lock_path):
+        if line.startswith(_STALE_AFTER_PREFIX):
+            try:
+                value = int(line[len(_STALE_AFTER_PREFIX) :].split()[0])
+            except (ValueError, IndexError):
+                return None
+            return value if value > 0 else None
+    return None
 
 
 def _read_acquired_ts(lock_path: Path) -> int | None:
@@ -431,8 +458,12 @@ def _stale_threshold_for_lock(lock_path: Path) -> int:
 
     Reads the sibling ``.appsec-checkpoint`` to resolve the current phase,
     then asks ``phase_budgets`` for the matching threshold. Falls back to
-    the depth-agnostic default when phase or yaml is unavailable.
+    the depth-agnostic default when phase or yaml is unavailable. A
+    ``stale_after=`` the holder wrote into the lock outranks both.
     """
+    own = _read_stale_after(lock_path)
+    if own is not None:
+        return own
     if phase_budgets is None:  # pragma: no cover
         return HEARTBEAT_STALE_SECONDS
     phase, depth = _read_phase_from_checkpoint(lock_path.parent)
@@ -623,7 +654,55 @@ def _blocked_message(lock_path: Path, info: dict) -> str:
     return "\n".join(lines)
 
 
+class LockBusy(ValueError):
+    """Another process is changing or holding this assessment's lock."""
+
+
+@contextmanager
+def serialization_guard(output_dir: Path):
+    """Serialize lock mutations, including a synchronous headless holder.
+
+    The guard inode persists while the ordinary liveness file may be removed.
+    All command-line writers use it; a multi-repository controller holds it
+    until its scoped work finishes. It carries no source or model authority.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(output_dir / ".appsec-lock.guard", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        raise LockBusy("Assessment lock guard cannot be safely opened") from None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise LockBusy("Assessment lock guard must be a regular file without hard links")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise LockBusy("Assessment output is locked by another process") from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def main(argv: list[str]) -> int:
+    # The legacy argument parser remains authoritative. Only a valid single
+    # lock-path invocation enters this serialization boundary.
+    arguments = [
+        arg
+        for arg in argv[1:]
+        if arg not in {"--reset-dirs", "--heartbeat"} and not arg.startswith(("--phase=", "--step=", "--run-id="))
+    ]
+    if len(arguments) != 1:
+        return _main_unlocked(argv)
+    try:
+        with serialization_guard(Path(arguments[0]).parent):
+            return _main_unlocked(argv)
+    except LockBusy:
+        print("LOCK_BLOCKED: assessment output is locked by another process")
+        return 1
+
+
+def _main_unlocked(argv: list[str]) -> int:
     # Parse args: positional lock path + optional flags. ``--phase=<P>`` and
     # ``--step=<S>`` are key=value flags consumed by the heartbeat path.
     bare_flags = {"--reset-dirs", "--heartbeat"}

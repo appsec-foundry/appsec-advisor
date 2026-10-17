@@ -260,3 +260,139 @@ def test_a_docker_hub_short_name_resolves_to_docker_io(tmp_path):
     repo = _repo(tmp_path, {".github/workflows/ci.yml": workflow})
     (image,) = [row for row in _facts(repo)["outputs"] if row["kind"] == "container_image"]
     assert image["destination"] == {"registry": "docker.io", "repository": "acme/web"}
+
+
+GITLAB_KANIKO = """\
+include:
+  - local: ci/shared.yml
+  - project: platform/pipelines
+    ref: 3f2a9c1b0e8d7f6a5b4c3d2e1f0a9b8c7d6e5f40
+    file: /build.yml
+  - template: Jobs/Code-Quality.gitlab-ci.yml
+image: python:3.12
+default:
+  services:
+    - name: redis:7
+      alias: cache
+.prepare:
+  before_script:
+    - !reference [.base, before_script]
+assemble:
+  stage: build
+  tags: [shared-runner]
+  script:
+    - pip install -r requirements.txt
+    - wget -qO- https://get.example.net/setup.sh | bash
+release:
+  stage: deploy
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  tags:
+    - docker
+  script:
+    - /kaniko/executor --context "${CI_PROJECT_DIR}" --dockerfile "${CI_PROJECT_DIR}/Dockerfile" --destination "registry.example.net/team/ledger:${CI_COMMIT_SHA}"
+"""
+GITLAB_DOCKER = """\
+include: 'https://ci.example.org/shared/lint.yml'
+stages: [package]
+container-build:
+  stage: package
+  image: docker:27@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  services: ["docker:27-dind"]
+  script:
+    - yarn install --immutable
+    - docker build -f deploy/Dockerfile.app -t quay.io/example-team/catalog:stable .
+    - docker push quay.io/example-team/catalog:stable
+"""
+
+
+def _gitlab_rows(facts: dict) -> dict[str, list[dict]]:
+    return {
+        key: [row for row in facts[key] if row["file"].startswith(".gitlab-ci")]
+        for key in facts
+        if key != "version" and key != "capabilities"
+    }
+
+
+def test_a_gitlab_pipeline_records_images_includes_installs_and_its_push(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yml": GITLAB_KANIKO, "Dockerfile": "FROM python:3.12\n"})
+    facts = _facts(repo)
+    rows = _gitlab_rows(facts)
+    assert rows["workflows"] == [
+        {
+            "file": ".gitlab-ci.yml",
+            "token_permissions": "unknown",
+            "builds_container_image": True,
+            "pushes_container_image": True,
+            "publishes_packages": [],
+        }
+    ]
+    assert [(r["kind"], r["reference"], r["pinning"], r["line"], r.get("job")) for r in rows["inputs"]] == [
+        (
+            "ci_include",
+            "project:platform/pipelines@3f2a9c1b0e8d7f6a5b4c3d2e1f0a9b8c7d6e5f40:/build.yml",
+            "commit-sha",
+            3,
+            None,
+        ),
+        ("ci_include", "template:Jobs/Code-Quality.gitlab-ci.yml", "none", 6, None),
+        ("base_image", "python:3.12", "tag", 7, None),
+        ("base_image", "redis:7", "tag", 10, None),
+        ("base_image", "gcr.io/kaniko-project/executor:debug", "tag", 24, "release"),
+        ("remote_script", "wget -qO- https://get.example.net/setup.sh | bash", "none", 20, "assemble"),
+    ]
+    assert [(r["ecosystem"], r["lockfile_enforced"], r["line"], r["job"]) for r in rows["installs"]] == [
+        ("pip", False, 19, "assemble")
+    ]
+    # The push is the executor step, not the line naming the kaniko image, and runner tags name no image.
+    assert rows["outputs"] == [
+        {
+            "kind": "container_image",
+            "file": ".gitlab-ci.yml",
+            "line": 29,
+            "pushed": True,
+            "destination": {"registry": "registry.example.net", "repository": "team/ledger"},
+            "dockerfile": "Dockerfile",
+            "job": "release",
+        }
+    ]
+    Draft202012Validator({"$defs": SCHEMA["$defs"], **SCHEMA["$defs"]["supplyChainFacts"]}).validate(facts)
+
+
+def test_another_gitlab_layout_yields_the_same_kinds_of_facts(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yaml": GITLAB_DOCKER, "deploy/Dockerfile.app": "FROM node:22\n"})
+    rows = _gitlab_rows(_facts(repo))
+    assert [(r["kind"], r["reference"], r["pinning"], r.get("job")) for r in rows["inputs"]] == [
+        ("ci_include", "remote:https://ci.example.org/shared/lint.yml", "none", None),
+        ("base_image", rows["inputs"][1]["reference"], "digest", "container-build"),
+        ("base_image", "docker:27-dind", "tag", "container-build"),
+    ]
+    assert [(r["ecosystem"], r["lockfile_enforced"]) for r in rows["installs"]] == [("npm", True)]
+    (image,) = rows["outputs"]
+    assert image["destination"] == {"registry": "quay.io", "repository": "example-team/catalog"}
+    assert (image["dockerfile"], image["job"]) == ("deploy/Dockerfile.app", "container-build")
+
+
+def test_gitlab_facts_leave_local_includes_nested_pipelines_and_github_ecosystems_out(tmp_path):
+    repo = _repo(
+        tmp_path,
+        {
+            ".gitlab-ci.yml": "include:\n  - local: ci/build.yml\n  - ci/test.yml\nlint:\n  script: [make lint]\n",
+            "vendor/tool/.gitlab-ci.yml": GITLAB_DOCKER,
+            "package.json": "{}",
+        },
+    )
+    facts = _facts(repo)
+    assert [row["file"] for row in facts["workflows"]] == [".gitlab-ci.yml"]
+    assert facts["inputs"] == [] and facts["outputs"] == []
+    # GitLab CI is not a Dependabot ecosystem; only GitHub workflows make github-actions one in use.
+    assert facts["capabilities"]["dependency_updates"]["ecosystems_used"] == ["npm"]
+
+
+def test_an_unparsable_gitlab_pipeline_still_counts_as_a_build_definition(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yml": "build: [unclosed\n  script: npm ci\n"})
+    facts = _facts(repo)
+    assert [row["file"] for row in facts["workflows"]] == [".gitlab-ci.yml"]
+    assert [row["ecosystem"] for row in facts["installs"]] == ["npm"]
+    assert facts["inputs"] == []

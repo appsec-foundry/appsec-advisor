@@ -7,14 +7,14 @@
 #
 # Three ways to use this file:
 #
-#   1. Copy it to `<repo>/.appsec/abuse-cases/<name>.yaml` in the repository
+#   1. Copy it to `<repo>/docs/security/abuse-cases/<name>.yaml` in the repository
 #      being analyzed. Every run picks it up, no flag needed. This is the
 #      normal case — the scenario is versioned with the code it describes.
 #   2. Pass it for a single scan: `--abuse-case-file .appsec/my-case.yaml`
 #      (repository-relative; a path outside the repository is rejected).
 #      This also switches abuse-case verification on at quick depth. Use it for
 #      a case you do not want on every run — a file already in
-#      `.appsec/abuse-cases/` is loaded either way.
+#      `docs/security/abuse-cases/` is loaded either way.
 #   3. Ship it from an org profile via `abuse_cases.add`, using `ORG-AC-NNN`
 #      ids. See docs/org-profiles.md.
 #

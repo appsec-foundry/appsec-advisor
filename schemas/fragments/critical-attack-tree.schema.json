@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/critical-attack-tree.schema.json",
-  "title": "Critical Attack Tree fragment",
-  "description": "Data-driven attack-tree section rendered as the unnumbered `## Critical Attack Tree` block between the Management Summary and Section 1. The renderer produces a single `graph LR` Mermaid tree (full goal-decomposition, short `T-NNN` leaf labels), a fixed one-line explanation above it, and a one-line findings pointer below it (each leaf id → title → §8 anchor; no mitigations — those live in §9). Replaces the dormant critical-attack-chain.schema.json (2026-05 hybrid migration). This is the report's single cross-finding view — the §3.1 Attack Chain Overview was retired; §3 is per-Critical sequenceDiagram walkthroughs only.",
+  "title": "Critical Findings by Root Cause fragment",
+  "description": "Generated from threat-model.yaml for the unnumbered `## Critical Findings by Root Cause` section between the Management Summary and Section 1. The Mermaid graph links each `risk == Critical` finding (`leaf`) to the weakness records that explain it (`rootcause`) or to one `unassigned` node, and those to the `goal`. `fixes[]` lists each root cause's structural fix and the Critical findings it closes.",
   "type": "object",
   "required": ["mermaid"],
   "additionalProperties": false,
@@ -42,8 +42,14 @@
               "label": { "type": "string", "minLength": 1, "maxLength": 120 },
               "class": {
                 "type": "string",
-                "enum": ["goal", "and_node", "or_node", "leaf", "attacker", "crit", "high", "medium", "low", "impact", "system"],
-                "description": "Tree-shape classes: `goal` (root), `and_node` / `or_node` (internal refinement), `leaf` (primitive finding ref). Legacy chain classes are retained for backwards compatibility during the hybrid transition."
+                "enum": ["goal", "rootcause", "unassigned", "and_node", "or_node", "leaf", "attacker", "crit", "high", "medium", "low", "impact", "system"],
+                "description": "`goal` (root), `rootcause` (a weakness record), `unassigned` (Criticals without a linked weakness), `leaf` (a Critical finding). `and_node` / `or_node` and the chain classes remain valid for fragments written by earlier versions."
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "Optional second line of a leaf, the file name of its first evidence location."
               },
               "finding_ref": {
                 "type": "string",
@@ -71,6 +77,30 @@
                 "description": "DEPRECATED (2026-05-30): the rendered AND/OR edge label is now DERIVED from the destination node's class (`or_node`→OR, `and_node`→AND), which makes a per-edge value contradicting the parent class impossible. This field is no longer read; encode AND/OR via the parent node's `class` instead."
               }
             }
+          }
+        }
+      }
+    },
+    "critical_count": {
+      "type": "integer",
+      "minimum": 2,
+      "description": "Number of `risk == Critical` findings; larger than the leaf count when the node cap leaves some out of the graph."
+    },
+    "fixes": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "One entry per `rootcause` node that has a structural recommendation, in node order.",
+      "items": {
+        "type": "object",
+        "required": ["weakness", "recommendation", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "weakness": { "type": "string", "pattern": "^W-\\d{3,4}$" },
+          "recommendation": { "type": "string", "minLength": 1, "maxLength": 400 },
+          "findings": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^[FT]-\\d{3,4}$" }
           }
         }
       }

@@ -29,24 +29,6 @@ import runtime.runtime_cleanup as rc
 PLUGIN_ROOT = Path(__file__).parent.parent
 
 
-def test_cleanup_preserves_persistent_business_context(tmp_path):
-    import orchestrator.orchestration_controller as orchestration_controller
-
-    output = tmp_path / "docs/security"
-    output.mkdir(parents=True)
-    context = output / "business-context.md"
-    context.write_text("Confirmed project purpose.\n")
-    for cleanup in (orchestration_controller._cleanup_full, orchestration_controller._cleanup_rebuild):
-        cleanup(output)
-        assert context.read_text() == "Confirmed project purpose.\n"
-    (output / "threat-model.md").write_text("Report\n")
-    (output / ".business-context-input.md").write_text("Temporary context\n")
-    result = rc.run_cleanup(output, "post-qa", False, True)
-    assert not result["skipped"]
-    assert not (output / ".business-context-input.md").exists()
-    assert context.read_text() == "Confirmed project purpose.\n"
-
-
 def test_completed_cleanup_preserves_both_architecture_diagrams(tmp_path):
     for name in ["threat-model.md", "threat-model.figure1.svg", "threat-model.figure1-detail.svg"]:
         (tmp_path / name).write_text("generated report artifact")
@@ -57,10 +39,8 @@ def test_completed_cleanup_preserves_both_architecture_diagrams(tmp_path):
 
 
 CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "internal" / "contracts" / "cleanup-whitelist.md"
-SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
-FULL_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
-COMPLETION_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
-HELP_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "HELP.txt"
+# The launcher's usage text documents the assessment flags.
+HEADLESS_SH = PLUGIN_ROOT / "scripts" / "run-headless.sh"
 RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime/runtime_cleanup.py"
 
 # ---------------------------------------------------------------------------
@@ -94,6 +74,7 @@ EXPECTED_WHITELIST_FILES = {
     ".coverage-gaps.json",
     ".dispatch-waves.json",
     ".stride-repository-registry.json",
+    ".incremental-carry.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
     ".trust-boundary-assessment-input.json",
@@ -193,6 +174,9 @@ NEVER_CLEANUP = {
     ".architect-review.md",
     ".requirements.yaml",
     ".appsec-cache",
+    ".assessment-state.json",
+    ".assessment-work",
+    ".appsec-lock.guard",
     ".appsec-checkpoint",
     ".agent-run.log",
     ".hook-events.log",
@@ -214,7 +198,7 @@ def whitelist_text() -> str:
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
-    return "\n".join(path.read_text() for path in (SKILL_MD, FULL_RUNTIME_MD, COMPLETION_RUNTIME_MD, HELP_MD))
+    return HEADLESS_SH.read_text()
 
 
 @pytest.fixture(scope="module")
@@ -499,32 +483,7 @@ class TestCleanupWhitelistDoc:
 
 class TestSkillMdFlag:
     def test_flag_in_argument_table(self, skill_text):
-        assert "--keep-runtime-files" in skill_text, "SKILL.md flag-parsing table must document --keep-runtime-files"
-
-    def test_env_var_passed_to_orchestrator(self, skill_text):
-        assert "KEEP_RUNTIME_FILES" in skill_text, (
-            "SKILL.md must pass KEEP_RUNTIME_FILES env to the orchestrator (Stage 1 handoff)"
-        )
-
-    def test_skill_invokes_cleanup_script(self, skill_text):
-        """The skill layer MUST call the deterministic cleanup at the end of
-        Completion Summary — this is the fallback that runs even when the
-        orchestrator skipped its own Phase 11 cleanup due to turn-budget
-        pressure."""
-        assert "runtime/runtime_cleanup.py" in skill_text, (
-            "SKILL.md Completion Summary must invoke scripts/runtime/runtime_cleanup.py "
-            "so cleanup runs deterministically at the end of every successful run"
-        )
-
-    def test_skill_invokes_post_qa_stage(self, skill_text):
-        assert "runtime/runtime_cleanup.py" in skill_text and "post-qa" in skill_text, (
-            "SKILL.md must invoke runtime/runtime_cleanup.py with --stage post-qa after Stage 3 (QA reviewer) completes"
-        )
-
-    def test_skill_invokes_post_architect_stage(self, skill_text):
-        assert "post-architect" in skill_text, (
-            "SKILL.md must invoke runtime/runtime_cleanup.py with --stage post-architect when ARCHITECT_REVIEW=true"
-        )
+        assert "--keep-runtime-files" in skill_text, "run-headless.sh usage must document --keep-runtime-files"
 
 
 # ---------------------------------------------------------------------------

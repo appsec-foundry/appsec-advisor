@@ -67,6 +67,59 @@ def _reset_cache():
     scan_excludes._reset_cache_for_tests()
 
 
+def test_inventory_output_detection_preserves_source_and_declared_inputs():
+    products = {
+        "threat-model.md",
+        "threat-model.yaml",
+        "old/.agent-run.log",
+        "old/.skill-config.json",
+        "old/.data-flows.json",
+        "custom/.abuse-case-verdict-case-17.json",
+        ".assessment-work/render/model.json",
+        ".assessment-work/render/business-context.md",
+    }
+    source = {
+        "app.py",
+        "docs/design.md",
+        "old/business-context.md",
+        "old/requirements.yaml",
+        "old/abuse-cases/business.yaml",
+        ".appsec/config.yaml",
+        "notes/threat-model.md",
+        "notes/.skill-config.json",
+        "old/known-threats/prior.yaml",
+        "old/app.py",
+        "old/.eslintrc.json",
+    }
+    assert scan_excludes.assessment_artifacts_in_inventory(products | source) == products
+
+
+@pytest.mark.parametrize(
+    ("folder", "markers"),
+    [
+        ("docs/review-copy", {"threat-model.md", "threat-model.yaml"}),
+        ("archive/2025/scan.bak", {".agent-run.log", ".skill-config.json"}),
+    ],
+)
+def test_inventory_output_copy_without_code_is_excluded_whole(folder, markers):
+    """Every file of an old output copy is excluded, also names no product list knows."""
+    products = {f"{folder}/{name}" for name in markers} | {
+        f"{folder}/.evidence-verification.json",
+        f"{folder}/.actors-for-billing.json",
+        f"{folder}/component-map.json",
+        f"{folder}/threat-model.figure1.svg",
+        f"{folder}/render/.threats-merged.json",
+    }
+    kept = {f"{folder}/business-context.md", f"{folder}/abuse-cases/business.yaml", "src/app.ts", "docs/guide.md"}
+    assert scan_excludes.assessment_artifacts_in_inventory(products | kept) == products
+
+
+def test_inventory_report_in_repository_root_never_excludes_the_root():
+    products = {"threat-model.md", "threat-model.yaml"}
+    source = {"README.md", "settings.json", ".evidence-verification.json"}
+    assert scan_excludes.assessment_artifacts_in_inventory(products | source) == products
+
+
 # ---------------------------------------------------------------------------
 # YAML schema / shape
 # ---------------------------------------------------------------------------

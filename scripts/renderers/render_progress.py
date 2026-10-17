@@ -22,9 +22,14 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
+import os
 import re
+import select
+import shutil
 import sys
 from datetime import datetime, timezone
+
+from renderers.term_style import ANSI_RE, SPINNER, Style
 
 # Canonical lines are double-space separated (event_log.format_line). Splitting
 # on 2+ spaces recovers the leading fixed columns; the trailing detail is
@@ -200,6 +205,43 @@ def _clock(when) -> str:
     return when.astimezone().strftime("%H:%M:%S")
 
 
+_SPINNER = SPINNER
+_TICK_S = 0.1
+_ANSI_RE = ANSI_RE
+
+
+def _input_lines(stream, tick=None):
+    """Yield the lines of ``stream``; call ``tick`` whenever none arrives for ``_TICK_S``.
+
+    The spinner on the live line needs a clock of its own: events arrive
+    seconds to minutes apart. Without ``tick``, or on a stream without a file
+    descriptor, this is plain line iteration.
+    """
+    if tick is None:
+        yield from stream
+        return
+    try:
+        fd = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        yield from stream
+        return
+    buf = b""
+    while True:
+        ready, _, _ = select.select([fd], [], [], _TICK_S)
+        if not ready:
+            tick()
+            continue
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        buf += chunk
+        *complete, buf = buf.split(b"\n")
+        for line in complete:
+            yield line.decode("utf-8", "replace") + "\n"
+    if buf:
+        yield buf.decode("utf-8", "replace")
+
+
 def main() -> int:
     cur_phase = ""  # e.g. "2/11 Reconnaissance"
     phase_start = None  # datetime the current phase began
@@ -207,6 +249,9 @@ def main() -> int:
 
     out = sys.stdout
     is_tty = out.isatty()
+    st = Style.for_stream(out)
+    live_body = ""  # the TTY status line without its spinner frame
+    spin_frame = 0
     cur_clock = " " * 8
     cur_when = None  # datetime of the line being processed
     status_shown = False  # a transient \r heartbeat line is on screen
@@ -236,7 +281,7 @@ def main() -> int:
         if status_shown:  # retire the transient heartbeat line first
             out.write(_CLEAR)
             status_shown = False
-        out.write("\n" if line == "" else f"{cur_clock}  {line}\n")
+        out.write("\n" if line == "" else f"{st(cur_clock, 'muted')}  {line}\n")
         out.flush()
         last_perm = cur_when
 
@@ -261,17 +306,56 @@ def main() -> int:
             return ""
         return f"STRIDE {len(stride_finished)}/{len(stride_components)} components done"
 
-    def heartbeat(line: str) -> None:
-        """Show liveness without flooding the console."""
-        nonlocal status_shown
+    def draw_live() -> None:
+        out.write(f"{_CLEAR}{st(cur_clock, 'muted')}  {st(_SPINNER[spin_frame % len(_SPINNER)], 'accent')} {live_body}")
+        out.flush()
+
+    def heartbeat(line: str, live: str = "") -> None:
+        """Show liveness without flooding the console.
+
+        On a TTY ``live`` replaces ``line``: one status line, redrawn in place
+        and kept turning by the spinner between events.
+        """
+        nonlocal status_shown, live_body
         if is_tty:
-            out.write(f"{_CLEAR}{cur_clock}  {line}")  # in-place, no newline
-            out.flush()
+            live_body = live or line.strip()
+            draw_live()  # in-place, no newline
             status_shown = True
         elif last_perm is None or cur_when is None or (cur_when - last_perm).total_seconds() >= _HB_THROTTLE_S:
             w(line)  # off-TTY: occasional scrolling tick only
 
-    for raw in sys.stdin:
+    def tick() -> None:
+        nonlocal spin_frame
+        if status_shown:
+            spin_frame += 1
+            draw_live()
+
+    def live_progress(phase_el: str, total_el: str) -> str:
+        """Body of the TTY status line: phase, bar, and what is still running."""
+        running = ""
+        if cur_phase.startswith("9/") and stride_components:
+            done, total = len(stride_finished), len(stride_components)
+            progress = f"{st.bar(done, total)} {st(f'{done}/{total}', 'bold')} components"
+            open_ = sorted(stride_components - stride_finished)
+            if open_:
+                names = ", ".join(open_[:3]) + (f" +{len(open_) - 3}" if len(open_) > 3 else "")
+                running = st(f" · running: {names}", "muted")
+        elif last_pct_seen:
+            pct = int(last_pct_seen)
+            progress = f"{st.bar(pct, 100)} {st(f'~{pct}%', 'bold')}"
+        else:
+            progress = ""
+        head = f"Phase {cur_phase} {st(f'— {phase_el}', 'muted')}"
+        tail = st(f"   [+{total_el} total]", "muted")
+        body = f"{head}  {progress}{running}{tail}" if progress else f"{head}{tail}"
+        # A status line wider than the terminal wraps, and `\r\033[K` then
+        # clears only its last row; the running names go first.
+        width = shutil.get_terminal_size((120, 24)).columns
+        if running and len(_ANSI_RE.sub("", body)) + 12 > width:
+            body = body.replace(running, "")
+        return body
+
+    for raw in _input_lines(sys.stdin, tick if is_tty else None):
         parsed = parse_line(raw)
         if not parsed:
             continue
@@ -309,10 +393,10 @@ def main() -> int:
             reqs = _kv(detail, "CHECK_REQUIREMENTS") == "true"
             req_src = _kv(detail, "REQUIREMENTS_URL_OVERRIDE")
             w()
-            w(f"══ Assessment started · mode={mode}{'  requirements=on' if reqs else ''} ══")
+            w(st(f"══ Assessment started · mode={mode}{'  requirements=on' if reqs else ''} ══", "accent", "bold"))
             if reqs and req_src:
-                w(f"   requirements ← {req_src}")
-            w(f"   Pipeline: {_ROADMAP}")
+                w(st(f"   requirements ← {req_src}", "muted"))
+            w(st(f"   Pipeline: {_ROADMAP}", "muted"))
 
         elif event in ("PHASE_START", "PHASE_END"):
             m = _PHASE_RE.search(detail)
@@ -326,12 +410,15 @@ def main() -> int:
                 cur_phase = f"{num}/{total} {head}"
                 phase_start = when
                 w()
-                w(f"▶ Phase {num}/{total} · {head}   [+{total_el} total]")
+                w(
+                    f"{st('▶', 'accent')} {st(f'Phase {num}/{total} · {head}', 'accent', 'bold')}"
+                    f"{st(f'   [+{total_el} total]', 'muted')}"
+                )
                 if action.strip():
                     w(f"    {action.strip()}")
             else:
                 tail = f" — {action.strip()}" if action.strip() else ""
-                w(f"✓ Phase {num}/{total} · {head}{tail}")
+                w(f"{st(f'✓ Phase {num}/{total} · {head}', 'ok')}{st(tail, 'muted')}")
 
         elif event == "AGENT_SPAWN":
             call_id = _kv(detail, "agent_call_id")
@@ -365,7 +452,7 @@ def main() -> int:
                 component = _kv(detail, "component_id") or call_id
                 stride_calls[call_id] = component
                 stride_components.add(component)
-            w(f"    ↳ {agent_name}{_agent_tag(model, depth)}: {task}")
+            w(f"    {st('↳', 'muted')} {st(agent_name, 'agent')}{st(_agent_tag(model, depth), 'muted')}: {task}")
 
         elif event == "AGENT_INVOKE":
             # Legacy PostToolUse mislabeled a successful return as a new start.
@@ -380,14 +467,17 @@ def main() -> int:
                 terminal_calls.add(call_id)
             agent = _kv(detail, "agent_type") or comp
             agent_name = agent.split(":")[-1] if agent else "agent"
-            mark = "✓" if event == "AGENT_DONE" else "⚠"
-            state = "done" if event == "AGENT_DONE" else "failed"
+            done = event == "AGENT_DONE"
+            mark = st("✓", "ok") if done else st("⚠", "warn")
+            state = "done" if done else "failed"
             tail = _terminal_subject(detail, run_level_reasons)
+            tally = ""
             if call_id and call_id in stride_calls:
-                if event == "AGENT_DONE":
+                if done:
                     stride_finished.add(stride_calls[call_id])
-                tail += f"   [{stride_tally()}]"
-            w(f"    {mark} {agent_name} {state}{tail}")
+                tally = f"   [{stride_tally()}]"
+            # A failure's reason is the part to read; a success's subject is context.
+            w(f"    {mark} {agent_name} {state}{st(tail, 'muted') if done else tail}{st(tally, 'muted')}")
 
         elif event == "SCAN_END":
             # Publication milestone, not a lifecycle terminal: the producer has
@@ -396,15 +486,15 @@ def main() -> int:
             # "done" showed two completions for one call — and, when the
             # lifecycle disagreed, a success and a failure for the same call.
             owner = comp or "scan"
-            w(f"      · {owner} output ready — {detail}")
+            w(f"      {st('·', 'muted')} {owner} output ready {st(f'— {detail}', 'muted')}")
 
         elif event in ("STEP_START", "STEP_END"):
-            mark = "·" if event == "STEP_START" else "✓"
+            mark = st("·", "muted") if event == "STEP_START" else st("✓", "ok")
             w(f"      {mark} {_strip_ids(detail, 'agent_call_id', 'action_id', 'job_id')}")
 
         elif event == "STRIDE_PROGRESS":
             files = _kv(detail, "stride_files")
-            w(f"      · STRIDE {files} component(s) analysed")
+            w(st(f"      · STRIDE {files} component(s) analysed", "muted"))
 
         elif event == "HEARTBEAT":
             total_el = _mins(run_start, when)
@@ -420,17 +510,23 @@ def main() -> int:
                 # 2026-09-06 put two and nine percentage lines on screen for
                 # 20 and 190 emitted readings.
                 pct_tag = f" · ~{last_pct_seen}%" if last_pct_seen else ""
-                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}{tally}{pct_tag}   [+{total_el} total]")
+                heartbeat(
+                    f"    · still in Phase {cur_phase} — {phase_el}{tally}{pct_tag}   [+{total_el} total]",
+                    live_progress(phase_el, total_el) if is_tty else "",
+                )
             else:
                 step = _kv(detail, "step") or "startup"
-                heartbeat(f"    · starting up ({step}) — +{total_el}")
+                heartbeat(
+                    f"    · starting up ({step}) — +{total_el}",
+                    f"starting up ({step}) {st(f'— +{total_el}', 'muted')}",
+                )
 
         elif event == "WATCHDOG_START":
-            w("    ⤷ watchdog armed (idle / stall guard active)")
+            w(st("    ⤷ watchdog armed (idle / stall guard active)", "muted"))
         elif event == "RUN_IDLE":
-            w(f"    ⚠ idle stall detected — {detail}")
+            w(f"    {st('⚠ idle stall detected', 'warn')} — {detail}")
         elif event == "RUN_RESUMED":
-            w(f"    ↻ resumed — {detail}")
+            w(f"    {st('↻ resumed', 'accent')} — {detail}")
         elif event == "RUN_PROGRESS":
             # The watchdog's `phase=` token is read from `.appsec-checkpoint`,
             # which is only written at phase *end* and therefore lags the live
@@ -448,7 +544,7 @@ def main() -> int:
             last_pct_seen = pct or last_pct_seen
             if pct is None or pct != last_pct_shown:
                 last_pct_shown = pct
-                w(f"    ◷ progress · {detail}")
+                w(f"    {st('◷', 'accent')} progress {st(f'· {detail}', 'muted')}")
         elif event == "PHASE_COST":
             # Boundary line: the phase named here is over. `delta≥` is what it
             # spent, `total≥` the run so far — both floors, both only present
@@ -463,31 +559,31 @@ def main() -> int:
                 spend = f" · run {total}"
             else:
                 spend = ""
-            w(f"    ✓ Phase {phase} done — {duration}{spend}")
+            w(f"    {st(f'✓ Phase {phase} done', 'ok')} {st(f'— {duration}{spend}', 'muted')}")
         elif event == "RUN_BUDGET_WARN":
             scope = _kv(detail, "scope")
             used, budget, pct = _kv(detail, "used"), _kv(detail, "budget"), _kv(detail, "pct")
             label = "soft budget" if scope == "soft" else "hard cut (the host stops the run there)"
-            w(f"    ⚠ cost {label} — {used} of {budget} ({pct})")
+            w(f"    {st(f'⚠ cost {label}', 'warn')} — {used} of {budget} ({pct})")
         elif event == "RUN_BUDGET_UNWATCHED":
-            w(f"    ⚠ budget not watchable — {detail}")
+            w(f"    {st('⚠ budget not watchable', 'warn')} — {detail}")
         elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
-            w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
+            w(f"    {st('⚠ ' + event.lower().replace('_', ' '), 'warn')} — {detail}")
         elif event == "SUBSTEP2_IDLE":
-            w(f"    ⛔ substep-2 idle — {detail}")
+            w(f"    {st('⛔ substep-2 idle', 'critical')} — {detail}")
         elif event == "SESSION_BLOAT":
-            w(f"    ⚠ session context bloat — {detail}")
+            w(f"    {st('⚠ session context bloat', 'warn')} — {detail}")
         elif event == "SESSION_NONEMPTY":
-            w(f"    ⚠ non-empty session at scan start — {detail}")
+            w(f"    {st('⚠ non-empty session at scan start', 'warn')} — {detail}")
         elif event == "SESSION_ABORTED_MIDRUN":
-            w(f"    ⛔ aborted mid-run — {detail}")
+            w(f"    {st('⛔ aborted mid-run', 'critical')} — {detail}")
         elif event in ("BUDGET_WARN", "BUDGET_CRITICAL"):
             # Turn consumption is not something an operator can act on mid-run,
             # and it crosses 75% on healthy agents that go on to finish. Shown
             # as plain progress so ⚠ and ⛔ keep meaning "look at this now".
             # The event itself is unchanged in the log and in run issues, and
             # MAX_TURNS — an agent that actually died — still carries a glyph.
-            w(f"   budget · {_strip_ids(detail, 'agent_call_id')}")
+            w(st(f"   budget · {_strip_ids(detail, 'agent_call_id')}", "muted"))
         elif event in (
             "MAX_TURNS",
             "AGENT_ERROR",
@@ -504,16 +600,19 @@ def main() -> int:
                 if code in run_level_notices:
                     continue
                 run_level_notices.add(code)
-            w(f"    ⚠ {event.lower().replace('_', ' ')} — {_strip_ids(detail, 'agent_call_id', 'action_id')}")
+            w(
+                f"    {st('⚠ ' + event.lower().replace('_', ' '), 'warn')}"
+                f" — {_strip_ids(detail, 'agent_call_id', 'action_id')}"
+            )
         elif event == "PARALLEL_STRIDE_RESOLVED":
-            w(f"   config · {detail}")
+            w(st(f"   config · {detail}", "muted"))
         elif event == "ROUTE_INVENTORY_PREPASS":
-            w(f"   prep · {detail}")
+            w(st(f"   prep · {detail}", "muted"))
         elif event == "ASSESSMENT_SUMMARY":
             w()
-            w(f"✓ assessment complete — {detail}")
+            w(f"{st('✓ assessment complete', 'ok', 'bold')} — {detail}")
         elif event == "ASSESSMENT_MODELS":
-            w(f"    models · {detail}")
+            w(f"    {st('models ·', 'muted')} {detail}")
 
     if status_shown:  # leave the cursor on a clean line at EOF
         out.write("\n")

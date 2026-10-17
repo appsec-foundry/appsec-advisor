@@ -49,6 +49,7 @@ if not __package__:
 
 
 import argparse
+import fnmatch
 import importlib.util
 import json
 import re
@@ -277,6 +278,24 @@ def _glob_matches(relative_path: Path, patterns: list[str]) -> bool:
     return False
 
 
+def _path_pattern_matches(relative_path: Path, patterns: list[str]) -> bool:
+    """Match ``scope_qualifier.path_patterns`` the way a case author writes them.
+
+    Case is ignored, so ``*admin*`` also selects ``AdminController.java``. A
+    pattern without ``/`` is tested against every directory and file name in
+    the path, so ``*admin*`` also selects ``src/admin/users/list.ts``. A
+    pattern with ``/`` keeps the right-anchored glob semantics.
+    """
+    lowered = Path(relative_path.as_posix().lower())
+    for pattern in (p.lower() for p in patterns):
+        if "/" in pattern:
+            if _glob_matches(lowered, [pattern]):
+                return True
+        elif any(fnmatch.fnmatchcase(part, pattern) for part in lowered.parts):
+            return True
+    return False
+
+
 def _source_probe(step: dict, repo_root: Path | None) -> dict | None:
     """Return direct source evidence for a step's sink, if present.
 
@@ -382,6 +401,14 @@ def match_step(
     top_score = 0
     weak_tie_ids: set[str] = set()
     for idx, finding in enumerate(findings):
+        # The source probe's evidence policy applies to bound findings too. A
+        # CI-workflow finding classified CWE-269 bound to a registration step
+        # by its CWE family (juice-shop 2026-10-08), and the chain then raised
+        # that workflow finding to Critical as its keystone.
+        ev = finding.get("evidence")
+        ev_file = ev.get("file") if isinstance(ev, dict) else None
+        if isinstance(ev_file, str) and not _is_runtime_surface_evidence(ev_file):
+            continue
         text = _finding_text(finding)
         cwe_field = (finding.get("cwe") or "").strip()
         score = 0
@@ -435,6 +462,13 @@ def match_step(
         # CWE-862, and the verifier then burned its whole turn budget
         # discovering the binding was nonsense.
         weak = not has_non_cwe_match and not exact_cwe
+        coherent = bool(ev_file) and ev_file in prefer_files
+        # A lone weak match is no better evidence than a tied one when the step
+        # declares its own CWE: with the CI finding filtered, AC-T-003 step 2
+        # bound the coupon finding again (juice-shop 2026-10-08). It stays
+        # eligible only where the chain runs through its file.
+        if weak and step_cwe and not coherent:
+            continue
         if score > top_score:
             top_score = score
             weak_tie_ids = {fid} if weak else set()
@@ -442,8 +476,6 @@ def match_step(
             weak_tie_ids.add(fid)
         # Maximise: score, chain coherence, the step's own CWE, real mechanism
         # evidence, then prefer a not-yet-consumed finding, then earliest.
-        ev_file = (finding.get("evidence") or {}).get("file") if isinstance(finding.get("evidence"), dict) else None
-        coherent = bool(ev_file) and ev_file in prefer_files
         key = (score, coherent, exact_cwe, has_non_cwe_match, fid not in exclude_ids, -idx)
         if best_key is None or key > best_key:
             best_key = key
@@ -498,7 +530,7 @@ def _scope_status(case: dict, signals: set[str] | None, repo_root: Path | None) 
             # absence of the inventory cannot disprove applicability.
             pass
         elif not patterns or not any(
-            _glob_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)
+            _path_pattern_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)
         ):
             unmet_paths = [str(p) for p in raw_patterns]
     return not unmet_signals and not unmet_paths, unmet_signals, unmet_paths
@@ -534,7 +566,199 @@ def _match_chain(
     return step_matches
 
 
-def match_case(case: dict, findings: list[dict], signals: set[str] | None, repo_root: Path | None = None) -> dict:
+def is_descriptive(case: dict) -> bool:
+    """A plain-language business case without probes (schema_version 2)."""
+    return isinstance(case, dict) and case.get("kind") == "descriptive"
+
+
+def _finding_file(finding: dict) -> str | None:
+    ev = finding.get("evidence")
+    file = ev.get("file") if isinstance(ev, dict) else None
+    return file.replace("\\", "/") if isinstance(file, str) and file else None
+
+
+# Files a descriptive case can bind a step to: code that executes or renders
+# server-side. Styles, markup, data, and backups only steer the verifier away.
+_DESCRIPTIVE_SOURCE_SUFFIXES = frozenset(
+    ".ts .tsx .js .jsx .mjs .cjs .py .rb .go .java .kt .kts .scala .groovy .cs .vb .fs .rs .php "
+    ".c .cc .cpp .h .hpp .m .mm .swift .dart .ex .exs .erl .lua .pl .pm .vue .svelte "
+    ".jsp .aspx .cshtml .erb".split()
+)
+
+
+# Most specific first: a route handler file can be the router that registers every route.
+_LOCATORS = ("detector_rules", "path_patterns", "route_patterns")
+
+
+def _descriptive_preselection(
+    case: dict,
+    findings: list[dict],
+    repo_root: Path | None,
+    max_files: int,
+    routes: list[dict] | None,
+    owned: frozenset[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Return (preselected source files, related findings).
+
+    Three locators select files, in this order: files of findings a
+    detector raised under one of the ``detector_rules``, the case's
+    ``path_patterns``, and handlers of routes in the route inventory whose
+    path matches a ``route_patterns`` entry. A file must be executable runtime source in the
+    bounded repository inventory; documentation, tests, styles, and catalog
+    data are never admitted, and a route or finding cannot name a file outside
+    the inventory.
+    Related findings are existing, unrefuted findings located in those files:
+    detector results the verifier cites as evidence instead of re-deciding.
+    """
+    qualifier = case.get("scope_qualifier") or {}
+    if repo_root is None or not repo_root.is_dir():
+        return [], []
+    runtime: dict[str, Path] = {}
+    for path in _repo_source_files(repo_root):
+        rel = path.relative_to(repo_root)
+        # `owned` limits the search to files a component lists, so a confirmed
+        # step can become a finding of the component that owns its file.
+        if owned is not None and rel.as_posix() not in owned:
+            continue
+        if path.suffix.lower() in _DESCRIPTIVE_SOURCE_SUFFIXES and _is_runtime_surface_evidence(rel.as_posix()):
+            runtime[rel.as_posix()] = rel
+    route_patterns = [str(v).lower() for v in qualifier.get("route_patterns") or [] if str(v).strip()]
+    rules = {str(v) for v in qualifier.get("detector_rules") or []}
+    path_patterns = [p for p in (_safe_repo_glob(v) for v in qualifier.get("path_patterns") or []) if p]
+    located: dict[str, list[str]] = {
+        "route_patterns": [
+            str(route["handler_file"]).replace("\\", "/").removeprefix("./")
+            for route in routes or []
+            if any(fnmatch.fnmatchcase(str(route["path"]).lower(), pattern) for pattern in route_patterns)
+        ],
+        "detector_rules": [
+            file
+            for finding in findings
+            if str(finding.get("source_check_id") or "") in rules
+            for file in [_finding_file(finding)]
+            if file
+        ],
+        "path_patterns": [
+            rel_str for rel_str, rel in runtime.items() if path_patterns and _path_pattern_matches(rel, path_patterns)
+        ],
+    }
+    files: list[str] = []
+    for locator in _LOCATORS:
+        for file in located[locator]:
+            if file in runtime and file not in files and len(files) < max_files:
+                files.append(file)
+    selected = set(files)
+    related: dict[str, dict] = {}
+    for finding in findings:
+        fid = _finding_id(finding)
+        if fid and fid not in related and _finding_file(finding) in selected:
+            ev = finding.get("evidence") or {}
+            line = ev.get("line") if isinstance(ev, dict) else None
+            related[fid] = {
+                "id": fid,
+                "title": str(finding.get("title") or "")[:200],
+                "cwe": str(finding.get("cwe") or "")[:40] or None,
+                "file": _finding_file(finding),
+                "line": line if type(line) is int and line >= 1 else None,
+            }
+    return files, [related[fid] for fid in sorted(related)][:max_files]
+
+
+def _match_descriptive(
+    case: dict,
+    findings: list[dict],
+    signals: set[str] | None,
+    repo_root: Path | None,
+    max_files: int,
+    routes: list[dict] | None = None,
+    owned: frozenset[str] | None = None,
+) -> dict:
+    """Preselect a descriptive case deterministically; the verifier binds it.
+
+    No regex matches a business boundary, so a step is never ``matched`` here.
+    A case is a candidate when every required signal holds and one of its
+    locators finds a runtime source file; a case that declares no locator finds
+    none. Without that it reaches the verifier only through an explicit request.
+    """
+    qualifier = case.get("scope_qualifier") or {}
+    unmet_signals = (
+        [] if signals is None else [sig for sig in qualifier.get("required_signals") or [] if sig not in signals]
+    )
+    declared = [locator for locator in _LOCATORS if qualifier.get(locator)]
+    files, related = (
+        _descriptive_preselection(case, findings, repo_root, max_files, routes, owned)
+        if not unmet_signals
+        else ([], [])
+    )
+    unlocated = not files and not unmet_signals
+    applicable = not unmet_signals and not unlocated
+    unmet_paths = [str(p) for p in qualifier.get("path_patterns") or []] if unlocated else []
+    reason = None
+    if not applicable:
+        reasons = []
+        if unmet_signals:
+            reasons.append("required signal(s) absent: " + ", ".join(unmet_signals))
+        if unlocated and qualifier.get("route_patterns"):
+            reasons.append(
+                "no route matched: " + ", ".join(map(str, qualifier["route_patterns"]))
+                if routes is not None
+                else "route inventory unavailable"
+            )
+        if unlocated and qualifier.get("detector_rules"):
+            reasons.append(
+                "no runtime finding from detector rule(s): " + ", ".join(map(str, qualifier["detector_rules"]))
+            )
+        if unmet_paths:
+            reasons.append("no runtime source path matched: " + ", ".join(unmet_paths))
+        if unlocated and not declared:
+            reasons.append("declares no path, route, or detector locator")
+        reason = "; ".join(reasons) or "scope preconditions not met for this codebase"
+    steps = [
+        {
+            "step": index,
+            "label": text,
+            "required": True,
+            "grants": None,
+            "requires": None,
+            "matched": False,
+            "matched_finding_id": None,
+            "evidence": None,
+            "match_basis": "descriptive",
+            "controls_found": [],
+        }
+        # Mirrors resolve_abuse_cases.descriptive_steps: an open case has one step, its check.
+        for index, text in enumerate(case.get("steps") or ([case["check"]] if case.get("check") else []), start=1)
+    ]
+    return {
+        "abuse_case_id": case.get("id"),
+        "title": case.get("title"),
+        "source": "descriptive",
+        "kind": "descriptive",
+        "applicable": applicable,
+        "structural_verdict": "candidate" if applicable else "not_applicable",
+        "reason": reason,
+        "unmet_signals": unmet_signals or None,
+        "unmet_path_patterns": unmet_paths or None,
+        "matched_finding_ids": [],
+        "related_finding_ids": [f["id"] for f in related],
+        "related_findings": related,
+        "preselected_sources": files,
+        "step_matches": steps,
+        "case": case,
+    }
+
+
+def match_case(
+    case: dict,
+    findings: list[dict],
+    signals: set[str] | None,
+    repo_root: Path | None = None,
+    max_descriptive_files: int = 12,
+    routes: list[dict] | None = None,
+    owned: frozenset[str] | None = None,
+) -> dict:
+    if is_descriptive(case):
+        return _match_descriptive(case, findings, signals, repo_root, max_descriptive_files, routes, owned)
     applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
     step_matches = _match_chain(case, findings, repo_root if applicable else None)
     # Second pass: each step prefers findings in files its sibling steps
@@ -638,6 +862,7 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     all required steps confirmed, nothing unresolved -> fully_viable
     >=1 required confirmed AND >=1 step has a control -> partially_blocked
     all required steps blocked                        -> mitigated
+    descriptive case, a step blocked, none unresolved -> mitigated
     any ASSESSED step inconclusive or refuted         -> inconclusive
 
     ``fully_viable`` is a positive claim of end-to-end exploitability, so it
@@ -659,7 +884,14 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     verdicts = [(by_step.get(s.get("step")) or {}).get("verdict", _INCONCLUSIVE) for s in required_steps]
     # Controls from EVERY step (required or not) — a control anywhere on the
     # chain impedes it. Per step the verifier's reading wins over the matcher's.
-    any_control = any(_step_controls(s, by_step.get(s.get("step"))) for s in step_matches)
+    # A confirmed business step states that no control enforces its boundary,
+    # so a control listed beside it is the insufficient check its reason names.
+    descriptive = case_match.get("kind") == "descriptive"
+    any_control = any(
+        _step_controls(s, by_step.get(s.get("step")))
+        for s in step_matches
+        if not (descriptive and (by_step.get(s.get("step")) or {}).get("verdict") == _CONFIRMED)
+    )
 
     if all(v == _BLOCKED for v in verdicts):
         return "mitigated"
@@ -697,6 +929,11 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     # elevating the member findings off an unproven chain.
     if any(v.get("verdict") in _UNESTABLISHED for v in step_verdicts):
         return "inconclusive"
+    # A business chain is one short sequence through one operation: a verified
+    # control at any step stops the abuse. A technical chain keeps the mixed
+    # verdict, because an attacker may reach its later steps another way.
+    if case_match.get("kind") == "descriptive" and _BLOCKED in verdicts:
+        return "mitigated"
     confirmed = [v == _CONFIRMED for v in verdicts]
     if all(confirmed):
         return "partially_blocked" if any_control else "fully_viable"
@@ -751,7 +988,11 @@ def _effective_registration_signal(signals: set[str] | None, output_dir: Path) -
     matching runs after that tail, so the later boolean is authoritative when
     present. Missing YAML/meta leaves the earlier signal unchanged; an explicit
     false removes a stale recon true as well as true adding a missed signal.
+    Without a recon sidecar matching is ungated; the overlay must not turn that
+    unknown into a set where every other required signal reads as absent.
     """
+    if signals is None:
+        return None
     path = output_dir / "threat-model.yaml"
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -784,6 +1025,84 @@ def _scan_case_config(output_dir: Path) -> tuple[list[Path], set[str]]:
     return files, ids
 
 
+# Admitted model-derived cases of this run, written by model/derive_abuse_cases.py.
+DERIVED_CASE_FILE = ".derived-abuse-cases.yaml"
+
+
+def _assessment_depth(output_dir: Path) -> str:
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "standard"
+    depth = cfg.get("assessment_depth") if isinstance(cfg, dict) else None
+    return depth if depth in {"quick", "standard", "thorough"} else "standard"
+
+
+def apply_descriptive_limits(
+    matches: list[dict], requested: set[str], depth: str, limits: dict[str, int], derived: set[str] = frozenset()
+) -> None:
+    """Bound model work on descriptive candidates; record every omission.
+
+    Explicitly requested cases run at every depth up to their own limit.
+    Optional ones run from standard depth up to the depth's limit, strongest
+    preselection evidence first. Model-derived cases run only at thorough
+    depth, within their own limit (AC-12). An omitted candidate becomes
+    ``not_performed`` with its reason, so it is reported rather than lost.
+    """
+    optional_cap = {
+        "quick": 0,
+        "standard": limits["descriptive_candidates_standard"],
+        "thorough": limits["descriptive_candidates_thorough"],
+    }[depth]
+    explicit_cap = limits["descriptive_candidates_explicit"]
+    derived_cap = limits["descriptive_candidates_derived"] if depth == "thorough" else 0
+    for match in matches:
+        # A request is answered even when preselection found nothing: the
+        # verifier then binds the case without a preselected file set.
+        if (
+            match.get("kind") == "descriptive"
+            and match["abuse_case_id"] in requested
+            and match.get("structural_verdict") == "not_applicable"
+        ):
+            match["structural_verdict"] = "candidate"
+            match["reason"] = f"explicitly requested; preselection found no match ({match.get('reason')})"
+    candidates = [m for m in matches if m.get("kind") == "descriptive" and m.get("structural_verdict") == "candidate"]
+    ranked = sorted(
+        candidates,
+        key=lambda m: (
+            -len(m.get("related_finding_ids") or []),
+            -len(m.get("preselected_sources") or []),
+            m["abuse_case_id"],
+        ),
+    )
+    used = {"explicit": 0, "derived": 0, "optional": 0}
+    caps = {"explicit": explicit_cap, "derived": derived_cap, "optional": optional_cap}
+    for match in ranked:
+        match["requested"] = match["abuse_case_id"] in requested
+        if match["requested"]:
+            kind = "explicit"
+        elif match["abuse_case_id"] in derived:
+            kind = "derived"
+        else:
+            kind = "optional"
+        if used[kind] < caps[kind]:
+            used[kind] += 1
+            continue
+        match["structural_verdict"] = "not_performed"
+        if match["requested"]:
+            match["reason"] = f"exceeds the limit of {explicit_cap} explicitly requested business abuse cases per run"
+        elif kind == "derived":
+            match["reason"] = (
+                f"exceeds the limit of {derived_cap} model-derived business abuse cases"
+                if depth == "thorough"
+                else "model-derived business abuse cases run only at thorough depth"
+            )
+        elif depth == "quick":
+            match["reason"] = "quick depth verifies business abuse cases only on explicit request"
+        else:
+            match["reason"] = f"exceeds the limit of {optional_cap} business abuse cases at {depth} depth"
+
+
 def _candidate_priority(case_match: dict, findings_by_id: dict[str, dict]) -> tuple:
     """Prioritize verification from matched evidence, retaining every candidate.
 
@@ -809,6 +1128,38 @@ def _candidate_priority(case_match: dict, findings_by_id: dict[str, dict]) -> tu
     )
 
 
+def load_routes(out_dir: Path) -> list[dict] | None:
+    """Routes of the run's route inventory with a path and handler file; None when the inventory is absent."""
+    try:
+        document = json.loads((out_dir / ".route-inventory.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    routes = document.get("routes") if isinstance(document, dict) else None
+    if not isinstance(routes, list):
+        return None
+    return [
+        route
+        for route in routes
+        if isinstance(route, dict) and isinstance(route.get("path"), str) and isinstance(route.get("handler_file"), str)
+    ]
+
+
+def _component_owned_files(out_dir: Path) -> frozenset[str]:
+    """Files the finalized components list literally; empty when the inventory is missing or malformed."""
+    try:
+        document = json.loads((out_dir / ".components.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    rows = document.get("components") if isinstance(document, dict) else None
+    return frozenset(
+        str(path)
+        for row in rows or []
+        if isinstance(row, dict)
+        for path in row.get("paths") or []
+        if isinstance(path, str)
+    )
+
+
 def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
@@ -829,9 +1180,20 @@ def cmd_match(args: argparse.Namespace) -> int:
         profile = rac._load_yaml(p)
         profile_dir = p.parent
     extra_case_files, only_ids = _scan_case_config(out_dir)
-    cases, errors = _rac().resolve_abuse_cases(
-        profile, profile_dir, PLUGIN_ROOT, repo_root, extra_case_files=extra_case_files
+    origins: dict[str, str] = {}
+    rac = _rac()
+    limits = rac.load_limits()
+    cases, errors, rejected = rac.resolve_abuse_case_sources(
+        profile,
+        profile_dir,
+        PLUGIN_ROOT,
+        repo_root,
+        extra_case_files=extra_case_files,
+        origins=origins,
+        derived_case_file=out_dir / DERIVED_CASE_FILE,
     )
+    for item in rejected:
+        sys.stderr.write(f"REJECTED: {item['path']}: {item['reason']}\n")
     if errors:
         for e in errors:
             sys.stderr.write(f"ERROR: {e}\n")
@@ -844,10 +1206,23 @@ def cmd_match(args: argparse.Namespace) -> int:
         return 1
     if only_ids:
         cases = [c for c in cases if c.get("id") in only_ids]
-    matches = [match_case(c, findings, signals, repo_root=repo_root) for c in cases]
+    max_files = limits["descriptive_source_files"]
+    routes = load_routes(out_dir)
+    owned = _component_owned_files(out_dir) if getattr(args, "component_owned_only", False) else None
+    matches = [
+        match_case(
+            c, findings, signals, repo_root=repo_root, max_descriptive_files=max_files, routes=routes, owned=owned
+        )
+        for c in cases
+    ]
     findings_by_id = {_finding_id(finding): finding for finding in findings}
     matches.sort(key=lambda match: _candidate_priority(match, findings_by_id))
+    requested = {cid for cid, origin in origins.items() if origin == "explicit"} | only_ids
+    derived = {cid for cid, origin in origins.items() if origin == "derived"}
+    apply_descriptive_limits(matches, requested, _assessment_depth(out_dir), limits, derived)
     result = {"schema_version": 1, "matches": matches}
+    if rejected:
+        result["rejected_case_files"] = rejected
     (out_dir / ".abuse-case-matches.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     n_cand = sum(1 for m in matches if m["structural_verdict"] in ("candidate", "partial_candidate"))
     sys.stderr.write(f"MATCH: {len(matches)} cases, {n_cand} candidate(s)\n")
@@ -926,6 +1301,81 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
     return 0
 
 
+_EXCERPT_WINDOW = 3
+_DECIDING_VERDICTS = frozenset({_CONFIRMED, _BLOCKED, _REFUTED})
+
+
+def _configured_repo_root(output_dir: Path | None) -> Path | None:
+    if output_dir is None:
+        return None
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    root = cfg.get("repo_root") if isinstance(cfg, dict) else None
+    return Path(root) if isinstance(root, str) and root else None
+
+
+def _evidence_problem(evidence: object, repo_root: Path | None) -> str | None:
+    """Return why a step's evidence cannot be admitted, or None when it can.
+
+    Admitted evidence names a runtime source file inside the repository and
+    an excerpt that occurs within a few lines of the cited line.
+    """
+    if repo_root is None:
+        return "repository root unavailable"
+    if not isinstance(evidence, dict):
+        return "no evidence"
+    file, line, excerpt = evidence.get("file"), evidence.get("line"), evidence.get("excerpt")
+    if not isinstance(file, str) or _safe_repo_glob(file) is None or not _is_runtime_surface_evidence(file):
+        return "file is not a runtime source path inside the repository"
+    if type(line) is not int or line < 1:
+        return "no positive line"
+    if not isinstance(excerpt, str) or not excerpt.strip():
+        return "no excerpt"
+    root = repo_root.resolve()
+    path = root / file
+    try:
+        path.resolve(strict=True).relative_to(root)
+    except (OSError, ValueError):
+        return "file does not exist inside the repository"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > _SOURCE_PROBE_MAX_BYTES:
+        return "file is not an admissible regular file"
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    window = " ".join(lines[max(0, line - 1 - _EXCERPT_WINDOW) : line + _EXCERPT_WINDOW])
+    if " ".join(excerpt.split()) not in " ".join(window.split()):
+        return f"excerpt does not occur near {file}:{line}"
+    return None
+
+
+def admit_descriptive_evidence(verdict: dict, step_count: int, repo_root: Path | None) -> None:
+    """Downgrade descriptive step verdicts whose evidence is not in the code.
+
+    A descriptive case has no deterministic binding, so the verifier's cited
+    location is the binding. A deciding verdict (confirmed, blocked, refuted)
+    stands only on an excerpt found at the cited source line; otherwise the
+    step becomes a decided ``inconclusive`` and keeps the rejected citation for
+    audit. An inconclusive step keeps a citation only when it is found the
+    same way, because a cited location makes it an indication. Steps outside
+    the case's chain are dropped.
+    """
+    kept = []
+    for step in verdict.get("step_verdicts") or []:
+        if not isinstance(step, dict) or type(step.get("step")) is not int or not 1 <= step["step"] <= step_count:
+            continue
+        deciding = step.get("verdict") in _DECIDING_VERDICTS
+        if deciding or step.get("evidence") is not None:
+            problem = _evidence_problem(step.get("evidence"), repo_root)
+            if problem:
+                step["rejected_evidence"] = step.get("evidence")
+                step["evidence"] = None
+                if deciding:
+                    step["verdict"] = _INCONCLUSIVE
+                    step["reason"] = f"evidence not admitted ({problem}): {str(step.get('reason') or '')[:200]}"
+        kept.append(step)
+    verdict["step_verdicts"] = kept
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir) if args.output_dir else None
     matches_path = Path(args.matches) if args.matches else (out_dir / ".abuse-case-matches.json")
@@ -934,9 +1384,12 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     vdoc = json.loads(verdicts_path.read_text(encoding="utf-8"))
     verdicts = vdoc.get("verdicts") if isinstance(vdoc, dict) else vdoc
 
+    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else _configured_repo_root(out_dir)
     for v in verdicts:
         cid = v.get("abuse_case_id")
         case_match = matches.get(cid, {"step_matches": []})
+        if case_match.get("kind") == "descriptive":
+            admit_descriptive_evidence(v, len(case_match.get("step_matches") or []), repo_root)
         v["chain_verdict"] = finalize_verdict(case_match, v.get("step_verdicts") or [])
 
     out = {"schema_version": 1, "verdicts": verdicts}
@@ -953,8 +1406,17 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--output-dir", required=True)
     m.add_argument("--findings", help="path to .threats-merged.json (default: <output-dir>/.threats-merged.json)")
     m.add_argument("--org-profile", default=None)
-    m.add_argument("--repo-root", default=None, help="target repo root; loads <repo>/.appsec/abuse-cases/*.yaml")
+    m.add_argument(
+        "--repo-root",
+        default=None,
+        help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
+    )
     m.add_argument("--signals", default=None, help="recon signals json (optional)")
+    m.add_argument(
+        "--component-owned-only",
+        action="store_true",
+        help="preselect only files that <output-dir>/.components.json lists literally",
+    )
     m.set_defaults(func=cmd_match)
 
     lc = sub.add_parser("list-candidates", help="print candidate ids")
@@ -965,6 +1427,7 @@ def main(argv: list[str] | None = None) -> int:
     fz.add_argument("--output-dir", default=None)
     fz.add_argument("--matches", default=None)
     fz.add_argument("--verdicts", default=None)
+    fz.add_argument("--repo-root", default=None, help="target repo root (default: repo_root in .skill-config.json)")
     fz.set_defaults(func=cmd_finalize)
 
     li = sub.add_parser(

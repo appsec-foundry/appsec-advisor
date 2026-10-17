@@ -1,0 +1,59 @@
+{
+  "strategies": {
+    "broken_auth": {
+      "bespoke_hit": false,
+      "strategy": "standard-vetted",
+      "vetted_libs_found": [
+        "jsonwebtoken"
+      ]
+    },
+    "injection": {
+      "bespoke_evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 34
+        },
+        {
+          "file": "routes/search.ts",
+          "line": 23
+        }
+      ],
+      "bespoke_hit": true,
+      "strategy": "standard-misused",
+      "vetted_libs_found": [
+        "sequelize",
+        "zod"
+      ]
+    },
+    "output_xss_csp": {
+      "bespoke_evidence": [
+        {
+          "file": "frontend/src/app/about/about.component.ts",
+          "line": 119
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 73
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 91
+        },
+        {
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 57
+        },
+        {
+          "file": "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+          "line": 39
+        }
+      ],
+      "bespoke_hit": true,
+      "strategy": "standard-misused",
+      "vetted_libs_found": [
+        "sanitize-html"
+      ]
+    }
+  },
+  "version": 1
+}

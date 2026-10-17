@@ -2,10 +2,12 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://appsec-advisor/schemas/abuse-cases.schema.yaml"
 title: AppSec Advisor Abuse Case Library
 description: |
-  Schema for abuse-case definition files. An abuse case is a narrative,
-  end-to-end attack scenario (AC-NNN) that chains atomic findings (F-NNN)
-  into a verifiable exploitation path. Both the plugin standard library
-  (data/abuse-cases/default-library.yaml) and org-profile custom files
+  Schema for abuse-case definition files. A technical abuse case is an
+  end-to-end attack chain that links atomic findings (F-NNN) into a
+  verifiable exploitation path; a business abuse case (`kind: descriptive`)
+  states in one sentence what a user must not be able to do. The plugin
+  defaults (data/abuse-cases/technical.yaml and business.yaml) and
+  org-profile custom files
   (abuse-cases/*.yaml referenced via org_profile.abuse_cases.add) use this
   shape: a top-level `abuse_cases:` list of case objects.
 
@@ -17,11 +19,21 @@ additionalProperties: false
 required: [abuse_cases]
 properties:
   schema_version:
-    type: integer
+    description: >
+      1 for probe cases only. 2 additionally admits descriptive cases
+      (`kind: descriptive`).
+    enum: [1, 2]
     default: 1
   abuse_cases:
     type: array
-    items: { $ref: "#/$defs/abuse_case" }
+    items:
+      if:
+        type: object
+        required: [kind]
+        properties:
+          kind: { const: descriptive }
+      then: { $ref: "#/$defs/descriptive_case" }
+      else: { $ref: "#/$defs/abuse_case" }
 
 $defs:
   abuse_case:
@@ -31,12 +43,14 @@ $defs:
     properties:
       id:
         type: string
-        # AC-T-001 (library template), ORG-AC-001 (org custom), REPO-AC-001
-        # (repo-local: <repo>/.appsec/abuse-cases/*.yaml). The bare AC-NNN form
+        # AC-T-001 (plugin technical case), ORG-AC-001 (org custom), REPO-AC-001
+        # (repo-local: <repo>/docs/security/abuse-cases/*.yaml). The bare AC-NNN form
         # is reserved for analysis-discovered cases — NOT yet produced by any
         # pipeline step (no discovered-case generator exists); kept in the
         # pattern for forward-compat only.
-        pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
+        pattern: "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
+      kind:
+        const: probe
       title:
         type: string
         minLength: 1
@@ -66,20 +80,10 @@ $defs:
           severity.
         enum: [Critical, High, Medium, Low]
       scope_qualifier:
-        type: object
-        additionalProperties: false
-        properties:
-          required_signals:
-            type: array
-            items: { type: string }
-          path_patterns:
-            type: array
-            description: >
-              Repository-relative glob patterns. At least one pattern must
-              match a regular file for the case to be in scope. Patterns are
-              evaluated as data, never as shell paths; absolute paths and
-              parent traversal do not match.
-            items: { type: string }
+        # Probe cases match chain steps to findings; only descriptive cases use the locators.
+        allOf:
+          - { $ref: "#/$defs/scope_qualifier" }
+          - properties: { detector_rules: false, route_patterns: false }
       chain:
         type: array
         minItems: 1
@@ -97,6 +101,154 @@ $defs:
           applies_to_presets:
             type: array
             items: { type: string }
+
+  scope_qualifier:
+    type: object
+    additionalProperties: false
+    properties:
+      required_signals:
+        type: array
+        items: { type: string }
+      path_patterns:
+        type: array
+        description: >
+          Repository-relative glob patterns, matched ignoring case. A pattern
+          without "/" matches any directory or file name in the path; a
+          pattern with "/" matches the end of the path. At least one pattern
+          must match a regular file for the case to be in scope. Patterns are
+          evaluated as data, never as shell paths; absolute paths and
+          parent traversal do not match.
+        items: { type: string }
+      detector_rules:
+        type: array
+        maxItems: 16
+        description: >
+          Detector check IDs (for example AUTHZ-003). A finding a detector
+          raised under one of them puts its file in scope.
+        items: { type: string, pattern: "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*-[0-9]{3}$" }
+      route_patterns:
+        type: array
+        maxItems: 16
+        description: >
+          Case-insensitive glob patterns over route paths in the route
+          inventory, for example "*role*". The handler file of a matching
+          route is in scope.
+        items: { type: string, minLength: 1, maxLength: 120 }
+
+  prose:
+    type: string
+    minLength: 1
+    maxLength: 600
+
+  prose_list:
+    type: array
+    items: { $ref: "#/$defs/prose" }
+
+  descriptive_case:
+    description: >
+      A business abuse case written in plain language. It has no probe,
+      release gate: deterministic preselection decides whether it can apply,
+      and the abuse-case verifier binds it to this repository's code and
+      judges each step. Repository and organization authors maintain these
+      without pipeline knowledge. An open case states only what to check;
+      the verifier derives actor, operations, and boundary.
+    type: object
+    additionalProperties: false
+    required: [id, kind, title]
+    if: { not: { required: [check] } }
+    then: { required: [actor, initial_access, goal, boundary, steps, expected_controls, scope_qualifier] }
+    properties:
+      id:
+        type: string
+        pattern: "^(AC-B|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
+      kind:
+        const: descriptive
+      title:
+        type: string
+        minLength: 1
+        maxLength: 160
+      check:
+        description: What to check, in one or two sentences. Replaces actor, boundary, steps, and expected controls.
+        $ref: "#/$defs/prose"
+      actor: { $ref: "#/$defs/prose" }
+      initial_access:
+        enum: [unauthenticated, authenticated_low_priv, authenticated_high_priv, physical]
+      prerequisites: { $ref: "#/$defs/prose" }
+      goal: { $ref: "#/$defs/prose" }
+      boundary:
+        description: The authority or process boundary the attacker crosses.
+        $ref: "#/$defs/prose"
+      steps:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items: { $ref: "#/$defs/prose" }
+      expected_controls:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items: { $ref: "#/$defs/prose" }
+      evidence:
+        description: What a verifier must see in code to decide the case.
+        $ref: "#/$defs/prose_list"
+        maxItems: 8
+      exclusions:
+        description: Legitimate behavior that is not an abuse.
+        $ref: "#/$defs/prose_list"
+        maxItems: 8
+      open_questions:
+        description: Business facts the code cannot answer.
+        $ref: "#/$defs/prose_list"
+        maxItems: 8
+      finding:
+        type: object
+        description: >
+          Classification of the finding a confirmed or strongly indicated case
+          becomes. Omitted fields default to CWE-840, Elevation of Privilege,
+          and Medium.
+        additionalProperties: false
+        properties:
+          cwe: { type: string, pattern: "^CWE-[0-9]+$" }
+          stride:
+            enum:
+              - Spoofing
+              - Tampering
+              - Repudiation
+              - Information Disclosure
+              - Denial of Service
+              - Elevation of Privilege
+          severity:
+            enum: [Critical, High, Medium, Low]
+          mitigation_title: { type: string, minLength: 1, maxLength: 120 }
+      scope_qualifier:
+        description: >
+          Deterministic preselection. Every required signal must hold. Path
+          patterns, detector rules and route patterns each locate source
+          files; when a case declares any of them, at least one must locate a
+          runtime source file. Otherwise the case reaches the model only when
+          a run explicitly requests it.
+          Signals use the recon vocabulary (schemas/recon-signals.schema.json).
+        allOf:
+          - { $ref: "#/$defs/scope_qualifier" }
+          - anyOf:
+              - { required: [required_signals] }
+              - { required: [path_patterns] }
+              - { required: [detector_rules] }
+              - { required: [route_patterns] }
+          - properties:
+              required_signals:
+                items:
+                  enum:
+                    - has_auth_surface
+                    - has_ci_pipeline
+                    - has_client_storage
+                    - has_external_apis
+                    - has_llm_surface
+                    - has_multi_tenancy_signal
+                    - has_open_self_registration
+                    - has_public_routes
+                    - has_role_concept
+                    - has_secrets_in_repo
 
   chain_step:
     type: object

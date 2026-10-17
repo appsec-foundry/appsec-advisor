@@ -29,6 +29,7 @@ if not __package__:
 
 
 import argparse
+import functools
 import importlib.util
 import json
 import subprocess
@@ -153,8 +154,14 @@ def _severity(finding: dict) -> str:
     return sev if sev in _SEV_ORDER else ""
 
 
-def _combined_risk(matched: list[dict], chain_verdict: str, case: dict | None = None) -> str:
-    """Highest linked finding risk; a fully viable chain also reaches its declared goal impact."""
+def _combined_risk(matched: list[dict], chain_verdict: str, case: dict | None = None) -> str | None:
+    """Highest linked finding risk; a fully viable chain also reaches its declared goal impact.
+
+    A descriptive business case declares no goal impact and no severity. Without
+    a linked finding it stays unrated (None) instead of taking a fallback risk.
+    """
+    if isinstance(case, dict) and case.get("kind") == "descriptive" and not matched:
+        return None
     if chain_verdict == "fully_viable":
         return verified_chain_risk(matched, case)
     return abuse_case_risk(matched)
@@ -218,6 +225,8 @@ _ACCESS_GROUP = {
 
 def _actor_label(case: dict, meta: dict | None = None) -> str:
     """The attacker under the name Figure 1 gives its access group, then the case's own access prose."""
+    if case.get("kind") == "descriptive":
+        return str(case.get("actor") or "attacker")[:256]
     attacker = case.get("attacker") or {}
     access = attacker.get("initial_access", "")
     group = _ACCESS_GROUP.get(access)
@@ -288,7 +297,7 @@ def render_case(
     rows = []
     matched_findings: list[dict] = []
     step_of_fid: dict[str, int] = {}
-    for step in case.get("chain") or []:
+    for step in _rac().case_chain(case):
         n = step.get("step")
         sv = sv_by_step.get(n, {})
         mm = match_steps.get(n, {})
@@ -343,6 +352,7 @@ def render_case(
                     str(control).strip() for control in (sv.get("controls_found") or []) if str(control).strip()
                 ],
                 "unverified": _step_unverified(sv),
+                "reason": " ".join(str(sv.get("reason") or "").split())[:240],
             }
         )
 
@@ -353,10 +363,10 @@ def render_case(
     return {
         "id": cid,
         "title": case.get("title", ""),
-        "source": case.get("source", "discovered"),
+        "source": "descriptive" if case.get("kind") == "descriptive" else case.get("source", "discovered"),
         "actor_label": _actor_label(case, meta),
         "goal": case.get("goal", ""),
-        "prerequisite": (case.get("attacker") or {}).get("prerequisite", ""),
+        "prerequisite": (case.get("attacker") or {}).get("prerequisite", "") or case.get("prerequisites", ""),
         "combined_risk": combined,
         "chain_verdict": chain_verdict,
         "unverified_steps": unverified_steps,
@@ -364,6 +374,16 @@ def render_case(
         "matched_finding_ids": matched_ids,
         "combined_risk_rationale": case.get("combined_risk_rationale", ""),
         "blocking_mitigations": blocking,
+        "open_questions": [str(q) for q in case.get("open_questions") or [] if str(q).strip()][:3]
+        if case.get("kind") == "descriptive"
+        else [],
+        # A derived case has no file to reload it from; the model keeps what a later check needs.
+        "derived_definition": {
+            "check": " ".join(str(case.get("check") or "").split())[:600],
+            "path_patterns": [str(p) for p in (case.get("scope_qualifier") or {}).get("path_patterns") or []][:6],
+        }
+        if str(cid).startswith("MODEL-AC-") and case.get("check")
+        else None,
     }
 
 
@@ -371,6 +391,8 @@ def build_canonical_analysis(
     output_dir: Path,
     models: list[dict],
     catalog_rows: list[dict],
+    not_performed: list[dict] | None = None,
+    unverified: list[dict] | None = None,
 ) -> dict:
     """Project render models into the stable, non-rendering YAML contract."""
     sidecars_exist = any(
@@ -381,7 +403,10 @@ def build_canonical_analysis(
         config = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         pass
-    if sidecars_exist:
+    if unverified and not (output_dir / ".abuse-case-verdicts.json").is_file():
+        status = "not_run"
+        reason = f"abuse-case verification did not finish; {len(unverified)} matched candidate(s) were not verified"
+    elif sidecars_exist:
         status, reason = "completed", None
     elif config.get("skip_abuse_case_verification"):
         status = "skipped"
@@ -411,7 +436,9 @@ def build_canonical_analysis(
                 "actor": str(model.get("actor_label") or "attacker"),
                 "goal": str(model.get("goal") or ""),
                 "prerequisite": str(model.get("prerequisite") or ""),
-                "combined_risk": model.get("combined_risk") or "Informational",
+                "combined_risk": model.get("combined_risk")
+                if model.get("source") == "descriptive"
+                else model.get("combined_risk") or "Informational",
                 "chain_verdict": model.get("chain_verdict") or "inconclusive",
                 "verification_complete": not any(step["unverified"] for step in steps),
                 "unverified_steps": sorted({step["step"] for step in steps if step["unverified"]}),
@@ -422,6 +449,9 @@ def build_canonical_analysis(
                     )
                 ),
                 "steps": steps,
+                **({"open_questions": model["open_questions"]} if model.get("open_questions") else {}),
+                **({"requested": True} if model.get("requested") else {}),
+                **(model.get("derived_definition") or {}),
             }
         )
     evaluated = [
@@ -434,7 +464,19 @@ def build_canonical_analysis(
         for row in catalog_rows
         if row.get("id")
     ]
-    return {"status": status, "reason": reason, "cases": cases, "catalog_evaluated": evaluated}
+    analysis = {"status": status, "reason": reason, "cases": cases, "catalog_evaluated": evaluated}
+    not_performed = [*(not_performed or []), *(unverified or [])]
+    if not_performed:
+        analysis["not_performed"] = [
+            {
+                "id": row["id"],
+                "title": str(row.get("title") or row["id"])[:200],
+                "requested": bool(row.get("requested")),
+                "reason": str(row.get("reason") or "not performed"),
+            }
+            for row in not_performed
+        ]
+    return analysis
 
 
 def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
@@ -474,7 +516,11 @@ def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
 def _case_markdown(m: dict) -> str:
     icon, label = _CHAIN_VERDICT.get(m["chain_verdict"], ("?", "Inconclusive"))
     risk_emoji = _RISK_EMOJI.get(m["combined_risk"], "")
-    src = "mandatory" if m["source"] == "mandatory" else "analysis-discovered"
+    src = _SOURCE_LABEL.get(m["source"], "analysis-discovered")
+    if m.get("requested"):
+        src += ", requested"
+    if str(m["id"]).startswith("MODEL-AC-"):
+        src += ", model-derived"
     cid = m["id"]
     out: list[str] = []
     # Anchor on its OWN line before the heading (matches the Findings / Weakness
@@ -485,7 +531,7 @@ def _case_markdown(m: dict) -> str:
     out.append("")
     out.append(
         f"> **Source:** {src} · **Actor:** {m['actor_label']} · "
-        f"**Combined Risk:** {risk_emoji} {m['combined_risk']} · "
+        f"**Combined Risk:** {_risk_text(m['combined_risk'], risk_emoji)} · "
         f"**Verdict:** {icon} {label}"
     )
     out.append("")
@@ -574,6 +620,34 @@ def _case_markdown(m: dict) -> str:
     return "\n".join(out).rstrip()
 
 
+@functools.cache
+def _held_result():
+    return _rac().held_result
+
+
+def _held(m: dict) -> str | None:
+    """How the checked case holds, by the rule the abuse-case list also applies."""
+    return _held_result()(m["chain_verdict"], [r["verdict"] for r in m["rows"]])
+
+
+def _settled_table(models: list[dict]) -> str:
+    """One row per case that was checked and holds; it needs no card.
+
+    The row carries the case anchor, so cross-references still resolve, and the
+    verifier's reason with its code location, so the reader sees why it holds.
+    """
+    out = ["| Case | Result | Reason |", "|------|--------|--------|"]
+    for m in models:
+        blocked = [r for r in m["rows"] if r["verdict"] == "blocked"]
+        row = (blocked or m["rows"] or [{}])[0]
+        result = "✓ Mitigated" if _held(m) == "mitigated" else "✗ Does not apply"
+        reason = (row.get("reason") or "").replace("|", "\\|").strip()
+        if row.get("evidence"):
+            reason = f"{reason} (`{row['evidence']}`)".strip()
+        out.append(f'| <a id="{m["id"].lower()}"></a>{m["id"]} — {m["title"]} | {result} | {reason or "—"} |')
+    return "\n".join(out)
+
+
 def _summary_table(models: list[dict]) -> str:
     out = ["| # | Scenario | Actor | Combined Risk | Verdict |", "|---|----------|-------|---------------|---------|"]
     for m in models:
@@ -582,7 +656,7 @@ def _summary_table(models: list[dict]) -> str:
         actor_short = m["actor_label"].split(" — ")[0]
         out.append(
             f"| [{m['id']}](#{m['id'].lower()}) | {m['title']} | {actor_short} | "
-            f"{emoji} {m['combined_risk']} | {icon} {label} |"
+            f"{_risk_text(m['combined_risk'], emoji)} | {icon} {label} |"
         )
     return "\n".join(out)
 
@@ -618,12 +692,47 @@ _LEGEND = (
 )
 
 
+_SOURCE_LABEL = {"mandatory": "technical abuse case", "descriptive": "business abuse case"}
+
+
+def _risk_text(risk: str | None, emoji: str) -> str:
+    """An unlinked business case is not rated; say so instead of inventing a level."""
+    return f"{emoji} {risk}".strip() if risk else "not rated (no linked finding)"
+
+
+def _business_coverage(catalog_rows: list[dict], not_performed: list[dict], rejected: list[dict]) -> str:
+    """Summarize business-case coverage without one row per template.
+
+    Explicit requests are answered individually; optional omissions and
+    non-applicable templates are counted. Rejected repository case files are
+    listed, because their authors need to fix them.
+    """
+    out: list[str] = []
+    inapplicable = [r for r in catalog_rows if r.get("source") == "descriptive"]
+    requested = [r for r in not_performed if r.get("requested")]
+    optional = [r for r in not_performed if not r.get("requested")]
+    if inapplicable:
+        out.append(
+            f"- {len(inapplicable)} business abuse case(s) did not apply: preselection found no matching runtime code or signal."
+        )
+    if optional:
+        reasons = sorted({r["reason"] for r in optional})
+        out.append(f"- {len(optional)} business abuse case(s) were not performed: {'; '.join(reasons)}.")
+    for r in requested:
+        out.append(f"- Requested case {r['id']} — {r['title']}: not performed ({r['reason']}).")
+    for r in rejected:
+        out.append(f"- Repository case file `{r['path']}` was rejected: {r['reason']}")
+    if not out:
+        return ""
+    return "\n".join(["### Business-case coverage", "", *out])
+
+
 def _catalog_table(rows: list[dict]) -> str:
-    """Compact 'generic catalog evaluated, not applicable' table so the reader
+    """Compact 'technical abuse cases evaluated, not applicable' table so the reader
     sees WHICH common abuse-case scenarios were checked and why each was ruled
     out for this codebase — not just the viable ones."""
     out = [
-        "### Generic catalog — evaluated, not applicable",
+        "### Technical abuse cases — evaluated, not applicable",
         "",
         "_These common abuse-case scenarios from the standard library were "
         "checked against this codebase and did not apply. They are listed so "
@@ -637,27 +746,41 @@ def _catalog_table(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
-def render_fragment(models: list[dict], catalog_rows: list[dict] | None = None) -> str:
+def render_fragment(
+    models: list[dict],
+    catalog_rows: list[dict] | None = None,
+    not_performed: list[dict] | None = None,
+    rejected: list[dict] | None = None,
+    unverified: list[dict] | None = None,
+) -> str:
     parts: list[str] = [HEADING, ""]
+    if unverified:
+        parts += [_unverified_block(unverified), ""]
+    coverage = _business_coverage(catalog_rows or [], not_performed or [], rejected or [])
+    catalog_rows = [r for r in catalog_rows or [] if r.get("source") != "descriptive"]
     if models:
+        settled = [model for model in models if _held(model)]
+        open_models = [model for model in models if not _held(model)]
         parts += [_INTRO, ""]
         for verdict, label in _VERIFICATION_GROUPS.items():
-            group = [model for model in models if model["chain_verdict"] == verdict]
+            group = [model for model in open_models if model["chain_verdict"] == verdict]
             if group:
                 parts += [f"**{label}**", "", _summary_table(group), ""]
+        if settled:
+            parts += ["**Checked without finding**", "", _settled_table(settled), ""]
         parts += [_LEGEND, ""]
-        if any(m["blocking_mitigations"] for m in models):
+        if any(m["blocking_mitigations"] for m in open_models):
             parts += [_BLOCKING_NOTE, ""]
-        for m in models:
+        for m in open_models:
             parts.append("---")
             parts.append("")
             parts.append(_case_markdown(m))
             parts.append("")
-    else:
+    elif not unverified:
         parts += [
             "_No abuse-case chain was verified end-to-end on this codebase. "
-            "The generic catalog evaluation below records which standard "
-            "scenarios were checked._",
+            "The evaluation below records which technical abuse cases "
+            "were checked._",
             "",
         ]
     if catalog_rows:
@@ -665,6 +788,12 @@ def render_fragment(models: list[dict], catalog_rows: list[dict] | None = None) 
             parts.append("---")
             parts.append("")
         parts.append(_catalog_table(catalog_rows))
+        parts.append("")
+    if coverage:
+        if models or catalog_rows:
+            parts.append("---")
+            parts.append("")
+        parts.append(coverage)
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
@@ -758,9 +887,10 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         cv = verdict.get("chain_verdict", "inconclusive")
         if cv == "not_applicable":
             continue
-        models.append(
-            render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid), tm.get("meta") or {})
-        )
+        model = render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid), tm.get("meta") or {})
+        # Only the matcher knows the invocation's request intent; case data cannot assert it.
+        model["requested"] = (case_match_by_id.get(cid) or {}).get("requested") is True
+        models.append(model)
     group_order = {verdict: index for index, verdict in enumerate(_VERIFICATION_GROUPS)}
 
     def priority(model: dict) -> tuple:
@@ -798,6 +928,73 @@ def build_catalog_evaluation(output_dir: Path) -> list[dict]:
                 }
             )
     return sorted(rows, key=lambda r: r["id"] or "")
+
+
+def build_unverified_candidates(output_dir: Path) -> list[dict]:
+    """Return matched candidates that have no verifier verdict.
+
+    The matcher writes its match set before any verifier runs, so a stage
+    that stopped after matching leaves candidates no chain model represents.
+    Listing them keeps §9 from reading as "checked, nothing found".
+    """
+    try:
+        mdoc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    try:
+        vdoc = json.loads((output_dir / ".abuse-case-verdicts.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        vdoc = {}
+    verdicts = vdoc.get("verdicts") if isinstance(vdoc, dict) else None
+    decided = {v.get("abuse_case_id") for v in verdicts or [] if isinstance(v, dict)}
+    matches = mdoc.get("matches") if isinstance(mdoc, dict) else None
+    rows = [
+        {
+            "id": m["abuse_case_id"],
+            "title": m.get("title") or m["abuse_case_id"],
+            "requested": m.get("requested") is True,
+            "reason": "verification did not run",
+        }
+        for m in matches or []
+        if isinstance(m, dict)
+        and m.get("structural_verdict") == "candidate"
+        and m.get("abuse_case_id")
+        and m["abuse_case_id"] not in decided
+    ]
+    return sorted(rows, key=lambda r: r["id"])
+
+
+def _unverified_block(rows: list[dict]) -> str:
+    out = [
+        "### Not verified",
+        "",
+        f"_Abuse-case verification did not finish for this run: {len(rows)} matched "
+        "candidate(s) were never checked against the code. Their outcome is unknown, "
+        "not negative; re-run the assessment to verify them._",
+        "",
+    ]
+    out += [f"- {r['id']} — {r['title']}" for r in rows]
+    return "\n".join(out)
+
+
+def build_business_omissions(output_dir: Path) -> tuple[list[dict], list[dict]]:
+    """Return (not-performed business cases, rejected repository case files)."""
+    try:
+        mdoc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], []
+    omitted = [
+        {
+            "id": m.get("abuse_case_id"),
+            "title": m.get("title") or m.get("abuse_case_id"),
+            "requested": m.get("requested") is True,
+            "reason": m.get("reason") or "not performed",
+        }
+        for m in mdoc.get("matches", [])
+        if m.get("structural_verdict") == "not_performed" and m.get("abuse_case_id")
+    ]
+    rejected = [r for r in mdoc.get("rejected_case_files") or [] if isinstance(r, dict) and r.get("path")]
+    return sorted(omitted, key=lambda r: r["id"]), rejected
 
 
 def _abuse_fp(m: dict) -> str:
@@ -867,21 +1064,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render the §9 Abuse Cases fragment.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--org-profile", default=None)
-    parser.add_argument("--repo-root", default=None, help="target repo root; loads <repo>/.appsec/abuse-cases/*.yaml")
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
+    )
     parser.add_argument("--fragments-subdir", default=".fragments")
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir)
     models = build_models(output_dir, args.org_profile, args.repo_root)
     catalog_rows = build_catalog_evaluation(output_dir)
-    analysis = build_canonical_analysis(output_dir, models, catalog_rows)
+    not_performed, rejected = build_business_omissions(output_dir)
+    unverified = build_unverified_candidates(output_dir)
+    analysis = build_canonical_analysis(output_dir, models, catalog_rows, not_performed, unverified)
 
     frag_dir = output_dir / args.fragments_subdir
     frag_dir.mkdir(parents=True, exist_ok=True)
     md_path = frag_dir / "abuse-cases.md"
     json_path = frag_dir / "abuse-cases.json"
 
-    if not models and not catalog_rows:
+    if not models and not catalog_rows and not not_performed and not rejected and not unverified:
         # Only remove stale fragments when the evaluation sidecars are also
         # absent — that is the true "Phase 10c never ran" case. When
         # .abuse-case-verdicts.json or .abuse-case-matches.json exist, Stage
@@ -914,7 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("RENDER_ABUSE_CASES: no abuse-case evaluation on disk — placeholder will render\n")
         return 0
 
-    md_path.write_text(render_fragment(models, catalog_rows), encoding="utf-8")
+    md_path.write_text(render_fragment(models, catalog_rows, not_performed, rejected, unverified), encoding="utf-8")
     json_path.write_text(
         json.dumps(
             {"schema_version": 1, "abuse_cases": models, "catalog_evaluated": catalog_rows},

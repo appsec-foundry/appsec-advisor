@@ -14,15 +14,12 @@ Guards three rules of `renderers/render_completion_summary.py`:
 from __future__ import annotations
 
 import json
-import re
 import types
 from pathlib import Path
 
 import orchestrator.orchestration_controller as oc
 import pytest
 import renderers.render_completion_summary as rcs
-
-_RECEIPT = Path(__file__).resolve().parents[1] / "scripts" / "renderers/render_editorial_receipt.py"
 
 
 def _write_config(output_dir: Path, **values) -> None:
@@ -87,29 +84,17 @@ def test_argv_cannot_make_the_summary_contradict_the_run(tmp_path, capsys):
 @pytest.mark.parametrize("flag, listed", [("--write-sarif", True), ("--no-write-sarif", False)])
 def test_argv_decides_without_a_resolved_config(tmp_path, capsys, flag, listed):
     (tmp_path / "threat-model.md").write_text("# Threat Model\n", encoding="utf-8")
-    (tmp_path / "threat-model.sarif.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "security-assessment.sarif.json").write_text("{}", encoding="utf-8")
 
     assert _run_main(tmp_path, flag) == 0
 
     outputs = _outputs_block(capsys.readouterr().out)
-    assert (str(tmp_path / "threat-model.sarif.json") in outputs) is listed
+    assert (str(tmp_path / "security-assessment.sarif.json") in outputs) is listed
 
 
 # ---------------------------------------------------------------------------
 # Architect line reports the editorial outcome
 # ---------------------------------------------------------------------------
-
-
-def test_every_receipt_outcome_has_summary_words():
-    """An outcome the receipt can emit must not fall through to raw text."""
-    emitted = {
-        word
-        for line in _RECEIPT.read_text(encoding="utf-8").splitlines()
-        if re.match(r"\s*outcome = ", line)
-        for word in re.findall(r'"([a-z_]+)"', line)
-    }
-    assert emitted, "the receipt's outcome assignments moved — update this extractor"
-    assert emitted <= set(rcs._ARCHITECT_OUTCOME_WORDS)
 
 
 @pytest.mark.parametrize("outcome", sorted(rcs._ARCHITECT_OUTCOME_WORDS))
@@ -229,8 +214,13 @@ def _identity_args(argv):
             ("/srv/a", "full", "quick", "opus"),
         ),
         ({}, {"repo_root": Path("/work/b")}, ("/work/b", "full", "standard", "opus")),
+        (
+            {"repo_root": "/srv/a", "mode": "rerender", "assessment_depth": "thorough", "reasoning_model": "opus"},
+            {},
+            ("/srv/a", "rerender", "thorough", "opus"),
+        ),
     ],
-    ids=["config-only", "flag-overrides", "no-config"],
+    ids=["config-only", "flag-overrides", "no-config", "rerender"],
 )
 def test_run_identity_comes_from_the_run_config(config, argv, expected):
     args = _identity_args(argv)

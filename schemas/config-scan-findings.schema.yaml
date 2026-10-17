@@ -287,7 +287,7 @@ $defs:
           required: [kind, reference, pinning, file, line]
           additionalProperties: false
           properties:
-            kind: {enum: [github_action, base_image, remote_script]}
+            kind: {enum: [github_action, base_image, remote_script, ci_include]}
             reference: {type: string, minLength: 1}
             pinning: {enum: [commit-sha, digest, tag, branch, none, unresolved]}
             file: {type: string, minLength: 1}

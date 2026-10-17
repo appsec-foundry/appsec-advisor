@@ -238,6 +238,27 @@ class TestCat9OAuthOidc:
             "oauth-refresh-token-browser-storage",
         } <= subs
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            'const token = location.hash.substring(1).includes("access_token");\n',
+            "const idt = window.location.hash.split('&').find((p) => p.startsWith('id_token'));\n",
+        ],
+    )
+    def test_oauth_implicit_token_read_from_fragment_flagged(self, repo, line):
+        (repo / "callback.ts").write_text(line, encoding="utf-8")
+
+        subs = {f["subcategory"] for f in rp.scan_oauth_oidc(repo)["findings"]}
+
+        assert "oauth-implicit-flow" in subs
+
+    def test_oauth_fragment_without_token_name_not_implicit(self, repo):
+        (repo / "nav.ts").write_text("const section = location.hash.substring(1);\n", encoding="utf-8")
+
+        subs = {f["subcategory"] for f in rp.scan_oauth_oidc(repo)["findings"]}
+
+        assert "oauth-implicit-flow" not in subs
+
     def test_reversible_identity_derived_oauth_credential_is_a_bounded_review_signal(self, repo):
         (repo / "src").mkdir()
         (repo / "src" / "federated-login.ts").write_text(

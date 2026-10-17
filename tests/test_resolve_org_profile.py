@@ -157,8 +157,8 @@ def test_resolve_default_preset(isolated_root):
     assert effective["defaults"]["write_sarif"] is True
     assert effective["defaults"]["write_pdf"] is False
     assert effective["requirements_source"]["enabled"] is True
-    assert effective["skill_toggles"]["publish-threat-model"]["enabled"] is False
-    assert effective["skill_toggles"]["publish-threat-model"]["reason"]
+    assert effective["skill_toggles"]["authnz-review"]["enabled"] is False
+    assert effective["skill_toggles"]["authnz-review"]["reason"]
 
 
 def test_resolve_explicit_preset_overrides_default(isolated_root):
@@ -576,3 +576,10 @@ def test_invalid_analyst_packages_fail_profile_validation(isolated_root, tmp_pat
     path = _profile_with_analyst(tmp_path, {"required_packages": [entry]})
     _effective, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
     assert errors
+
+
+@pytest.mark.parametrize(("block", "allowed"), [({}, True), ({"allow_exploration": False}, False)])
+def test_analyst_block_carries_the_exploration_switch(tmp_path, block, allowed):
+    from runtime.resolve_org_profile import analyst_packages
+
+    assert analyst_packages({"analyst": {"default_packages": [], **block}}, tmp_path)["allow_exploration"] is allowed

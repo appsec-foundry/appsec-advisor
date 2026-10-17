@@ -1,0 +1,29 @@
+{
+  "findings": [
+    {
+      "asset_tier": "T2",
+      "category": "Insufficient Patch Management",
+      "control": "Lockfile hygiene",
+      "derived_from": [],
+      "effectiveness": "Missing",
+      "evidence": [
+        {
+          "file": ".gitignore",
+          "line": 10
+        },
+        {
+          "file": ".npmrc",
+          "line": 1
+        }
+      ],
+      "linked_checks": [
+        "IAC-050"
+      ],
+      "severity": "Medium",
+      "source": "sca-practice",
+      "summary": "Asset tier T2: Lockfile hygiene is missing. The architectural concern is patch-management maturity \u2014 without this signal the team relies on ad-hoc upgrades after the fact. Address by introducing the control at the platform level (CI workflow, repo config, or org policy), not by reacting to individual CVE advisories.",
+      "title": "Lockfile hygiene: missing"
+    }
+  ],
+  "schema_version": 1
+}

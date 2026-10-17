@@ -759,3 +759,46 @@ def test_the_blocked_message_names_the_never_heartbeated_cause(tmp_path: Path, c
     lp = _abandoned_lock(tmp_path, max(1, acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS // 4))
     acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
     assert "never heartbeated" in capsys.readouterr().out
+
+
+def test_a_heartbeat_rewrite_never_shows_a_reader_an_empty_lock(tmp_path: Path):
+    """Concurrent workers checkpoint while others read the run id; a truncate-in-place showed them ''."""
+    import threading
+
+    lock = _lock_path(tmp_path)
+    acquire_lock._write_lock(lock, 1, 1, "run-a")
+    stop, seen = threading.Event(), set()
+
+    def write():
+        beat = 0
+        while not stop.is_set():
+            beat += 1
+            acquire_lock._write_lock(lock, 1, beat, "run-a")
+
+    writer = threading.Thread(target=write)
+    writer.start()
+    try:
+        for _ in range(3000):
+            seen.add(acquire_lock.read_run_id(lock))
+    finally:
+        stop.set()
+        writer.join(5)
+    assert seen == {"run-a"}
+    assert [path.name for path in lock.parent.iterdir()] == [".appsec-lock"]
+
+
+def test_holder_stale_after_outranks_the_default_threshold(tmp_path: Path):
+    """A lock that states stale_after=60 is dead after 60 s, not after the phase budget."""
+    lp = _lock_path(tmp_path)
+    now = int(time.time())
+    acquire_lock._write_lock(lp, 999999, now - 30, "run-a", stale_after=60)
+    assert acquire_lock._classify_lock(lp)[0] == "fresh"
+    acquire_lock._write_lock(lp, 999999, now - 90, "run-a", stale_after=60)
+    assert acquire_lock._classify_lock(lp)[0] != "fresh"
+    assert not acquire_lock.lock_held_by_live_other_run(lp)
+
+
+def test_stale_after_is_never_read_as_a_run_id(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()), stale_after=60)
+    assert acquire_lock.read_run_id(lp) == ""

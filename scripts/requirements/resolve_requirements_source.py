@@ -179,7 +179,7 @@ def resolve(
     profile_rs = (effective or {}).get("requirements_source") or {}
     if profile_rs.get("requirements_yaml_url"):
         ctm = profile_rs.get("create_threat_model") or {}
-        if caller == "create-threat-model":
+        if caller == "appsec-analyzer":
             enabled = bool(ctm.get("default_active", True))
             if base_mode == "quick":
                 enabled = bool(ctm.get("quick_default_active", enabled))
@@ -214,7 +214,7 @@ def resolve(
 
     if remembered and remembered.get("url"):
         # The catalog was fetched before; reuse the remembered URL. Treated as an
-        # active source only for the explicit audit action — create-threat-model
+        # active source only for the explicit audit action — appsec-analyzer
         # must not be silently switched on by a leftover sidecar.
         return {
             **base,
@@ -259,11 +259,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--caller",
-        default="create-threat-model",
-        choices=["create-threat-model", "audit-security-requirements"],
+        default="appsec-analyzer",
+        choices=["appsec-analyzer", "audit-security-requirements"],
     )
     parser.add_argument("--demo", action="store_true", help="resolve to the packaged example catalog (DEMO)")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"))
+    # The local catalog is a repository input; reports may be written elsewhere.
+    parser.add_argument(
+        "--catalog-dir",
+        default=None,
+        help="directory of a developer-authored requirements.yaml (default: --output-dir)",
+    )
     parser.add_argument("--plugin-root", default=None)
     parser.add_argument("--cache-path", default=None, help="override plugin cache path (sidecar lives beside it)")
     args = parser.parse_args(argv)
@@ -274,7 +280,8 @@ def main(argv: list[str] | None = None) -> int:
     legacy = _load_legacy_default(plugin_root)
 
     demo_path = str(plugin_root / "examples" / "appsec-requirements-example.yaml") if args.demo else None
-    local_path = rstate.local_repo_source(Path(args.output_dir)) if args.output_dir else None
+    catalog_dir = args.catalog_dir or args.output_dir
+    local_path = rstate.local_repo_source(Path(catalog_dir)) if catalog_dir else None
     cache_file = Path(args.cache_path) if args.cache_path else plugin_root / ".cache" / "requirements.yaml"
     remembered = rstate.read_sidecar(rstate.sidecar_path_for_cache(cache_file))
 

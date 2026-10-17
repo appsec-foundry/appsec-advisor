@@ -117,6 +117,147 @@ def test_upstream_target_resolution_never_selects_repository_executables(tmp_pat
     assert ub.upstream_targets(result, repo, home) == []
 
 
+def test_upstream_user_install_is_not_also_a_project_when_repo_is_home(tmp_path):
+    home = tmp_path / "operator"
+    carrier = home / ".claude/CLAUDE.md"
+    carrier.parent.mkdir(parents=True)
+    record = home / ".aiscb/installation.json"
+    record.parent.mkdir()
+    record.write_text(json.dumps({"entries": {str(carrier): "recorded"}}))
+    result = {
+        "matches": [
+            {"managed_by": "aiscb", "scope": scope, "file": str(carrier), "id": "aiscb-0.1.18"}
+            for scope in ("project", "user")
+        ]
+    }
+
+    assert ub.upstream_targets(result, home, home) == [(home, True)]
+
+
+def test_upstream_project_record_in_home_remains_project_scope(tmp_path):
+    home = tmp_path / "operator"
+    carrier = home / "CLAUDE.md"
+    record = home / ".aiscb/installation.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"entries": {"CLAUDE.md": "recorded"}}))
+    result = {
+        "matches": [
+            {"managed_by": "aiscb", "scope": scope, "file": str(carrier), "id": "aiscb-0.1.18"}
+            for scope in ("project", "user")
+        ]
+    }
+
+    assert ub.upstream_targets(result, home, home) == [(home, False)]
+
+
+def test_upstream_user_and_project_records_keep_their_own_scope(tmp_path):
+    home = tmp_path / "operator"
+    repo = home / "project"
+    repo.mkdir(parents=True)
+    user_carrier = home / ".claude/CLAUDE.md"
+    project_carrier = repo / "CLAUDE.md"
+    for base, entry in ((home, {str(user_carrier): "recorded"}), (repo, {"CLAUDE.md": "recorded"})):
+        record = base / ".aiscb/installation.json"
+        record.parent.mkdir(parents=True)
+        record.write_text(json.dumps({"entries": entry}))
+    result = {
+        "matches": [
+            {"managed_by": "aiscb", "scope": "user", "file": str(user_carrier), "id": "aiscb-0.1.18"},
+            {"managed_by": "aiscb", "scope": "project", "file": str(project_carrier), "id": "aiscb-0.1.18"},
+        ]
+    }
+
+    assert ub.upstream_targets(result, repo, home) == [(home, True), (repo, False)]
+
+
+def test_unrecorded_external_install_is_left_to_its_installer(tmp_path):
+    home = tmp_path / "operator"
+    repo = tmp_path / "project"
+    home.mkdir()
+    repo.mkdir()
+    carrier = home / ".claude/CLAUDE.md"
+    result = {"matches": [{"managed_by": "aiscb", "scope": "user", "file": str(carrier), "id": "aiscb-0.1.18"}]}
+
+    assert ub.upstream_targets(result, repo, home) == []
+
+
+def test_legacy_external_copy_without_record_does_not_delegate(tmp_path):
+    home = tmp_path / "operator"
+    repo = tmp_path / "project"
+    home.mkdir()
+    repo.mkdir()
+    carrier = home / bc.AISCB_USER_DATA / "secure-coding-baseline.md"
+    result = {"matches": [{"managed_by": "aiscb", "scope": "user", "file": str(carrier), "id": "aiscb-0.1.18"}]}
+
+    assert ub.upstream_targets(result, repo, home) == []
+
+
+def test_unrecorded_project_is_not_inferred_from_user_record(tmp_path):
+    home = tmp_path / "operator"
+    carrier = home / "CLAUDE.md"
+    record = home / ".aiscb/installation.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"entries": {str(home / ".claude/CLAUDE.md"): "recorded"}}))
+    result = {"matches": [{"managed_by": "aiscb", "scope": "project", "file": str(carrier), "id": "aiscb-0.1.18"}]}
+
+    assert ub.upstream_targets(result, home, home) == []
+
+
+def test_home_as_repo_delegates_only_to_user_scope(tmp_path, monkeypatch):
+    home = tmp_path / "operator"
+    carrier = home / ".claude/CLAUDE.md"
+    record = home / ".aiscb/installation.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"entries": {str(carrier): "recorded"}}))
+    result = {
+        "status": "installed",
+        "matches": [
+            {"managed_by": "aiscb", "scope": scope, "file": str(carrier), "id": "aiscb-0.1.18"}
+            for scope in ("project", "user")
+        ],
+        "older": [],
+        "newer": [],
+    }
+    monkeypatch.setattr(bc, "check", lambda **kwargs: result)
+    observed = []
+    monkeypatch.setattr(ub, "update_upstream", lambda targets, *args, **kwargs: observed.extend(targets) or ["updated"])
+
+    steps, code = ub.update(home, home, {"enabled": True, "id": "aiscb-0.1.18", "release": {}})
+
+    assert code == 0
+    assert steps == ["updated"]
+    assert observed == [(home, True)]
+
+
+def test_refused_delegation_names_scope_and_terminal_fallback(tmp_path, monkeypatch):
+    home = tmp_path / "operator"
+    repo = tmp_path / "project"
+    repo.mkdir()
+    carrier = home / ".claude/CLAUDE.md"
+    record = home / ".aiscb/installation.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"entries": {str(carrier): "recorded"}}))
+    updater = home / ".aiscb/install.py"
+    updater.touch()
+    result = {
+        "status": "installed",
+        "matches": [{"managed_by": "aiscb", "scope": "user", "file": str(carrier), "id": "aiscb-0.1.18"}],
+        "older": [],
+        "newer": [],
+    }
+    monkeypatch.setattr(bc, "check", lambda **kwargs: result)
+
+    def refused(*args, **kwargs):
+        raise ub.UpdateError("AISCB refused the delegated update for the user installation")
+
+    monkeypatch.setattr(ub, "update_upstream", refused)
+    with pytest.raises(ub.UpdateError, match=r"python3 -I .+install.py --update"):
+        ub.update(repo, home, {"enabled": True, "id": "aiscb-0.1.18", "release": {}})
+    updater.unlink()
+    with pytest.raises(ub.UpdateError, match="official AISCB Quick Start"):
+        ub.update(repo, home, {"enabled": True, "id": "aiscb-0.1.18", "release": {}})
+
+
 def test_delegation_refuses_offline_old_protocol_and_failed_verification(monkeypatch, repo):
     import baseline.baseline_release as br
 
@@ -141,6 +282,36 @@ def test_delegation_refuses_offline_old_protocol_and_failed_verification(monkeyp
     monkeypatch.setattr(br, "fetch_latest", refused)
     with pytest.raises(ub.UpdateError, match="no unverified installer"):
         ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+
+
+@pytest.mark.parametrize("user", [True, False])
+def test_delegated_installer_refusal_identifies_its_scope(monkeypatch, repo, user):
+    import baseline.baseline_release as br
+
+    config = {"id": "aiscb-0.1.18", "release": {"repository": "example/baseline"}}
+    bundle = {
+        "install.py": b"UPDATE_PROTOCOL = 'aiscb-refresh-installed-v1'\n",
+        "show_baseline_version.py": b"",
+        br.BASELINE_FILE: b"",
+    }
+    monkeypatch.setattr(
+        br,
+        "fetch_latest",
+        lambda *args, **kwargs: br.Release("", "aiscb-0.1.18", "verified", bundle),
+    )
+    observed = []
+
+    def refused(argv, **kwargs):
+        observed.append(argv)
+        return subprocess.CompletedProcess(argv, 1, "", "record refused")
+
+    monkeypatch.setattr(ub.subprocess, "run", refused)
+
+    with pytest.raises(ub.UpdateError, match="user installation" if user else "project .* installation"):
+        ub.update_upstream([(repo, user)], config, dry_run=False, offline=False)
+    assert len(observed) == 1
+    assert ("--user" in observed[0]) == user
+    assert "--dry-run" in observed[0]
 
 
 # ---------- nothing installed, or not ours --------------------------------

@@ -151,6 +151,42 @@
               "items": {
                 "type": "object"
               }
+            },
+            "mitigations": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "object"
+              }
+            },
+            "actors": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "object"
+              }
+            },
+            "security_controls": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "object"
+              }
+            },
+            "focus_components": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "omitted": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           }
         }
@@ -178,6 +214,28 @@
           "asks": {
             "type": "string",
             "maxLength": 600
+          },
+          "applies_when": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "new_entry_point",
+                "changed_permission",
+                "sensitive_data",
+                "removed_control",
+                "external_integration",
+                "business_operation",
+                "untrusted_input",
+                "credential_handling",
+                "model_or_agent",
+                "dependency_or_build",
+                "configuration_change",
+                "any_change"
+              ]
+            }
           }
         }
       }

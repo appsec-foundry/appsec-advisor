@@ -57,7 +57,7 @@ def _startup_record(**overrides) -> dict:
         "changed_variable": "shared kernel",
         "claude_code_version": "2.1.220",
         "model_id": "claude-sonnet-4-6",
-        "pricing_table_version": "2026-08-05",
+        "pricing_table_version": "2026-10-08",
         "tool_allow_list": ["Read", "Write"],
         "task_sha256": "sha256:" + "a" * 64,
         "agent_definition_sha256": "sha256:" + "b" * 64,
@@ -327,7 +327,7 @@ def test_report_diagnostics_include_role_totals_precedence_and_compaction_durati
 
     result = report.build_report([path], include_turn_diagnostics=True)
     assert result["turn_diagnostics"]["telemetry_only"] is True
-    assert result["turn_diagnostics"]["pricing_table_version"] == "2026-08-05"
+    assert result["turn_diagnostics"]["pricing_table_version"] == "2026-10-08"
     assert result["turn_diagnostics"]["classification_precedence"][0] == "agent_dispatch"
     assert result["turn_diagnostics"]["summary"]["role_counts"] == {"appsec-advisor:test-role": 1}
     session = result["sessions"][0]["turn_diagnostics"]

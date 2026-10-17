@@ -211,19 +211,22 @@ def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, 
     (e2e_run / ".fragments/security-posture-attack-paths.json").write_text(json.dumps(paths))
     if fallback:
         monkeypatch.setattr(figure1_dfd, "check_diagram", lambda *a, **kw: ("", ["test forces SVG fallback"]))
+        with pytest.raises(compose.FigureError, match="data-flow diagram failed its self-check"):
+            compose.render(CONTRACT, e2e_run)
+        assert not (e2e_run / "figure1.svg").exists()
+        return
     markdown, warnings = compose.render(CONTRACT, e2e_run)
     svg = (e2e_run / "figure1.svg").read_text()
     svg_text = " ".join(" ".join(ET.fromstring(svg).itertext()).split())
-    assert (ET.fromstring(svg).find("{*}g[@data-legend-section='notation']") is not None) != fallback
-    assert not warnings or fallback
-    for text in (markdown, svg_text) if fallback else (markdown,):
+    assert ET.fromstring(svg).find("{*}g[@data-legend-section='notation']") is not None
+    assert not warnings
+    for text in (markdown,):
         assert ("because registration is open" in text) == registration
         assert ("because the source repository is public" in text) == public_source
         assert ("Each finding retains its login and privilege requirements." in text) == (registration or public_source)
-    if not fallback:
-        assert ("Self-registered users" in svg_text) == registration
-        assert ("Public-source readers" in svg_text) == public_source
-        assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
+    assert ("Self-registered users" in svg_text) == registration
+    assert ("Public-source readers" in svg_text) == public_source
+    assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
     assert "it is shown distinctly" not in markdown
     # The privileged attacker keeps its own row, coded like its Figure 1 card.
     assert re.search(r"^\| (A\d+ · )?Privileged User \| Attacker \|", markdown, re.M)
@@ -237,10 +240,10 @@ def test_compose_renders_canonical_document(rendered_run: Path) -> None:
     assert "## Management Summary\n" in md
     for heading in (
         "### Verdict",
+        "### Remediation Priorities",
         # Top Findings + Architecture Assessment were merged into the single
-        # "Security Posture & Top Threats" block; Mitigations → Top Mitigations.
+        # "Security Posture & Top Threats" block.
         "### Security Posture & Top Threats",
-        "### Top Mitigations",
         "### Operational Strengths",
     ):
         assert heading in md, f"missing MS subsection: {heading}"
@@ -805,21 +808,17 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert "SQL built by concatenation; no parametrized layer." in rendered
     assert "**Confirmed findings:**" in rendered
     # The standalone "### Security Principles" verdict table was retired from the
-    # Management Summary (2026-07-14): it duplicated Top Weaknesses as a second
-    # systemic-framing block and only partially linked to the register. The
-    # executive systemic view is now carried solely by `### Top Weaknesses`.
+    # Management Summary (2026-07-14): it duplicated the root-cause view as a
+    # second systemic-framing block and only partially linked to the register.
+    # The executive view is now carried by `### Remediation Priorities`.
     assert "### Security Principles" not in rendered
-    # `### Top Weaknesses` renders INSIDE the Management Summary (between its
-    # `## Management Summary` heading and the next `## ` section) and before the
-    # central Weakness Register it links into.
-    assert "### Top Weaknesses" in rendered
+    # `### Remediation Priorities` renders INSIDE the Management Summary and
+    # links each root cause into the central Weakness Register.
     ms_start = rendered.index("## Management Summary")
     ms_end = rendered.index("\n## ", ms_start + 1)
-    assert ms_start < rendered.index("### Top Weaknesses") < ms_end, (
-        "Top Weaknesses table must render inside the Management Summary"
-    )
+    assert ms_start < rendered.index("### Remediation Priorities") < ms_end
+    assert '<a href="#w-001">W-001</a>' in rendered[ms_start:ms_end]
     assert "[Weakness Register](#weakness-register)" in rendered
-    assert rendered.index("### Top Weaknesses") < rendered.index("## 7. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
     assert "finding(s) confirmed in code" in rendered

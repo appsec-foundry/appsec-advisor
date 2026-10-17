@@ -58,6 +58,49 @@ properties:
       analysis_duration_seconds:
         type: [integer, "null"]
         minimum: 0
+      unexamined_source:
+        type: array
+        description: >-
+          Per component, the source files the analysis did not examine individually because they
+          carry no route, lead or security signal; rendered in §1 Scope as a coverage gap.
+        items:
+          type: object
+          additionalProperties: false
+          required: [component, files]
+          properties:
+            component: {type: string, minLength: 1}
+            files: {type: integer, minimum: 1}
+      undecided_targets:
+        type: array
+        description: >-
+          STRIDE targets a job read but could not decide, with the reason it named (MR-11); rendered
+          in §1 Scope as a coverage gap instead of a console warning.
+        items:
+          type: object
+          additionalProperties: false
+          required: [component, target]
+          properties:
+            component: {type: string, minLength: 1}
+            target: {type: string, minLength: 1, maxLength: 300}
+      unowned_source:
+        type: object
+        description: >-
+          Program files outside every component, which no analysis job reads, counted per top-level
+          directory (at most ten); rendered in §1 Scope as a coverage gap.
+        additionalProperties: false
+        required: [files, by_directory]
+        properties:
+          files: {type: integer, minimum: 1}
+          by_directory:
+            type: array
+            maxItems: 10
+            items:
+              type: object
+              additionalProperties: false
+              required: [directory, files]
+              properties:
+                directory: {type: string, minLength: 1}
+                files: {type: integer, minimum: 1}
       mode:
         type: string
         enum: [full, incremental]
@@ -310,7 +353,7 @@ properties:
               type: array
               items:
                 type: string
-                pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-\\d{3,}$"
+                pattern: "^(AC-T|AC-B|AC|ORG-AC|REPO-AC|MODEL-AC)-\\d{3,}$"
             components:
               type: array
               items: { type: string }
@@ -821,13 +864,16 @@ properties:
           additionalProperties: false
           required: [id, title, source, actor, goal, prerequisite, combined_risk, chain_verdict, verification_complete, unverified_steps, matched_finding_ids, blocking_mitigation_ids, steps]
           properties:
-            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
+            id: {type: string, pattern: "^(AC-T|AC-B|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"}
             title: {type: string, minLength: 1, maxLength: 200}
             source: {type: string, minLength: 1, maxLength: 64}
             actor: {type: string, minLength: 1, maxLength: 256}
             goal: {type: string, maxLength: 1000}
             prerequisite: {type: string, maxLength: 1000}
-            combined_risk: {type: string, enum: [Critical, High, Medium, Low, Informational]}
+            combined_risk:
+              description: Highest policy risk of the linked findings. Null only for a descriptive business case without a linked finding, which verification does not rate.
+              type: [string, "null"]
+              enum: [Critical, High, Medium, Low, Informational, null]
             chain_verdict: {type: string, enum: [fully_viable, partially_blocked, mitigated, inconclusive]}
             verification_complete: {type: boolean}
             unverified_steps:
@@ -842,6 +888,24 @@ properties:
               type: array
               uniqueItems: true
               items: {type: string, pattern: "^M-[0-9]{3,}$"}
+            open_questions:
+              description: Business facts a descriptive case leaves to the team; the team-question selector reads them.
+              type: array
+              maxItems: 3
+              items: {type: string, minLength: 1, maxLength: 600}
+            requested:
+              description: Present and true when the invocation explicitly requested this case.
+              const: true
+            check:
+              description: The one-sentence check of a model-derived (MODEL-AC) case, kept so the case can be checked again without the run's intermediate files.
+              type: string
+              minLength: 1
+              maxLength: 600
+            path_patterns:
+              description: The file and directory name patterns of a model-derived case.
+              type: array
+              maxItems: 6
+              items: {type: string, minLength: 1, maxLength: 60}
             steps:
               type: array
               minItems: 1
@@ -877,9 +941,21 @@ properties:
           additionalProperties: false
           required: [id, title, source, reason]
           properties:
-            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
+            id: {type: string, pattern: "^(AC-T|AC-B|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"}
             title: {type: string, minLength: 1, maxLength: 200}
             source: {type: [string, "null"], maxLength: 64}
+            reason: {type: string, minLength: 1, maxLength: 1000}
+      not_performed:
+        description: Descriptive business cases selected for verification but omitted by depth or per-run limits, with the reason. Explicitly requested cases are marked.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, title, requested, reason]
+          properties:
+            id: {type: string, pattern: "^(AC-T|AC-B|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"}
+            title: {type: string, minLength: 1, maxLength: 200}
+            requested: {type: boolean}
             reason: {type: string, minLength: 1, maxLength: 1000}
 
   tier_root_causes:
@@ -1034,7 +1110,7 @@ properties:
           type: array
           uniqueItems: true
           maxItems: 5
-          items: {type: string, enum: [identity, privilege, tenant, data-origin, operator]}
+          items: {type: string, enum: [identity, privilege, tenant, data-origin, operator, data-access]}
         enforcement_point: {type: string, minLength: 3, maxLength: 120}
         confidence_basis: {type: string, enum: [analyst, route-evidence]}
         covers_components:

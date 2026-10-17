@@ -73,11 +73,11 @@ import contexts.load_business_context as load_business_context  # noqa: E402
 import requirements.requirements_trace as requirements_trace  # noqa: E402
 import validators.secret_scan as secret_scan  # noqa: E402
 from contexts.load_business_context import project_answered_questions  # noqa: E402
-from runtime.stride_outputs import is_stride_output, stride_output_files  # noqa: E402
+from runtime.stride_outputs import stride_output_files  # noqa: E402
 from shared._atomic_io import atomic_write_text  # noqa: E402
 from shared._boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from shared._boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
-from shared._finding_state import is_refuted, record_evidence  # noqa: E402
+from shared._finding_state import is_refuted  # noqa: E402
 from shared._paths import strip_dot_slash  # noqa: E402
 from shared._severity_policy import normalize_risks  # noqa: E402
 
@@ -501,16 +501,7 @@ def renumber_trust_boundaries(doc: dict) -> tuple[dict, dict[str, str]]:
     return _walk(doc), mapping
 
 
-# ─── Incremental threat reconciliation (depth-downgrade preservation) ──────
-#
-# When a DIRTY component is re-scanned at a SHALLOWER depth than the run that
-# produced the baseline, its `.stride-<id>.json` is overwritten and prior
-# threats the shallow scan did not re-emit would silently vanish. This
-# deterministic reconciler is the authoritative safety net (the analyzer-side
-# carry rule in appsec-stride-analyzer-v2.md is advisory): it re-injects such prior
-# threats — unless the analyzer affirmatively confirmed a fix — and records
-# honest changelog buckets. See
-# docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md.
+# ─── Cross-run finding identity for the changelog diff ─────────────────────
 
 _DEPTH_RANK = {"quick": 0, "standard": 1, "thorough": 2}
 
@@ -796,153 +787,6 @@ def _depth_is_shallower(cur: str | None, prior: str | None) -> bool:
     return c is not None and p is not None and c < p
 
 
-def _load_last_run_depth(output_dir: Path) -> str | None:
-    """The baseline run's assessment depth from `.appsec-cache/baseline.json`.
-    At builder time baseline.json still reflects the PRIOR run (it is rewritten
-    only after compose — same contract the §7 carry-forward relies on)."""
-    bpath = output_dir / ".appsec-cache" / "baseline.json"
-    if not bpath.is_file():
-        return None
-    try:
-        return json.loads(bpath.read_text()).get("last_run_depth") or None
-    except (OSError, ValueError):
-        return None
-
-
-def _reanalyzed_component_ids(output_dir: Path) -> set[str] | None:
-    """Components whose `.stride-<id>.json` changed vs the baseline hash → were
-    re-analyzed this run. Returns None when no baseline exists (full/first run),
-    signalling the caller to skip reconciliation entirely.
-
-    Carried-forward components reuse their exact prior stride file, so their
-    sha256 matches the baseline and they are excluded — their threats survive
-    naturally through the merge and need no re-injection."""
-    bpath = output_dir / ".appsec-cache" / "baseline.json"
-    if not bpath.is_file():
-        return None
-    try:
-        prior_hashes = json.loads(bpath.read_text()).get("stride_files") or {}
-    except (OSError, ValueError):
-        return None
-    changed: set[str] = set()
-    for cid, rec in prior_hashes.items():
-        sfile = output_dir / f".stride-{cid}.json"
-        if not is_stride_output(sfile):
-            # Baselines written before the `.stride-` sidecars were excluded
-            # carry `dispatch-manifest` / `selection` / `analyst-context` as
-            # component ids. Their content changes almost every run, so they
-            # would show up as changed components forever.
-            continue
-        if not sfile.is_file():
-            continue  # removed component — handled by the removal path, not here
-        actual = "sha256:" + hashlib.sha256(sfile.read_bytes()).hexdigest()
-        if actual != (rec or {}).get("sha256"):
-            changed.add(cid)
-    return changed
-
-
-def _index_resolved_prior(merged: dict) -> dict[str, str]:
-    """Map every analyzer-affirmed fix to a reason, keyed by BOTH the prior id
-    and the comp|cwe|title fingerprint, so the reconciler can match either way.
-
-    The fingerprint key stays `_fp_str` (comp|cwe|title), NOT the file|cwe-family
-    match key: `resolved_prior_findings` carry no `file` (stride.schema.yaml:
-    only prior_id/cwe/title/reason), so a match key can't be computed for them.
-    This is fine — `prior_id` is required on every entry and is the reliable
-    match; the fingerprint is only a secondary fallback. The reconciler probes
-    this dict with `_fp_str(prior_threat)`, keeping both sides comp|cwe|title."""
-    out: dict[str, str] = {}
-    for r in merged.get("resolved_prior_findings") or []:
-        if not isinstance(r, dict):
-            continue
-        reason = (r.get("reason") or "").strip() or "fix confirmed by re-scan"
-        pid = r.get("prior_id")
-        if pid:
-            out[pid] = reason
-        out[_fp_str({"component": r.get("component_id"), "cwe": r.get("cwe"), "title": r.get("title")})] = reason
-    return out
-
-
-def reconcile_incremental_threats(
-    threats: list[dict],
-    prior_yaml: dict | None,
-    components: list[dict],
-    output_dir: Path,
-    cur_depth: str | None,
-    resolved_prior: dict,
-) -> tuple[list[dict], dict | None]:
-    """Re-inject prior threats of RE-ANALYZED components that a shallower
-    re-scan dropped without an affirmative fix. Mutates/extends ``threats`` and
-    returns ``(threats, recon_info)`` where ``recon_info`` is None for
-    full/first runs (no baseline) or a dict of honest changelog buckets.
-
-    Only carries when the current depth is strictly shallower than the baseline
-    depth — at equal/deeper depth a non-reproduced prior threat is genuinely
-    resolved (recorded, no longer silently dropped)."""
-    reanalyzed = _reanalyzed_component_ids(output_dir)
-    if reanalyzed is None or not prior_yaml:
-        return threats, None
-
-    prior_depth = _load_last_run_depth(output_dir)
-    shallower = _depth_is_shallower(cur_depth, prior_depth)
-
-    # Diff on the stable file|cwe-family match key, NOT comp|cwe|title: an
-    # analyzer that re-emits a prior finding with a drifted CWE/title/component
-    # would otherwise look "not reproduced" → bogus resolved (equal/deeper) or a
-    # duplicate carry (shallower). The match key absorbs that drift, matching the
-    # full-run changelog diff. prior threats carry `evidence`, so a file anchor
-    # is available on both sides. (2026-06-26)
-    present = {_match_key(t) for t in threats}
-    prior_keys = {_match_key(pt) for pt in (prior_yaml.get("threats") or [])}
-
-    # merge_threats._assign_t_ids restarts global T-numbering at T-001 every run,
-    # so a carried threat's prior id may collide with a freshly-assigned one.
-    # Continue numbering after the current maximum to stay collision-free.
-    next_t_num = max(
-        (int(m.group(1)) for t in threats for m in [re.match(r"^T-(\d+)$", str(t.get("id") or ""))] if m),
-        default=0,
-    )
-
-    resolved_reason_by_id: dict[str, str] = {}
-    carried_ids: list[str] = []
-
-    for pt in prior_yaml.get("threats") or []:
-        comp = pt.get("component") or pt.get("component_id") or ""
-        if comp not in reanalyzed:
-            continue  # carried-forward component → threats already intact
-        key = _match_key(pt)
-        if key in present:
-            continue  # re-emitted by the analyzer (B1) → keep, no double-inject
-        pid = pt.get("id", "")
-        # resolved_prior is keyed by prior_id (reliable) + _fp_str fallback (the
-        # resolved findings carry no file, so probe with the prior threat's
-        # comp|cwe|title — both sides agree on that representation).
-        fp = _fp_str(pt)
-        if pid in resolved_prior or fp in resolved_prior:
-            resolved_reason_by_id[pid] = resolved_prior.get(pid) or resolved_prior.get(fp)
-            continue
-        if shallower:
-            next_t_num += 1
-            carried = dict(pt)
-            carried["id"] = f"T-{next_t_num:03d}"
-            record_evidence(carried, "carried-unverified-shallower-depth")
-            threats.append(carried)
-            present.add(key)
-            carried_ids.append(carried["id"])
-        else:
-            resolved_reason_by_id[pid] = "not reproduced at equal-or-deeper depth"
-
-    all_ids = {c.get("id", "") for c in components if c.get("id")}
-    recon_info = {
-        "reanalyzed_ids": sorted(reanalyzed & all_ids),
-        "carried_forward_ids": sorted(all_ids - reanalyzed),
-        "resolved_reason_by_id": resolved_reason_by_id,
-        "carried_ids": sorted(carried_ids),
-        "added_ids": sorted(t["id"] for t in threats if t.get("id") and _match_key(t) not in prior_keys),
-    }
-    return threats, recon_info
-
-
 # ─── Field builders ───────────────────────────────────────────────────────
 
 
@@ -1018,11 +862,6 @@ def build_component_selection(
         "selected": selected,
         "excluded": excluded,
     }
-
-
-def _output_mode(skill_cfg: dict) -> str:
-    """Map runtime modes to the public threat-model assessment mode."""
-    return "incremental" if str(skill_cfg.get("mode") or "full").lower() == "incremental" else "full"
 
 
 def _apply_business_context_basis(threats: list[dict], output_dir: Path, skill_cfg: dict) -> int:
@@ -1236,7 +1075,9 @@ def build_meta(
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
     commit_sha = _git(["rev-parse", "HEAD"], repo_root) or "unknown"
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root) or "unknown"
-    repo_url = _git(["remote", "get-url", "origin"], repo_root)
+    from shared._remote_url import public_remote_url
+
+    repo_url = public_remote_url(_git(["remote", "get-url", "origin"], repo_root))
 
     # project: sidecar fallback chain — recon-summary, then prior yaml meta.project, then repo basename
     project = recon_project or (prior_yaml or {}).get("meta", {}).get("project") or repo_root.name
@@ -1247,23 +1088,36 @@ def build_meta(
 
     from shared._manifest_readers import manifest_display_name, read_project_manifest
 
-    project_name = manifest_display_name(read_project_manifest(SimpleNamespace(repo_root=repo_root)))
+    manifest = read_project_manifest(SimpleNamespace(repo_root=repo_root))
+    project_name = manifest_display_name(manifest)
+    # The §1 overview reads these from meta; without them it searched the
+    # renderer's working directory, which is not the scanned repository.
+    # Manifest and README text is repository content: mask it like evidence.
+    from validators.secret_scan import mask_text
+
+    node = (manifest.get("engines") or {}).get("node") if isinstance(manifest.get("engines"), dict) else None
+    runtime = manifest.get("runtime") or (f"Node.js {node}" if isinstance(node, str) and node.strip() else None)
+    described = {
+        key: mask_text(value.strip())[0]
+        for key, value in (("project_description", manifest.get("description")), ("runtime", runtime))
+        if isinstance(value, str) and value.strip()
+    }
 
     return {
         "schema_version": 1,
         "project": project,
         **({"project_name": project_name} if project_name else {}),
+        **described,
         "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        # ``rebuild`` is an orchestration/cleanup mode, not a public assessment
-        # mode.  The output contract deliberately exposes only a complete
-        # assessment (``full``) or a delta assessment (``incremental``).
-        "mode": _output_mode(skill_cfg),
+        # Every controller run is a complete assessment; ``rebuild`` only resets
+        # the retained history and is not a public assessment mode.
+        "mode": "full",
         "model": skill_cfg.get("stride_model", "sonnet"),
         "analyst": f"context-v2 pipeline ({skill_cfg.get('stride_model', 'sonnet')})",
         "plugin_version": plugin_ver,
         "analysis_version": analysis_ver,
         "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
-        # Exact create-threat-model invocation flags (depth, reasoning tier,
+        # Exact appsec-analyzer invocation flags (depth, reasoning tier,
         # per-stage overrides, --stride-cap, mode, …) so the report can show the
         # precise parameterization that produced it — reproducibility anchor.
         # Survives runtime cleanup, unlike .skill-config.json.
@@ -1401,7 +1255,10 @@ def _conform_title(threat: dict) -> bool:
     if not cleaned or len(_clamp_title(cleaned)) < _TITLE_MINLEN:
         cleaned, lossy = _fallback_title(threat), True
     threat["title"] = _clamp_title(cleaned)
-    if lossy:
+    # Any change keeps the original: cleaning drops the "class — qualifier"
+    # separator and may cut the wording, so the title emitter must re-derive
+    # from the source, not from this conformed string.
+    if lossy or threat["title"] != raw.strip():
         threat.setdefault("_title_source", raw)
     return lossy
 
@@ -1566,7 +1423,9 @@ def _clean_title(raw: str) -> str:
         if len(s) <= 80:
             suffix = ""
         else:
-            s = s[:79].rstrip().rstrip(",;:-") + "…"
+            from shared._register_titles import _cut_at_word  # noqa: PLC0415
+
+            s = _cut_at_word(s, 79) + "…"
             suffix = ""
     return f"{s}{suffix}"
 
@@ -2720,7 +2579,6 @@ def build_changelog(
     existing_changelog: list[dict] | None,
     plugin_root: Path,
     current_sha: str | None = None,
-    recon_info: dict | None = None,
     mitigations: list[dict] | None = None,
     run_id: str | None = None,
 ) -> list[dict]:
@@ -2741,7 +2599,7 @@ def build_changelog(
 
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
     run_mode = str(skill_cfg.get("mode") or "full").lower()
-    mode = _output_mode(skill_cfg)
+    mode = "full"
     cur_depth = skill_cfg.get("assessment_depth", "standard")
     cur_n = len(threats)
 
@@ -2830,17 +2688,7 @@ def build_changelog(
         else None
     )
 
-    if recon_info is not None:
-        # Incremental path (baseline-diff already computed upstream) — unchanged.
-        delta_basis = "incremental"
-        added_threats = recon_info["added_ids"]
-        carried_components = recon_info["carried_forward_ids"]
-        reanalyzed = recon_info["reanalyzed_ids"]
-        resolved_block = {
-            "threats": sorted(recon_info["resolved_reason_by_id"].keys()),
-            "reason_by_id": dict(recon_info["resolved_reason_by_id"]),
-        }
-    elif prior_has_fps and _depth_is_shallower(cur_depth, prior_depth):
+    if prior_has_fps and _depth_is_shallower(cur_depth, prior_depth):
         # Full run over a FINGERPRINTED prior, but at a SHALLOWER depth
         # (e.g. standard → quick). The current run did not examine everything
         # the deeper prior did, so a fingerprint set-diff would mis-report every
@@ -2870,9 +2718,7 @@ def build_changelog(
         # repo untouched, each reported ~16 added / ~37 resolved). Suppress the
         # delta and report an honest re-derived snapshot. The entry still
         # persists its own fingerprints/match_keys (below), so a LATER run over
-        # CHANGED code diffs against this snapshot normally. For reliable
-        # per-edit deltas use the incremental path (git baseline diff), not a
-        # full re-scan.
+        # CHANGED code diffs against this snapshot normally.
         delta_basis = "rescan-unchanged"
         added_threats = []
         reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
@@ -3040,12 +2886,183 @@ def build_changelog(
 # ─── Main ─────────────────────────────────────────────────────────────────
 
 
+def build_assessment_model(
+    scope,
+    *,
+    skill_cfg: dict,
+    architecture: dict,
+    controls: list[dict],
+    boundaries: dict,
+    merged: dict,
+    plugin_root: Path,
+    project: str,
+    context: dict | None = None,
+) -> tuple[dict, list[str]]:
+    """Build the qualified pre-enrichment model without publishing completion.
+
+    The controller supplies accepted stage artifacts. This assembler rechecks
+    their scope and references and reuses the ordinary finding, mitigation and
+    severity builders. It neither selects a primary checkout nor grants source
+    access from serialized inventory. The normal enrichment and delivery gates
+    still follow this step.
+    """
+    import copy
+
+    from contexts.multi_repo_analysis import contract, source_selection
+    from jsonschema import Draft202012Validator
+    from runtime.multi_repo_scope import AssessmentScope
+    from shared.assessment_sources import source_rows
+    from validators.validate_assessment_architecture import validate_flows, validate_source
+    from validators.validate_intermediate import validate_threat_model_output
+
+    if not isinstance(scope, AssessmentScope):
+        raise ValueError("Combined model construction requires an admitted assessment scope")
+    if not isinstance(project, str) or not project.strip() or len(project) > 256 or any(ord(c) < 32 for c in project):
+        raise ValueError("Combined project name must be bounded single-line text")
+    if skill_cfg.get("assessment_scope") != "multiple-repositories" or skill_cfg.get("mode") != "full":
+        raise ValueError("Combined model construction requires resolved full-assessment configuration")
+    inventory = scope.inventory()
+    if skill_cfg.get("source_scope_sha256") != inventory["scope_sha256"]:
+        raise ValueError("Combined configuration belongs to another source scope")
+    # Declared context reaches the analysis only through the captured record
+    # (orchestrator/assessment_context.py). Without it, refuse rather than
+    # publish an unused source as not_configured or invent an assessment/trace.
+    configured_business = skill_cfg.get("business_context_source") or any(
+        path in repo.files
+        for repo in scope.repositories
+        for path in ("docs/security/business-context.md", "docs/business-context.md")
+    )
+    if configured_business and not skill_cfg.get("skip_business_context") and context is None:
+        raise ValueError("Combined business context was not captured")
+    catalog_ids = frozenset(((context or {}).get("requirements") or {}).get("ids") or ())
+    if skill_cfg.get("check_requirements") and not catalog_ids:
+        raise ValueError("Combined requirements catalog was not captured")
+    scope.verify_unchanged()
+    components, receipt = architecture["components"], architecture["finalization"]
+    validate_flows(scope, components, receipt, architecture["data_flows"])
+    fingerprint = receipt["component_inventory_fingerprint"]
+    Draft202012Validator(contract("threats-merged-v2.schema.json")).validate(merged)
+    if (
+        merged["source_scope_sha256"] != inventory["scope_sha256"]
+        or merged["component_inventory_fingerprint"] != fingerprint
+    ):
+        raise ValueError("Merged findings do not match the finalized assessment")
+    Draft202012Validator(contract("fragments/trust-boundaries-v3.schema.json")).validate(boundaries)
+    if boundaries["source_scope_sha256"] != inventory["scope_sha256"]:
+        raise ValueError("Normalized boundaries belong to another source scope")
+    component_ids = {row["id"] for row in components["components"]}
+    by_id = {row["id"]: row for row in components["components"]}
+    control_schema = contract("multi-repo-controls.schema.json")["properties"]["security_controls"]["items"]
+    for control in controls:
+        Draft202012Validator(control_schema).validate(control)
+        if not set(control["component_ids"]) <= component_ids:
+            raise ValueError("Security control refers to an unknown component")
+        owned = source_selection([by_id[key] for key in control["component_ids"]])
+        if any((e["repository_id"], e["file"]) not in owned for e in control["evidence"]):
+            raise ValueError("Security control evidence is outside its component ownership")
+    for row in merged["threats"]:
+        if row["component_id"] not in component_ids:
+            raise ValueError("Merged finding refers to an unknown component")
+        anchor = row.get("evidence")
+        if anchor and (anchor["repository_id"], anchor["file"]) not in source_selection([by_id[row["component_id"]]]):
+            raise ValueError("Merged finding anchor is outside its component ownership")
+    finding_ids = [row["t_id"] for row in merged["threats"]]
+    if len(finding_ids) != len(set(finding_ids)):
+        raise ValueError("Merged finding identities are not unique")
+    for asset in architecture["assets"]:
+        if any(ref["component_id"] not in component_ids for ref in asset.get("component_refs", [])):
+            raise ValueError("Asset refers to an unknown component")
+    # Walk before recursive copying/schema use to bound alias expansion and
+    # retain exact provenance for nested evidence, including removed findings.
+    for value in (architecture["assets"], controls, boundaries, merged):
+        for evidence in source_rows(value):
+            validate_source(scope, evidence, path_key="file")
+
+    threats, warnings = build_threats(copy.deepcopy(merged), skill_cfg.get("register_severity_floor") or "medium")
+    if any(set(t.get("violated_requirements") or ()) - catalog_ids for t in threats):
+        raise ValueError("Combined finding carries a requirement link outside the captured catalog")
+    mitigations = build_mitigations(threats)
+    mitigations, mitigation_warnings = prune_dangling_mitigation_threat_ids(threats, mitigations)
+    warnings.extend(mitigation_warnings)
+    threats, mitigations = dedupe_mitigation_controls(threats, mitigations)
+    plugin_version, analysis_version = _plugin_version(plugin_root)
+    meta = {
+        "schema_version": 2,
+        "project": project.strip(),
+        "generated": merged["generated_at"],
+        "mode": "full",
+        "model": skill_cfg["stride_model"],
+        "analyst": "qualified multi-repository assessment",
+        "plugin_version": plugin_version,
+        "analysis_version": analysis_version,
+        "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
+        "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
+        "register_severity_floor": skill_cfg.get("register_severity_floor") or "medium",
+        "check_requirements": bool(catalog_ids),
+        "source_scope_sha256": inventory["scope_sha256"],
+        "component_inventory_fingerprint": fingerprint,
+    }
+    for key in ("stride_model", "triage_model", "merger_model"):
+        if skill_cfg.get(key):
+            meta[key] = skill_cfg[key]
+    rows = copy.deepcopy(components["components"])
+    for component in rows:
+        component["threat_ids"] = sorted(t["id"] for t in threats if t["component"] == component["id"])
+    doc = {
+        "meta": meta,
+        "source_inventory": inventory,
+        "components": rows,
+        "data_flows": copy.deepcopy(architecture["data_flows"]["data_flows"]),
+        "external_entities": copy.deepcopy(architecture["data_flows"].get("external_entities", [])),
+        "assets": copy.deepcopy(architecture["assets"]),
+        # Route/actor aggregation is a separate producer. Do not turn unknown
+        # route authentication into a guessed Internet actor here.
+        "attack_surface": [],
+        "trust_boundaries": copy.deepcopy(boundaries["trust_boundaries"]),
+        "security_controls": link_checked_controls(copy.deepcopy(controls), threats),
+        "threats": threats,
+        "mitigations": mitigations,
+        "critical_findings": build_critical_findings(threats),
+        "abuse_case_analysis": build_initial_abuse_case_analysis(skill_cfg),
+        "business_context_trace": {
+            "status": "skipped" if skill_cfg.get("skip_business_context") else "not_configured",
+            "source_kind": None,
+            "source": None,
+            "sha256": None,
+            "fields_present": [],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        },
+    }
+    if merged.get("weaknesses"):
+        doc["weaknesses"], pruning_warnings = prune_dangling_weakness_instances(
+            threats, copy.deepcopy(merged["weaknesses"]), refuted_ids=refuted_threat_ids(merged)
+        )
+        warnings.extend(pruning_warnings)
+    doc, _ = renumber_trust_boundaries(doc)
+    doc, masked_patterns = secret_scan.mask_structure(doc)
+    if masked_patterns:
+        warnings.append("Secret masking applied to combined model prose")
+    valid, messages = validate_threat_model_output(doc)
+    if not valid:
+        raise ValueError("Combined model violates canonical output invariants: " + "; ".join(messages))
+    warnings.extend(messages)
+    scope.verify_unchanged()
+    return doc, warnings
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("output_dir", type=run_path_arg, help="$OUTPUT_DIR (e.g. docs/security)")
     ap.add_argument("--repo-root", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(os.environ.get("CLAUDE_PLUGIN_ROOT", _SCRIPT_DIR.parent)))
     ap.add_argument("--dry-run", action="store_true", help="Print the composed yaml to stdout instead of writing.")
+    ap.add_argument(
+        "--history",
+        type=Path,
+        default=None,
+        help="JSON changelog of the assessment this run replaces; used when output_dir holds no changelog.",
+    )
     args = ap.parse_args()
 
     od = args.output_dir
@@ -3171,31 +3188,6 @@ def main() -> int:
             if flow.get("from") not in allowed_endpoints or flow.get("to") not in allowed_endpoints:
                 raise ValueError(f"{flow_id} references an unknown component endpoint")
 
-    # Incremental depth-downgrade preservation: re-inject prior threats of
-    # re-analyzed components that a shallower re-scan dropped without an
-    # affirmative fix. Runs BEFORE build_mitigations so carried threats get a §10
-    # register entry, and BEFORE the threat_ids derivation so they are counted
-    # per component. Carried threats receive fresh, collision-free T-ids
-    # (merge_threats._assign_t_ids restarts global numbering every run, so the
-    # prior id cannot be reused safely). No-op on full/first runs.
-    # Incremental reconciliation is an INCREMENTAL-only operation (depth-downgrade
-    # carry-forward). On full/rebuild/first runs it must be a no-op — gate on the
-    # resolved run mode, NOT on the mere presence of .appsec-cache/baseline.json.
-    # A same-run yaml rebuild (Phase-11 Substep 2 writes baseline.json, then the
-    # yaml is rebuilt) leaves baseline.json + a self-written threat-model.yaml on
-    # disk; keying "incremental" off those files made a first/full run self-diff
-    # into a bogus "+0 / ~0 / -0 · incremental · N threats (stable)" changelog.
-    recon_info = None
-    if (skill_cfg.get("mode") or "full").lower() == "incremental":
-        threats, recon_info = reconcile_incremental_threats(
-            threats,
-            prior_yaml,
-            components,
-            od,
-            skill_cfg.get("assessment_depth", "standard"),
-            _index_resolved_prior(merged),
-        )
-
     mitigations = build_mitigations(threats)
     mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
     # Dangling-link prune (2026-06-28): sidecar additions can carry hallucinated
@@ -3254,15 +3246,19 @@ def main() -> int:
     # retaining the security finding. This is the final deterministic backstop
     # after merge/carry-forward and before schema validation.
     try:
-        from contexts.prepare_trust_boundary_context import revalidate_boundary_refs
+        from contexts.prepare_trust_boundary_context import associate_boundary_refs, revalidate_boundary_refs
 
-        for warning in revalidate_boundary_refs(
-            threats,
-            boundaries=trust_boundaries,
-            known_component_ids={
-                row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
-            },
+        known = {row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)}
+        # Owners and carried findings are final here, so this is the last place
+        # an evidenced interface link can still be found.
+        for gap in associate_boundary_refs(
+            threats, boundaries=trust_boundaries, known_component_ids=known, components=components
         ):
+            sys.stderr.write(
+                f"  TRUST_BOUNDARY_REF_GAP: {gap['finding_id']}: {gap['reason']} "
+                f"({', '.join(gap['candidate_boundary_ids'])})\n"
+            )
+        for warning in revalidate_boundary_refs(threats, boundaries=trust_boundaries, known_component_ids=known):
             sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: {warning}\n")
     except Exception as exc:
         for threat in threats:
@@ -3296,6 +3292,14 @@ def main() -> int:
     # claiming this is the initial scan — a false "first scan" is exactly the
     # kind of misleading audit claim the changelog must never make.
     existing_changelog = (prior_yaml or {}).get("changelog")
+    if not existing_changelog and args.history is not None:
+        # The controller builds in a fresh workspace and passes the replaced
+        # assessment's changelog explicitly (REQ-USE-004).
+        _history = _load_json(args.history, required=True)
+        if not isinstance(_history, list) or not all(isinstance(entry, dict) for entry in _history):
+            sys.stderr.write(f"FATAL: --history must hold a changelog list: {args.history}\n")
+            return 2
+        existing_changelog = _history
     if not existing_changelog:
         _baseline = _load_json(od / ".appsec-cache" / "baseline.json")
         _mirror = (_baseline or {}).get("changelog_mirror")
@@ -3337,7 +3341,6 @@ def main() -> int:
         existing_changelog,
         args.plugin_root,
         current_sha=(meta.get("git") or {}).get("commit_sha"),
-        recon_info=recon_info,
         mitigations=mitigations,
         run_id=_run_id,
     )

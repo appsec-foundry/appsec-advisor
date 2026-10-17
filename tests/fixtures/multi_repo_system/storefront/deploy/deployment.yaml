@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  namespace: shop
+spec:
+  template:
+    spec:
+      containers:
+        - name: storefront
+          image: storefront:latest
+          env:
+            - name: ORDERS_API
+              value: http://orders-api.shop.svc.cluster.local:8080

@@ -10,6 +10,7 @@ contract, so a chapter that neither frozen run renders is still held.
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import re
 import shutil
@@ -234,6 +235,12 @@ def _tables(block: Block) -> list[str]:
     for line in block.lines:
         if line.startswith("|") and not previous.startswith("|"):
             found.append(_normalize_table(line))
+        if line.startswith("<thead><tr>"):
+            headers = [
+                html.unescape(re.sub(r"<[^>]+>", "", cell)) for cell in re.findall(r"<th(?:\s[^>]*)?>(.*?)</th>", line)
+            ]
+            if headers:
+                found.append(_normalize_table("| " + " | ".join(headers) + " |"))
         previous = line
     return found
 

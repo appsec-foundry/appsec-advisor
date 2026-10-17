@@ -21,7 +21,7 @@ The policy is read from two places, in this order:
    packaged with.
 
 The second source is what makes the gate work at all for the skills people
-reach first. The effective file is written by a create-threat-model run into
+reach first. The effective file is written by a appsec-analyzer run into
 its output directory, so before any scan has happened there was no policy to
 find and every skill fell through to enabled — a control that reported itself
 as active in ``status`` output while enforcing nothing. Packaging now resolves
@@ -60,7 +60,7 @@ OPERATIONAL_SKILLS = {
     "check-permissions",
     "clean-run-state",
     "fix-run-issues",
-    "threat-model-health",
+    "security-assessment-health",
 }
 
 
@@ -144,7 +144,7 @@ def check(skill: str, output_dir: Path | None, help_only: bool) -> tuple[int, st
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check whether a skill is enabled under the active org profile.")
-    parser.add_argument("skill", help="user-facing skill name (e.g. export-threat-model)")
+    parser.add_argument("skill", help="user-facing skill name (e.g. export-security-assessment)")
     parser.add_argument(
         "--output-dir",
         default=os.environ.get("OUTPUT_DIR"),

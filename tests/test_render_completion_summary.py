@@ -231,12 +231,19 @@ class TestSeverityBasisMatchesTheReport:
         register, so the console must not count them as standalone findings."""
         model = self._model(
             [
-                {"risk": "High", "evidence_tier": "insecure-practice"},
-                {"risk": "High", "evidence_tier": "insecure-practice"},
+                {"id": "T-001", "risk": "High", "evidence_tier": "insecure-practice"},
+                {"id": "T-002", "risk": "High", "evidence_tier": "insecure-practice"},
                 {"risk": "High"},
                 {"risk": "Critical"},
             ],
-            weaknesses=[{"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}],
+            weaknesses=[
+                {
+                    "kind": "implementation",
+                    "severity_basis": "confirmed",
+                    "severity": "High",
+                    "observable_backing": {"practice_evidence": [{"id": "T-001"}, {"id": "T-002"}]},
+                }
+            ],
         )
         m = rcs.extract_metrics(model, "")
 
@@ -1016,13 +1023,13 @@ class TestNextSteps:
         assert not any("fix first" in l for l in clean)
 
     def test_ask_step_does_not_name_the_skill_command(self, tmp_path):
-        # ask-threat-model routes itself from any natural-language question
+        # ask-security-assessment routes itself from any natural-language question
         # about the model, so printing the slash command implies a step the
         # reader does not have to take — the question is the invocation.
-        # review-threat-model is a console you start, so it keeps its command.
+        # triage-security-assessment is a console you start, so it keeps its command.
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
-        assert not any("ask-threat-model" in l for l in lines)
-        assert any("review-threat-model" in l for l in lines)
+        assert not any("ask-security-assessment" in l for l in lines)
+        assert any("triage-security-assessment" in l for l in lines)
 
     def test_every_alternative_is_a_self_contained_entry(self, tmp_path):
         # Nothing joins the bullets any more, so no entry may be a lowercase
@@ -1057,9 +1064,9 @@ class TestNextSteps:
 
     def test_triage_hint_only_when_findings_present(self, tmp_path):
         with_findings = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
-        assert any("review-threat-model" in l for l in with_findings)
+        assert any("triage-security-assessment" in l for l in with_findings)
         clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
-        assert not any("review-threat-model" in l for l in clean)
+        assert not any("triage-security-assessment" in l for l in clean)
 
     def test_architect_review_shown_when_file_exists(self, tmp_path):
         (tmp_path / ".architect-review.md").write_text("# review\n")
@@ -1074,17 +1081,17 @@ class TestNextSteps:
     def test_sarif_hint_is_a_follow_up_not_an_alternative(self, tmp_path):
         # Uploading the SARIF is something a reader does as well as reading the
         # report; chained into the alternatives it read as instead of.
-        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        (tmp_path / "security-assessment.sarif.json").write_text("{}")
         cfg = self._cfg(write_sarif=True)
         steps = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), cfg)
         follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), cfg)
 
-        assert not any("threat-model.sarif.json" in l for l in steps)
-        assert any("threat-model.sarif.json" in l for l in follow_ups)
+        assert not any("security-assessment.sarif.json" in l for l in steps)
+        assert any("security-assessment.sarif.json" in l for l in follow_ups)
 
     def test_the_sarif_hint_names_a_tool_class_not_three_products(self, tmp_path):
         # A reader has one SARIF consumer; the product list read as a menu.
-        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        (tmp_path / "security-assessment.sarif.json").write_text("{}")
         follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), self._cfg(write_sarif=True))
         assert any("your SARIF consumer" in l for l in follow_ups)
 
@@ -1907,23 +1914,6 @@ class TestRenderFiles:
         out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": True}))
         assert "Threat Dragon" not in out
 
-    def test_completion_runtime_passes_only_the_output_dir(self):
-        """RA-8: the run config carries identity and switches; the runtime argv cannot drift from it.
-
-        A long documented argv once described flags the parser no longer
-        accepted, and an auto-mode classifier refused another. Every documented
-        call passes the output directory only, and the parser accepts it.
-        """
-        impl = (
-            Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
-        ).read_text(encoding="utf-8")
-        calls = re.findall(r"scripts/renderers/render_completion_summary\.py\"?((?:\\\n|[^\n`])*)", impl)
-        assert len(calls) == 2, calls
-        for args in calls:
-            flags = set(re.findall(r"--[a-z-]+", args))
-            assert flags <= {"--output-dir", "--patch-placeholders", "--no-print"}, flags
-            assert "--output-dir" in flags
-
 
 class TestRunIssues:
     def test_extract_missing(self, tmp_path: Path):
@@ -2160,6 +2150,10 @@ class TestRenderMisc:
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: R())
         out = "\n".join(rcs.render_security_notice(tmp_path))
         assert "NOT git-ignored" in out
+
+    def test_security_notice_outside_a_repository(self, tmp_path: Path):
+        # `git check-ignore` exits 128 there; that is no evidence the report would be committed.
+        assert rcs.render_security_notice(tmp_path) == []
 
     def test_security_notice_git_error(self, tmp_path: Path, monkeypatch):
         def boom(*a, **k):
@@ -2519,12 +2513,18 @@ class TestExportDeliverablesBackstop:
     def test_exports_threatdragon_when_requested(self, tmp_path: Path):
         self._seed(tmp_path, write_threatdragon=True)
         rcs._export_deliverables_if_configured(tmp_path)
-        assert (tmp_path / "threat-model.threatdragon.json").is_file()
+        assert (tmp_path / "security-assessment.threatdragon.json").is_file()
+
+    def test_exports_from_published_yaml(self, tmp_path: Path):
+        self._seed(tmp_path, write_threatdragon=True)
+        (tmp_path / "threat-model.yaml").rename(tmp_path / "security-assessment.yaml")
+        rcs._export_deliverables_if_configured(tmp_path)
+        assert (tmp_path / "security-assessment.threatdragon.json").is_file()
 
     def test_noop_when_not_requested(self, tmp_path: Path):
         self._seed(tmp_path, write_threatdragon=False)
         rcs._export_deliverables_if_configured(tmp_path)
-        assert not (tmp_path / "threat-model.threatdragon.json").exists()
+        assert not (tmp_path / "security-assessment.threatdragon.json").exists()
 
     def test_noop_when_no_config(self, tmp_path: Path, monkeypatch):
         calls = []
@@ -2534,7 +2534,7 @@ class TestExportDeliverablesBackstop:
 
     def test_leaves_an_existing_export_alone(self, tmp_path: Path, monkeypatch):
         self._seed(tmp_path, write_threatdragon=True)
-        (tmp_path / "threat-model.threatdragon.json").write_text('{"mine": true}', encoding="utf-8")
+        (tmp_path / "security-assessment.threatdragon.json").write_text('{"mine": true}', encoding="utf-8")
         calls = []
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
         rcs._export_deliverables_if_configured(tmp_path)
@@ -2610,10 +2610,10 @@ class TestRequestedDeliverablesAreReported:
         mod = _load_module()
         assert sorted(mod.missing_deliverables(tmp_path, self.ALL_REQUESTED)) == [
             "pentest-tasks.yaml",
-            "threat-model.html",
-            "threat-model.pdf",
-            "threat-model.sarif.json",
-            "threat-model.threatdragon.json",
+            "security-assessment.html",
+            "security-assessment.pdf",
+            "security-assessment.sarif.json",
+            "security-assessment.threatdragon.json",
         ]
 
     def test_outputs_block_marks_them_missing(self, tmp_path):
@@ -2624,19 +2624,19 @@ class TestRequestedDeliverablesAreReported:
 
     def test_a_missing_pdf_or_html_prints_its_export_command(self, tmp_path):
         mod = _load_module()
-        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        (tmp_path / "security-assessment.pdf").write_text("x", encoding="utf-8")
         body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True, "write_html": True, "write_sarif": True}))
         commands = [line.strip() for line in body.splitlines() if line.strip().startswith("python3 ")]
         assert len(commands) == 1
         assert "exporters/export_html.py --require-mermaid --input" in commands[0]
-        assert commands[0].endswith(str(tmp_path / "threat-model.html"))
+        assert commands[0].endswith(str(tmp_path / "security-assessment.html"))
         assert "--no-mermaid" not in body
 
     def test_present_deliverable_is_listed_normally(self, tmp_path):
         mod = _load_module()
-        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        (tmp_path / "security-assessment.pdf").write_text("x", encoding="utf-8")
         body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True}))
-        assert "threat-model.pdf" in body
+        assert "security-assessment.pdf" in body
         assert "MISSING" not in body
         assert mod.missing_deliverables(tmp_path, {"write_pdf": True}) == []
 
@@ -2666,6 +2666,53 @@ class TestHeadlessWrapperForwardsVerbose:
     to forward it to the skill as well, or the detail this module gates on the
     resolved `verbose` flag is unreachable outside an interactive run."""
 
-    def test_verbose_reaches_the_skill_prompt(self):
-        body = (REPO_ROOT / "scripts" / "run-headless.sh").read_text(encoding="utf-8")
-        assert 'PROMPT="$PROMPT $VERBOSE"' in body
+
+# ---------------------------------------------------------------------------
+# Terminal colour for the headless console
+# ---------------------------------------------------------------------------
+
+
+class TestStyleSummary:
+    _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+    TEXT = (
+        "Assessment complete: Create Threat Model\n\n"
+        "Results\n"
+        "  Threats     : 20 total | 2 Critical | 7 High | 11 Medium\n"
+        "  Mitigations : F-001 (unproven) | W-002\n\n"
+        "Security Notice\n"
+        "  Warning: threat-model.md is NOT git-ignored and may be committed.\n"
+        "  - Open the report\n"
+    )
+
+    def _style(self, enabled: bool = True) -> str:
+        from renderers.term_style import Style
+
+        return rcs.style_summary(self.TEXT, Style(enabled, True))
+
+    def test_disabled_style_returns_the_text_unchanged(self):
+        assert self._style(False) == self.TEXT
+
+    def test_every_plain_line_survives_in_order(self):
+        plain = self._ANSI.sub("", self._style()).splitlines()
+        it = iter(plain)
+        for line in self.TEXT.splitlines():
+            expected = f"✓ {line}" if line.startswith("Assessment complete") else line
+            assert any(candidate == expected for candidate in it), line
+
+    def test_unproven_stays_visible(self):
+        """REQ-MOD-009: colour never drops the unproven marker."""
+        assert "F-001 (unproven)" in self._ANSI.sub("", self._style())
+
+    def test_severity_bars_follow_the_threats_field(self):
+        plain = self._ANSI.sub("", self._style()).splitlines()
+        start = plain.index("  Threats     : 20 total | 2 Critical | 7 High | 11 Medium")
+        bars = plain[start + 1 : start + 4]
+        assert [b.split()[0:2] for b in bars] == [["critical", "2"], ["high", "7"], ["medium", "11"]]
+        assert bars[2].count("▪") == 16
+        assert bars[0].count("▪") < bars[1].count("▪")
+
+    def test_coloured_lines_close_their_colour(self):
+        for line in self._style().splitlines():
+            codes = self._ANSI.findall(line)
+            if codes:
+                assert codes[-1] == "\x1b[0m", line

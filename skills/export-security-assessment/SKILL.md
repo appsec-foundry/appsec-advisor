@@ -1,0 +1,267 @@
+---
+name: export-security-assessment
+description: Re-export a finished security assessment (security-assessment.yaml/.md, or a legacy threat-model.* set) into PDF + HTML + SARIF + pentest-tasks artifacts, or the alpha OWASP Threat Dragon / ThreatAtlas JSON. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF, pentest-tasks and Threat Dragon are derived deterministically from the assessment YAML; PDF and HTML are converted from the report Markdown (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
+---
+
+You are exporting an existing threat model into one or more artifact formats. This skill is **standalone post-processing** — do not analyze the repository, do not dispatch any agent, do not modify the source report or model (`security-assessment.md` and `.yaml`, or `threat-model.*` in a legacy directory). The skill reads those two files and writes the requested exports under the `security-assessment` name.
+
+## `--help` — inline help (early exit)
+
+If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
+
+```
+/appsec-advisor:export-security-assessment — Re-export a threat model into PDF / HTML / SARIF / pentest-tasks / Threat Dragon.
+
+USAGE
+  /appsec-advisor:export-security-assessment [FLAGS]
+
+FLAGS
+  --repo <path>            Repository to operate on (default: current working dir)
+  --output <path>          Assessment source directory — must contain the
+                           report and/or model of a prior appsec-analyzer run
+                           (default: the repo's assessment directory)
+  --exports-dir <path>     Directory where the NEW export files are written
+                           (default: same as --output — exports land next to
+                           the source files)
+  --input <path>           Markdown input for PDF/HTML export. Overrides
+                           the report in <output> for markup exports.
+  --output-pdf <path>      Exact PDF destination. Implies --formats pdf when
+                           --formats is not explicitly provided.
+  --formats <csv>          Comma-separated subset of: pdf, html, sarif, pentest,
+                           threatdragon, all   (default: all)
+                           threatdragon is ALPHA and is NOT part of `all` —
+                           request it explicitly.
+  --pentest-format <name>  Pentest dialect: generic|strix (default: generic)
+  --pentest-target <url>   Optional base URL for the pentest target
+  --slug <value>           Insert -<value> into every export filename
+                           (security-assessment-<value>.pdf, pentest-tasks-<value>.yaml,
+                           …), matching appsec-analyzer --slug.
+                           1-64 characters from [A-Za-z0-9._-].
+  --no-mermaid             Skip Mermaid SVG pre-rendering for PDF/HTML
+  --require-mermaid        Fail preflight if mmdc is not installed
+  --keep-html              Keep intermediate HTML next to the PDF (debug; pdf only)
+  --check-only             Run preflight checks only — do not write
+  --help, -h               Show this help and exit
+
+DEPENDENCIES (installed by the user, not by this plugin)
+  pandoc        Required for PDF + HTML.  apt install pandoc | brew install pandoc
+  weasyprint    Required for PDF only.    pip install weasyprint
+  mmdc          Required for PDF Mermaid diagrams (optional for HTML).
+                Also needs a Chrome/Chromium for Puppeteer.
+                npm install -g @mermaid-js/mermaid-cli
+                + npx puppeteer browsers install chrome   (or apt install
+                chromium and set PUPPETEER_EXECUTABLE_PATH)
+                PDF aborts if missing; pass --no-mermaid to skip diagrams.
+  pyyaml        Required for SARIF + pentest + threatdragon.
+                apt install python3-yaml | pip install pyyaml
+
+OUTPUTS
+  <exports-dir>/security-assessment.pdf                 (when pdf ∈ formats)
+  <exports-dir>/security-assessment.html                (when html ∈ formats)
+  <exports-dir>/security-assessment.sarif.json          (when sarif ∈ formats)
+  <exports-dir>/pentest-tasks.yaml               (when pentest ∈ formats)
+  <exports-dir>/security-assessment.threatdragon.json   (when threatdragon ∈ formats)
+  With --slug, each name carries -<slug> after its prefix.
+
+THREAT DRAGON EXPORT (ALPHA)
+  OWASP Threat Dragon v2 JSON. Opens in Threat Dragon and imports into OWASP
+  ThreatAtlas (Diagram → Import). Lossy by construction — Threat Dragon has no
+  field for CVSS, CWE, evidence locations, mitigation priority or requirements
+  traceability, so those are folded into each threat's description and every
+  threat keeps its F-NNN anchor. See docs/threat-dragon-export.md.
+
+EXAMPLES
+  /appsec-advisor:export-security-assessment
+  /appsec-advisor:export-security-assessment --formats sarif,pentest
+  /appsec-advisor:export-security-assessment --formats threatdragon
+  /appsec-advisor:export-security-assessment --formats html
+  /appsec-advisor:export-security-assessment --formats pdf --no-mermaid
+  /appsec-advisor:export-security-assessment --formats pdf --input ./report.md --output-pdf ./report.pdf
+  /appsec-advisor:export-security-assessment --pentest-target https://staging.example.com
+  /appsec-advisor:export-security-assessment --formats pentest --slug a3f9
+  /appsec-advisor:export-security-assessment --check-only
+
+The skill is idempotent and side-effect-free apart from writing the requested
+exports. It never dispatches agents and never spends LLM tokens.
+
+EXIT CODES
+  0  All requested exports written (or --check-only succeeded)
+  1  Missing dependency (pandoc / weasyprint / mmdc+Chrome / pyyaml)
+  2  Input file not found (report or model), or the directory holds both naming sets
+  3  The assessment YAML is schema-invalid
+  4  Conversion error from one of the helpers
+```
+
+After printing, exit.
+
+## Step 1 — Parse arguments
+
+Recognized flags:
+
+  `--repo <path>`  `--output <path>`  `--exports-dir <path>`
+  `--input <path>`  `--output-pdf <path>`  `--formats <csv>`
+  `--pentest-format <name>`  `--pentest-target <url>`  `--slug <value>`
+  `--no-mermaid`  `--require-mermaid`  `--keep-html`  `--check-only`
+  `--help` | `-h`
+
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `EXPORTS_DIR`, `INPUT_MD_OVERRIDE`, `OUTPUT_PDF_OVERRIDE`, `FORMATS`, `FORMATS_EXPLICIT`, `PENTEST_FORMAT`, `PENTEST_TARGET_URL`, `SLUG`, `NO_MERMAID`, `REQUIRE_MERMAID`, `KEEP_HTML`, `CHECK_ONLY`.
+
+Defaults:
+- `REPO_ROOT` → current working directory
+- `OUTPUT_DIR` → the repository's assessment directory, resolved at the start of Step 3
+- `EXPORTS_DIR` → `$OUTPUT_DIR` (same dir)
+- `INPUT_MD_OVERRIDE` → unset (use the report in `$OUTPUT_DIR`)
+- `OUTPUT_PDF_OVERRIDE` → unset (use `$EXPORTS_DIR/security-assessment.pdf`)
+- `FORMATS` → `pdf,html,sarif,pentest` (when `all`, or no `--formats` flag)
+- `PENTEST_FORMAT` → `generic`
+- `PENTEST_TARGET_URL` → unset
+- `SLUG` → unset
+
+If `--output-pdf` is provided and `--formats` is not provided, set
+`FORMATS=pdf` so the single-output PDF workflow remains available through
+this skill.
+
+### Reject unknown arguments (hard fail)
+
+If the invocation contains **any** token that is not one of the recognized flags above — or is not the value consumed by a flag that takes a value — DO NOT proceed. Print the help block (see Step `--help`) to stderr and exit with status `2`.
+
+## Step 2 — Resolve and validate formats
+
+Normalize `FORMATS`:
+- Split on comma, lowercase, strip whitespace.
+- `all` (any element) → `pdf,html,sarif,pentest`. **`threatdragon` is alpha and is deliberately not in `all`** — it ships only when the user names it.
+- Reject any token that is not in `{pdf, html, sarif, pentest, threatdragon, all}` with a clear error and exit `2`.
+
+Set boolean flags `DO_PDF`, `DO_HTML`, `DO_SARIF`, `DO_PENTEST`, `DO_THREATDRAGON` from the resolved set.
+
+## Step 3 — Preflight
+
+For each requested format, verify the inputs and dependencies exist. Print each line as you check.
+
+```bash
+# Resolver failure prints its own "Error: ..." line; stop, never fall back to docs/security.
+[ -n "$OUTPUT_DIR" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
+[ -n "$EXPORTS_DIR" ] || EXPORTS_DIR="$OUTPUT_DIR"
+# Report and model come from one naming set: security-assessment.*, or a legacy threat-model.* set.
+NEW=0; OLD=0
+{ [ -f "$OUTPUT_DIR/security-assessment.yaml" ] || [ -f "$OUTPUT_DIR/security-assessment.md" ]; } && NEW=1
+{ [ -f "$OUTPUT_DIR/threat-model.yaml" ] || [ -f "$OUTPUT_DIR/threat-model.md" ]; } && OLD=1
+if [ "$NEW" = 1 ] && [ "$OLD" = 1 ]; then
+  echo "ERROR: $OUTPUT_DIR holds both security-assessment.* and threat-model.*; move the older set away first" >&2
+  exit 2
+fi
+STEM=security-assessment; [ "$OLD" = 1 ] && STEM=threat-model
+INPUT_MD="$OUTPUT_DIR/$STEM.md"
+INPUT_YAML="$OUTPUT_DIR/$STEM.yaml"
+[ -n "$INPUT_MD_OVERRIDE" ] && INPUT_MD="$INPUT_MD_OVERRIDE"
+
+# The slug becomes part of every export filename, so only filename-safe values pass.
+if [ -n "$SLUG" ] && ! printf '%s' "$SLUG" | grep -Eqx '[A-Za-z0-9._-]{1,64}'; then
+  echo "ERROR: --slug must be 1-64 filename-safe characters ([A-Za-z0-9._-])." >&2
+  exit 2
+fi
+SFX="${SLUG:+-$SLUG}"
+mkdir -p "$EXPORTS_DIR"
+
+PREFLIGHT_FAIL=0
+
+# Yaml needed for sarif + pentest + threatdragon
+if [ "$DO_SARIF" = "true" ] || [ "$DO_PENTEST" = "true" ] || [ "$DO_THREATDRAGON" = "true" ]; then
+  if [ ! -f "$INPUT_YAML" ]; then
+    echo "ERROR: assessment model not found at $INPUT_YAML" >&2
+    PREFLIGHT_FAIL=2
+  else
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" \
+      threat_model_output "$INPUT_YAML" >/dev/null 2>&1 || {
+        echo "ERROR: $STEM.yaml is schema-invalid (run validators/validate_intermediate.py for details)" >&2
+        PREFLIGHT_FAIL=3
+      }
+  fi
+fi
+
+# Markdown needed for pdf and html
+if { [ "$DO_PDF" = "true" ] || [ "$DO_HTML" = "true" ]; } && [ ! -f "$INPUT_MD" ]; then
+  echo "ERROR: assessment report not found at $INPUT_MD" >&2
+  PREFLIGHT_FAIL=2
+fi
+
+# PDF dependencies — delegate to exporters/export_pdf.py --check-only (pandoc + weasyprint)
+if [ "$DO_PDF" = "true" ]; then
+  PDF_CHECK_ARGS="--check-only --input $INPUT_MD"
+  [ "$NO_MERMAID"      = "true" ] && PDF_CHECK_ARGS="$PDF_CHECK_ARGS --no-mermaid"
+  [ "$REQUIRE_MERMAID" = "true" ] && PDF_CHECK_ARGS="$PDF_CHECK_ARGS --require-mermaid"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_pdf.py" $PDF_CHECK_ARGS || PREFLIGHT_FAIL=1
+fi
+
+# HTML dependencies — delegate to exporters/export_html.py --check-only (pandoc only)
+if [ "$DO_HTML" = "true" ]; then
+  HTML_CHECK_ARGS="--check-only --input $INPUT_MD"
+  [ "$NO_MERMAID"      = "true" ] && HTML_CHECK_ARGS="$HTML_CHECK_ARGS --no-mermaid"
+  [ "$REQUIRE_MERMAID" = "true" ] && HTML_CHECK_ARGS="$HTML_CHECK_ARGS --require-mermaid"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" $HTML_CHECK_ARGS || PREFLIGHT_FAIL=1
+fi
+
+[ "$PREFLIGHT_FAIL" != "0" ] && exit "$PREFLIGHT_FAIL"
+[ "$CHECK_ONLY" = "true" ] && { echo "Preflight passed."; exit 0; }
+```
+
+## Step 4 — Run exports
+
+Execute the requested format helpers in order: SARIF → pentest → Threat Dragon → HTML → PDF (markup outputs last). Each helper's exit code propagates the first non-zero result back to the user.
+
+**Run the HTML/PDF helpers UNSANDBOXED.** Mermaid rendering (used by both `exporters/export_html.py` and `exporters/export_pdf.py`) shells out to a headless Chrome via mmdc/Puppeteer, whose `process_singleton` calls `socket()` at launch — a syscall the Bash sandbox blocks (`Operation not permitted`, EPERM, path-independent). Sandboxed, `exporters/export_pdf.py` aborts with "Mermaid renderer cannot run …" and writes **no** PDF (a diagram-less PDF is a broken deliverable, not a silent fallback). Dispatch this block with the **sandbox disabled** so diagrams render. The abort message means the sandbox — re-run unsandboxed; do **not** reach for `--no-mermaid` (that is only for a deliberately diagram-less export).
+
+```bash
+EXIT_CODE=0
+
+if [ "$DO_SARIF" = "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_sarif.py" \
+    --threat-model "$INPUT_YAML" \
+    --output       "$EXPORTS_DIR/security-assessment$SFX.sarif.json" \
+    || EXIT_CODE=4
+fi
+
+if [ "$DO_PENTEST" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
+  PENTEST_ARGS="--threat-model $INPUT_YAML \
+                --output $EXPORTS_DIR/pentest-tasks$SFX.yaml \
+                --dialect $PENTEST_FORMAT"
+  [ -n "$PENTEST_TARGET_URL" ] && PENTEST_ARGS="$PENTEST_ARGS --target-url $PENTEST_TARGET_URL"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_pentest_tasks.py" $PENTEST_ARGS \
+    || EXIT_CODE=4
+fi
+
+if [ "$DO_THREATDRAGON" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_threat_dragon.py" \
+    --threat-model "$INPUT_YAML" \
+    --output       "$EXPORTS_DIR/security-assessment$SFX.threatdragon.json" \
+    || EXIT_CODE=4
+fi
+
+if [ "$DO_HTML" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
+  HTML_ARGS="--input $INPUT_MD \
+             --output $EXPORTS_DIR/security-assessment$SFX.html"
+  [ "$NO_MERMAID"      = "true" ] && HTML_ARGS="$HTML_ARGS --no-mermaid"
+  [ "$REQUIRE_MERMAID" = "true" ] && HTML_ARGS="$HTML_ARGS --require-mermaid"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" $HTML_ARGS \
+    || EXIT_CODE=4
+fi
+
+if [ "$DO_PDF" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
+  OUTPUT_PDF="$EXPORTS_DIR/security-assessment$SFX.pdf"
+  [ -n "$OUTPUT_PDF_OVERRIDE" ] && OUTPUT_PDF="$OUTPUT_PDF_OVERRIDE"
+  mkdir -p "$(dirname "$OUTPUT_PDF")"
+  PDF_ARGS="--input $INPUT_MD \
+            --output $OUTPUT_PDF"
+  [ "$NO_MERMAID"      = "true" ] && PDF_ARGS="$PDF_ARGS --no-mermaid"
+  [ "$REQUIRE_MERMAID" = "true" ] && PDF_ARGS="$PDF_ARGS --require-mermaid"
+  [ "$KEEP_HTML"       = "true" ] && PDF_ARGS="$PDF_ARGS --keep-html"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_pdf.py" $PDF_ARGS \
+    || EXIT_CODE=4
+fi
+
+exit "$EXIT_CODE"
+```
+
+## Step 5 — (No step 5)
+
+The helpers' stdout/stderr is the deliverable. Do not add commentary.

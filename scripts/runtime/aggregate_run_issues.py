@@ -1702,6 +1702,98 @@ def _extract_unconnected_injected_components(output_dir: Path) -> list[dict]:
     ]
 
 
+def _load_architecture(output_dir: Path) -> tuple[list[dict], list[dict]] | None:
+    try:
+        components = json.loads((output_dir / ".components.json").read_text(encoding="utf-8")).get("components")
+        flows = json.loads((output_dir / ".data-flows.json").read_text(encoding="utf-8")).get("data_flows")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(components, list) or not isinstance(flows, list):
+        return None
+    return [c for c in components if isinstance(c, dict)], [f for f in flows if isinstance(f, dict)]
+
+
+def _extract_components_without_flows(output_dir: Path) -> list[dict]:
+    """Report runtime components the analyst modelled but connected to nothing.
+
+    Boundary signals derive from data flows, so such a component has no
+    boundary and its exposure rests on its card alone. Build-plane components
+    are left out because Figure 1b draws them from the supply-chain facts, and
+    finalization-injected ones are reported by their own check.
+    """
+    from model.build_plane import is_build_component  # noqa: PLC0415
+
+    loaded = _load_architecture(output_dir)
+    if loaded is None:
+        return []
+    components, flows = loaded
+    try:
+        receipt = json.loads((output_dir / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+        injected = set(receipt.get("injected_component_ids") or [])
+    except (OSError, ValueError, AttributeError, TypeError):
+        injected = set()
+    connected = {f.get(side) for f in flows for side in ("from", "to")}
+    return [
+        {
+            "category": "component_without_flows",
+            "severity": "warning",
+            "title": f"Component {component['id']} has no data flow, so no trust boundary can reach it",
+            "component_id": component["id"],
+            "evidence": {
+                "log_file": ".data-flows.json",
+                "log_line": 1,
+                "raw_event": f".components.json lists {component['id']}; .data-flows.json names it in no flow",
+                "outcome": "unconnected_component",
+            },
+        }
+        for component in components
+        if isinstance(component.get("id"), str)
+        and component["id"] not in connected
+        and component["id"] not in injected
+        and not is_build_component(component)
+    ]
+
+
+def _extract_egress_without_flow(output_dir: Path) -> list[dict]:
+    """Report evidenced outbound destinations whose owning component has no flow to `external`."""
+    from contexts.build_architecture_analysis_context import EGRESS_CONTEXT  # noqa: PLC0415
+    from model.reclassify_components import resolve_owner  # noqa: PLC0415
+
+    loaded = _load_architecture(output_dir)
+    try:
+        destinations = json.loads((output_dir / EGRESS_CONTEXT).read_text(encoding="utf-8")).get("destinations")
+    except (OSError, ValueError, AttributeError):
+        return []
+    if loaded is None or not isinstance(destinations, list):
+        return []
+    components, flows = loaded
+    leaving = {f.get("from") for f in flows if f.get("to") == "external"}
+    issues = []
+    for row in destinations:
+        evidence = [e for e in row.get("evidence") or [] if isinstance(e, dict) and e.get("file")]
+        owners = {owner[0] for e in evidence if (owner := resolve_owner(e["file"], components))}
+        if not evidence or owners & leaving:
+            continue
+        target = row.get("host") or "a request-chosen URL"
+        first = evidence[0]
+        issues.append(
+            {
+                "category": "egress_without_flow",
+                "severity": "warning",
+                "title": f"Outbound call to {target} has no data flow to an external service",
+                "component_id": sorted(owners)[0] if owners else None,
+                "evidence": {
+                    "log_file": EGRESS_CONTEXT,
+                    "log_line": 1,
+                    "raw_event": f"{first['file']}:{first.get('line')} calls {target}; "
+                    f"no flow leaves {', '.join(sorted(owners)) or 'its owner'} for external",
+                    "outcome": "unmodelled_egress",
+                },
+            }
+        )
+    return issues
+
+
 def _extract_unmodelled_workloads(output_dir: Path) -> list[dict]:
     """Report deployment-topology workloads that no component models and none declares unmodelled.
 
@@ -2016,6 +2108,89 @@ def _extract_cost_accounting(output_dir: Path) -> list[dict]:
     ]
 
 
+def _abuse_matches(output_dir: Path) -> dict:
+    try:
+        data = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _descriptive_abuse_case_ids(output_dir: Path) -> set[str]:
+    return {
+        m.get("abuse_case_id")
+        for m in _abuse_matches(output_dir).get("matches") or []
+        if isinstance(m, dict) and m.get("kind") == "descriptive"
+    }
+
+
+def _extract_rejected_abuse_case_files(output_dir: Path) -> list[dict]:
+    """Flag repository abuse-case files the resolver rejected on their own.
+
+    Reads ``rejected_case_files`` from ``.abuse-case-matches.json``. Each
+    rejected file was left out of the run while every other case still ran;
+    its author must fix it for the scenario to be checked.
+    """
+    issues: list[dict] = []
+    for row in _abuse_matches(output_dir).get("rejected_case_files") or []:
+        if not isinstance(row, dict) or not row.get("path"):
+            continue
+        path, reason = str(row["path"]), str(row.get("reason") or "")
+        issues.append(
+            {
+                "category": "abuse_case_file_rejected",
+                "severity": "warning",
+                "title": f"Repository abuse-case file {_clip(path, 80)} was rejected: {_clip(reason, 120)}",
+                "evidence": {
+                    "log_file": ".abuse-case-matches.json",
+                    "log_line": 1,
+                    "raw_event": f"{path}: {_clip(reason, 300)}",
+                    "path": path,
+                },
+            }
+        )
+    return issues
+
+
+def _extract_unverified_abuse_candidates(output_dir: Path) -> list[dict]:
+    """Flag matched abuse-case candidates that never received a verdict.
+
+    The matcher writes ``.abuse-case-matches.json`` before any verifier runs,
+    so a Stage 1d that stopped after matching (an aborted dispatch, a skipped
+    stage) leaves candidates without a verdict. §9 lists them as not
+    verified; this makes the gap a run-level signal too.
+    """
+    matches = _abuse_matches(output_dir).get("matches") or []
+    try:
+        merged = json.loads((output_dir / ".abuse-case-verdicts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        merged = {}
+    verdicts = merged.get("verdicts") if isinstance(merged, dict) else None
+    decided = {v.get("abuse_case_id") for v in verdicts or [] if isinstance(v, dict)}
+    missing = sorted(
+        str(m["abuse_case_id"])
+        for m in matches
+        if isinstance(m, dict)
+        and m.get("structural_verdict") == "candidate"
+        and m.get("abuse_case_id")
+        and m["abuse_case_id"] not in decided
+    )
+    if not missing:
+        return []
+    return [
+        {
+            "category": "abuse_case_not_verified",
+            "severity": "error",
+            "title": f"{len(missing)} matched abuse-case candidate(s) were never verified: {_clip(', '.join(missing), 120)}",
+            "evidence": {
+                "log_file": ".abuse-case-matches.json",
+                "log_line": 1,
+                "raw_event": _clip(", ".join(missing), 300),
+            },
+        }
+    ]
+
+
 def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     """Flag abuse-case chains the verifier fan-out could not confirm.
 
@@ -2035,11 +2210,19 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
         data = json.loads(merged.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return issues
+    descriptive = _descriptive_abuse_case_ids(output_dir)
     for v in (data.get("verdicts") or []) if isinstance(data, dict) else []:
         if not isinstance(v, dict):
             continue
         steps = v.get("step_verdicts") or []
         verdicts = {(s.get("verdict") or "").strip().lower() for s in steps if isinstance(s, dict)}
+        # An inconclusive business case usually waits on a business fact the
+        # code cannot show: a reported result, not a run problem. Only an
+        # unfinished verifier or a rejected citation is a run issue there.
+        if v.get("abuse_case_id") in descriptive and not any(
+            isinstance(s, dict) and (s.get("state") == "pending" or s.get("rejected_evidence")) for s in steps
+        ):
+            continue
         if "inconclusive" in verdicts and "blocked" not in verdicts:
             ac_id = v.get("abuse_case_id") or "AC-?"
             title = v.get("title") or ac_id
@@ -2689,12 +2872,16 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_unconnected_injected_components(output_dir))
+    issues.extend(_extract_components_without_flows(output_dir))
+    issues.extend(_extract_egress_without_flow(output_dir))
     issues.extend(_extract_unmodelled_workloads(output_dir))
     issues.extend(_extract_actor_model_corrections(output_dir, agent_log))
     issues.extend(_extract_pillar_cwe_findings(output_dir))
     issues.extend(_extract_run_invariants(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_unverified_abuse_candidates(output_dir))
+    issues.extend(_extract_rejected_abuse_case_files(output_dir))
     issues.extend(_extract_stage_coverage_collapse(output_dir))
     issues.extend(_extract_severity_regression(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

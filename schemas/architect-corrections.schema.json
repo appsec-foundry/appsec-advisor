@@ -168,6 +168,10 @@
             "value"
           ],
           "properties": {
+            "effect": {
+              "description": "The effect in the assessed system; preservation and conditional changes cannot replace a fix. Absent on historical proposals.",
+              "enum": ["prevents-mechanism", "preserves-mechanism", "conditional"]
+            },
             "operation": {
               "enum": [
                 "add",

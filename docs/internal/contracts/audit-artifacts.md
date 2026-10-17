@@ -29,6 +29,9 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.agent-run.log` | Structured agent run log |
 | `.hook-events.log` | Hook timing/diagnostic events |
 | `.appsec-cache/` | Carry-forward cache directory |
+| `.assessment-state.json`, `.assessment-work/` | Private headless multi-repository lifecycle and accepted job receipts; resume rechecks selected source state, settings, plugin bytes and cumulative budgets before reuse. `jobs/` holds only receipts the run's accounting charged; an unfinished earlier run's accepted jobs wait in `cache/` until a job adopts (and charges) or discards them, and `--rebuild` drops the cache |
+| `.assessment-work/budget-report.md` | Explicitly incomplete, redacted snapshot after a resource-budget interruption; its bounded projection lives in the state's `partial_report` field under `schemas/multi-repo-state.schema.json`, and a successful continuation or fresh attempt removes it |
+| `.appsec-lock.guard` | Persistent serialization inode shared by headless and ordinary lock writers; removing it while a holder is active breaks output ownership |
 | `.appsec-cache/baseline.json` | **Critical** — incremental anchor; deleting forces cold full scan and breaks T-ID stability |
 
 Canonical enforcement: `scripts/runtime/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.

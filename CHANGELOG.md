@@ -9,12 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.6.0-beta.5 (2026-10-17)
+
+### Added
+
+- Experimental: repeat `--repo` in the headless runner to assess several local checkouts as one system, with evidenced cross-repository calls and repository attribution in the model, report, and Figure 1; replacing an earlier combined report requires `--rebuild`.
+- Standard and thorough runs check business abuse cases, thorough runs add application-specific cases, and repositories and organization profiles can supply their own checks; `/appsec-advisor:abuse-cases` lists cases and results or explains a selected case.
+- The Threat Analyst checks concrete hypotheses or a selected abuse case against code at a Git revision, answers change-specific questions with `--question`, and supports read-only repository exploration for design questions and reviews with `--explore`.
+- Headless assessments accept HTTPS and SSH Git URLs with token or SSH authentication and automatic temporary checkout cleanup.
+
+### Changed
+
+- `/appsec-advisor:appsec-analyzer` replaces `create-threat-model` and `update-threat-model` with full security assessments, business-context questions, depth-based budgets, live progress, and `--stop`; incremental and rerender modes are no longer supported.
+- Assessment commands are now `ask-security-assessment`, `show-security-assessment`, `triage-security-assessment`, `export-security-assessment`, `security-assessment-health`, and `eval-security-assessment`; the former `publish-threat-model` skill is removed.
+- Reports and exports use `security-assessment.*` in a private application directory outside the repository by default; existing `docs/security/threat-model.*` results remain readable and can be imported with their history.
+- The Management Summary groups remediation priorities by root cause and severity, and Critical Findings by Root Cause replaces the Critical Attack Tree with links to weakness records and structural fixes.
+- Headless controller assessments analyze up to three components concurrently by default, let operators choose one to four, reserve resources for required completion, and retain a clearly incomplete snapshot when required work cannot finish.
+- Headless findings count as confirmed exploitable when source evidence establishes insecure code, attacker reachability, and no stopping control; reports identify unresolved checks and source coverage gaps.
+- Figure 1 and Figure 1b show network and build trust boundaries more precisely, and Figure 1 distinguishes unauthenticated client requests and maps more client calls to their routes.
+- Threat Analyst design questions, reviews, and hypothesis checks use existing threat-model context unless `--isolated` is passed, and reviews also inspect relevant imports and files cited by earlier findings.
+- `scripts/run-headless.sh` uses the controller for single-repository assessments and rejects unsupported modes such as `--incremental`, `--rerender`, and `--pr-mode`; `--audit-requirements` audits the repository named by `--repo`.
+- Headless output shows component progress and delivered files, groups routine diagnostics unless `--verbose` is set, and supports fixed-width wrapping with `--width`.
+- Repository abuse cases now belong in `docs/security/abuse-cases/`; the legacy `.appsec/abuse-cases/` path remains supported.
+
+### Fixed
+
+- Completion summaries name the published assessment files and recover missing requested exports under those names.
+- Hardcoded secrets cited by findings, including keys passed as call arguments, are masked in every report output, and the secret gate fails if one remains.
+- `appsec-reviewer-cli` rejects repository-local Claude Code configuration unless `--trust-mode trusted` is passed and no longer accepts checkout verdict files as its own results; the Threat Analyst honors organization Opus bans.
+- Authentication checks recognize more JavaScript middleware and imported handlers, and ownership middleware suppresses findings only when its binding and execution order protect every recognized handler registration.
+- Abuse-case verification no longer credits unrelated or non-runtime findings, marks confirmed findings as verified, reports unresolved checks, and rejects invalid case files without dropping valid ones.
+- Trust-boundary detection handles different source layouts, distinguishes separately deployed targets and build channels, and includes outbound calls to external services and request-chosen URLs.
+- Source analysis no longer cites archived reports as code evidence or misreports wildcard CORS without credentials, and now detects OAuth implicit-flow tokens read from `location.hash`.
+- Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped after rendering.
+
 ## 0.6.0-beta.4 (2026-10-06)
 
 ### Added
 
 - `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` analyze a planned feature or a selected code change on request; the [Threat Analyst](docs/threat-analyst.md) is experimental.
 - Repositories with a build pipeline get Figure 1b, a supply-chain diagram linking build inputs and release artifacts to the most severe evidenced attack and the relevant controls.
+- GitLab CI pipelines get the same supply-chain facts, build trust-boundary signals and Figure 1b detail as GitHub workflows: job and service images, script installs, piped installers, external `include:` entries and registry pushes.
 - `scripts/analyzers/repo_scan.py` lists findings by severity, endpoints and detected technologies without a threat model; it and Security Score accept HTTPS GitHub/GitLab URLs and write YAML or JSON.
 - `.appsec/actors.yaml` accepts `legitimate_roles` for declared user roles whose login lives outside the repository.
 - Report figures ship with a dark-background variant that GitHub and browsers show automatically in dark mode.

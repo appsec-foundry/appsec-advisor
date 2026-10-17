@@ -1,0 +1,18 @@
+{
+  "abuse_case_id": "AC-T-006",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>",
+        "file": "lib/xml.ts",
+        "line": 12
+      },
+      "matched_finding_id": null,
+      "reason": "The new Function() body is a fixed string ('return import(specifier)') and dynamicImport is only called with literals ('libxml2-wasm', 'libxml2-wasm/lib/nodejs.mjs'). The vm.runInContext script is also a constant. The attacker-controlled `data` is passed into the context as a variable and parsed as XML, not evaluated as code. The sink is real but receives no attacker input, so it does not hold as code execution. The XXE exposure is a different weakness.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "refuted"
+    }
+  ]
+}

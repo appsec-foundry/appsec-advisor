@@ -262,35 +262,6 @@ def test_rejects_malformed_optional_route_inventory(tmp_path: Path):
         builder.build(repo, output, "standard")
 
 
-def test_incremental_build_preserves_prior_flow_id_by_semantic_identity(tmp_path: Path):
-    repo, output, receipt = _setup(tmp_path)
-    _write_flows(output, receipt)
-    current = json.loads((output / ".data-flows.json").read_text(encoding="utf-8"))
-    prior_rows = [dict(row, id=f"df-{777 + index}") for index, row in enumerate(current["data_flows"])]
-    (output / "threat-model.yaml").write_text(
-        "data_flows:\n"
-        + "\n".join(
-            [
-                f"  - id: {row['id']}\n"
-                f"    from: {row['from']}\n"
-                f"    to: {row['to']}\n"
-                f"    label: {row['label']}\n"
-                f"    protocol: {row['protocol']}"
-                for row in prior_rows
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (output / ".skill-config.json").write_text(json.dumps({"incremental": True}), encoding="utf-8")
-
-    result = builder.build(repo, output, "standard")
-
-    assert [row["id"] for row in result["data_flows"]] == ["df-777", "df-778"]
-    persisted = json.loads((output / ".data-flows.json").read_text(encoding="utf-8"))
-    assert [row["id"] for row in persisted["data_flows"]] == ["df-777", "df-778"]
-
-
 def test_rejects_stale_flow_fingerprint(tmp_path: Path):
     repo, output, receipt = _setup(tmp_path)
     _write_flows(output, receipt, "sha256:" + "0" * 64)
@@ -415,3 +386,144 @@ def test_a_component_without_workload_zones_keeps_its_previous_card_and_signals(
     plain = _zone_card("gateway", ["dmz"])
     assert "workload_zones" not in plain
     assert _cross_zone(plain, _zone_card("ledger", ["dmz"], ["compose:core"])) == []
+
+
+NPM_RELEASE = """\
+name: release
+on: push
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ghcr.io/example-org/ledger:latest
+"""
+
+PIP_QUAY = """\
+name: bake
+on: push
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL https://get.example.dev/tool.sh | sh
+      - run: poetry install
+      - run: docker build -t quay.io/example-team/catalog:1 .
+      - run: docker push quay.io/example-team/catalog:1
+"""
+
+PIP_TESTS = """\
+name: checks
+on: pull_request
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install -r requirements.txt
+      - run: pytest
+"""
+
+IMAGE_ONLY = """\
+name: ship
+on: push
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - run: docker build -t registry.example.net/team/api:1 .
+      - run: docker push registry.example.net/team/api:1
+"""
+
+SIGNAL = "signal-build-and-deployment-"
+
+
+def _build_signals(tmp_path: Path, files: dict[str, str], pipeline: dict) -> dict[str, list[dict]]:
+    """Build-and-deployment signals, with their evidence, of a repository holding ``files``."""
+    repo, output, _ = _setup(tmp_path)
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, encoding="utf-8")
+    components = json.loads((output / ".components.json").read_text(encoding="utf-8"))["components"]
+    components.append(pipeline)
+    (output / ".components.json").write_text(json.dumps({"schema_version": 1, "components": components}))
+    _, receipt = finalizer.finalize(repo, output)
+    _write_flows(output, receipt)
+    body = builder.build(repo, output, "standard")
+    return {row["id"]: row["evidence"] for row in body["signals"] if row["class"] == "build-and-deployment"}
+
+
+def _pipeline(paths: list[str], zones: list[str] | None = None) -> dict:
+    return {**_component("pipeline", "application", zones or ["ci-cd-runtime"]), "paths": paths}
+
+
+def test_a_build_component_gets_one_scoped_signal_per_crossing_with_its_lines(tmp_path: Path):
+    files = {".github/workflows/release.yml": NPM_RELEASE, "Dockerfile": "FROM node:20-alpine\nRUN npm ci\n"}
+    signals = _build_signals(tmp_path, files, _pipeline([".github/workflows/*", "Dockerfile"]))
+    workflow = ".github/workflows/release.yml"
+    assert signals == {
+        SIGNAL + "external-to-pipeline-npm-dependencies": [
+            {"file": workflow, "line": 8},
+            {"file": "Dockerfile", "line": 2},
+        ],
+        SIGNAL + "external-to-pipeline-actions": [{"file": workflow, "line": 7}, {"file": workflow, "line": 9}],
+        SIGNAL + "external-to-pipeline-base-images": [{"file": "Dockerfile", "line": 1}],
+        SIGNAL + "pipeline-to-external-push-ghcr-io-example-org-ledger": [{"file": workflow, "line": 9}],
+    }
+
+
+def test_another_ecosystem_and_registry_keep_their_own_scopes(tmp_path: Path):
+    files = {"ci/.github/workflows/bake.yml": PIP_QUAY}
+    signals = _build_signals(tmp_path, files, _pipeline(["ci/**"], ["build-pipeline"]))
+    workflow = "ci/.github/workflows/bake.yml"
+    assert signals == {
+        SIGNAL + "external-to-pipeline-pip-dependencies": [{"file": workflow, "line": 8}],
+        SIGNAL + "external-to-pipeline-remote-scripts": [{"file": workflow, "line": 7}],
+        SIGNAL + "pipeline-to-external-push-quay-io-example-team-catalog": [{"file": workflow, "line": 9}],
+    }
+
+
+def test_build_facts_without_a_build_zone_component_raise_no_build_signal(tmp_path: Path):
+    files = {".github/workflows/release.yml": NPM_RELEASE}
+    assert _build_signals(tmp_path, files, _pipeline([".github/workflows/*"], ["dmz"])) == {}
+
+
+def test_a_test_only_workflow_raises_no_publish_signal(tmp_path: Path):
+    signals = _build_signals(tmp_path, {".github/workflows/checks.yml": PIP_TESTS}, _pipeline([".github/workflows/*"]))
+    assert list(signals) == [SIGNAL + "external-to-pipeline-pip-dependencies"]
+
+
+def test_a_build_without_an_install_command_raises_no_registry_signal(tmp_path: Path):
+    signals = _build_signals(tmp_path, {".github/workflows/ship.yml": IMAGE_ONLY}, _pipeline([".github/workflows/*"]))
+    assert list(signals) == [SIGNAL + "pipeline-to-external-push-registry-example-net-team-api"]
+
+
+def test_facts_outside_the_build_component_keep_only_its_placement_signal(tmp_path: Path):
+    files = {".github/workflows/release.yml": NPM_RELEASE, "deploy/run.sh": "echo deploy\n"}
+    signals = _build_signals(tmp_path, files, _pipeline(["deploy/**"]))
+    assert signals == {SIGNAL + "external-to-pipeline": []}
+
+
+GITLAB_PIPELINE = """\
+include:
+  - remote: https://ci.example.org/shared/build.yml
+package:
+  image: node:22
+  script:
+    - npm ci
+    - docker build -t registry.example.net/team/api:1 .
+    - docker push registry.example.net/team/api:1
+"""
+
+
+def test_a_gitlab_pipeline_raises_the_same_scoped_build_signals(tmp_path: Path):
+    signals = _build_signals(tmp_path, {".gitlab-ci.yml": GITLAB_PIPELINE}, _pipeline([".gitlab-ci.yml"]))
+    assert signals == {
+        SIGNAL + "external-to-pipeline-npm-dependencies": [{"file": ".gitlab-ci.yml", "line": 6}],
+        SIGNAL + "external-to-pipeline-base-images": [{"file": ".gitlab-ci.yml", "line": 4}],
+        SIGNAL + "external-to-pipeline-ci-includes": [{"file": ".gitlab-ci.yml", "line": 2}],
+        SIGNAL + "pipeline-to-external-push-registry-example-net-team-api": [{"file": ".gitlab-ci.yml", "line": 7}],
+    }

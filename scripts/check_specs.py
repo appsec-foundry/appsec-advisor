@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate the product requirements and their technical implementation bindings.
 
-`specs/requirements.md` contains only normative product behavior. Volatile path,
+`requirements.md` contains only normative product behavior. Volatile path,
 decision, document, and test references live in
 `data/requirement-bindings.yaml`. This checker keeps that separation honest and
 supports file-to-requirement lookup without making refactors specification
@@ -27,17 +27,17 @@ import yaml
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parent.parent
-CATALOG = ROOT / "specs" / "requirements.md"
+CATALOG = ROOT / "requirements.md"
 BINDINGS = ROOT / "data" / "requirement-bindings.yaml"
 BINDING_SCHEMA = ROOT / "schemas" / "requirement-bindings.schema.yaml"
 REGISTER = ROOT / "docs" / "internal" / "decisions.md"
 
 REGISTER_PATH = "docs/internal/decisions.md"
-HELD_PATHS = ("specs/requirements.md", REGISTER_PATH)
+HELD_PATHS = ("requirements.md", REGISTER_PATH)
 CHANGE_DIR = "specs/changes/"
 
 SECTION_RE = re.compile(r"^## (.+?)\s*$")
-ENTRY_RE = re.compile(r"^### (REQ-[A-Z]{2,5}-\d{3}) — (.+?)\s*$")
+ENTRY_RE = re.compile(r"^- \*\*(REQ-[^:*\s]+):\*\*\s*(.*?)\s*$")
 ID_SHAPE_RE = re.compile(r"^REQ-[A-Z]{2,5}-\d{3}$")
 DECISION_RE = re.compile(r"^[A-Z]{2,3}-\d+$")
 DECISION_ROW_RE = re.compile(r"^\|\s*([A-Z]{2,3}-\d+)\s*\|(.*)$")
@@ -48,7 +48,6 @@ PROPOSAL_RE = re.compile(r"^specs/changes/[^/]+/proposal\.md$")
 @dataclass(frozen=True)
 class Entry:
     rid: str
-    title: str
     section: str
     line: int
     text: str = ""
@@ -76,7 +75,6 @@ def parse(text: str) -> list[Entry]:
         if current is not None:
             entries[-1] = Entry(
                 current.rid,
-                current.title,
                 current.section,
                 current.line,
                 " ".join(line for line in text_lines if line).strip(),
@@ -89,7 +87,8 @@ def parse(text: str) -> list[Entry]:
         entry_match = ENTRY_RE.match(line)
         if entry_match:
             finish()
-            current = Entry(entry_match.group(1), entry_match.group(2), section, number)
+            current = Entry(entry_match.group(1), section, number)
+            text_lines = [entry_match.group(2)]
             entries.append(current)
             continue
         section_match = SECTION_RE.match(line)
@@ -288,7 +287,7 @@ def render(entry: Entry, binding: Binding) -> str:
     decisions = ", ".join(binding.decisions) if binding.decisions else "none"
     documents = ", ".join(binding.documents) if binding.documents else "none"
     return (
-        f"{entry.rid} — {entry.title}\n"
+        f"{entry.rid} ({entry.section})\n"
         f"  {entry.text}\n"
         f"  Technical context: decisions: {decisions}; documents: {documents}\n"
         f"  Guard coverage: {binding.coverage}; guards: {guards}"

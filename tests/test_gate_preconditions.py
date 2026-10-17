@@ -23,19 +23,15 @@ only reason they would have fired before any of those runs started.
 from __future__ import annotations
 
 import ast
-import json
-import re
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import orchestrator.orchestration_controller as oc  # noqa: E402
 
 # gate script -> producers that must have run as hard steps before it.
 GATE_PRODUCERS = {
@@ -180,133 +176,3 @@ def test_no_resolution_set_rejects_everything_when_its_authority_is_absent():
         "Guard the membership test on the set being populated, or add the entry to "
         "KNOWN_FAIL_OPEN_SETS with the reason an empty set is correct there:\n  " + "\n  ".join(offenders)
     )
-
-
-def test_an_abort_names_the_failure_and_not_the_warning_above_it():
-    """No marker at all: the last non-benign line is the fault.
-
-    Only some producers prefix a fault with `FATAL:`; most report it as plain
-    `<script>: <exception>`. Reporting the first line instead logged a
-    `TRUST_BOUNDARY_WARN` about a rejected evidence path as the cause of a run
-    whose real fault was a schema violation, and that abort has no known cause
-    to this day (2026-07-31).
-    """
-    detail = oc._abort_event_detail(
-        "prepare_trust_boundary_context.py failed with exit 1: "
-        "TRUST_BOUNDARY_WARN: candidate-1: rejected missing evidence file 'routes/index.ts'\n"
-        "TRUST_BOUNDARY_WARN: candidate-3: rejected unsafe evidence path\n"
-        "prepare_trust_boundary_context: 'trust_boundaries' is a required property"
-    )
-
-    assert "'trust_boundaries' is a required property" in detail
-    assert "TRUST_BOUNDARY_WARN" not in detail
-    assert "\n" not in detail
-
-
-def test_an_abort_counts_findings_of_one_class_instead_of_picking_one():
-    """N identical findings mean a systematic defect, and the count says so.
-
-    Reporting one arbitrary exemplar of 116 `does not resolve` lines hid that
-    *every* reference had failed, and the abort was read as analyzers inventing
-    a handful of IDs (juice-shop 2026-08-30).
-    """
-    findings = "\n".join(
-        f"INVALID: mitigation M-{index:03d}: fulfilled requirement 'AC-003' does not resolve" for index in range(40)
-    )
-    detail = oc._abort_event_detail(
-        f"build_threat_model_yaml.py failed with exit 5: threats: 5 below severity floor\n"
-        f"FATAL: schema validation failed\n{findings}"
-    )
-
-    assert re.search(r"\b40× ", detail)
-    assert "does not resolve" in detail
-    assert "\n" not in detail
-
-
-def _triage_flags(tmp_path, *types):
-    (tmp_path / ".triage-flags.json").write_text(
-        json.dumps(
-            {
-                "version": 2,
-                "generated_at": "2026-08-18T06:00:00Z",
-                "flags": [
-                    {
-                        "flag_id": f"TF-{index + 1:03d}",
-                        "type": value,
-                        "severity": "warning",
-                        "threat_ids": ["F-001"],
-                        "message": "m",
-                    }
-                    for index, value in enumerate(types)
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    return tmp_path
-
-
-def test_separator_drift_in_an_llm_enum_is_repaired_not_fatal(tmp_path):
-    """One character must not end a completed Stage 1.
-
-    The agent's own instruction file spells this token both ways, so it wrote
-    the prose variant and the schema enum rejected it (juice-shop2 2026-08-18).
-    Agent output is untrusted input: canonicalise the separator, then validate.
-    """
-    output = _triage_flags(tmp_path, "business-impact", "consistency")
-
-    assert oc._canonicalize_triage_flag_types(output) == ["business-impact -> business_impact"]
-
-    flags = json.loads((output / ".triage-flags.json").read_text(encoding="utf-8"))["flags"]
-    assert [flag["type"] for flag in flags] == ["business_impact", "consistency"]
-
-
-def test_a_value_the_schema_never_declared_is_left_for_the_validator(tmp_path):
-    """Canonicalisation repairs spelling, never invents membership."""
-    output = _triage_flags(tmp_path, "totally-unknown")
-
-    assert oc._canonicalize_triage_flag_types(output) == []
-    flags = json.loads((output / ".triage-flags.json").read_text(encoding="utf-8"))["flags"]
-    assert flags[0]["type"] == "totally-unknown"
-
-
-def test_the_accepted_flag_types_come_from_the_schema(tmp_path):
-    """A second hand-maintained list here would be the same drift one layer down."""
-    schema = yaml.safe_load((REPO_ROOT / "schemas" / "triage-flags.schema.yaml").read_text(encoding="utf-8"))
-    declared = schema["properties"]["flags"]["items"]["properties"]["type"]["enum"]
-    hyphenated = [value.replace("_", "-") for value in declared if "_" in value]
-    assert hyphenated, "no underscore-bearing enum value left to drift"
-
-    output = _triage_flags(tmp_path, *hyphenated)
-    oc._canonicalize_triage_flag_types(output)
-
-    flags = json.loads((output / ".triage-flags.json").read_text(encoding="utf-8"))["flags"]
-    assert [flag["type"] for flag in flags] == [value for value in declared if "_" in value]
-
-
-def test_an_abort_still_names_a_lone_finding_below_a_benign_first_line():
-    """The case the marker rule was introduced for stays fixed."""
-    detail = oc._abort_event_detail(
-        "build_threat_model_yaml.py failed with exit 5: threats: 5 below severity floor dropped from register\n"
-        "INVALID: threats[18].title must be a non-empty string"
-    )
-
-    assert "threats[18].title" in detail
-    assert "×" not in detail
-
-
-def test_agent_authored_json_is_canonicalized_before_validation(tmp_path):
-    """A null for an omitted optional field must not end the run."""
-    schema = tmp_path / "s.json"
-    schema.write_text(
-        json.dumps({"type": "object", "properties": {"trace": {"type": "object"}}, "additionalProperties": False}),
-        encoding="utf-8",
-    )
-    artifact = tmp_path / ".merge-decisions.json"
-    artifact.write_text(json.dumps({"trace": None}), encoding="utf-8")
-
-    with pytest.raises(oc.ControllerError):
-        oc._validate_json_artifact(artifact, schema, contract="probe")
-    assert oc._validate_json_artifact(artifact, schema, contract="probe", agent_authored=True) == {}
-    assert json.loads(artifact.read_text(encoding="utf-8")) == {}
-    assert "AGENT_OUTPUT_CANONICALIZED" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")

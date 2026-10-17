@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit a compact, LLM-friendly facts index of an existing ``threat-model.yaml``.
 
-Powers ``/appsec-advisor:ask-threat-model`` — the free-form "ask my threat
+Powers ``/appsec-advisor:ask-security-assessment`` — the free-form "ask my threat
 model a question" surface. Read-only: it parses the committed semantic model
 and prints a compact digest (identity, severity counts, a one-line record per
 finding + weakness, and the mitigation index) that the skill loads *once* and
@@ -18,7 +18,7 @@ Three query modes:
                        is what catches "what is F-003?" style questions.
 
 This is deliberately NOT ``renderers/summarize_threat_model.py`` (that renders a fixed
-human overview for ``show-threat-model``). This tool exists so an LLM can answer
+human overview for ``show-security-assessment``). This tool exists so an LLM can answer
 arbitrary questions from a small, greppable representation instead of loading
 the multi-thousand-line rendered report and guessing.
 
@@ -61,6 +61,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared._requirements_gate import load_requirements, violated_requirements  # noqa: E402
+from shared.artifact_names import MODEL, ArtifactSetError, model_path  # noqa: E402
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 _KNOWN_SEVERITIES = set(_SEVERITY_ORDER)
@@ -298,6 +299,62 @@ def _surface_record(e: dict) -> dict:
         "auth_required": str(e.get("auth_required")).strip().lower() in ("true", "yes", "1"),
         "notes": _trim(e.get("notes") or ""),
         "tags": [str(t).strip() for t in (e.get("relevance_tags") or []) if str(t).strip()],
+    }
+
+
+def _abuse_case_record(c: dict) -> dict:
+    return {
+        "id": str(c.get("id") or "").strip(),
+        "title": (c.get("title") or "").strip(),
+        "source": (c.get("source") or "").strip(),
+        "actor": (c.get("actor") or "").strip(),
+        "goal": _trim(c.get("goal") or ""),
+        "verdict": (c.get("chain_verdict") or "").strip(),
+        "risk": c.get("combined_risk") or "",
+        "verification_complete": bool(c.get("verification_complete")),
+        "findings": [str(f).strip() for f in (c.get("matched_finding_ids") or []) if str(f).strip()],
+        "mitigations": [str(m).strip() for m in (c.get("blocking_mitigation_ids") or []) if str(m).strip()],
+        "open_questions": [str(q).strip() for q in (c.get("open_questions") or []) if str(q).strip()],
+    }
+
+
+def _abuse_cases(data: dict, grep: str | None) -> dict:
+    """The model's recorded abuse-case outcomes (``abuse_case_analysis``): the
+    verified cases, the evaluated catalog cases that did not apply, and the
+    selected cases not performed. A read of stored verdicts, never a re-check."""
+    analysis = data.get("abuse_case_analysis")
+    if not isinstance(analysis, dict):
+        return {"status": "", "reason": "", "cases": [], "evaluated": [], "not_performed": []}
+    cases = [_abuse_case_record(c) for c in (analysis.get("cases") or []) if isinstance(c, dict)]
+    evaluated = [
+        {k: str(row.get(k) or "").strip() for k in ("id", "title", "source", "reason")}
+        for row in (analysis.get("catalog_evaluated") or [])
+        if isinstance(row, dict)
+    ]
+    not_performed = [
+        {
+            "id": str(row.get("id") or "").strip(),
+            "title": str(row.get("title") or "").strip(),
+            "requested": bool(row.get("requested")),
+            "reason": str(row.get("reason") or "").strip(),
+        }
+        for row in (analysis.get("not_performed") or [])
+        if isinstance(row, dict)
+    ]
+    if grep:
+        cases = [
+            c
+            for c in cases
+            if _matches([c["id"], c["title"], c["source"], c["actor"], c["goal"], " ".join(c["findings"])], grep)
+        ]
+        evaluated = [r for r in evaluated if _matches([r["id"], r["title"], r["source"], r["reason"]], grep)]
+        not_performed = [r for r in not_performed if _matches([r["id"], r["title"], r["reason"]], grep)]
+    return {
+        "status": str(analysis.get("status") or "").strip(),
+        "reason": str(analysis.get("reason") or "").strip(),
+        "cases": cases,
+        "evaluated": evaluated,
+        "not_performed": not_performed,
     }
 
 
@@ -541,6 +598,7 @@ def build_facts(
             "controls": len(controls),
         },
         "requirements": requirements,
+        "abuse_cases": _abuse_cases(data, grep),
         "system": {
             "components": components_l,
             "assets": assets_l,
@@ -736,6 +794,37 @@ def render_text(facts: dict) -> str:
         buf.append(f"  The run used {why}.")
         buf.append("  Do not report compliance with any custom requirement from this model.")
 
+    abuse = facts.get("abuse_cases") or {}
+    if abuse.get("status"):
+        buf.append("")
+        status, reason = abuse["status"], abuse["reason"]
+        # A recorded reason may already open with the status ("skipped (quick depth)").
+        state = reason if reason.startswith(status) else f"{status}: {reason}" if reason else status
+        buf.append(f"ABUSE CASES — verification {state}")
+        for c in abuse.get("cases") or []:
+            bits = " · ".join(
+                x
+                for x in (
+                    c["source"],
+                    "model-derived" if c["id"].startswith("MODEL-AC-") else "",
+                    c["risk"],
+                    "" if c["verification_complete"] else "verification incomplete",
+                )
+                if x
+            )
+            buf.append(f"  {c['id']:<12} {c['verdict'] or '?':<17} {c['title']}" + (f"  [{bits}]" if bits else ""))
+            if c["findings"]:
+                buf.append(f"               findings: {', '.join(c['findings'])}")
+            if c["mitigations"]:
+                buf.append(f"               blocked by: {', '.join(c['mitigations'])}")
+            for q in c["open_questions"]:
+                buf.append(f"               open question: {q}")
+        for r in abuse.get("evaluated") or []:
+            buf.append(f"  {r['id']:<12} {'did not apply':<17} {r['title']} — {r['reason']}")
+        for r in abuse.get("not_performed") or []:
+            label = "not performed" + (" (requested)" if r["requested"] else "")
+            buf.append(f"  {r['id']:<12} {label:<17} {r['title']} — {r['reason']}")
+
     worst = facts.get("worst_case") or []
     if worst:
         buf.append("")
@@ -823,11 +912,18 @@ def render_detail(focus: dict) -> str:
         if f["scenario"]:
             buf.append(f"  Scenario: {f['scenario']}")
         if f["boundary_refs"]:
+            # A merged finding may cite one boundary from both of its origins (FE-16):
+            # one entry per boundary, naming every origin, with the first rationale.
+            boundaries: dict[str, dict] = {}
+            for ref in f["boundary_refs"]:
+                entry = boundaries.setdefault(ref["boundary_id"], {"origins": [], "rationale": ref["rationale"]})
+                if ref["origin_component_id"] and ref["origin_component_id"] not in entry["origins"]:
+                    entry["origins"].append(ref["origin_component_id"])
             buf.append(
                 "  Trust boundary gap(s): "
                 + ", ".join(
-                    f"{ref['boundary_id']} ({ref['origin_component_id']}): {ref['rationale']}"
-                    for ref in f["boundary_refs"]
+                    f"{boundary_id} ({', '.join(entry['origins'])}): {entry['rationale']}"
+                    for boundary_id, entry in boundaries.items()
                 )
             )
         if focus["mitigations"]:
@@ -927,14 +1023,18 @@ def _emit_no_model(output_dir: Path, as_json: bool) -> None:
     if as_json:
         print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
     else:
-        print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
-        print("Run /appsec-advisor:create-threat-model to generate one.")
+        print(f"No threat model found at {output_dir / MODEL}.")
+        print("Run /appsec-advisor:appsec-analyzer to generate one.")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     output_dir = Path(args.output_dir).resolve()
-    yaml_path = output_dir / "threat-model.yaml"
+    try:
+        yaml_path = model_path(output_dir)
+    except ArtifactSetError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     if not yaml_path.is_file():
         _emit_no_model(output_dir, args.json)
@@ -953,7 +1053,16 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2
-    contract_errors = _validate_output_contract(data)
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    if is_portable_model(data):
+        # Facts name `<repository label>:<file>`; no location is resolved locally.
+        try:
+            data, contract_errors = labelled_model(data), []
+        except ValueError as exc:
+            contract_errors = [str(exc)]
+    else:
+        contract_errors = _validate_output_contract(data)
     if contract_errors:
         print(f"Error: {yaml_path} does not satisfy the threat-model output contract.", file=sys.stderr)
         for error in contract_errors[:5]:

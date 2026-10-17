@@ -20,6 +20,14 @@ from pathlib import Path
 
 import pytest
 
+
+def test_multi_repository_state_targets_are_documented_under_existing_output_scope():
+    text = (Path(__file__).resolve().parents[1] / "data/required-permissions.yaml").read_text()
+    assert ".assessment-state.json" in text
+    assert ".assessment-work/" in text
+    assert ".appsec-lock.guard" in text
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
@@ -123,9 +131,10 @@ def test_controller_command_and_paths_are_covered_by_existing_rules():
     assert "Read(${PLUGIN_ROOT}/**)" in rules
     assert "Write(${OUTPUT_DIR}/**)" in rules
     for command in (
-        "prepare --interactive-context",
-        "review-business-impact",
-        "complete-preflight --context-answer answered",
+        "assess --repo r --output o",
+        "assess-context-preview --repo r",
+        "assess-context-save --repo r --context-answer answered",
+        "assess-stop --output o",
     ):
         assert any(
             cp._rule_covers(rule, f"Bash(python3 orchestrator/orchestration_controller.py {command})") for rule in rules
@@ -153,6 +162,8 @@ def test_maintainer_test_groups_use_existing_shell_permission():
         "python3 scripts/run_tests.py --check-groups",
         "make test-plan BASE=origin/dev",
         "make test-changed BASE=origin/dev",
+        'make test-for FILES="scripts/a.py tests/test_a.py"',
+        "python3 scripts/run_tests.py --path scripts/a.py",
         "git diff --name-only --no-renames -z HEAD --",
         "make test-full",
         "make validate",
@@ -315,11 +326,13 @@ def test_write_missing_preserves_unrelated_keys(tmp_path):
 
 
 def test_main_exit_code_when_all_granted(tmp_path, capsys, monkeypatch):
-    # build a project settings.json that grants every required entry
+    # build a project settings.json that grants every required entry; the
+    # default output is the repository's assessment directory under the data directory
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     entries = cp.load_required(cp.DATA_FILE)
-    expanded = [
-        cp.expand_entry(e["entry"], tmp_path, tmp_path / "docs" / "security", plugin_dir=tmp_path) for e in entries
-    ]
+    output = cp._assessment_directory(tmp_path)
+    assert output.is_relative_to(tmp_path / "data" / "appsec-advisor" / "assessments")
+    expanded = [cp.expand_entry(e["entry"], tmp_path, output, plugin_dir=tmp_path) for e in entries]
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir()
     settings.write_text(json.dumps({"permissions": {"allow": expanded}}))
@@ -371,6 +384,11 @@ def test_main_update_fixes_missing(tmp_path, capsys, monkeypatch):
 def test_rule_covers_bracket_form():
     assert cp._rule_covers("Bash([:*)", "Bash([ -f /tmp/file ])")
     assert not cp._rule_covers("Bash([:*)", "Bash(test -f /tmp/file)")
+
+
+def test_hypothesis_check_uses_existing_shell_permission():
+    rules = [item["entry"] for item in cp.load_required()]
+    assert any(cp._rule_covers(rule, "Bash(python3 scripts/appsec-analyst-cli hypothesis)") for rule in rules)
 
 
 def test_shipped_settings_is_covered_by_yaml():

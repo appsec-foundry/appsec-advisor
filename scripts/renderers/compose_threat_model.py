@@ -68,6 +68,7 @@ import importlib.util
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,12 +142,15 @@ from shared._manifest_readers import (
 from shared._manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
+from shared._register_titles import clamp_heading_title as _clamp_heading_title
+from shared.artifact_names import MODEL, REPORT, published_name
 
 import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup
 import renderers.inline_code_formatter as _inline_code_formatter
 import renderers.team_questions as _team_questions
 from renderers.actor_presentation import attacker_display, inventory_actors
+from renderers.component_labels import component_names, endpoint_label
 from renderers.pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from renderers.pregenerate_fragments import _classify_tier as _pregen_classify_tier
 from renderers.pregenerate_fragments import assessment_intro as _pregen_assessment_intro
@@ -185,6 +189,10 @@ def _fast_yaml_load(text: str):
 
 class ContractError(Exception):
     """Raised when the contract file is malformed."""
+
+
+class FigureError(Exception):
+    """Raised when a deterministic figure builder fails or its output fails its self-check."""
 
 
 class FragmentError(Exception):
@@ -2472,7 +2480,7 @@ def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | No
     """Return evidence and weakness counts without treating W as findings.
 
     Thin delegate — the rule lives in ``_severity_rollup`` so the overview
-    printed by ``show-threat-model`` computes it identically. See that module
+    printed by ``show-security-assessment`` computes it identically. See that module
     for why the three tallies in the model differ.
     """
     return _severity_rollup.weakness_basis_breakdown(yaml_data)
@@ -5681,17 +5689,19 @@ def _fig1_label(text: str) -> str:
 
 
 def _figure_basename_for_md(md_name: str) -> str:
-    """Derive the Figure 1 SVG filename from the output Markdown name:
-    ``threat-model.md`` → ``threat-model.figure1.svg``,
-    ``threat-model-juice-shop-quick.md`` → ``threat-model-juice-shop-quick.figure1.svg``.
+    """Derive the published Figure 1 SVG filename from the output Markdown name:
+    ``threat-model.md`` → ``security-assessment.figure1.svg``,
+    ``threat-model-juice-shop-quick.md`` → ``security-assessment-juice-shop-quick.figure1.svg``.
 
     Tying the figure to the md stem lets several models share one output
-    directory without their figure files colliding.
+    directory without their figure files colliding. The figure carries its
+    published name already, so the report links stay valid when publication
+    renames the report beside it.
     """
-    return f"{Path(md_name).stem}.figure1.svg"
+    return published_name(f"{Path(md_name).stem}.figure1.svg")
 
 
-def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
+def _figure1_intro(project: str, facts: dict, *, runtime: bool = False, has_boundaries: bool = True) -> str:
     """Introduce Figure 1 with this system's facts; the in-figure legend explains the notation."""
     system = f"{project} has {pluralize(facts['components'], 'component')} in {pluralize(facts['layers'], 'layer')}"
     if runtime:
@@ -5703,7 +5713,10 @@ def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
         shown += " and where the attack scenario below begins"
     elif facts["scenarios"]:
         shown += f" and where each of the {facts['scenarios']} attack scenarios below begins"
-    return f"{system}. {shown}. The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+    intro = f"{system}. {shown}."
+    if has_boundaries:
+        intro += " The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+    return intro
 
 
 def _figure1_display_data(ctx: RenderContext) -> dict:
@@ -5854,18 +5867,15 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     """Build Figure 1 as a deterministic hand-built SVG, write it next to
     threat-model.md, and return the image-reference markdown.
 
-    PRIMARY: ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
+    ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
     boundary crossings with their assumption verdict, STRIDE per element, attack
-    scenarios). FALLBACK: the ``figure1_svg`` tier stack. Both compute their own
-    layout and emit plain primitives (rect/path/text) which GitHub, VS Code and
-    WeasyPrint render natively — so the PDF export needs no Chrome for it. The
-    Mermaid builder below is the last resort: Mermaid/ELK lays each tier out as
-    one horizontal row and grew unboundedly wide on busy models.
+    scenarios) from plain primitives (rect/path/text) which GitHub, VS Code and
+    WeasyPrint render natively — so the PDF export needs no Chrome for it.
 
-    Each SVG builder projects the original actors for display and explains the
-    grouping, so its attribution matches Figure 2. Returns "" when
-    there is nothing to draw or the generator is unavailable — the caller then
-    falls back to the Mermaid builder and finally the LLM fragment.
+    The builder verifies its own output (no edge through a foreign node, no
+    label overlap, every arrow matches its YAML flow). A diagram that fails that
+    check is wrong, so it raises ``FigureError`` like a builder crash does and
+    the report is not published. Returns "" only when there is nothing to draw.
     """
     components = ctx.yaml_data.get("components") or []
     split = _supply_chain_split(ctx) is not None
@@ -5873,20 +5883,10 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     if not components or not (split or attack_paths_data.get("attack_paths") or []):
         return ""
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-    kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
-    # PRIMARY: the data-flow diagram (zones, flows, boundary crossings, STRIDE
-    # per element). FALLBACK: the tier-stack generator, kept for models the DFD
-    # builder cannot draw. The DFD builder verifies its own output (no edge
-    # through a foreign node, no label overlap, every arrow matches its YAML
-    # flow); a diagram that fails that check is wrong, not merely ugly, so it
-    # falls back like a crash does — and both paths leave a RENDER_WARN, so a
-    # silent downgrade cannot hide behind a report that still has a Figure 1.
     # Figure 1 is the overview. Only a model beyond the overview caps also gets
     # a linked paged detail sibling.
-    svg, intro = "", ""
     detail_svg = ""
     detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
-    role_notes = []
     try:
         from renderers.figure1_detail import needs_views
         from renderers.figure1_dfd import check_diagram, legitimate_role_notes, overview_facts
@@ -5904,73 +5904,35 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             actors=actors,
             detail=False,
         )
-        if problems:
-            ctx.warnings.append(
-                f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): "
-                f"{'; '.join(problems[:3])}) — rendered the tier-stack fallback"
-            )
-            svg = ""
-        else:
-            role_notes = legitimate_role_notes(ctx.yaml_data)
-            intro = _figure1_intro(
-                (figure_data.get("project") or {}).get("name") or "The system",
-                overview_facts(
-                    figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios
-                ),
-                runtime=split,
-            )
-            if paged:
-                try:
-                    detail_svg, detail_problems = check_diagram(
-                        figure_data,
-                        attack_paths_data,
-                        attack_taxonomy,
-                        actor_labels=actor_labels,
-                        scenarios=scenarios,
-                        actors=actors,
-                        detail=True,
-                    )
-                except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
-                    detail_svg, detail_problems = "", [str(exc)]
-                if detail_problems:
-                    ctx.warnings.append(
-                        f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}"
-                    )
-                    detail_svg = ""
-    except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
-        ctx.warnings.append(
-            f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"
+    except Exception as exc:  # noqa: BLE001 — any builder failure stops publication with its cause
+        raise FigureError(f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc})") from exc
+    if problems:
+        raise FigureError(
+            f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): {'; '.join(problems[:3])})"
         )
-        svg = ""
-    if not (svg or "").strip():
+    role_notes = legitimate_role_notes(ctx.yaml_data)
+    intro = _figure1_intro(
+        (figure_data.get("project") or {}).get("name") or "The system",
+        overview_facts(figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios),
+        runtime=split,
+        has_boundaries=bool(_ordered_trust_boundaries(ctx)),
+    )
+    if paged:
         try:
-            from renderers.figure1_svg import build_figure1_svg
-        except Exception:  # noqa: BLE001 — missing module must never break the section
-            return ""
-        if split:
-            from renderers.figure1_dfd import runtime_model
-
-            svg = build_figure1_svg(
-                runtime_model(ctx.yaml_data), _runtime_attack_paths(attack_paths_data), attack_taxonomy, **kwargs
+            detail_svg, detail_problems = check_diagram(
+                figure_data,
+                attack_paths_data,
+                attack_taxonomy,
+                actor_labels=actor_labels,
+                scenarios=scenarios,
+                actors=actors,
+                detail=True,
             )
-        else:
-            svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
-        if not (svg or "").strip():
-            return ""
-        intro = (
-            "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
-            "top threats per component. The in-figure legend on the right explains the attack scenarios, "
-            "severity dots and symbols."
-        )
-        # Name the boundary dividers only when the builder actually drew them —
-        # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
-        # caption that promises an element the figure omits is the same defect as the
-        # §2 `==>` legend bullet.
-        if "trust boundary" in (svg or ""):
-            intro += (
-                " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
-                "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
-            )
+        except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
+            detail_svg, detail_problems = "", [str(exc)]
+        if detail_problems:
+            ctx.warnings.append(f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}")
+            detail_svg = ""
     # Always write the file (referenced by the published md / consumed by export).
     _write_figure(ctx, ctx.figure_basename, svg)
     detail_path = ctx.output_dir / detail_basename
@@ -5979,7 +5941,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     elif detail_path.exists():
         detail_path.unlink()  # Never leave a prior run's detail next to the current overview.
     # Embed inline when the CLI flag is set OR the skill persisted the choice in
-    # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
+    # .skill-config.json — the latter lets `/appsec-analyzer --embed-figures`
     # work through the renderer/recompose paths without threading a flag to each.
     embed = bool(getattr(ctx, "embed_figures", False))
     if not embed:
@@ -7688,22 +7650,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # Figure 1 is built DETERMINISTICALLY from yaml + the SAME reconciled
     # attack_paths order that drives Figure 2's glyphs, so ①–⑦ agree across
     # both figures and the Top Threats table. Precedence, see
-    # `_render_figure1_svg`: the self-checked data-flow diagram, then the
-    # tier-stack SVG, then the Mermaid builder below, and an LLM/operator-
-    # authored `.fragments/top-threats-architecture.md` ONLY when every
-    # deterministic builder yields nothing (e.g. no attack_paths). The fragment
-    # comes last on purpose: when it was preferred it produced free-form
+    # `_render_figure1_svg`: the self-checked data-flow diagram, whose failure
+    # stops the report; when it has nothing to draw, the Mermaid builder below,
+    # and an LLM/operator-authored `.fragments/top-threats-architecture.md` ONLY
+    # when every deterministic builder yields nothing (e.g. no attack_paths). The
+    # fragment comes last on purpose: when it was preferred it produced free-form
     # diagrams that ignored the prescribed structure and emitted out-of-range
-    # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
-    # a builder failure must never break the section (Figure 2 + table still render).
-    # PRIMARY: deterministic hand-built SVG (written next to threat-model.md).
-    figure1_md = ""
-    try:
-        figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
-    except Exception:  # noqa: BLE001 — Figure 1 is non-essential
-        figure1_md = ""
-    # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
-    # if the SVG generator is unavailable or yields nothing).
+    # `linkStyle` indices that crash Mermaid (2026-05-30 regression).
+    figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
+    # FALLBACK 1: the legacy deterministic Mermaid builder when the SVG builder has nothing to draw.
     split = _supply_chain_split(ctx) is not None
     if not figure1_md:
         try:
@@ -7954,340 +7909,232 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
     return rendered, len(qualifying_ids)
 
 
-def _curate_top_mitigations(
-    floor: list[dict[str, Any]],
-    extras_sorted: list[dict[str, Any]],
-    llm_order: list[str],
-    mit_min: int,
-    mit_max: int,
-) -> list[dict[str, Any]]:
-    """Select the §1 Top-Mitigations leader-board: Critical-floor + curation.
+_REMEDIATION_HEADERS = ("Root cause → lasting fix", "Do first", "Resolves", "Effort")
+_REMEDIATION_COL_WIDTHS = ("34%", "46%", "12%", "8%")
+_REMEDIATION_FIXES_PER_CAUSE = 3
+_REMEDIATION_MIN_ROWS = 5
+_REMEDIATION_RESOLVES_SHOWN = 3
 
-    `floor` (always shown, coverage guarantee) + the most important extras.
-    Extras are ordered by the LLM `llm_order` first (valid + de-duped against
-    the floor), then by the caller's deterministic `extras_sorted` so the soft
-    minimum can always be met and the no-fragment fallback is deterministic.
-    `mit_max` is a SOFT clamp — the floor is never truncated even if it alone
-    exceeds `mit_max` (Critical coverage wins). Pure function — unit-tested.
-    """
-    floor_ids = {m["id"] for m in floor}
-    extras_by_id = {m["id"]: m for m in extras_sorted}
-    ordered: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for mid in llm_order:
-        m = extras_by_id.get(mid)
-        if m and mid not in seen and mid not in floor_ids:
-            ordered.append(m)
-            seen.add(mid)
-    for m in extras_sorted:
-        if m["id"] not in seen and m["id"] not in floor_ids:
-            ordered.append(m)
-            seen.add(m["id"])
-    budget = max(0, mit_max - len(floor))
-    display = list(floor) + ordered[:budget]
-    for m in ordered[budget:]:
-        if len(display) >= mit_min:
-            break
-        display.append(m)
-    return display
+
+def _finding_key(ref: str) -> str:
+    """Visible F-NNN for a T-NNN or F-NNN reference."""
+    return _normalize_tid_to_fid(str(ref or "").strip().upper())
 
 
 def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Render the §1.x Management Summary Mitigations block as a SINGLE
-    table covering only the immediate-action (P1) items, with a `Component`
-    column and a single linked-mitigation column. P2+ items live in §9
-    Mitigation Register; the table footer points the reader there.
+    """Render ``### Remediation Priorities``: the Management Summary's answer to
+    what the team fixes first.
 
-    Schema:
-        | Mitigation | Component | Priority | Addresses | Effort |
-        - Mitigation: `[M-NNN — <title>](#m-nnn)` (one column, one link).
-        - Component:  comma-joined list of component IDs whose threats
-                      this mitigation addresses (cross-cutting → multiple).
-        - Addresses:  bare-ID `[F-NNN](#f-nnn)` links (titles live in §8 /
-                      §9 — the MS table stays scannable).
-        - Effort / Priority: unchanged.
+    One row per mitigation, grouped under the top root causes (`_ms_top_weaknesses`).
+    The root-cause cell spans its group's rows and carries the weakness's
+    structural fix as the lasting fix; the other cells name the measure, the
+    findings it resolves and its effort. Each group lists its P1/P2 measures,
+    every Critical-fixing one included and the rest capped at
+    `_REMEDIATION_FIXES_PER_CAUSE`. A Critical-fixing measure without a root
+    cause lands in a trailing "No root cause linked" group, so no Critical is
+    left without a surfaced fix; that group also tops a short table up to
+    `_REMEDIATION_MIN_ROWS` with the best measures that have no root cause. Declared business context orders measures
+    first within their priority (FE-7). The table is raw HTML because the
+    grouping needs ``rowspan``; cells are rendered from the canonical
+    reference forms."""
+    from validators.qa_checks import _render_inline_md_to_html
 
-    Sort: severity asc (Critical first) → effort asc (Low first) →
-    component → mid.
-
-    Cut-off rule: the MS shows only P1 items. When zero P1 mitigations
-    exist (rare — small/early-stage report), fall back to the top 5
-    mitigations by severity to keep the section informative. The full
-    inventory is always available in §9 Mitigation Register.
-    """
     mitigations = ctx.yaml_data.get("mitigations", []) or []
     threats = _threat_lookup(ctx)
-    components = _component_lookup(ctx)
     business_relevant = _business_relevance.relevant_findings(ctx.yaml_data)
 
     def _derive_priority(max_sev_rank: int) -> str:
-        # _severity_rank: critical=0, high=1, medium=2, low=3
         return {0: "P1", 1: "P2", 2: "P3", 3: "P4"}.get(max_sev_rank, "P4")
 
     def enrich(m: dict[str, Any]) -> dict[str, Any]:
-        mid = m.get("m_id") or m.get("id") or ""
-        addressed_ids = m.get("addresses") or m.get("threat_ids") or []
-        addressed = []
+        addressed_ids = [str(a) for a in (m.get("addresses") or m.get("threat_ids") or []) if a]
         max_sev = 99
+        critical = False
         for tid in addressed_ids:
             t = threats.get(tid, {})
-            sev = _severity_rank(t.get("effective_severity") or t.get("risk") or t.get("severity"))
-            max_sev = min(max_sev, sev)
-            # Same locator-free label as every other finding reference (RA-4).
-            short_label = ctx.lookup_label(tid) or _strip_trailing_locator(
-                (t.get("title") or t.get("scenario_short") or "").strip()
-            )
-            # Criticality dot — the Addresses column lists findings and so
-            # carries the same severity glyph as every other finding cross-ref
-            # (§8 register, asset/component tables). Empty when severity unknown.
-            dot = ctx.severity_emoji(ctx.severity_for_ref(tid))
-            addressed.append({"ref": tid, "label": short_label, "dot": dot})
-        comp_ids = m.get("components") or []
-        if not comp_ids:
-            seen: set[str] = set()
-            for tid in addressed_ids:
-                # Threats may carry the component reference under either
-                # `component_id` (canonical) or `component` (the field name
-                # actually emitted by the orchestrator's YAML writer pre-2026-05).
-                # Support both forms so the per-component grouping in the MS
-                # Top Mitigations table doesn't fall back to "Cross-cutting"
-                # for every row.
-                t_dict = threats.get(tid) or {}
-                c = t_dict.get("component_id") or t_dict.get("component")
-                if c and c not in seen:
-                    comp_ids.append(c)
-                    seen.add(c)
-        component_list = [{"id": cid, "name": (components.get(cid) or {}).get("name", cid)} for cid in comp_ids]
+            sev = t.get("effective_severity") or t.get("risk") or t.get("severity")
+            max_sev = min(max_sev, _severity_rank(sev))
+            critical = critical or str(sev or "").strip().lower() == "critical"
         priority = (m.get("priority") or "").strip().upper()
         if priority not in ("P1", "P2", "P3", "P4"):
             priority = _derive_priority(max_sev)
         return {
-            "id": mid,
-            "title": (m.get("title") or m.get("mitigation_title") or "").strip(),
-            "component_list": component_list,
-            "primary_component_id": comp_ids[0] if comp_ids else "",
-            "addresses": addressed,
-            "effort": m.get("effort", "Medium"),
+            "id": m.get("m_id") or m.get("id") or "",
+            "finding_keys": list(dict.fromkeys(_finding_key(a) for a in addressed_ids)),
+            "effort": m.get("effort") or "Medium",
             "priority": priority,
             "max_sev_rank": max_sev,
-            "addressed_count": len(addressed),
+            "covers_critical": critical,
             "business_note": _business_relevance.mitigation_note(addressed_ids, business_relevant),
         }
 
-    enriched = [enrich(m) for m in mitigations]
-
-    def _priority_rank(p: str) -> int:
-        return {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(p, 99)
-
-    def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(
-            rows,
-            key=lambda r: (
-                r.get("max_sev_rank", 9),
-                _effort_rank(r["effort"]),
-                ",".join(c["id"] for c in r.get("component_list", [])),
-                r["id"],
-            ),
-        )
-
-    # ----------------------------------------------------------------------
-    # MS Top Mitigations — single central table, sub-grouped by component
-    # via divider rows (post-2026-05 layout per user request).
-    #
-    # All P1+P2 mitigations live in one table; each component-bucket is
-    # introduced by a "divider row" whose first cell carries the bold
-    # component name and whose remaining cells are empty. Within a bucket,
-    # rows are sorted P1 → P2 → severity (Critical first) → effort (Low
-    # first) → ID. Cross-cutting mitigations (no primary_component_id) land
-    # in a synthetic "Cross-cutting" bucket rendered last.
-    #
-    # Each row dict carries `is_divider: True|False` — the j2 template
-    # branches on it to render either a divider row or a data row.
-    # ----------------------------------------------------------------------
-    p12_rows = [m for m in enriched if m.get("priority") in ("P1", "P2")]
-    if not p12_rows:
-        # Fall-back: top 6 mitigations by severity → effort, single bucket.
-        p12_rows = _sort_rows(enriched)[:6]
-
-    # Component ordering: preserve YAML `components[]` order so the user
-    # sees the same component sequence as in §2.3 and §8. Unknown components
-    # (somehow not in the YAML) appear after the known ones alphabetically.
-    yaml_component_order: dict[str, int] = {}
-    for i, c in enumerate(ctx.yaml_data.get("components", []) or []):
-        cid = (c.get("id") or "").strip()
-        if cid:
-            yaml_component_order[cid] = i
-
-    def _component_sort_key(cid: str) -> tuple[int, str]:
-        return (yaml_component_order.get(cid, 10_000), cid or "~cross-cutting")
-
-    def _row_sort_key(r: dict[str, Any]) -> tuple[int, int, int, int, str]:
-        # Sort order:
-        #   1. priority           (P1 first)
-        #   1b. declared business context first within its priority (FE-7)
-        #   2. -addressed_count   (high-leverage mitigations first — closes
-        #                          the historic "P1 fix addressing 1 finding
-        #                          outranks P1 fix addressing 4 findings"
-        #                          symmetry break)
-        #   3. severity rank      (Critical first inside same leverage tier)
-        #   4. effort             (Low first)
-        #   5. id                 (stable tie-break)
+    def _row_sort_key(r: dict[str, Any]) -> tuple[Any, ...]:
         return (
-            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
-            not r.get("business_note"),
-            -int(r.get("addressed_count") or 0),
-            r.get("max_sev_rank", 9),
-            _effort_rank(r.get("effort", "Medium")),
-            r.get("id") or "",
+            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r["priority"], 9),
+            not r["business_note"],
+            -len(r["finding_keys"]),
+            r["max_sev_rank"],
+            _effort_rank(r["effort"]),
+            r["id"],
         )
 
-    # 2026-05 user-request: cap the Management-Summary mitigations list at
-    # the contract-configured `rows.max` (default 10). Overflow drops into
-    # §9 Mitigation Register which carries the full P1/P2/P3 catalogue with
-    # `Why` / `How` / verification detail. Cap applied AFTER priority-sort
-    # so the highest-priority + highest-leverage items always survive.
-    mit_max = (ctx.contract["sections"].get("mitigations") or {}).get("table", {}).get("rows", {}).get("max", 5)
-    mit_min = (ctx.contract["sections"].get("mitigations") or {}).get("table", {}).get("rows", {}).get("min", 3)
-    p12_total_before_cap = len(p12_rows)
+    enriched = sorted((enrich(m) for m in mitigations), key=_row_sort_key)
+    # When declared context reaches every measure, the unnamed marker orders
+    # nothing and tells the reader nothing; a named asset still explains a row.
+    if enriched and all(r["business_note"] for r in enriched):
+        for r in enriched:
+            if r["business_note"] == _business_relevance.UNNAMED_CONTEXT_NOTE:
+                r["business_note"] = ""
+    eligible = [r for r in enriched if r["priority"] in ("P1", "P2")]
 
-    # ── Top-Mitigations selection: Critical-floor + LLM curation ──────────
-    # The Management-Summary leader-board is no longer a blind top-N cut.
-    #   1. Critical-floor (deterministic, non-negotiable): every mitigation
-    #      that fixes at least one Critical finding is ALWAYS shown, so no
-    #      Critical is left without a surfaced remediation — even if the LLM
-    #      curation omits it.
-    #   2. LLM curation (optional `.fragments/ms-top-mitigations.json`,
-    #      authored by the Stage-2 renderer): an ordered list of the most
-    #      important *additional* mitigations + a one-line rationale. The
-    #      composer honours the LLM order for the extras but validates the
-    #      ids, drops unknowns/dupes, and clamps to `rows.max`.
-    #   3. Fallback (no fragment, e.g. quick mode): extras are ordered by the
-    #      deterministic `_row_sort_key` — byte-identical to the legacy
-    #      behaviour except the Critical-floor guarantee is now explicit.
-    threats_by_id = _threat_lookup(ctx)
+    top = _ms_top_weaknesses(ctx)
+    ranked = _ranked_weaknesses(ctx)
+    findings_of = {(w.get("id") or "").strip(): {_finding_key(f) for f in _weakness_finding_ids(w)} for w in ranked}
 
-    def _is_critical(tid: str) -> bool:
-        t = threats_by_id.get(tid) or {}
-        return (t.get("effective_severity") or t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
-
-    def _covers_critical(m: dict[str, Any]) -> bool:
-        return any(_is_critical(a.get("ref")) for a in (m.get("addresses") or []))
-
-    floor = sorted([m for m in p12_rows if _covers_critical(m)], key=_row_sort_key)
-    extras = [m for m in p12_rows if not _covers_critical(m)]
-
-    llm_order: list[str] = []
-    curation_rationale = ""
-    try:
-        _sel = _load_fragment(ctx, "top_mitigations", "ms-top-mitigations.json")
-        if isinstance(_sel, dict):
-            llm_order = [s for s in (_sel.get("selected") or []) if isinstance(s, str)]
-            curation_rationale = (_sel.get("rationale") or "").strip()
-    except FragmentError:
-        pass  # optional — fall back to deterministic extras ordering
-
-    p12_rows = _curate_top_mitigations(floor, sorted(extras, key=_row_sort_key), llm_order, mit_min, mit_max)
-    p12_curated = bool(llm_order)
-    p12_dropped = max(0, p12_total_before_cap - len(p12_rows))
-
-    # Canonical C-NN resolution for the linked Component column. `cid` is the
-    # mitigation's primary_component_id, which may be a slug (`express-backend`)
-    # or already-canonical (`C-01`); `_component_lookup` aliases both and carries
-    # `_canonical_id`. The link target matches the §8 register and the
-    # Architecture Assessment "Affected components" cell: `[C-NN](#c-nn) — Name`.
-    comp_lookup = _component_lookup(ctx)
-
-    def _component_cell_label(cid: str) -> str:
-        if not cid:
-            return "Cross-cutting"
-        c = comp_lookup.get(cid) or {}
-        name = (c.get("name") or cid).strip()
-        if re.match(r"^C-\d+$", cid):
-            canonical = cid
-        else:
-            canonical = (c.get("_canonical_id") or "").strip()
-        if canonical:
-            return f"[{canonical}](#{canonical.lower()}) — {name}"
-        return name
-
-    # 2026-05-30 user request: the leader-board is sorted PRIORITY-FIRST, THEN
-    # by component — i.e. all P1 rows (across components, in canonical component
-    # order) come before any P2 row, rather than grouping all of one component's
-    # rows together. The Component value is therefore carried PER ROW (the
-    # template falls back to the row-level `component_label` when the group has
-    # none) instead of as a once-per-component group label.
-    def _display_sort_key(r: dict[str, Any]) -> tuple[Any, ...]:
-        return (
-            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
-            not r.get("business_note"),
-            _component_sort_key(r.get("primary_component_id") or ""),
-            -int(r.get("addressed_count") or 0),
-            r.get("max_sev_rank", 9),
-            _effort_rank(r.get("effort", "Medium")),
-            r.get("id") or "",
+    def _cause_of(r: dict[str, Any], pool: list[dict]) -> str:
+        keys = set(r["finding_keys"])
+        return next(
+            ((w.get("id") or "").strip() for w in pool if findings_of.get((w.get("id") or "").strip(), set()) & keys),
+            "",
         )
 
-    group_rows: list[dict[str, Any]] = []
-    _row_number = 0
-    for r in sorted(p12_rows, key=_display_sort_key):
-        r["is_divider"] = False
-        _row_number += 1
-        r["number"] = _row_number
-        r["component_label"] = _component_cell_label(r.get("primary_component_id") or "")
-        group_rows.append(r)
-    groups: list[dict[str, Any]] = [
-        {
-            "header": None,
-            # Group-level label is None now — the Component column is filled
-            # per row (see `component_label` on each row) so priority-first
-            # ordering can interleave components.
-            "component_label": None,
-            "divider_label": None,
-            "include_affects_column": False,
-            "mitigations": group_rows,
-        }
-    ]
+    groups: dict[str, list[dict[str, Any]]] = {(w.get("id") or "").strip(): [] for w in top}
+    weakness_by_id = {(w.get("id") or "").strip(): w for w in ranked}
+    orphans: list[dict[str, Any]] = []
+    for r in eligible:
+        wid = _cause_of(r, top)
+        if not wid and r["covers_critical"]:
+            wid = _cause_of(r, ranked)
+            if wid:
+                groups.setdefault(wid, [])
+        if wid:
+            groups[wid].append(r)
+        elif r["covers_critical"]:
+            orphans.append(r)
 
-    total_count = len(enriched)
-    p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
-    p2_count = sum(1 for r in p12_rows if r.get("priority") == "P2")
-    # `rest_count` = items NOT eligible for the P1/P2 leader-board (P3+).
-    # Computed against the pre-cap P1/P2 total so the "capped" and
-    # "backlog" footer counters are disjoint and don't double-count.
-    rest_count = max(0, total_count - p12_total_before_cap)
+    def _cap(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept = [r for r in rows if r["covers_critical"]]
+        for r in rows:
+            if len(kept) >= _REMEDIATION_FIXES_PER_CAUSE:
+                break
+            if r not in kept:
+                kept.append(r)
+        return sorted(kept, key=_row_sort_key)
 
-    # 2026-05 user-request: surface BOTH (a) P3 backlog overflow and (b)
-    # P1/P2 entries that did not fit under `rows.max`. The MS leader-board
-    # is the most-impactful subset; the full inventory always lives in §9.
-    overflow_p12 = p12_dropped
-    overflow_p3 = rest_count
-    _floor_n = sum(1 for r in p12_rows if _covers_critical(r))
-    intro = (
-        f"Highest-impact P1/P2 mitigations — {len(p12_rows)} of "
-        f"{p12_total_before_cap} qualifying ({total_count} total). "
-        f"Full detail in [§10 Mitigation Register](#10-mitigation-register)."
-    )
-    if _floor_n:
-        intro += f" All {_floor_n} mitigation(s) that fix a Critical finding are always listed here" + (
-            f"; the remaining entries are curated by impact: {curation_rationale}"
-            if (p12_curated and curation_rationale)
-            else "."
+    assigned = {r["id"] for rows in groups.values() for r in rows} | {r["id"] for r in orphans}
+    shown_groups: list[tuple[dict | None, list[dict[str, Any]]]] = []
+    for wid, rows in groups.items():
+        # A top root cause without a P1/P2 measure of its own still names its
+        # lasting fix; a P3/P4 measure is never shown as "do first".
+        shown_groups.append((weakness_by_id[wid], _cap(rows)))
+    # A model with few or no root causes would leave the table nearly empty:
+    # top up with the best P1/P2 measures that have no root cause.
+    shown_count = sum(max(1, len(rows)) for _w, rows in shown_groups) + len(orphans)
+    for r in eligible:
+        if shown_count >= _REMEDIATION_MIN_ROWS:
+            break
+        if r["id"] not in assigned and not _cause_of(r, ranked):
+            orphans.append(r)
+            assigned.add(r["id"])
+            shown_count += 1
+    if orphans:
+        shown_groups.append((None, sorted(orphans, key=_row_sort_key)))
+    if not shown_groups and enriched:
+        shown_groups.append((None, enriched[:_REMEDIATION_MIN_ROWS]))
+
+    def _md(text: str) -> str:
+        return _render_inline_md_to_html(text)
+
+    def _cause_cell(w: dict | None) -> str:
+        if w is None:
+            return "<em>No root cause linked</em>"
+        wid = (w.get("id") or "").strip()
+        title = re.sub(r"\s+safeguards\s+in\s+.*$", "", (w.get("title") or "").strip()).strip()
+        sev = ctx.severity_emoji((w.get("severity") or "").strip().lower())
+        cell = _md(f"{sev + ' ' if sev else ''}[{wid}](#{wid.lower()}) — {title}")
+        lasting = " ".join((w.get("structural_recommendation") or "").split())
+        if lasting:
+            cell += f"<br/><em>→ {html.escape(lasting, quote=False)}</em>"
+        return cell
+
+    def _fix_cell(r: dict[str, Any] | None) -> str:
+        if r is None:
+            return "—"
+        cell = _md(ctx.linkify_with_label(r["id"]))
+        if r["business_note"]:
+            cell += f"<br/><em>{html.escape(r['business_note'], quote=False)}</em>"
+        return cell
+
+    def _resolves_cell(r: dict[str, Any] | None) -> str:
+        if r is None:
+            return "—"
+        keys = r["finding_keys"]
+        refs = [_md(ctx.linkify_with_label(k, compact=True)) for k in keys[:_REMEDIATION_RESOLVES_SHOWN]]
+        if len(keys) > _REMEDIATION_RESOLVES_SHOWN:
+            refs.append(f"+{len(keys) - _REMEDIATION_RESOLVES_SHOWN} more")
+        return "<br/>".join(refs)
+
+    wrap = ' style="overflow-wrap:break-word"'
+    rows_html: list[str] = []
+    shown_ids: set[str] = set()
+    for w, rows in shown_groups:
+        span = max(1, len(rows))
+        cause = f'<td rowspan="{span}"{wrap}>{_cause_cell(w)}</td>'
+        for i, r in enumerate(rows or [None]):
+            if r is not None:
+                shown_ids.add(r["id"])
+            effort = html.escape(str(r["effort"]), quote=False) if r else "—"
+            cells = (cause if i == 0 else "") + (
+                f"<td{wrap}>{_fix_cell(r)}</td><td>{_resolves_cell(r)}</td><td>{effort}</td>"
+            )
+            rows_html.append(f"<tr>{cells}</tr>")
+
+    out = ["### Remediation Priorities", ""]
+    if not rows_html:
+        out.append("No mitigation is recorded. See [§10 Mitigation Register](#10-mitigation-register).")
+    elif ranked:
+        out.append(
+            "The root causes behind the findings, ranked by severity, each with the measures to do first. "
+            "The lasting fix under a root cause removes it and every finding it causes. "
+            "Every mitigation that fixes a Critical finding is listed. "
+            "Details in the [§7 Weakness Register](#7-weakness-register) and the "
+            "[§10 Mitigation Register](#10-mitigation-register)."
         )
-    footer_parts: list[str] = []
-    if overflow_p12:
-        footer_parts.append(
-            f"{pluralize(overflow_p12, 'additional P1/P2 mitigation', 'additional P1/P2 mitigations')} "
-            f"capped from the leader-board"
-        )
-    if overflow_p3:
-        footer_parts.append(f"{pluralize(overflow_p3, 'P3 backlog item')}")
-    if footer_parts:
-        footer = "*" + " · ".join(footer_parts) + " in [§10 Mitigation Register](#10-mitigation-register).*"
     else:
-        footer = None
+        out.append(
+            "The highest-priority recorded measures. Details in the [§10 Mitigation Register](#10-mitigation-register)."
+        )
+    out.append("")
+    out.append('<table style="table-layout:fixed;width:100%">')
+    out.append(
+        "<colgroup>" + "".join(f'<col width="{w}" style="width:{w}">' for w in _REMEDIATION_COL_WIDTHS) + "</colgroup>"
+    )
+    out.append(
+        "<thead><tr>"
+        + "".join(f"<th>{html.escape(h, quote=False)}</th>" for h in _REMEDIATION_HEADERS)
+        + "</tr></thead>"
+    )
+    out.append("<tbody>")
+    out.extend(rows_html)
+    out.append("</tbody>")
+    out.append("</table>")
 
-    tpl = env.get_template("mitigations.md.j2")
-    return tpl.render(groups=groups, intro=intro, footer=footer).rstrip() + "\n"
+    hidden_p12 = sum(1 for r in eligible if r["id"] not in shown_ids)
+    hidden_rest = sum(1 for r in enriched if r["priority"] not in ("P1", "P2") and r["id"] not in shown_ids)
+    footer_parts = []
+    if hidden_p12:
+        footer_parts.append(pluralize(hidden_p12, "more P1/P2 mitigation", "more P1/P2 mitigations"))
+    if hidden_rest:
+        footer_parts.append(pluralize(hidden_rest, "P3/P4 backlog item"))
+    legend = "● P1 · ◕ P2 · ◑ P3 · ○ P4"
+    out.append("")
+    if footer_parts:
+        out.append(
+            f"*{' and '.join(footer_parts)} in the [§10 Mitigation Register](#10-mitigation-register). {legend}*"
+        )
+    else:
+        out.append(f"*{legend}*")
+    return "\n".join(out) + "\n"
 
 
 def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -8625,7 +8472,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         else:
             empty_banner = (
                 "_No defensive cluster currently rates above Weak. Per-control "
-                "posture is catalogued in `threat-model.yaml → security_controls[]`._"
+                f"posture is catalogued in `{MODEL} → security_controls[]`._"
             )
 
     show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red") and bool(rendered_rows)
@@ -9919,7 +9766,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # link non-breaking so an F-NNN / C-NN id never wraps mid-token;
             # the title between them still wraps on normal spaces.
             # Component link carries its NAME (not a bare ID) — consistent with
-            # Top Mitigations / §2.3. The `→ [C-NN]` stays non-breaking; the name
+            # §2.3. The `→ [C-NN]` stays non-breaking; the name
             # sits OUTSIDE the span so it wraps with the rest of the cell.
             _c_suffix = f"&nbsp;{_c_name}" if _c_name and _c_name != c_anchor else ""
             finding_cells.append(
@@ -10057,16 +9904,8 @@ def _abuse_chain_ms_note(ctx: RenderContext) -> str:
     return note
 
 
-def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
-    """Render the MS ``### Top Weaknesses`` table (2026-07-14 redesign).
-
-    The executive view of the systemic root-cause control gaps, placed before the
-    Mitigations tables. Top weaknesses by severity, each with the findings that
-    prove it and a link into the full Weakness Register. Computed from
-    ``weaknesses[]``; returns "" when the register is empty (nothing to show)."""
-    weaknesses = ctx.yaml_data.get("weaknesses") or []
-    if not weaknesses:
-        return ""
+def _ranked_weaknesses(ctx: RenderContext) -> list[dict]:
+    """Weaknesses by severity, then design risk before confirmed, then id."""
     _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     _basis_rank = {"design-risk": 0, "confirmed": 1}
 
@@ -10077,50 +9916,37 @@ def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
             w.get("id") or "",
         )
 
-    ranked = sorted(weaknesses, key=_sort_key)
-    # Executive focus: the Critical/High root causes. Cap at 6 rows; if fewer than
-    # 3 reach High, top up from the ranked list so the table is never trivially short.
-    top = [w for w in ranked if (w.get("severity") or "").strip().lower() in ("critical", "high")]
+    return sorted((w for w in ctx.yaml_data.get("weaknesses") or [] if isinstance(w, dict)), key=_sort_key)
+
+
+def _ms_top_weaknesses(ctx: RenderContext) -> list[dict]:
+    """The root causes the Management Summary leads with: those whose own
+    severity or worst owned finding is Critical/High, capped at 6, topped up
+    from the ranked list when fewer than 3 qualify so the view is never
+    trivially short.
+
+    A weakness's own severity counts confirmed instances only, so a cause whose
+    Critical finding is a practice site can carry a lower heading than that
+    finding. The order therefore takes the worse of both, then the worst owned
+    finding, so a cause behind a Critical finding never trails one that resolves
+    only Medium findings."""
+    severity_of = {
+        _finding_key(t.get("t_id") or t.get("id")): t.get("effective_severity") or t.get("risk") or t.get("severity")
+        for t in ctx.yaml_data.get("threats") or []
+        if isinstance(t, dict) and (t.get("t_id") or t.get("id"))
+    }
+
+    def finding_rank(w: dict) -> int:
+        return min((_severity_rank(severity_of.get(_finding_key(f))) for f in _weakness_finding_ids(w)), default=99)
+
+    def own_rank(w: dict) -> int:
+        return _severity_rank(w.get("severity"))
+
+    ranked = sorted(_ranked_weaknesses(ctx), key=lambda w: (min(own_rank(w), finding_rank(w)), finding_rank(w)))
+    top = [w for w in ranked if min(own_rank(w), finding_rank(w)) <= 1]
     if len(top) < 3:
         top = ranked[: min(5, len(ranked))]
-    top = top[:6]
-    if not top:
-        return ""
-
-    out: list[str] = ["### Top Weaknesses", ""]
-    out.append(
-        "The systemic root-cause problems behind the findings — the classes to fix, "
-        "not just individual bugs. Each links to the full [Weakness Register]"
-        "(#7-weakness-register) with its findings and remediation."
-    )
-    out.append("")
-    for w in top:
-        wid = (w.get("id") or "").strip()
-        title = (w.get("title") or "").strip()
-        title = re.sub(r"\s+safeguards\s+in\s+.*$", "", title).strip()
-        sev = (w.get("severity") or "").strip()
-        sev_emoji = ctx.severity_emoji(sev.lower())
-        # Short, plain-language explanation: the first sentence of the per-class
-        # description (kept concise so the bullet stays scannable).
-        desc = (w.get("description") or w.get("statement") or "").strip()
-        first = re.split(r"(?<=[.!?])\s+", desc)[0] if desc else ""
-        if len(first) > 200:
-            first = first[:197].rstrip() + "…"
-        n_findings = len(_weakness_finding_ids(w))
-        proof_links = []
-        for fid in _weakness_finding_ids(w)[:3]:
-            m = re.search(r"(\d+)$", fid)
-            if m:
-                proof_links.append(f"[F-{m.group(1)}](#f-{m.group(1)})")
-        proof = ", ".join(proof_links)
-        if proof and n_findings > len(proof_links):
-            proof += f" (+{n_findings - len(proof_links)} more)"
-        proof_txt = f" _Proven by {proof}._" if proof else ""
-        lead = f"{sev_emoji} **[{wid}](#{wid.lower()}) — {title}** ({sev})"
-        expl = f" — {first}" if first else ""
-        out.append(f"- {lead}{expl}{proof_txt}")
-    out.append("")
-    return "\n".join(out)
+    return top[:6]
 
 
 def _render_ms_open_questions(ctx: RenderContext) -> str:
@@ -10145,15 +9971,18 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
     # the bullet: `is_report_question_line` anchors on the reference tail ending
     # the bullet, and a trailing clause would silently re-enable title enrichment
     # on these ids. The impact carries no ids of its own for the same reason.
+    # The question is set in italics so it reads as the quoted ask; its impact
+    # stays upright beneath it. `_plain_question` rejects `_`, so the emphasis
+    # cannot be broken by the question text.
     for topic in selection["questions"]:
         refs = ", ".join(link(item["id"], unproven=item["unproven"]) for item in topic["refs"])
         if topic["hidden"] > 0:
             refs += f" +{topic['hidden']} more"
         if topic["weakness_id"]:
             refs = f"{link(topic['weakness_id'])}: {refs}" if refs else link(topic["weakness_id"])
-        out.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
+        out.append(f"- _{topic['question']}_" + (f" ({refs})" if refs else ""))
         if topic.get("impact"):
-            out.append(f"  _{topic['impact']}_")
+            out.append(f"  {topic['impact']}")
     out.append("")
     return "\n".join(out)
 
@@ -10175,29 +10004,25 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # (_get_weakness_antipatterns). No standalone MS block.
         #
         # systemic_posture ("### Security Principles" VIOLATED/WEAK/ADEQUATE table)
-        # RETIRED from the MS (2026-07-14): it duplicated Top Weaknesses as a second
+        # RETIRED from the MS (2026-07-14): it duplicated the root-cause view as a second
         # systemic-framing block, scored every principle identically on a
         # systemically-broken repo (no discrimination vs. the one-line Verdict), and
         # only partially linked to the register (principles without a W-NNN rendered
-        # as dead all-red rows). The systemic story is now carried solely by Top
-        # Weaknesses + the §6 Weakness Register. `_render_security_principles` is
+        # as dead all-red rows). The systemic story is now carried solely by
+        # Remediation Priorities + the §7 Weakness Register. `_render_security_principles` is
         # retained for standalone callers/tests but is no longer wired into the MS.
         #
-        # top_weaknesses — the executive view of the root-cause control gaps
-        # (2026-07-14), placed BEFORE the Security-Posture / Top-Threats block so
-        # the reader sees "what is systemically wrong" before the per-finding view.
-        # Computed from weaknesses[]; renders nothing when the register is empty.
-        "top_weaknesses",
+        # mitigations renders "### Remediation Priorities": the root causes with
+        # the measures to do first, right after the Verdict so the reader sees
+        # what to fix before the per-threat detail.
+        "mitigations",
         # The same deterministic selection used by the completion summary.
-        # This slot follows Top Weaknesses when present and still surfaces
-        # unresolved attack-chain or deployment questions without a register.
         "open_questions_for_team",
         # security_posture_at_a_glance renders "### Security Posture & Top Threats"
         # (Figure 1 + Figure 2 heatmap + the Top Threats table).
         "security_posture_at_a_glance",
-        "mitigations",
         # ai_exposure_ms — optional AI/LLM-exposure callout, moved (2026-07-14) from
-        # MS position #2 into the specialized-surface band AFTER Top Mitigations. On
+        # MS position #2 into the specialized-surface band AFTER Top Threats. On
         # a typical repo the LLM surface is a scoped secondary attack surface, not a
         # headline finding, so its placement now matches its risk weight (the reader
         # sees Verdict → root causes → concrete threats/mitigations first). Renders
@@ -10225,11 +10050,6 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # systemic_posture ("### Security Principles") retired from the MS tuple
         # (2026-07-14); _render_security_principles is kept for standalone use but
         # is no longer dispatched here.
-        if sid == "top_weaknesses":
-            tw_ms = _render_ms_top_weaknesses(ctx)
-            if tw_ms.strip():
-                parts.append(tw_ms.rstrip())
-            continue
         if sid == "open_questions_for_team":
             questions_ms = _render_ms_open_questions(ctx)
             if questions_ms.strip():
@@ -10267,11 +10087,18 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
 # the impact-node navy (#0f172a); intermediate AND/OR capability nodes use two
 # slate shades (darker = AND/all-required, lighter = OR/alternatives) instead of
 # the off-palette purple/blue; leaf (threat) nodes keep the attacker red.
+# Tight spacing keeps one row per leaf readable without stretching the graph.
+_ATTACK_TREE_INIT = (
+    '%%{init: {"flowchart": {"nodeSpacing": 14, "rankSpacing": 50, "padding": 8, "wrappingWidth": 260}}}%%'
+)
+
 _ATTACK_TREE_CLASSDEFS = (
     "    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px\n"
     "    classDef and_node fill:#334155,stroke:#1e293b,color:#fff,stroke-width:2px\n"
     "    classDef or_node fill:#64748b,stroke:#334155,color:#fff,stroke-width:2px\n"
-    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
+    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px\n"
+    "    classDef rootcause fill:#334155,stroke:#1e293b,color:#fff,stroke-width:2px\n"
+    "    classDef unassigned fill:#f8fafc,stroke:#94a3b8,color:#334155,stroke-dasharray:4 3"
 )
 
 
@@ -10291,15 +10118,16 @@ def _normalize_tid_to_fid(ref: str) -> str:
 
 
 def _attack_tree_node_label(node: dict[str, Any]) -> str:
-    """Display label for a tree node. Leaf nodes show their finding id PLUS a
-    short title (`F-NNN — <title>`) so the diagram is self-describing instead
-    of a wall of bare IDs (2026-05-30 user request); the full title still lives
-    in the Branch table below. The title is truncated so leaf boxes stay
-    readable rather than ballooning. Goal/capability nodes keep their label.
+    """Display label for a tree node: a leaf shows ``F-NNN — <short title>`` and
+    its optional file line, a root cause its weakness id above its title, and
+    every other node its label.
 
     The leaf id is normalised T-NNN → F-NNN (see `_normalize_tid_to_fid`) so
     the box matches the F-NNN ids used everywhere else in the document."""
-    label = node.get("label", node.get("id", ""))
+    label = node.get("label", node.get("id", "")).replace('"', "'")
+    if node.get("class") == "rootcause":
+        ref, sep, title = label.partition(" · ")
+        return f"{ref}<br/>{title}" if sep else label
     if node.get("class") == "leaf":
         m = re.search(r"[FT]-\d{3,}", label)
         if m:
@@ -10308,13 +10136,13 @@ def _attack_tree_node_label(node: dict[str, Any]) -> str:
             title = (label[: m.start()] + label[m.end() :]).strip(" -—:·\t")
             if not title:
                 return tid
-            _MAX = 32
-            if len(title) > _MAX:
-                title = title[: _MAX - 1].rstrip() + "…"
-            # Leaf labels are emitted inside mermaid ["..."]; a literal double
-            # quote would break the node declaration.
-            title = title.replace('"', "'")
-            return f"{tid} — {title}"
+            # Root-cause leaves carry a file line and wrap; legacy leaves stay one short line.
+            limit = 60 if node.get("detail") else 32
+            if len(title) > limit:
+                cut = title[: limit - 1]
+                title = (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(" ,;:-") + "…"
+            detail = str(node.get("detail") or "").replace('"', "'")
+            return f"{tid} — {title}" + (f"<br/>{detail}" if detail else "")
     return label
 
 
@@ -10333,6 +10161,9 @@ def _attack_tree_edge_line(edge: dict[str, Any], nodes_by_id: dict[str, dict[str
     the authored `label`/`refinement` only for unclassed destinations)."""
     src, dst = edge.get("from"), edge.get("to")
     dst_class = (nodes_by_id.get(dst) or {}).get("class")
+    if {dst_class, (nodes_by_id.get(src) or {}).get("class")} & {"rootcause", "unassigned"}:
+        # Root-cause grouping is attribution, not AND/OR logic.
+        return f"    {src} --> {dst}"
     label = _ATTACK_TREE_EDGE_LABEL_BY_DST_CLASS.get(dst_class) or edge.get("label") or edge.get("refinement")
     if label:
         return f'    {src} -->|"{label}"| {dst}'
@@ -10348,7 +10179,7 @@ def _attack_tree_block(
     """Build a complete mermaid `graph` source (header + nodes + edges +
     classDefs) for the given node subset, preserving the fragment's node
     declaration order for stability."""
-    lines = [f"graph {orientation}"]
+    lines = [_ATTACK_TREE_INIT, f"graph {orientation}"]
     for nid in node_ids:
         n = nodes_by_id.get(nid)
         if not n:
@@ -10385,30 +10216,51 @@ def _build_attack_tree_blocks(data: dict[str, Any]) -> list[dict[str, str]]:
     return [{"title": None, "src": _attack_tree_block("LR", order, edges, nodes_by_id)}]
 
 
-def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
-    """Ordered leaf-finding pointer for the compact line under the tree.
+def _root_cause_overview(data: dict[str, Any]) -> dict[str, Any]:
+    """Opening sentence, structural fixes and unlinked findings of the section."""
+    mermaid = data.get("mermaid") or {}
+    nodes = {n.get("id"): n for n in mermaid.get("nodes") or [] if n.get("id")}
 
-    The diagram shows only short `T-NNN` leaf boxes, so this tells the reader
-    what each id is and links it to its §8 Findings Register row. One entry per
-    leaf in tree-declaration order: ``{"id": "T-001", "title": "SQL injection
-    login bypass", "anchor": "#t-001"}``. Title is the leaf label with its id
-    prefix stripped; mitigations are intentionally NOT surfaced here (they live
-    in §9) — this section only points at the findings.
-    """
-    out: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for n in (data.get("mermaid") or {}).get("nodes") or []:
-        if n.get("class") != "leaf":
-            continue
-        label = n.get("label", "")
-        m = re.search(r"[FT]-\d{3,4}", label)
-        fid = _normalize_tid_to_fid((m.group(0) if m else (n.get("finding_ref") or "")).strip())
-        if not fid or fid in seen:
-            continue
-        seen.add(fid)
-        title = (label[: m.start()] + label[m.end() :]).strip(" -—:·") if m else label.strip()
-        out.append({"id": fid, "title": title, "anchor": "#" + fid.lower()})
-    return out
+    def _fid(node: dict[str, Any]) -> str:
+        m = re.search(r"[FT]-\d{3,4}", node.get("label", "")) or re.search(r"[FT]-\d{3,4}", node.get("finding_ref", ""))
+        return _normalize_tid_to_fid(m.group(0)) if m else ""
+
+    leaves = [_fid(n) for n in nodes.values() if n.get("class") == "leaf"]
+    leaves = [f for f in leaves if f]
+    causes = [n for n in nodes.values() if n.get("class") == "rootcause"]
+    unlinked = [
+        _fid(nodes[e.get("from")])
+        for e in mermaid.get("edges") or []
+        if (nodes.get(e.get("to")) or {}).get("class") == "unassigned" and nodes.get(e.get("from"))
+    ]
+    unlinked = [f for f in unlinked if f]
+    total = max(int(data.get("critical_count") or 0), len(leaves))
+    if causes:
+        summary = (
+            f"{len(leaves) - len(unlinked)} of {pluralize(total, 'Critical finding')} trace back to "
+            f"{pluralize(len(causes), 'root cause')}; fixing a root cause addresses every finding linked to it."
+        )
+        if unlinked:
+            summary += f" {len(unlinked)} {'has' if len(unlinked) == 1 else 'have'} no root cause linked yet."
+    else:
+        summary = f"No weakness record links the {pluralize(total, 'Critical finding')} to a root cause yet."
+    if total > len(leaves):
+        summary += (
+            f" {total - len(leaves)} more {'is' if total - len(leaves) == 1 else 'are'} listed only in the "
+            "[§8 Findings Register](#8-findings-register)."
+        )
+    elif not causes:
+        summary += " See the [§8 Findings Register](#8-findings-register)."
+    fixes = [
+        {
+            "weakness": fix["weakness"],
+            "anchor": "#" + fix["weakness"].lower(),
+            "recommendation": fix["recommendation"][:1].upper() + fix["recommendation"][1:].rstrip("."),
+            "findings": [_normalize_tid_to_fid(f) for f in fix["findings"]],
+        }
+        for fix in data.get("fixes") or []
+    ]
+    return {"summary": summary, "fixes": fixes, "unlinked": unlinked}
 
 
 def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -10435,14 +10287,8 @@ def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, se
         return ""
     _validate_fragment("critical_attack_tree", data, section["schema"])
     blocks = _build_attack_tree_blocks(data)
-    findings = _derive_attack_tree_findings(data)
-    # Leading severity dot per finding so the compact pointer line under the
-    # tree is annotated like every other linked-findings context (§2/§8).
-    for f in findings:
-        emoji = ctx.severity_emoji(ctx.severity_for_ref(f.get("id", "")))
-        f["dot"] = f"{emoji} " if emoji else ""
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data, blocks=blocks, findings=findings).rstrip() + "\n"
+    return tpl.render(blocks=blocks, **_root_cause_overview(data)).rstrip() + "\n"
 
 
 def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
@@ -10725,7 +10571,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # §5 Attack Surface + §7 Security Architecture author their finding
     # cross-references WITHOUT the severity dot (the §5 entry-point tables and
     # the §7 control tables / DiD bullets). Prefix each with its criticality
-    # glyph so they match §8, the asset/component tables, and Top Mitigations.
+    # glyph so they match §8, the asset/component tables, and Remediation Priorities.
     # Runs after enrich so any dot it already produced is seen (idempotent).
     # NOTE: §3 Attack Walkthroughs and §9 Abuse Cases are handled by the GLOBAL
     # retrofit pass at the end of render() instead — their F-refs are rewritten
@@ -10759,9 +10605,9 @@ _ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
     "This section reconstructs how each Critical finding would actually play "
     "out as an attack — one short walkthrough per finding, with attack steps "
     "and a sequence diagram contrasting current behaviour with the "
-    "post-mitigation state. The cross-finding view (which weaknesses combine "
-    "toward the worst-case goal, and where one fix severs several paths) is "
-    "in the [Critical Attack Tree](#critical-attack-tree) above §1. Medium- "
+    "post-mitigation state. The cross-finding view (which root cause each "
+    "Critical traces back to, and which structural fix closes it) is in "
+    "[Critical Findings by Root Cause](#critical-findings-by-root-cause) above §1. Medium- "
     "and Low-severity findings are not walked through here — they are "
     "documented in [§8 Findings Register](#8-findings-register)."
 )
@@ -11190,36 +11036,12 @@ def _leg_control_link(leg: str) -> str:
 
 
 def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
-    """Name, under each §6 control domain, the crossings that depend on it.
+    """Keep stable control anchors without deriving dependencies from CWE adjacency.
 
-    Deliberately NOT a second assessment: the line carries the crossing, the
-    leg's derived state and the finding ids, and nothing that grades the
-    control. §6 keeps that authority — the two answer different questions and
-    neither may overrule the other.
+    A shared authentication condition does not make every related finding a
+    session-control dependency. The boundary catalogue retains actual links.
     """
-    rows = _visible_trust_boundaries(ctx)
-    if not rows:
-        return md
-    threats = ctx.yaml_data.get("threats") or []
-    state_text = {"refuted": "assumption broken", "unconfirmed": "assumption not confirmed"}
-    per_leg: dict[str, list[str]] = {}
-    for row in rows:
-        for leg in boundary_leg_states(row, threats):
-            if leg["state"] == "unexamined":
-                continue
-            ids = [_visible_finding_id(fid) for fid in leg["finding_ids"][:3]]
-            crossing, _mechanism = _boundary_crossing_and_mechanism(row)
-            entry = [
-                f"- [{row['id']}](#{row['id']})"
-                + (f" — {crossing}" if crossing else "")
-                + f" ({state_text.get(leg['state'], leg['state'])})"
-            ]
-            entry += [f"  - [{fid}](#{fid.lower()})" for fid in ids]
-            extra = len(leg["finding_ids"]) - len(ids)
-            if extra > 0:
-                entry.append(f"  - +{extra} more")
-            per_leg.setdefault(leg["leg"], []).append("\n".join(entry))
-    for domain, leg in _SECTION7_DOMAIN_LEG.items():
+    for domain in _SECTION7_DOMAIN_LEG:
         # `[ \t]*$`, not `\s*$`: the latter backtracks into the heading's own
         # newline, so the injected block would absorb the blank line and the
         # following prose would join it into one paragraph.
@@ -11232,12 +11054,7 @@ def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
         # back-link pointing at two elements.
         if anchor in md:
             continue
-        entries = per_leg.get(leg) or []
-        line = (
-            f"{anchor}\n\n**Dependent crossings:**\n\n" + "\n".join(entries)
-            if entries
-            else f"{anchor}\n\n_No trust boundary in this model depends on this control class._"
-        )
+        line = anchor
         md = re.sub(pattern, r"\1\n\n" + line.replace("\\", "\\\\"), md, count=1, flags=re.MULTILINE)
     return md
 
@@ -11762,6 +11579,7 @@ def _wrap_segment_words(seg: str, width: int) -> str:
 # Keep in sync with qa_checks `_FIXED_LAYOUT_SPECS`.
 _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
+        ("ID", "Crossing", "Required condition", "Findings / open question"),
         ("Method", "Route", "Risk", "Notes"),
         ("Asset", "Classification", "Description", "Linked Threats"),
         # Trust Boundaries (2026-07-31): a column whose every row says the same
@@ -13013,8 +12831,15 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
 _BARE_FNNN_RE = re.compile(r"(?<![\w/#-])(F-\d{2,4})(?![\w-])")
 _BARE_LOCAL_ID_RE = re.compile(r"(?<![\w/#-])([a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d{3})(?![\w-])")
 # Opaque spans we must NOT rewrite inside: backtick code, full markdown links,
-# link TEXT brackets, HTML tags/anchors.
-_PROSE_MASK_RE = re.compile(r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<[^>]+>")
+# and HTML. Whole `<a>` / `<code>` ELEMENTS are opaque, not just their tags: an
+# HTML table (Remediation Priorities, the compliance tables) already links an ID
+# as `<a href="…">F-003</a>`, and masking only the tags would leave the inner
+# text exposed and nest a markdown link inside the anchor. Element alternatives
+# precede the generic tag so they win.
+_PROSE_MASK_RE = re.compile(
+    r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<a\b[^>]*>.*?</a>|<code\b[^>]*>.*?</code>|<[^>]+>",
+    re.DOTALL,
+)
 
 
 def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
@@ -13051,18 +12876,21 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
     if not f_exists:
         return md
 
-    def _link(fid: str) -> str:
-        return f"[{fid}](#{fid.lower()})"
-
-    def _rewrite_run(run: str) -> str:
-        run = _BARE_FNNN_RE.sub(lambda m: _link(m.group(1)) if m.group(1) in f_exists else m.group(0), run)
-        run = _BARE_LOCAL_ID_RE.sub(
-            lambda m: _link(local_to_f[m.group(1).lower()]) if m.group(1).lower() in local_to_f else m.group(0),
-            run,
-        )
-        return run
-
     def _process_line(line: str) -> str:
+        # Markdown is not parsed inside a raw HTML table row, so a row links
+        # with an HTML anchor.
+        html_row = line.lstrip().startswith("<tr")
+
+        def _link(fid: str) -> str:
+            return f'<a href="#{fid.lower()}">{fid}</a>' if html_row else f"[{fid}](#{fid.lower()})"
+
+        def _rewrite_run(run: str) -> str:
+            run = _BARE_FNNN_RE.sub(lambda m: _link(m.group(1)) if m.group(1) in f_exists else m.group(0), run)
+            return _BARE_LOCAL_ID_RE.sub(
+                lambda m: _link(local_to_f[m.group(1).lower()]) if m.group(1).lower() in local_to_f else m.group(0),
+                run,
+            )
+
         out: list[str] = []
         pos = 0
         for mm in _PROSE_MASK_RE.finditer(line):
@@ -13089,16 +12917,6 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
 
 
 _BARE_REQ_ID_RE = re.compile(r"(?<![\w/#-])([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)(?![\w-])")
-
-# Like `_PROSE_MASK_RE`, but whole `<a>` / `<code>` ELEMENTS are opaque, not
-# just their tags. The compliance tables reach this pass as HTML, where an ID
-# already carries a link as `<a href="…"><code>AC-002</code></a>`; masking only
-# the tags would leave the inner text exposed and nest a markdown link inside
-# the anchor. Element alternatives precede the generic tag so they win.
-_REQ_PROSE_MASK_RE = re.compile(
-    r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<a\b[^>]*>.*?</a>|<code\b[^>]*>.*?</code>|<[^>]+>",
-    re.DOTALL,
-)
 
 
 def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
@@ -13132,7 +12950,7 @@ def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
     def _process_line(line: str) -> str:
         out: list[str] = []
         pos = 0
-        for mm in _REQ_PROSE_MASK_RE.finditer(line):
+        for mm in _PROSE_MASK_RE.finditer(line):
             if mm.start() > pos:
                 out.append(_rewrite_run(line[pos : mm.start()]))
             out.append(mm.group(0))  # opaque span — passthrough
@@ -13271,6 +13089,50 @@ def _apply_outside_changelog(md: str, fn) -> str:
     return fn(md[:start]) + md[start:end] + fn(md[end:])
 
 
+# Structural-fix list of Critical Findings by Root Cause (critical-attack-tree.md.j2).
+_ROOT_CAUSE_FIX_LINE_RE = re.compile(
+    r"^- \*\*(?:\[W-\d{3,4}\]\(#w-\d{3,4}\)\*\* — .*_\(closes |No root cause linked\*\* — )"
+)
+
+
+def _is_inline_finding_citation(line: str, offset: int) -> bool:
+    """A parenthetical citation attached to prose, rather than a standalone finding list."""
+    if line.lstrip().startswith(("|", "#", "<")):
+        return False
+    if any(m.start() <= offset < m.end() for m in re.finditer(r"`+[^`\n]*`+", line)):
+        return False
+    masked = re.sub(r"\[[^\]\n]*\]\([^\)\n]*\)|`[^`\n]*`", lambda m: " " * len(m[0]), line)
+    opening = masked.rfind("(", 0, offset)
+    return opening > masked.rfind(")", 0, offset) and bool(re.search(r"[A-Za-z]", masked[:opening]))
+
+
+def _compact_inline_finding_citations(ctx: RenderContext, md: str) -> str:
+    """Keep known finding titles in lists, but omit them from citations whose sentence explains the issue."""
+
+    def compact(line: str) -> str:
+        pattern = r"\[([FT]-\d{3,4})\]\(#[ft]-\d+\)"
+        for match in reversed(list(re.finditer(pattern, line))):
+            if not _is_inline_finding_citation(line, match.start()):
+                continue
+            title = _title_without_locator(ctx.lookup_label(match[1]) or "")
+            if not title:
+                continue
+            for suffix in (f" — {title}", f" - {title}", f" ({title})"):
+                tail = line[match.end() :]
+                if tail.startswith(suffix) and re.match(r"\s*(?:[,;.)]|$)", tail[len(suffix) :]):
+                    line = line[: match.end()] + line[match.end() + len(suffix) :]
+                    break
+        return line
+
+    fenced = False
+    lines = []
+    for line in md.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        lines.append(line if fenced else compact(line))
+    return "\n".join(lines)
+
+
 def _is_bare_finding_ref_line(line: str) -> bool:
     """True for lines that deliberately list BARE finding ids — no severity dot,
     no ``— Title`` suffix — because a single higher-level signal already owns the
@@ -13278,27 +13140,23 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     this module, plus ``linkify_anchors`` / ``_annotate_id_refs`` in qa_checks)
     skip these lines so their `[F-NNN](#f-nnn)` links stay compact.
 
-    Four contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
-      • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
-        severity signal (`… _Proven by [F-NNN], …._`).
+    Contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
       • MS "Open Questions for the Team" bullets — the linked W/F ids trail the
         question in parentheses and are the same compact evidence references the
         console prints. Recognised by shape (`_team_questions.is_report_question_line`),
         not by a separator glyph: `_normalize_emdashes` rewrites mid-line em dashes,
         so a glyph-keyed guard silently stopped matching whenever a bullet carried
         a `+N more` tail and the block shipped dotted, titled refs (2026-09-17).
-      • Critical Attack Tree findings pointer — the tree leaves above already
-        carry each finding's id + title, so the pointer is a bare jump-index.
+      • Structural-fix list under Critical Findings by Root Cause — the graph
+        above already carries each Critical's id + title.
       • §1 Trust Boundaries catalogue row (carries its `<a id="tb-N">` declaration
         anchor) — its Linked-findings column is the narrowest in the fixed-layout
         table; appended titles collapsed it into a column of single
         stacked characters. The renderer emits the severity dot itself.
     """
-    if "_Proven by " in line and "](#w-" in line:
-        return True
     if _team_questions.is_report_question_line(line):
         return True
-    if "full detail in" in line and "#8-findings-register" in line:
+    if _ROOT_CAUSE_FIX_LINE_RE.match(line):
         return True
     if '<a id="tb-' in line:
         return True
@@ -13315,7 +13173,7 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
     """Prefix every finding cross-reference ``[F-NNN](#f-nnn)`` with its
     severity glyph so §5 Attack Surface and §7 Security Architecture carry the
     same criticality dot the reader already sees in §8, the asset / component
-    tables, and the Top Mitigations Addresses column.
+    tables, and the Remediation Priorities Resolves column.
 
     Idempotent — a ref already preceded by a severity emoji is left untouched.
     Skips fenced code blocks and inline code spans; heading lines never carry a
@@ -13335,8 +13193,8 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out_chunks.append(chunk)
         else:
-            # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
-            # Tree findings pointer) deliberately list undotted `[F-NNN]` ids — a
+            # Bare-finding-ref lines (Open Questions, Critical Attack Tree
+            # findings pointer) deliberately list undotted `[F-NNN]` ids — a
             # single higher-level signal owns the context. The global F-dot retrofit
             # would put an identical dot in front of every ref, collapsing the
             # hierarchy into a flat row of same-looking dots (user 2026-07-15). Skip
@@ -13727,7 +13585,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         invocation if invocation != "(not recorded)" else (skill_cfg.get("invocation_args") or "(not recorded)")
     )
     inv_prefix = (
-        "/appsec-advisor:create-threat-model "
+        "/appsec-advisor:appsec-analyzer "
         if (invocation_cell != "(not recorded)" and not invocation_cell.startswith("/"))
         else ""
     )
@@ -15527,7 +15385,7 @@ def _build_threat_card(
             if boundary:
                 if _boundary_exposure(boundary, component_ids) == "internet-facing":
                     label += " {} {}".format(*rating_of("internet-facing"))
-                crossing, _mechanism = _boundary_crossing_and_mechanism(boundary)
+                crossing, _mechanism = _boundary_crossing_and_mechanism(boundary, component_names(ctx.yaml_data))
                 label += f" — {_safe_boundary_text(crossing)}"
                 # WHICH condition of the crossing this finding breaks. The
                 # catalogue states the legs; without naming one here the reader
@@ -15879,6 +15737,22 @@ def _render_actor_inventory(ctx: RenderContext, people: list[dict]) -> str:
         )
         where = f" · [Figure 1b](#{_FIGURE1B_ANCHOR})" if person.get("figure") == "1b" else ""
         lines.append(f"| {safe(name)} | {kind} | {safe(access)}{where} | {scenario_text or '—'} | {findings} |")
+    shown_slugs = {person["slug"] for person in attackers}
+    unassigned = [
+        threat
+        for threat in _severity_rollup.register_threats(model)
+        if not (_attacker_groups_of(threat, model, meta) & shown_slugs)
+    ]
+    if unassigned:
+        tally = Counter(_severity_rollup.register_severity(threat) for threat in unassigned)
+        summary = ", ".join(f"{tally[sev]} {sev}" for sev in _severity_rollup.SEVERITY_ORDER if tally[sev])
+        lines.extend(
+            [
+                "",
+                f"{len(unassigned)} findings are not represented in the actor counts ({summary}). "
+                "These counts cover assigned findings only; absence from them does not establish inaccessibility.",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -16094,7 +15968,7 @@ def _normalize_boundary_arrows(value: Any) -> str:
     return _ASCII_ARROW_BETWEEN_WORDS_RE.sub(" → ", str(value or ""))
 
 
-def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
+def _boundary_crossing_and_mechanism(row: dict, names: dict[str, str] | None = None) -> tuple[str, str]:
     """Split a boundary row into its two distinct facts: the crossing and the
     mechanism that enforces it.
 
@@ -16122,12 +15996,17 @@ def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
     enforced when nothing was found enforcing it. The name tail is still used for
     the crossing HEAD, which is a naming fact, not a control claim.
 
+    Endpoints show component names from ``names`` (identifiers are lookup
+    keys, opaque in a combined model); the name head is matched on the
+    identifiers it was written with.
+
     Returns raw (unescaped) text; the caller escapes for its context. An empty
     mechanism is a valid, expected result.
     """
     source = str(row.get("from") or "?")
     target = str(row.get("to") or "?")
-    crossing = f"{source} → {target}"
+    shown = f"{endpoint_label(names or {}, source)} → {endpoint_label(names or {}, target)}"
+    crossing = shown
     name = " ".join(str(row.get("name") or "").split())
     head, sep, _tail = name.partition(": ")
     if sep and re.match(rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}\b", head):
@@ -16141,7 +16020,7 @@ def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
         # construction and leaves nothing for either pass to escape.
         crossing = re.sub(
             rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}",
-            f"{source} → {target}",
+            lambda _match: shown,
             head,
             count=1,
         )
@@ -16420,19 +16299,14 @@ def _finding_boundary_leg(threat: dict, ref: dict, boundary: dict) -> str:
 def _external_boundary_elevations_cached(output_dir: str) -> dict[str, tuple[str, ...]]:
     """`{threat id: (boundary ids,)}` for findings the ingress rule actually raised.
 
-    Same record and same renumbering translation `emit_severity_rationale` uses
-    — the triage flag is the audit trail, and the delivered yaml carries the
-    contiguous `tb-N` ids assigned after triage ran.
+    Same record `emit_severity_rationale` uses. Triage ranks the delivered yaml,
+    so the flag already carries delivered IDs and needs no translation (TB-9).
     """
     base = Path(output_dir)
     try:
         doc = json.loads((base / ".triage-flags.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
-    try:
-        renumber = json.loads((base / ".trust-boundary-renumber.json").read_text(encoding="utf-8")).get("mapping") or {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
-        renumber = {}
     prefix = "triage_compute_ranking.py:external_boundary:"
     result: dict[str, tuple[str, ...]] = {}
     for flag in doc.get("flags") or []:
@@ -16441,13 +16315,7 @@ def _external_boundary_elevations_cached(output_dir: str) -> dict[str, tuple[str
         source = str(flag.get("source") or "")
         if not source.startswith(prefix):
             continue
-        ids = tuple(
-            dict.fromkeys(
-                str(renumber.get(token.strip(), token.strip()))
-                for token in source.removeprefix(prefix).split(",")
-                if token.strip()
-            )
-        )
+        ids = tuple(dict.fromkeys(token.strip() for token in source.removeprefix(prefix).split(",") if token.strip()))
         for threat_id in flag.get("threat_ids") or []:
             if threat_id and ids:
                 result[str(threat_id)] = ids
@@ -16593,139 +16461,59 @@ def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
 
 
 def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """A compact inventory of crossings, conditions and evidenced gaps.
+
+    Existence confidence is separate from control effectiveness. Adjacency
+    names an unresolved relationship, never a proved broken control.
+    Source, mechanism and resolution metadata remain in the canonical model.
+    """
     rows = _ordered_trust_boundaries(ctx)
     if not rows:
         return ""
-    linked = _boundary_link_index(ctx)
-    component_ids = _boundary_component_ids(ctx)
     shown = _visible_trust_boundaries(ctx)
-    # Provenance / confidence / status are collapsed out of the table when every
-    # row agrees on them and the shared value is the unexceptional one; the
-    # footnote then states each collapsed fact once. See `_uniform_boundary_value`.
-    uniform_source = _uniform_boundary_value(
-        shown,
-        lambda row: ", ".join(str(source) for source in row.get("sources") or []),
-        None,
-    )
-    uniform_confidence = _uniform_boundary_value(shown, _boundary_confidence_text, "confirmed")
-    uniform_status = _uniform_boundary_value(shown, lambda row: str(row.get("resolution_status") or ""), "resolved")
-    # The Kind column names `status` only while a status is actually shown there.
-    headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if uniform_status is None else "Kind"]
-    headers.append(_BOUNDARY_ASSUMPTION_HEADER)
-    if uniform_source is None:
-        headers.append("Source")
-    headers.append("Linked findings")
+    linked = _boundary_link_index(ctx)
+    names = component_names(ctx.yaml_data)
     lines = [
         "### Trust Boundaries",
         "",
-        # Lead states what the table is and what its hardest column answers;
-        # the vocabulary follows the table as a legend, beside the Exposure one.
-        # As one block up front it ran to a screen of definitions the reader had
-        # to hold in memory before seeing a single row (user 2026-08-02).
-        "Canonical boundary crossings. **Assumption & verdict** names the condition that makes "
-        "each crossing safe and whether this report still supports it, judged one condition at a "
-        "time — which conditions apply follows from the direction of the crossing.",
+        "Each row names a crossing and the condition it relies on. A modelled crossing does not prove that its control works.",
         "",
-        f"| {' | '.join(headers)} |",
-        f"|{'---|' * len(headers)}",
+        "| ID | Crossing | Required condition | Findings / open question |",
+        "|---|---|---|---|",
     ]
     for row in shown:
-        boundary_id = row["id"]
-        # The bold crossing owns its line; everything else rides on ONE further
-        # line. Three stacked <br> lines in a ~26% column each wrapped again and
-        # made the cell read as a ragged block (user 2026-07-31), so the folded-in
-        # components ride behind the mechanism instead of claiming a line, and a
-        # fact with no content emits no line at all — never a dangling label.
-        # No emphasis markers around the mechanism / covers text: a later pass
-        # backticks the identifiers in it, and markdown emphasis wrapped around a
-        # code span does not survive the fixed-layout HTML conversion.
-        crossing, mechanism = _boundary_crossing_and_mechanism(row)
-        boundary = f"**{_safe_boundary_text(crossing, table=True)}**"
-        # "Control:" — the thing that decides whether the crossing is allowed.
-        # The label used to read "enforced by:", which readers could not
-        # interpret without a legend (user 2026-07-31). An absent
-        # `enforcement_point` is a finding about the model, not a gap to paper
-        # over: say that no single control was identified rather than
-        # reconstructing one from the boundary name.
-        detail = f"Control: {_safe_boundary_text(mechanism, table=True)}" if mechanism else "Control: none identified"
-        covers = [cid for cid in _boundary_covered_components(row) if cid != str(row.get("to") or "")]
+        crossing, mechanism = _boundary_crossing_and_mechanism(row, names)
+        crossing = _safe_boundary_text(crossing, table=True)
+        if row.get("resolution_status") != "resolved":
+            crossing += "<br>Endpoints: " + _safe_boundary_text(
+                row.get("resolution_status") or "unresolved", table=True
+            )
+        if _boundary_confidence_text(row) != "confirmed":
+            crossing += "<br>Crossing: " + _safe_boundary_text(_boundary_confidence_text(row), table=True)
+        covers = [endpoint_label(names, cid) for cid in _boundary_covered_components(row) if cid != row.get("to")]
         if covers:
-            detail += f" · Also covers: {_safe_boundary_text(', '.join(covers), table=True)}"
-        boundary += f"<br>{detail}"
-        # Exposure gets its own column; the kind cell carries the crossing
-        # mechanism and nothing else, so no row states its exposure twice. A
-        # resolution_status that is NOT the collapsed-away `resolved` is an
-        # exceptional state and stays visible — bold, on its own line — however
-        # uniform the rest of the table is.
-        exposure = _boundary_exposure_rating(row, component_ids)
-        kind = _safe_boundary_text(_boundary_kind_label(row), table=True)
-        if uniform_status is None:
-            kind += f"<br>**{_safe_boundary_text(row.get('resolution_status'), table=True)}**"
-        assumption = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
-        if uniform_confidence is None:
-            assumption += f"<br>_{_safe_boundary_text(_boundary_confidence_text(row), table=True)}_"
-        # Legs REPLACE the one-line row verdict rather than stacking beneath it:
-        # they answer the same question per condition, and a six-line cell in a
-        # ~26% column reads as a ragged block. The row verdict comes back only
-        # when it would otherwise be lost — a link the leg view could not
-        # attribute (no `leg`, no CWE match) still refutes the row, and a cell
-        # showing three "not examined" legs under a refuted row would be a lie.
-        threats_for_legs = ctx.yaml_data.get("threats") or []
-        leg_states = boundary_leg_states(row, threats_for_legs)
-        # Legs are shown only once at least one of them carries a state — a row
-        # nothing bears on would otherwise trade its one-line verdict for three
-        # lines of "not examined", which is longer and says less.
-        informative = [leg for leg in leg_states if leg["state"] != "unexamined"]
-        row_state, _row_ids = boundary_assumption_state(row, threats_for_legs)
-        # The row verdict comes back when the leg view would lose it: a link the
-        # legs could not attribute (no `leg` field, no CWE match) still refutes
-        # the row, and legs reading "not examined" beneath it would be a lie.
-        if not informative or (
-            row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}
-        ):
-            assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
-        if informative:
-            for line in _boundary_leg_lines(leg_states, ctx):
-                assumption += f"<br>{line}"
-        sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
-        finding_links = _boundary_finding_links(linked.get(boundary_id, []), leg_states, ctx)
-        cells = [f'<a id="{boundary_id}"></a>{boundary_id}', boundary, exposure, kind, assumption]
-        if uniform_source is None:
-            cells.append(sources)
-        cells.append(finding_links)
-        lines.append(f"| {' | '.join(cells)} |")
+            crossing += "<br>Also covers: " + _safe_boundary_text(", ".join(covers), table=True)
+        condition = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
+        condition += "<br>Control: " + (_safe_boundary_text(mechanism, table=True) if mechanism else "not identified")
+        legs = boundary_leg_states(row, ctx.yaml_data.get("threats") or [])
+        links = _boundary_finding_links(linked.get(row["id"], []), legs, ctx)
+        state, ids = boundary_assumption_state(row, ctx.yaml_data.get("threats") or [])
+        if state == "refuted":
+            answer = "Gap evidenced: " + links
+        elif state == "unconfirmed":
+            noun = "finding" if len(ids) == 1 else "findings"
+            answer = f"{len(ids)} related {noun}; relevance to this crossing remains unverified."
+            if links != "—":
+                answer += "<br>" + links
+        else:
+            answer = "No linked finding establishes a gap; control effectiveness is not established."
+            if links != "—":
+                answer += "<br>" + links
+        lines.append(f'| <a id="{row["id"]}"></a>{row["id"]} | {crossing} | {condition} | {answer} |')
     if len(rows) > len(shown):
-        lines.extend(
-            [
-                "",
-                f"_{len(rows) - len(shown)} additional trust boundary row(s) are available in "
-                "`threat-model.yaml` and `model/query_threat_model.py`._",
-            ]
-        )
-    lines.extend(["", _boundary_exposure_legend()])
-    lines.extend(["", _boundary_kind_legend()])
-    lines.extend(["", _boundary_condition_legend()])
-    lines.extend(["", _boundary_verdict_legend()])
-    if uniform_source is None:
-        lines.extend(
-            [
-                "",
-                "_Source: `detected` = derived from inspected repository evidence; "
-                "`repo-declared` = supplied by `.appsec/trust-boundaries.yaml`; "
-                "`legacy` = migrated from an earlier boundary format._",
-            ]
-        )
-    collapsed: list[str] = []
-    if uniform_source is not None:
-        gloss = _BOUNDARY_SOURCE_GLOSS.get(uniform_source)
-        collapsed.append(f"source: {gloss or uniform_source}")
-    if uniform_confidence is not None:
-        collapsed.append(f"confidence: {uniform_confidence}")
-    if uniform_status is not None:
-        collapsed.append(f"status: {uniform_status}")
-    if collapsed:
-        lines.extend(["", f"_All boundaries share {'; '.join(collapsed)}._"])
-    return "\n".join(lines).rstrip() + "\n"
+        lines.extend(["", f"{len(rows) - len(shown)} additional trust boundary row(s) are recorded in `{MODEL}`."])
+    lines.extend(["", f"Crossing types, source evidence and provenance are retained in `{MODEL}`."])
+    return "\n".join(lines) + "\n"
 
 
 _POSTURE_VERDICT_EMOJI = {"VIOLATED": "🔴", "WEAK": "🟠", "ADEQUATE": "🟢"}
@@ -17296,13 +17084,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
 
     # ---- Systemic weakness back-reference ---------------------------------
     # The standalone "Security Principles" MS verdict table was retired
-    # (2026-07-14); the executive systemic view is now Top Weaknesses in the
-    # Management Summary, and the evidence-backed detail lives in the Weakness
+    # (2026-07-14); the executive systemic view is now Remediation Priorities in
+    # the Management Summary, and the evidence-backed detail lives in the Weakness
     # Register. §8 keeps only this pointer so the systemic story is not repeated.
     if ctx.yaml_data.get("weaknesses"):
         lines.append(
-            "The systemic root-cause view is summarized in **Top Weaknesses** in "
-            "the Management Summary; evidence-backed weaknesses are documented in "
+            "The root causes and the fixes to do first are summarized in "
+            "**Remediation Priorities** in the Management Summary; evidence-backed weaknesses are documented in "
             "the [Weakness Register](#weakness-register)."
         )
         lines.append("")
@@ -17541,11 +17329,13 @@ def _heal_abuse_cases_fragment(ctx: RenderContext) -> str:
     try:
         models = rac.build_models(ctx.output_dir, org_profile, repo_root)
         catalog_rows = rac.build_catalog_evaluation(ctx.output_dir)
+        not_performed, rejected = rac.build_business_omissions(ctx.output_dir)
+        unverified = rac.build_unverified_candidates(ctx.output_dir)
     except Exception:
         return ""
-    if not models and not catalog_rows:
+    if not models and not catalog_rows and not not_performed and not rejected and not unverified:
         return ""
-    md = rac.render_fragment(models, catalog_rows)
+    md = rac.render_fragment(models, catalog_rows, not_performed, rejected, unverified)
     try:
         ctx.fragments_dir.mkdir(parents=True, exist_ok=True)
         (ctx.fragments_dir / "abuse-cases.md").write_text(md, encoding="utf-8")
@@ -17779,7 +17569,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             mid = m.get("m_id") or m.get("id") or "-"
             title = (m.get("title") or m.get("mitigation_title") or "(untitled)").strip()
             lines.append(f'<a id="{mid.lower()}"></a>')
-            lines.append(f"#### {mid} — {_escape_heading_placeholders(title)}")
+            lines.append(f"#### {mid} — {_escape_heading_placeholders(_clamp_heading_title(mid, title))}")
             lines.append("")
 
             # Addresses as a bulleted list of linkified refs (reference layout).
@@ -18474,8 +18264,8 @@ _ARCHITECTURE_SECTIONS = [
 _ARCHITECTURE_TOC_NOTE = (
     "> **Architecture Model** — this document covers Sections 1–7 "
     "(system overview, diagrams, assets, attack surface, security architecture). "
-    "The full threat model including STRIDE findings and mitigations will be "
-    "available in `threat-model.md` after the assessment completes."
+    "The full security assessment including STRIDE findings and mitigations will be "
+    f"available in `{REPORT}` after the assessment completes."
 )
 
 
@@ -19050,7 +18840,7 @@ def render(
     # Neutralise TLD-shaped brand tokens (Socket.IO, Node.js, …) across the
     # WHOLE document — not just markdown fragments. `_render_markdown_fragment`
     # already runs this per-fragment, but COMPUTED sections (the Mitigation
-    # Register / Top Mitigations, component tables, …) bypass it, so a
+    # Register / Remediation Priorities, component tables, …) bypass it, so a
     # mitigation title like "Attach JWT to Socket.IO handshake" shipped with
     # `Socket.IO` auto-linked by GFM (user report 2026-06). Idempotent — an
     # already-escaped `Socket\.IO` is not re-matched; fenced code/links/comments
@@ -19149,6 +18939,7 @@ def render(
     # normal `[ID](#id) — label` tail.
     rendered = _apply_outside_changelog(rendered, _delink_id_in_link_text)
     rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
+    rendered = _apply_outside_changelog(rendered, lambda text: _compact_inline_finding_citations(ctx, text))
     rendered = restore_figures(rendered)
 
     # Report-integrity manifest: certify which sections rendered and which
@@ -19491,7 +19282,7 @@ def _stage_branding_logo(ctx: RenderContext, logo: str | None) -> str | None:
 
 
 def _render_title(ctx: RenderContext, *, title_template_override: str | None = None) -> str:
-    """Render the document `# Threat Model — <Project Name>` header.
+    """Render the document `# Security Assessment Report — <Project Name>` header and its focus line.
 
     Shares the project-name derivation with `_render_infobox` via
     `_derive_project_name()` so the title and the infobox never disagree.
@@ -19540,11 +19331,17 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
     logo_rel = _stage_branding_logo(ctx, branding.get("logo"))
     logo_md = f"\n![]({logo_rel})\n" if logo_rel else ""
 
+    # The focus names requirements implementation only when the run assessed a catalog.
+    focus = (
+        "_Analysis of security architecture, threats, and requirements implementation_"
+        if ctx.eval_context.get("check_requirements")
+        else "_Analysis of security architecture and threats_"
+    )
     if plugin_v:
         suffix = f" (analysis v{analysis_v})" if analysis_v else ""
         subtitle = f"_Generated by appsec-advisor v{plugin_v}{suffix}_\n"
-        return f"# {title}\n\n{subtitle}{logo_md}"
-    return f"# {title}\n{logo_md}"
+        return f"# {title}\n\n{focus}\n\n{subtitle}{logo_md}"
+    return f"# {title}\n\n{focus}\n{logo_md}"
 
 
 def _derive_project_name(ctx: RenderContext) -> str:
@@ -20201,6 +19998,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 4
+        return 1
+    except FigureError as e:
+        print(f"RENDER_FAILED: {e}", file=sys.stderr)
         return 1
     except ContractError as e:
         print(f"CONTRACT_ERROR: {e}", file=sys.stderr)

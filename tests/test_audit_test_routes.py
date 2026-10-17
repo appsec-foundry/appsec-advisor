@@ -234,6 +234,44 @@ def test_measurement_records_in_process_and_subprocess_lines_and_reads_but_not_i
     assert (measured.skipped, measured.failed, measured.timed_out) == (0, 0, False)
 
 
+def test_descriptor_relative_reads_resolve_against_their_directory(tmp_path):
+    """The open audit event omits dir_fd; a same-named file elsewhere is not a repository read."""
+    repo = tmp_path / "repo"
+    _write(repo, "README.md", "plugin\n")
+    _write(repo, "docs/guide.md", "guide\n")
+    _write(repo, "docs/notes.md", "notes\n")
+    _write(
+        repo,
+        "tests/test_probe.py",
+        """\
+        import os
+        from pathlib import Path
+
+        ROOT = Path(__file__).resolve().parent.parent
+
+
+        def _read_at(directory, name):
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                child = os.open(name, os.O_RDONLY, dir_fd=descriptor)
+                os.close(child)
+            finally:
+                os.close(descriptor)
+
+
+        def test_probe(tmp_path):
+            (tmp_path / "README.md").write_text("target\\n")
+            _read_at(tmp_path, "README.md")
+            _read_at(ROOT / "docs", "guide.md")
+            assert Path("docs/notes.md").read_text() == "notes\\n"
+        """,
+    )
+    measured = audit_routes.measure(["tests/test_probe.py"], repo, tmp_path / "work", 1, 120)["tests/test_probe.py"]
+    assert measured.failed == 0
+    assert {"docs/guide.md", "docs/notes.md"} <= measured.reads
+    assert "README.md" not in measured.reads
+
+
 def test_cli_reports_notes_and_problems_with_exit_status(monkeypatch, capsys):
     monkeypatch.setattr(audit_routes.run_tests, "group_problems", lambda: [])
     monkeypatch.setattr(audit_routes, "measure", lambda *args: {})

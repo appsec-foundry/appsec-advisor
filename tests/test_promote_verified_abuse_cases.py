@@ -245,6 +245,37 @@ def test_source_probe_evidence_wins_when_verifier_omits_a_file(tmp_path: Path) -
     assert created["evidence"] == {"file": "src/template.ts", "line": 17}
 
 
+@pytest.mark.parametrize(
+    ("verifier_evidence", "expected"),
+    [
+        ({"file": "src/missing.ts", "line": 40, "excerpt": "eval(input)"}, {"file": "src/template.ts", "line": 17}),
+        ({"file": "lib/run.py", "line": 3, "excerpt": "exec(payload)"}, {"file": "src/template.ts", "line": 17}),
+        ({"file": "lib/run.py", "line": 3, "excerpt": "run(eval(code))"}, {"file": "lib/run.py", "line": 3}),
+    ],
+    ids=["file-not-in-repo", "excerpt-not-at-line", "excerpt-found"],
+)
+def test_verifier_location_wins_only_when_its_excerpt_is_in_the_code(
+    tmp_path: Path, verifier_evidence: dict, expected: dict
+) -> None:
+    """A confirmed source probe never becomes a verified finding at a location
+    the deterministic excerpt gate cannot find; the probe's own hit stands."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "lib").mkdir()
+    (repo / "src" / "template.ts").write_text("\n" * 16 + "eval(input)\n")
+    (repo / "lib" / "run.py").write_text("\n\nrun(eval(code))\n")
+    _write(tmp_path / ".skill-config.json", {"repo_root": str(repo)})
+    _sidecars(tmp_path)
+    verdicts_path = tmp_path / ".abuse-case-verdicts.json"
+    verdicts = json.loads(verdicts_path.read_text())
+    verdicts["verdicts"][0]["step_verdicts"][0]["evidence"] = verifier_evidence
+    _write(verdicts_path, verdicts)
+
+    assert mod.promote(tmp_path)[0] == 1
+    created = json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][-1]
+    assert created["evidence"] == expected
+
+
 def _registry(tmp_path: Path, components: list[dict]) -> None:
     (tmp_path / "threat-model.yaml").write_text(
         yaml.safe_dump({"components": components}, sort_keys=False), encoding="utf-8"
@@ -320,3 +351,242 @@ def test_missing_registry_keeps_the_default_and_says_so(tmp_path: Path) -> None:
     assert any("component registry unavailable" in n for n in notes)
     component_id, _ = _promoted_component(tmp_path)
     assert component_id == "backend-api"
+
+
+# ---------------------------------------------------------------------------
+# Business (descriptive) cases
+# ---------------------------------------------------------------------------
+
+
+def _business(tmp_path: Path, step: dict, *, chain_verdict: str, finding: dict | None = None) -> None:
+    case = {"id": "AC-B-001", "kind": "descriptive", "title": "Requester approves their own request", "check": "c"}
+    if finding is not None:
+        case["finding"] = finding
+    _write(
+        tmp_path / ".threats-merged.json",
+        {"version": 1, "generated_at": "2026-10-10T00:00:00Z", "threats": [{"t_id": "T-001", "title": "Other"}]},
+    )
+    _write(
+        tmp_path / ".abuse-case-matches.json",
+        {
+            "schema_version": 1,
+            "matches": [
+                {
+                    "abuse_case_id": "AC-B-001",
+                    "kind": "descriptive",
+                    "case": case,
+                    "step_matches": [
+                        {"step": 1, "label": "Check self-approval.", "match_basis": "descriptive", "evidence": None}
+                    ],
+                }
+            ],
+        },
+    )
+    _write(
+        tmp_path / ".abuse-case-verdicts.json",
+        {"verdicts": [{"abuse_case_id": "AC-B-001", "chain_verdict": chain_verdict, "step_verdicts": [step]}]},
+    )
+
+
+def _step(verdict: str, **extra: object) -> dict:
+    return {
+        "step": 1,
+        "verdict": verdict,
+        "state": "decided",
+        "reason": "approve() never compares approver and requester",
+        "evidence": {"file": "app/approvals/approve.py", "line": 12, "excerpt": "request.approve(user)"},
+        "controls_found": [],
+        **extra,
+    }
+
+
+def _promoted(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][-1]
+
+
+@pytest.mark.parametrize(
+    ("finding", "expected"),
+    [
+        (
+            {"cwe": "CWE-284", "stride": "Tampering", "severity": "High", "mitigation_title": "Separate duties"},
+            ("CWE-284", "Tampering", "High", "Separate duties"),
+        ),
+        (None, ("CWE-840", "Elevation of Privilege", "Medium", "Prevent: Requester approves their own request")),
+    ],
+    ids=["declared", "defaults"],
+)
+def test_confirmed_business_case_becomes_a_confirmed_finding(tmp_path: Path, finding, expected) -> None:
+    _business(tmp_path, _step("confirmed"), chain_verdict="fully_viable", finding=finding)
+
+    assert mod.promote(tmp_path)[0] == 1
+    created = _promoted(tmp_path)
+    assert (created["cwe"], created["stride"], created["risk"], created["mitigation_title"]) == expected
+    assert created["evidence_tier"] == "confirmed-exploitable"
+    assert created["evidence"] == {"file": "app/approvals/approve.py", "line": 12}
+    assert created["title"] == "Requester approves their own request"
+    merged_schema = yaml.safe_load((ROOT / "schemas" / "threats-merged.schema.yaml").read_text())
+    jsonschema.Draft202012Validator(merged_schema).validate(
+        {"version": 1, "generated_at": "2026-10-10T00:00:00Z", "threats": [created]}
+    )
+    match = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]
+    assert match["matched_finding_ids"] == [created["t_id"]]
+    # A rerun binds to the same finding instead of promoting it again.
+    assert mod.promote(tmp_path)[0] == 0
+
+
+def test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severity(tmp_path: Path) -> None:
+    _business(tmp_path, _step("inconclusive"), chain_verdict="inconclusive", finding={"severity": "High"})
+
+    assert mod.promote(tmp_path)[0] == 1
+    created = _promoted(tmp_path)
+    assert created["evidence_tier"] == "insecure-practice"
+    assert (created["evidence_check"], created["evidence_basis"]) == ("ambiguous", "ambiguous")
+    assert created["risk"] == "High"
+    assert created["scenario"] == "approve() never compares approver and requester"
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from shared._finding_state import is_confirmed  # type: ignore[import-not-found]
+
+    assert not is_confirmed(created)
+
+
+@pytest.mark.parametrize(
+    ("step", "chain_verdict"),
+    [
+        (_step("inconclusive", evidence=None), "inconclusive"),
+        (_step("inconclusive", controls_found=["approver != requester"]), "inconclusive"),
+        (_step("inconclusive", state="pending"), "inconclusive"),
+        (_step("refuted"), "inconclusive"),
+        (_step("blocked"), "mitigated"),
+        (_step("confirmed", controls_found=["role check"]), "partially_blocked"),
+        (_step("confirmed", matched_finding_id="T-001"), "fully_viable"),
+        (_step("inconclusive", matched_finding_id="T-001"), "inconclusive"),
+    ],
+    ids=[
+        "no-citation",
+        "control-found",
+        "pending",
+        "refuted",
+        "blocked",
+        "partially-blocked",
+        "confirmed-bound-to-finding",
+        "indication-bound-to-finding",
+    ],
+)
+def test_business_case_without_confirmation_or_indication_is_not_promoted(
+    tmp_path: Path, step: dict, chain_verdict: str
+) -> None:
+    _business(tmp_path, step, chain_verdict=chain_verdict)
+
+    assert mod.promote(tmp_path)[0] == 0
+    assert [t["t_id"] for t in json.loads((tmp_path / ".threats-merged.json").read_text())["threats"]] == ["T-001"]
+
+
+def test_business_case_binds_to_the_finding_already_at_its_location(tmp_path: Path) -> None:
+    _business(tmp_path, _step("confirmed"), chain_verdict="fully_viable", finding={"cwe": "CWE-639"})
+    _with_existing_finding(tmp_path, cwe="CWE-639", evidence={"file": "app/approvals/approve.py", "line": 12})
+
+    assert mod.promote(tmp_path)[0] == 0
+    step = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]["step_matches"][0]
+    assert (step["matched_finding_id"], step["match_basis"]) == ("T-001", "finding")
+
+
+@pytest.mark.parametrize("verdict", ["confirmed", "inconclusive"])
+def test_a_finding_the_verifier_cites_is_bound_in_the_match_sidecar(tmp_path: Path, verdict: str) -> None:
+    """Triage reads chain membership from the match sidecar; a business case
+    the verifier bound to a finding must appear there, not only in its verdict."""
+    chain = "fully_viable" if verdict == "confirmed" else "inconclusive"
+    _business(tmp_path, _step(verdict, matched_finding_id="T-001"), chain_verdict=chain)
+
+    assert mod.promote(tmp_path)[0] == 0
+    match = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]
+    assert match["step_matches"][0]["matched_finding_id"] == "T-001"
+    assert match["matched_finding_ids"] == ["T-001"]
+
+
+def test_a_cited_finding_that_is_refuted_or_unknown_is_not_bound(tmp_path: Path) -> None:
+    _business(tmp_path, _step("confirmed", matched_finding_id="T-404"), chain_verdict="fully_viable")
+    _with_existing_finding(tmp_path, evidence_check="refuted")
+    verdicts = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())
+    verdicts["verdicts"][0]["step_verdicts"][0]["matched_finding_id"] = "T-001"
+    _write(tmp_path / ".abuse-case-verdicts.json", verdicts)
+
+    mod.promote(tmp_path)
+    match = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]
+    assert "T-001" not in match["matched_finding_ids"]
+
+
+def _repo_with_approval(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "app" / "approvals").mkdir(parents=True)
+    (repo / "app" / "approvals" / "approve.py").write_text("\n" * 11 + "request.approve(user)\n")
+    _write(tmp_path / ".skill-config.json", {"repo_root": str(repo)})
+
+
+@pytest.mark.parametrize(
+    ("existing", "evidence", "expected"),
+    [
+        ({"evidence_check": "ambiguous", "evidence_basis": "ambiguous"}, {}, "verified"),
+        ({"evidence_check": "unchecked"}, {}, "verified"),
+        ({"evidence_check": "ambiguous"}, {"excerpt": "request.reject(user)"}, "ambiguous"),
+        ({"evidence_check": "ambiguous"}, {"file": "app/other.py"}, "ambiguous"),
+        ({"evidence_check": "refuted", "evidence_basis": "refuted"}, {}, "refuted"),
+    ],
+    ids=["ambiguous", "unchecked", "excerpt-not-in-code", "other-file", "refuted"],
+)
+def test_a_confirmed_step_verifies_the_finding_it_cites(tmp_path: Path, existing, evidence, expected) -> None:
+    _repo_with_approval(tmp_path)
+    step = _step("confirmed", matched_finding_id="T-001")
+    step["evidence"] = {**step["evidence"], **evidence}
+    _business(tmp_path, step, chain_verdict="fully_viable")
+    _with_existing_finding(
+        tmp_path,
+        cwe="CWE-639",
+        evidence={"file": "app/approvals/approve.py", "line": 12},
+        evidence_tier="insecure-practice",
+        **existing,
+    )
+
+    mod.promote(tmp_path)
+    finding = json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][0]
+    assert finding["evidence_check"] == expected
+    if expected == "verified":
+        assert finding["evidence_basis"] == "llm-verified"
+    assert finding["evidence_tier"] == "insecure-practice"
+
+
+def test_a_confirmed_technical_step_verifies_its_matched_finding(tmp_path: Path) -> None:
+    """The same rule holds when the matcher, not the verifier, made the binding."""
+    _repo_with_approval(tmp_path)
+    _business(tmp_path, _step("confirmed"), chain_verdict="fully_viable")
+    matches = json.loads((tmp_path / ".abuse-case-matches.json").read_text())
+    matches["matches"][0].pop("kind")
+    matches["matches"][0]["step_matches"][0].update(match_basis="finding", matched_finding_id="T-001")
+    _write(tmp_path / ".abuse-case-matches.json", matches)
+    _with_existing_finding(
+        tmp_path, evidence={"file": "app/approvals/approve.py", "line": 12}, evidence_check="ambiguous"
+    )
+
+    mod.promote(tmp_path)
+    assert json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][0]["evidence_check"] == "verified"
+
+
+def test_a_confirmed_business_case_is_promoted_despite_an_insufficient_check_beside_it(tmp_path: Path) -> None:
+    _business(tmp_path, _step("confirmed", controls_found=["role check only"]), chain_verdict="fully_viable")
+
+    assert mod.promote(tmp_path)[0] == 1
+    assert _promoted(tmp_path)["evidence_tier"] == "confirmed-exploitable"
+
+
+def test_access_control_business_cases_rate_like_their_technical_counterpart() -> None:
+    """An ownership or privilege business case promotes at the severity the
+    technical catalog gives the same weakness, not at the Medium default."""
+    business = yaml.safe_load((ROOT / "data" / "abuse-cases" / "business.yaml").read_text())["abuse_cases"]
+    technical = yaml.safe_load((ROOT / "data" / "abuse-cases" / "technical.yaml").read_text())["abuse_cases"]
+    technical_severity = {
+        step["finding"]["cwe"]: step["finding"]["severity"] for case in technical for step in case["chain"]
+    }
+    by_id = {case["id"]: case for case in business}
+
+    for case_id in ("AC-B-001", "AC-B-002", "AC-B-007"):
+        assert mod._descriptive_metadata(by_id[case_id])["severity"] == "High", case_id
+    assert technical_severity["CWE-639"] == mod._descriptive_metadata(by_id["AC-B-001"])["severity"]

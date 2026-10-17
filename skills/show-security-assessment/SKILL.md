@@ -1,0 +1,174 @@
+---
+name: show-security-assessment
+description: >-
+  Print the standard summary block of the current threat model — scan identity,
+  findings by severity, the remediation backlog (P1/P2/P3) and mitigation
+  coverage, the worst-case scenarios, control posture, and whether the model is
+  still up to date. A DISPLAY command, not a question-answering surface: use it
+  only for an explicit request to see that block ("show me the threat model
+  summary", "zeig mir die threat-model-uebersicht", "print the overview").
+  Reuses the same change detection that decides if an incremental scan is
+  needed. Does not analyze code, write files, or compose prose — it prints a
+  rendered block verbatim and cannot answer anything the block does not already
+  contain. Do NOT route a natural-language question here, not even "is there a
+  threat model?" / "gibt es hier ein bedrohungsmodell?" — every question goes to
+  ask-security-assessment, which answers directly and can produce this block too.
+---
+
+You are printing a human-facing overview of the threat model in the target
+repository. This skill is **read-only** — it does **not** analyze code, does
+**not** spawn agents, and does **not** write files. It reads the committed
+`threat-model.yaml` and reports.
+
+## This is a display command, not a Q&A surface
+
+Your entire job is to emit the rendered block. You do **not** answer questions
+about the model here, and you do **not** compose prose around the block.
+
+If the user's request was actually a **question** — "is there a threat model?",
+"does it cover SSRF?", "what's the fix for F-003?", "was ist am schlimmsten?" —
+routing landed on the wrong skill. Print the block (it is still useful context),
+then hand off in one line: *"Für Fragen zum Modell:
+`/appsec-advisor:ask-security-assessment`"*. Do not attempt the answer yourself from
+the block — it holds a fixed set of facts and cannot answer beyond them, and a
+plausible-sounding answer assembled from a summary is exactly the ungrounded
+output `ask-security-assessment` exists to prevent.
+
+The two skills are asymmetric on purpose: `ask-security-assessment` can also produce
+this block, so a misroute in that direction costs nothing — a misroute *here*
+is a dead end unless you hand off.
+
+The freshness verdict comes from `model/threat_model_health.py --json`, which wraps
+`baseline/baseline_state.py check-changes` + `dirty-set` — the **same** change detection
+the pipeline uses to decide whether an incremental scan is needed. This skill
+does not re-implement that logic; it folds the verdict into the overview.
+
+## `--help` — inline help (early exit)
+
+If the user's arguments contain `--help` or `-h`, print this block verbatim
+and exit.
+
+```
+/appsec-advisor:show-security-assessment — Read-only threat model overview.
+
+USAGE
+  /appsec-advisor:show-security-assessment [--repo <path>] [--output <path>] [--all] [--json]
+
+FLAGS
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: the repo's assessment directory)
+  --all             List every threat grouped by severity (default: top Critical only)
+  --json            Emit the overview as machine-readable JSON
+
+WHAT IT SHOWS
+  * Project + scan identity (commit, branch, model, depth, scan date)
+  * Freshness: is the model still current, or has security-relevant code changed?
+    (same change detection that drives the incremental-scan decision)
+  * The report's verdict — overall posture flag and the assessment's own
+    conclusion, verbatim from the Management Summary
+  * The "worst case if nothing changes" scenarios behind that verdict, with
+    the findings that support each and whether the attack path is verified
+  * Findings by severity (Critical / High / Medium / Low)
+  * Remediation backlog by mitigation priority (P1 / P2 / P3) and how many
+    findings have a proposed mitigation vs. are uncovered
+  * Top Critical findings (or all findings with --all)
+  * Control posture: effectiveness mix (Missing / Weak / Partial / Adequate)
+    and the weakest control domains
+  * Mitigation and control counts, plus the rendered report path
+
+RELATED
+  /appsec-advisor:ask-security-assessment      Ask anything about the model (any question)
+  /appsec-advisor:security-assessment-health   Ops/CI probe: freshness + cleanup + run state
+  /appsec-advisor:appsec-analyzer   Generate or update the threat model
+```
+
+After printing the help block, exit. Do not proceed.
+
+## Step 1 — Parse arguments
+
+Recognized flags (and the values consumed by `--repo` / `--output`):
+
+  `--repo <path>`  `--output <path>`  `--all`  `--json`  `--help` | `-h`
+
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `ALL_MODE`, `JSON_MODE`.
+
+- Default `REPO_ROOT` to the current working directory.
+- Default `OUTPUT_DIR` to the repository's assessment directory, resolved in Step 2.
+- `--repo <path>` overrides `REPO_ROOT`; `--output <path>` overrides `OUTPUT_DIR`.
+- `--all` and `--json` are boolean toggles that consume no value.
+
+### Reject unknown arguments (hard fail)
+
+If the invocation contains **any** token that is not one of the recognized
+flags above — or is not the value consumed by `--repo` / `--output` — DO NOT
+proceed. Do not resolve `CLAUDE_PLUGIN_ROOT`, do not invoke any helper, do not
+touch any file. Print the following block verbatim to stderr, substituting
+`<TOKEN>` with the first unknown token, then exit with status `2`:
+
+```
+Error: unknown argument '<TOKEN>'
+
+/appsec-advisor:show-security-assessment accepts only:
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: the repo's assessment directory)
+  --all             List every threat grouped by severity
+  --json            Emit the overview as machine-readable JSON
+  --help, -h        Show full help and exit
+
+Run `/appsec-advisor:show-security-assessment --help` for details.
+```
+
+A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown
+when its value is missing — treat the flag itself as the offending token.
+Repeated occurrences of the same flag are allowed; the last value wins.
+
+## Step 2 — Resolve `CLAUDE_PLUGIN_ROOT`
+
+```bash
+if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
+fi
+export CLAUDE_PLUGIN_ROOT
+if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
+  exit 2
+fi
+[ -n "${OUTPUT_DIR:-}" ] || OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT") || exit 2
+```
+
+On exit 2, print the resolver's `Error: ...` line and stop; never fall back to
+`docs/security`.
+
+## Step 3 — Dispatch to the helpers
+
+Run the freshness probe in JSON mode and pipe it into the summary renderer so
+the freshness verdict is folded into one deterministic block. Do not set
+`pipefail`: the meaningful exit code is the renderer's (0 = model present,
+1 = no model), not the health probe's CI exit code.
+
+```bash
+EXTRA=""
+[ "$ALL_MODE" = "true" ]  && EXTRA="$EXTRA --all"
+[ "$JSON_MODE" = "true" ] && EXTRA="$EXTRA --json"
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/summarize_threat_model.py" \
+    --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --health-json - $EXTRA
+EXIT=$?
+```
+
+Print the renderer's output **in full**, exactly as emitted, as the complete
+deliverable — do not add commentary, and do not drop, reorder or summarize any
+line. The `Ask` / `Act` lane pointers near the top are part of the block: they
+are how a reader whose actual question this block cannot answer finds
+`ask-security-assessment`, so trimming them turns a misroute into a dead end. If the
+renderer exits `1` (no model found), it already prints the hint to run
+`/appsec-advisor:appsec-analyzer`; surface that as-is.
+
+Exit-code reference (for shell callers):
+- `0` — threat model present, overview rendered
+- `1` — no threat model found in `<output>`
+- `2` — error (unreadable / unparseable model, or unknown argument)

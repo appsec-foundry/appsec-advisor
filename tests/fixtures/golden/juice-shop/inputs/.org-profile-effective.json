@@ -1,0 +1,14 @@
+{
+  "defaults": {},
+  "llm_context_documents": [],
+  "llm_policy": null,
+  "org_profile": {
+    "active": false,
+    "path": null,
+    "source": "none"
+  },
+  "preset": null,
+  "requirements_source": null,
+  "security_coach": null,
+  "skill_toggles": {}
+}

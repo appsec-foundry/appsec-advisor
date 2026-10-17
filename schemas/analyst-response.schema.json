@@ -80,6 +80,9 @@
           },
           "next_action": {
             "$ref": "#/$defs/text"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
           }
         }
       }
@@ -107,6 +110,9 @@
           },
           "requirement_refs": {
             "$ref": "#/$defs/requirement_refs"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
           }
         }
       }
@@ -284,6 +290,107 @@
       "items": {
         "$ref": "#/$defs/text"
       }
+    },
+    "hypothesis_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "explanation",
+        "evidence",
+        "next_action"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "supported",
+            "not_confirmed",
+            "unresolved"
+          ]
+        },
+        "explanation": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "next_action": {
+          "$ref": "#/$defs/text"
+        },
+        "steps": {
+          "description": "One verdict per numbered step the hypothesis lists (lines starting with '- Step N:'), each with the code it rests on.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "step",
+              "status",
+              "note",
+              "evidence"
+            ],
+            "properties": {
+              "step": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "status": {
+                "enum": [
+                  "supported",
+                  "not_confirmed",
+                  "unresolved"
+                ]
+              },
+              "note": {
+                "$ref": "#/$defs/text"
+              },
+              "evidence": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/$defs/location"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "rationale",
+          "trade_off"
+        ],
+        "properties": {
+          "title": {
+            "$ref": "#/$defs/title"
+          },
+          "rationale": {
+            "$ref": "#/$defs/text"
+          },
+          "trade_off": {
+            "$ref": "#/$defs/text"
+          },
+          "requirement_refs": {
+            "$ref": "#/$defs/requirement_refs"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -350,6 +457,15 @@
           "minLength": 1,
           "maxLength": 400
         }
+      }
+    },
+    "threat_refs": {
+      "type": "array",
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^F-[0-9]{3,}$"
       }
     }
   }

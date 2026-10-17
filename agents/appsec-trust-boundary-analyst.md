@@ -6,7 +6,7 @@ model: sonnet
 maxTurns: 24
 ---
 
-INTERNAL AGENT — do not invoke directly. The create-threat-model runtime
+INTERNAL AGENT — do not invoke directly. The appsec-analyzer runtime
 dispatches this agent once, after component inventory finalization and before
 security-control or STRIDE analysis.
 
@@ -62,6 +62,8 @@ protection`, `Sequelize query construction`. It is what keeps two candidates
 apart: the promotion step merges candidates that share a crossing unless they
 declare different enforcement points, so a copy-pasted value silently collapses
 boundaries that belong apart. Name it from the evidence you actually read.
+
+Build signals with distinct scopes (dependency registry, actions, base images, remote scripts, artifact push) are separate crossings: give each its own candidate with the control specific to that scope, e.g. `lockfile-enforced npm ci` or `SHA-pinned action references`, never one shared pipeline value.
 
 Write a NAME, not a sentence. Those examples are three to five words, and that
 is the budget: aim for under 60 characters. It is rendered in a narrow table
@@ -127,11 +129,23 @@ really does run at the crossing (a session cookie or token issued at that step,
 or a component tagged `client` that is in fact server-rendered or a BFF): name
 that control in `enforcement_point` and the row is kept.
 
-Endpoints that ship inside one deployable are an internal enforcement interface,
-not a privilege transition: emit the candidate with `kind: process`. Do not
-reach for `same-trust` there — that disposition is for a signal with no
-interface behind it at all, and using it for a real interface leaves the
-injection and data-access findings with nothing to attach to.
+Use `kind: process` only when the cited evidence shows an in-process invocation,
+such as a direct call or an embedded store driver, and no identity, privilege,
+tenant, or data-origin change at that call. A shared repository, directory,
+package, or container does not establish one process or the absence of a
+transition; keep the evidenced kind and record uncertainty in `confidence`.
+Components whose `workload_zones` share no network run in different workloads,
+so a call between them is never `process`. When an identity, privilege, tenant,
+data-origin, or third-party change happens inside one process, keep that `kind`
+and set `surface: in-process`; omit `surface` otherwise. An embedded store
+reached through its driver is `kind: process`; promotion adds the data-access
+transition to every crossing into a data-tier store. Looking up credentials or
+sessions in a store is not an identity change; that belongs to the ingress
+where the caller is authenticated. A missing or weak control at a crossing is a finding, never a reason
+to drop or downgrade the crossing. Do not reach for `same-trust` for a real
+in-process interface — that disposition is for a signal with no interface
+behind it at all, and using it leaves the injection and data-access findings
+with nothing to attach to.
 
 Use `confirmed` only after inspecting relevant source/config evidence.
 Otherwise use `inferred` or `unknown`. The assumption states what must remain
@@ -189,20 +203,14 @@ Also set `assumption` to the single most load-bearing of these conditions. It
 stays the one-line rollup for consumers that do not read legs; it is not a
 summary of all of them, and it must not join them with semicolons.
 
-The report renders this under **Assumption & verdict** and prints a verdict per
-leg directly beneath it, so every sentence must be the kind of statement a
-verdict can address. Four failure modes, all observed in one run (user
-2026-08-01). Promotion warns deterministically on the fact-list, absence and
-sanctioning shapes; a restatement is only caught when it reuses the
-`enforcement_point` string verbatim, so that one is on you:
+The report presents `assumption` as the required condition and links findings that evidence a gap. The model retains individual legs for assessment and scoring, so each condition must be falsifiable. Promotion warns on fact lists, absence statements and sanctioning shapes. It catches an enforcement-point restatement only when the text matches verbatim. Avoid these four patterns:
 
 - **A list of facts instead of a condition.** `SQLite runs embedded in the same
   Node.js process; no network isolation; Sequelize model methods use parameterized
   queries by default.` — three statements, none of which can be refuted as
   written. Pick the one that matters: *"Every query reaches SQLite through
   Sequelize parameter binding."* Never join clauses with semicolons.
-- **Restating `enforcement_point`.** The catalogue already prints the control in
-  the adjacent cell. Say what must be TRUE of it, not what it is.
+- **Restating `enforcement_point`.** The catalogue already names the control beside its required condition. Say what must be true of it, not what it is.
 - **Describing an absence.** `No outbound content filter or egress allow-list` is
   the opposite of an assumption — under a heading that announces one, it reads as
   a contradiction. Turn it into the condition the crossing relies on:
@@ -222,7 +230,9 @@ you leave at `inferred` therefore cannot raise any finding's severity no matter
 what evidence that finding carries. Cite the file that actually registers the
 inbound surface — promotion re-checks it and upgrades an ingress candidate whose
 evidence provably registers routes, so a precise citation is worth more than a
-cautious confidence value.
+cautious confidence value. For an internal crossing, cite the call into the
+target (the query or store call), never another line of the same handler: a
+finding on a cited line is linked to that crossing.
 
 Never author public `tb-N` IDs, `resolution_status`, `sources`, severity, CWE,
 CVSS, risk, finding references, exposure labels, commands, permissions, or

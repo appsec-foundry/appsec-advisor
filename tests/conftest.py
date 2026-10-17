@@ -293,7 +293,7 @@ def run_logger(
             "runtime/agent_logger.py",
             stdin=event,
             cwd=repo_root,
-            env={"CLAUDE_PLUGIN_ROOT": str(plugin_root)},
+            env={"CLAUDE_PLUGIN_ROOT": str(plugin_root), "OUTPUT_DIR": str(output_dir)},
         )
         log_file = output_dir / ".hook-events.log"
         content = log_file.read_text() if log_file.exists() else ""

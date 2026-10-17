@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """validators/eval_threat_model.py: developer-facing quality eval for a threat-model run.
 
-This is a TEST tool, not part of the create-threat-model pipeline. The pytest
+This is a TEST tool, not part of the appsec-analyzer pipeline. The pytest
 suite + validators/qa_checks.py already cover STRUCTURAL correctness (schema, render,
 cross-refs, determinism). They do NOT judge the SEMANTIC quality of the
 LLM-authored output. This harness fills that gap with a find -> adversarial-verify
@@ -21,7 +21,7 @@ Split of labour (AGENTS.md: prefer deterministic Python, make the LLM do less):
 
 The five dimensions and the JUDGE/VERIFY agent logic live in
 `agents/appsec-eval-judge.md`; the orchestration in
-`skills/eval-threat-model/SKILL.md`.
+`skills/eval-security-assessment/SKILL.md`.
 
 Exit codes:
     0  prepare succeeded, or aggregate found no confirmed High+/Critical defect
@@ -47,6 +47,7 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
+from shared.artifact_names import ArtifactSetError, model_path
 
 # Canonical STRIDE category names. Mirrors scripts/model/merge_threats.py
 # `_STRIDE_ORDER` / `_STRIDE_LETTER` (STRIDE is a fixed, stable acronym).
@@ -176,13 +177,29 @@ def _repo_relative_path_exists(repo_root: Path, raw_path: object) -> bool:
 # prepare
 # --------------------------------------------------------------------------- #
 def prepare(run_dir: Path, out: Path, repo: Path | None) -> int:
-    yml = run_dir / "threat-model.yaml"
+    try:
+        yml = model_path(run_dir)
+    except ArtifactSetError as exc:
+        return _err(str(exc))
     if not yml.is_file():
-        return _err(f"no threat-model.yaml under {run_dir}")
+        return _err(f"no assessment model under {run_dir}")
     try:
         model = _load_yaml(yml)
     except Exception as exc:  # noqa: BLE001 — surface any parse failure as usage error
         return _err(f"cannot parse {yml}: {exc}")
+    from shared.assessment_sources import is_portable_model, labelled_model, single_repository_only
+
+    if is_portable_model(model):
+        if repo is not None:
+            return _err(
+                single_repository_only(
+                    "eval-security-assessment --repo", "Omit --repo; component paths cannot be checked in one checkout."
+                )
+            )
+        try:
+            model = labelled_model(model)
+        except ValueError as exc:
+            return _err(f"invalid multi-repository model {yml}: {exc}")
 
     # Optional enrichment from the merged-threats sidecar (cwe / source / evidence).
     merged_by_id: dict[str, dict] = {}

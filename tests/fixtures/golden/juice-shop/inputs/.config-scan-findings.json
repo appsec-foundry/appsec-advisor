@@ -1,0 +1,1701 @@
+{
+  "checks_run": 57,
+  "findings": [
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-001",
+      "cwe": [
+        "CWE-1104"
+      ],
+      "evidence_snippet": "FROM node:24 AS installer",
+      "file": "Dockerfile",
+      "finding_type_id": "FT-140",
+      "iac_type": "Dockerfile",
+      "line": 1,
+      "local_id": "CFG-001",
+      "recommended_mitigation_title": "Pin base image to @sha256:<digest>",
+      "scenario": "Unpinned Container Base Image: Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:\u2026) ensures the exact image bytes are used on every build.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Unpinned Container Base Image"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-001",
+      "cwe": [
+        "CWE-1104"
+      ],
+      "evidence_snippet": "FROM alpine",
+      "file": "test/smoke/Dockerfile",
+      "finding_type_id": "FT-140",
+      "iac_type": "Dockerfile",
+      "line": 1,
+      "local_id": "CFG-002",
+      "recommended_mitigation_title": "Pin base image to @sha256:<digest>",
+      "scenario": "Unpinned Container Base Image: Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:\u2026) ensures the exact image bytes are used on every build.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Unpinned Container Base Image"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-002",
+      "cwe": [
+        "CWE-250"
+      ],
+      "evidence_snippet": "FROM alpine",
+      "file": "test/smoke/Dockerfile",
+      "finding_type_id": "FT-160",
+      "iac_type": "Dockerfile",
+      "line": 1,
+      "local_id": "CFG-003",
+      "recommended_mitigation_title": "Add USER <non-root-uid>",
+      "scenario": "Container Runs as Root: Containers running as root expand container-escape blast radius.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Container Runs as Root"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-003",
+      "cwe": [
+        "CWE-703"
+      ],
+      "evidence_snippet": "FROM gcr.io/distroless/nodejs24-debian13",
+      "file": "Dockerfile",
+      "finding_type_id": "FT-160",
+      "iac_type": "Dockerfile",
+      "line": 22,
+      "local_id": "CFG-004",
+      "recommended_mitigation_title": "Add HEALTHCHECK CMD curl -f http://localhost:<port>/health",
+      "scenario": "Missing Container Healthcheck: Missing HEALTHCHECK delays orchestrator detection of a hung or poisoned container.",
+      "severity": "Low",
+      "stride": "Denial of Service",
+      "title": "Missing Container Healthcheck"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-003",
+      "cwe": [
+        "CWE-703"
+      ],
+      "evidence_snippet": "FROM alpine",
+      "file": "test/smoke/Dockerfile",
+      "finding_type_id": "FT-160",
+      "iac_type": "Dockerfile",
+      "line": 1,
+      "local_id": "CFG-005",
+      "recommended_mitigation_title": "Add HEALTHCHECK CMD curl -f http://localhost:<port>/health",
+      "scenario": "Missing Container Healthcheck: Missing HEALTHCHECK delays orchestrator detection of a hung or poisoned container.",
+      "severity": "Low",
+      "stride": "Denial of Service",
+      "title": "Missing Container Healthcheck"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-005",
+      "cwe": [
+        "CWE-506"
+      ],
+      "evidence_snippet": "RUN npm install -g typescript@^6.0.3",
+      "file": "Dockerfile",
+      "finding_type_id": "FT-171",
+      "iac_type": "Dockerfile",
+      "line": 4,
+      "local_id": "CFG-006",
+      "recommended_mitigation_title": "Use `npm ci --ignore-scripts` and audit required postinstalls separately",
+      "scenario": "Dependency Install Scripts Run at Build Time: Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Dependency Install Scripts Run at Build Time"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job lint: no permissions at job or workflow level",
+      "file": ".github/workflows/ci.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 25,
+      "local_id": "CFG-007",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job bundle-analysis: no permissions at job or workflow level",
+      "file": ".github/workflows/frontend-bundle-analysis.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 13,
+      "local_id": "CFG-008",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job build: no permissions at job or workflow level",
+      "file": ".github/workflows/image_actions.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 21,
+      "local_id": "CFG-009",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job LMLFTFY: no permissions at job or workflow level",
+      "file": ".github/workflows/lint-fixer.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 6,
+      "local_id": "CFG-010",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job rebase: no permissions at job or workflow level",
+      "file": ".github/workflows/rebase.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 8,
+      "local_id": "CFG-011",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job create-release: no permissions at job or workflow level",
+      "file": ".github/workflows/release.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 10,
+      "local_id": "CFG-012",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job stale: no permissions at job or workflow level",
+      "file": ".github/workflows/stale.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 7,
+      "local_id": "CFG-013",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job UpdateChallengesOnWebsite: no permissions at job or workflow level",
+      "file": ".github/workflows/update-challenges-ebook.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 11,
+      "local_id": "CFG-014",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job UpdateChallengesOnWebsite: no permissions at job or workflow level",
+      "file": ".github/workflows/update-challenges-www-legacy.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 12,
+      "local_id": "CFG-015",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job UpdateChallengesOnWebsite: no permissions at job or workflow level",
+      "file": ".github/workflows/update-challenges-www.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 12,
+      "local_id": "CFG-016",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job UpdateNewsOnWebsite: no permissions at job or workflow level",
+      "file": ".github/workflows/update-news-www-legacy.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 8,
+      "local_id": "CFG-017",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job UpdateNewsOnWebsite: no permissions at job or workflow level",
+      "file": ".github/workflows/update-news-www.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 8,
+      "local_id": "CFG-018",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-010",
+      "cwe": [
+        "CWE-732"
+      ],
+      "evidence_snippet": "job zap_scan: no permissions at job or workflow level",
+      "file": ".github/workflows/zap_scan.yml",
+      "finding_type_id": "FT-143",
+      "iac_type": "github_workflow",
+      "line": 8,
+      "local_id": "CFG-019",
+      "recommended_mitigation_title": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed",
+      "scenario": "Missing Workflow Permissions Block: Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN \u2014 any compromised step can push code, create releases, or approve PRs.",
+      "severity": "Medium",
+      "stride": "Elevation of Privilege",
+      "title": "Missing Workflow Permissions Block"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-011",
+      "cwe": [
+        "CWE-829"
+      ],
+      "evidence_snippet": "uses: coverallsapp/github-action@v2",
+      "file": ".github/workflows/ci.yml",
+      "finding_type_id": "FT-146",
+      "iac_type": "github_workflow",
+      "line": 188,
+      "local_id": "CFG-020",
+      "recommended_mitigation_title": "Pin every third-party action to a full 40-char commit SHA",
+      "scenario": "Unpinned Third-Party GitHub Action: Tag-based action references (@v3, @main) are mutable \u2014 a compromised publisher can retroactively inject malicious code into an already-used tag.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Unpinned Third-Party GitHub Action"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-011",
+      "cwe": [
+        "CWE-829"
+      ],
+      "evidence_snippet": "uses: github/codeql-action/init@v3",
+      "file": ".github/workflows/codeql-analysis.yml",
+      "finding_type_id": "FT-146",
+      "iac_type": "github_workflow",
+      "line": 23,
+      "local_id": "CFG-021",
+      "recommended_mitigation_title": "Pin every third-party action to a full 40-char commit SHA",
+      "scenario": "Unpinned Third-Party GitHub Action: Tag-based action references (@v3, @main) are mutable \u2014 a compromised publisher can retroactively inject malicious code into an already-used tag.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Unpinned Third-Party GitHub Action"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-011",
+      "cwe": [
+        "CWE-829"
+      ],
+      "evidence_snippet": "uses: calibreapp/image-actions@main",
+      "file": ".github/workflows/image_actions.yml",
+      "finding_type_id": "FT-146",
+      "iac_type": "github_workflow",
+      "line": 33,
+      "local_id": "CFG-022",
+      "recommended_mitigation_title": "Pin every third-party action to a full 40-char commit SHA",
+      "scenario": "Unpinned Third-Party GitHub Action: Tag-based action references (@v3, @main) are mutable \u2014 a compromised publisher can retroactively inject malicious code into an already-used tag.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Unpinned Third-Party GitHub Action"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-040",
+      "cwe": [
+        "CWE-347"
+      ],
+      "evidence_kind": "absence",
+      "evidence_snippet": "No image signing found in 21 searched file(s)",
+      "file": ".github/workflows/*.yml",
+      "finding_type_id": "FT-148",
+      "iac_type": "github_workflow",
+      "line": 0,
+      "local_id": "CFG-023",
+      "recommended_mitigation_title": "Add cosign signing step to release workflow; or use actions/attest-build-provenance",
+      "scenario": "Missing Container Image Signing: Unsigned container images cannot be verified for provenance \u2014 any registry intermediary could substitute them.",
+      "searched_file_count": 21,
+      "searched_files": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql-analysis.yml",
+        ".github/workflows/frontend-bundle-analysis.yml",
+        ".github/workflows/image_actions.yml",
+        ".github/workflows/lint-fixer.yml",
+        ".github/workflows/lock.yml",
+        ".github/workflows/pr-compliance.yml",
+        ".github/workflows/rebase.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/stale.yml",
+        ".github/workflows/update-challenges-ebook.yml",
+        ".github/workflows/update-challenges-www-legacy.yml",
+        ".github/workflows/update-challenges-www.yml",
+        ".github/workflows/update-news-www-legacy.yml",
+        ".github/workflows/update-news-www.yml",
+        ".github/workflows/zap_scan.yml",
+        ".gitlab-ci.yml",
+        "Dockerfile",
+        "frontend/package.json",
+        "package.json",
+        "test/smoke/Dockerfile"
+      ],
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Missing Container Image Signing"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-050",
+      "cwe": [
+        "CWE-1104"
+      ],
+      "evidence_kind": "absence",
+      "evidence_snippet": "File not found",
+      "file": "package-lock.json",
+      "finding_type_id": "FT-171",
+      "iac_type": "npm_config",
+      "line": 0,
+      "local_id": "CFG-024",
+      "recommended_mitigation_title": "Commit package-lock.json; use `npm ci` in CI",
+      "scenario": "Missing npm Lockfile: Without a lockfile, `npm install` installs different transitive versions on each run \u2014 supply-chain attacks become undetectable.",
+      "searched_file_count": 0,
+      "searched_files": [],
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Missing npm Lockfile"
+    },
+    {
+      "breach_vector": "Build-Time",
+      "check_id": "IAC-051",
+      "cwe": [
+        "CWE-506"
+      ],
+      "evidence_snippet": "\"postinstall\": \"cd frontend && npm install && cd .. && npm run build:frontend && (npm run --silent build:server || cd .)\",",
+      "file": "package.json",
+      "finding_type_id": "FT-171",
+      "iac_type": "npm_config",
+      "line": 56,
+      "local_id": "CFG-025",
+      "recommended_mitigation_title": "Remove postinstall if possible; else document why required and use --ignore-scripts in CI and audit the hook content",
+      "scenario": "Unaudited npm Lifecycle Script: postinstall hooks execute arbitrary code at install time \u2014 the attack surface for supply-chain compromise.",
+      "severity": "Medium",
+      "stride": "Tampering",
+      "title": "Unaudited npm Lifecycle Script"
+    }
+  ],
+  "generated_at": "2026-10-16T15:17:49Z",
+  "supply_chain_facts": {
+    "capabilities": {
+      "dependency_updates": {
+        "ecosystems_covered": [],
+        "ecosystems_used": [
+          "docker",
+          "github-actions",
+          "npm"
+        ],
+        "evidence": [],
+        "present": false,
+        "searched_file_count": 0,
+        "searched_files": [],
+        "tools": []
+      },
+      "image_signing": {
+        "evidence": [],
+        "present": false,
+        "searched_file_count": 21,
+        "searched_files": [
+          ".github/workflows/ci.yml",
+          ".github/workflows/codeql-analysis.yml",
+          ".github/workflows/frontend-bundle-analysis.yml",
+          ".github/workflows/image_actions.yml",
+          ".github/workflows/lint-fixer.yml",
+          ".github/workflows/lock.yml",
+          ".github/workflows/pr-compliance.yml",
+          ".github/workflows/rebase.yml",
+          ".github/workflows/release.yml",
+          ".github/workflows/stale.yml",
+          ".github/workflows/update-challenges-ebook.yml",
+          ".github/workflows/update-challenges-www-legacy.yml",
+          ".github/workflows/update-challenges-www.yml",
+          ".github/workflows/update-news-www-legacy.yml",
+          ".github/workflows/update-news-www.yml",
+          ".github/workflows/zap_scan.yml",
+          ".gitlab-ci.yml",
+          "Dockerfile",
+          "frontend/package.json",
+          "package.json",
+          "test/smoke/Dockerfile"
+        ]
+      },
+      "sbom": {
+        "evidence": [
+          {
+            "file": ".github/workflows/ci.yml",
+            "line": 23
+          },
+          {
+            "file": ".github/workflows/release.yml",
+            "line": 7
+          },
+          {
+            "file": "Dockerfile",
+            "line": 18
+          },
+          {
+            "file": "frontend/package.json",
+            "line": 8
+          },
+          {
+            "file": "package.json",
+            "line": 77
+          }
+        ],
+        "present": true,
+        "searched_file_count": 21,
+        "searched_files": [
+          ".github/workflows/ci.yml",
+          ".github/workflows/codeql-analysis.yml",
+          ".github/workflows/frontend-bundle-analysis.yml",
+          ".github/workflows/image_actions.yml",
+          ".github/workflows/lint-fixer.yml",
+          ".github/workflows/lock.yml",
+          ".github/workflows/pr-compliance.yml",
+          ".github/workflows/rebase.yml",
+          ".github/workflows/release.yml",
+          ".github/workflows/stale.yml",
+          ".github/workflows/update-challenges-ebook.yml",
+          ".github/workflows/update-challenges-www-legacy.yml",
+          ".github/workflows/update-challenges-www.yml",
+          ".github/workflows/update-news-www-legacy.yml",
+          ".github/workflows/update-news-www.yml",
+          ".github/workflows/zap_scan.yml",
+          ".gitlab-ci.yml",
+          "Dockerfile",
+          "frontend/package.json",
+          "package.json",
+          "test/smoke/Dockerfile"
+        ]
+      }
+    },
+    "inputs": [
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "lint",
+        "kind": "github_action",
+        "line": 29,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "lint",
+        "kind": "github_action",
+        "line": 31,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coding-challenge-rsn",
+        "kind": "github_action",
+        "line": 45,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coding-challenge-rsn",
+        "kind": "github_action",
+        "line": 47,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "frontend-test",
+        "kind": "github_action",
+        "line": 63,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "frontend-test",
+        "kind": "github_action",
+        "line": 66,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "frontend-test",
+        "kind": "github_action",
+        "line": 74,
+        "pinning": "commit-sha",
+        "reference": "nick-invision/retry@7152eba30c6575329ac0576536151aca5a72780e"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "frontend-test",
+        "kind": "github_action",
+        "line": 88,
+        "pinning": "commit-sha",
+        "reference": "actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "server-test",
+        "kind": "github_action",
+        "line": 102,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "server-test",
+        "kind": "github_action",
+        "line": 105,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "server-test",
+        "kind": "github_action",
+        "line": 113,
+        "pinning": "commit-sha",
+        "reference": "nick-invision/retry@7152eba30c6575329ac0576536151aca5a72780e"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "server-test",
+        "kind": "github_action",
+        "line": 125,
+        "pinning": "commit-sha",
+        "reference": "actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "api-test",
+        "kind": "github_action",
+        "line": 139,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "api-test",
+        "kind": "github_action",
+        "line": 142,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "api-test",
+        "kind": "github_action",
+        "line": 150,
+        "pinning": "commit-sha",
+        "reference": "nick-invision/retry@7152eba30c6575329ac0576536151aca5a72780e"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "api-test",
+        "kind": "github_action",
+        "line": 163,
+        "pinning": "commit-sha",
+        "reference": "actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coverage-report",
+        "kind": "github_action",
+        "line": 174,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coverage-report",
+        "kind": "github_action",
+        "line": 176,
+        "pinning": "commit-sha",
+        "reference": "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coverage-report",
+        "kind": "github_action",
+        "line": 180,
+        "pinning": "commit-sha",
+        "reference": "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coverage-report",
+        "kind": "github_action",
+        "line": 184,
+        "pinning": "commit-sha",
+        "reference": "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "coverage-report",
+        "kind": "github_action",
+        "line": 188,
+        "pinning": "tag",
+        "reference": "coverallsapp/github-action@v2"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "custom-config-test",
+        "kind": "github_action",
+        "line": 196,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "custom-config-test",
+        "kind": "github_action",
+        "line": 198,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "custom-config-test",
+        "kind": "github_action",
+        "line": 205,
+        "pinning": "commit-sha",
+        "reference": "nick-invision/retry@7152eba30c6575329ac0576536151aca5a72780e"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "e2e-test",
+        "kind": "github_action",
+        "line": 230,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "e2e-test",
+        "kind": "github_action",
+        "line": 232,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "e2e-test",
+        "kind": "github_action",
+        "line": 241,
+        "pinning": "commit-sha",
+        "reference": "cypress-io/github-action@57b70560982e6a11d23d4b8bec7f8a487cdbb71b"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "e2e-test",
+        "kind": "github_action",
+        "line": 256,
+        "pinning": "commit-sha",
+        "reference": "cypress-io/github-action@57b70560982e6a11d23d4b8bec7f8a487cdbb71b"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "smoke-test",
+        "kind": "github_action",
+        "line": 275,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "smoke-test",
+        "kind": "github_action",
+        "line": 277,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "docker-test",
+        "kind": "github_action",
+        "line": 309,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 318,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 320,
+        "pinning": "commit-sha",
+        "reference": "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 322,
+        "pinning": "commit-sha",
+        "reference": "docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 324,
+        "pinning": "commit-sha",
+        "reference": "docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 338,
+        "pinning": "commit-sha",
+        "reference": "docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "heroku",
+        "kind": "github_action",
+        "line": 356,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "heroku",
+        "kind": "github_action",
+        "line": 369,
+        "pinning": "commit-sha",
+        "reference": "akhileshns/heroku-deploy@581dd286c962b6972d427fcf8980f60755c15520"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "notify-slack",
+        "kind": "github_action",
+        "line": 387,
+        "pinning": "commit-sha",
+        "reference": "Gamesight/slack-workflow-status@68bf00d0dbdbcb206c278399aa1ef6c14f74347a"
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "job": "heroku",
+        "kind": "remote_script",
+        "line": 358,
+        "pinning": "none",
+        "reference": "curl https://cli-assets.heroku.com/install.sh | sh"
+      },
+      {
+        "file": ".github/workflows/codeql-analysis.yml",
+        "job": "analyze",
+        "kind": "github_action",
+        "line": 21,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/codeql-analysis.yml",
+        "job": "analyze",
+        "kind": "github_action",
+        "line": 23,
+        "pinning": "tag",
+        "reference": "github/codeql-action/init@v3"
+      },
+      {
+        "file": ".github/workflows/codeql-analysis.yml",
+        "job": "analyze",
+        "kind": "github_action",
+        "line": 34,
+        "pinning": "tag",
+        "reference": "github/codeql-action/autobuild@v3"
+      },
+      {
+        "file": ".github/workflows/codeql-analysis.yml",
+        "job": "analyze",
+        "kind": "github_action",
+        "line": 36,
+        "pinning": "tag",
+        "reference": "github/codeql-action/analyze@v3"
+      },
+      {
+        "file": ".github/workflows/frontend-bundle-analysis.yml",
+        "job": "bundle-analysis",
+        "kind": "github_action",
+        "line": 17,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/frontend-bundle-analysis.yml",
+        "job": "bundle-analysis",
+        "kind": "github_action",
+        "line": 20,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/image_actions.yml",
+        "job": "build",
+        "kind": "github_action",
+        "line": 30,
+        "pinning": "tag",
+        "reference": "actions/checkout@v6"
+      },
+      {
+        "file": ".github/workflows/image_actions.yml",
+        "job": "build",
+        "kind": "github_action",
+        "line": 33,
+        "pinning": "branch",
+        "reference": "calibreapp/image-actions@main"
+      },
+      {
+        "file": ".github/workflows/image_actions.yml",
+        "job": "build",
+        "kind": "github_action",
+        "line": 42,
+        "pinning": "tag",
+        "reference": "peter-evans/create-pull-request@v8"
+      },
+      {
+        "file": ".github/workflows/lint-fixer.yml",
+        "job": "LMLFTFY",
+        "kind": "github_action",
+        "line": 10,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/lint-fixer.yml",
+        "job": "LMLFTFY",
+        "kind": "github_action",
+        "line": 12,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/lint-fixer.yml",
+        "job": "LMLFTFY",
+        "kind": "github_action",
+        "line": 22,
+        "pinning": "commit-sha",
+        "reference": "stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842"
+      },
+      {
+        "file": ".github/workflows/lock.yml",
+        "job": "action",
+        "kind": "github_action",
+        "line": 20,
+        "pinning": "commit-sha",
+        "reference": "dessant/lock-threads@89ae32b08ed1a541efecbab17912962a5e38981c"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 16,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 63,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 84,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 97,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 113,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 127,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 140,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 155,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 300,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 435,
+        "pinning": "commit-sha",
+        "reference": "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
+      },
+      {
+        "file": ".github/workflows/pr-compliance.yml",
+        "job": "check-compliance",
+        "kind": "github_action",
+        "line": 468,
+        "pinning": "commit-sha",
+        "reference": "Gamesight/slack-workflow-status@68bf00d0dbdbcb206c278399aa1ef6c14f74347a"
+      },
+      {
+        "file": ".github/workflows/rebase.yml",
+        "job": "rebase",
+        "kind": "github_action",
+        "line": 13,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/rebase.yml",
+        "job": "rebase",
+        "kind": "github_action",
+        "line": 17,
+        "pinning": "commit-sha",
+        "reference": "cirrus-actions/rebase@b87d48154a87a85666003575337e27b8cd65f691"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "create-release",
+        "kind": "github_action",
+        "line": 14,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "create-release",
+        "kind": "github_action",
+        "line": 16,
+        "pinning": "commit-sha",
+        "reference": "softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "kind": "github_action",
+        "line": 31,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "kind": "github_action",
+        "line": 33,
+        "pinning": "commit-sha",
+        "reference": "actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "kind": "github_action",
+        "line": 58,
+        "pinning": "commit-sha",
+        "reference": "softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 68,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 70,
+        "pinning": "commit-sha",
+        "reference": "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 72,
+        "pinning": "commit-sha",
+        "reference": "docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 74,
+        "pinning": "commit-sha",
+        "reference": "docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 80,
+        "pinning": "commit-sha",
+        "reference": "dawidd6/action-get-tag@727a6f0a561be04e09013531e73a3983a65e3479"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "github_action",
+        "line": 86,
+        "pinning": "commit-sha",
+        "reference": "docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355"
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "job": "notify-slack",
+        "kind": "github_action",
+        "line": 106,
+        "pinning": "commit-sha",
+        "reference": "Gamesight/slack-workflow-status@68bf00d0dbdbcb206c278399aa1ef6c14f74347a"
+      },
+      {
+        "file": ".github/workflows/stale.yml",
+        "job": "stale",
+        "kind": "github_action",
+        "line": 10,
+        "pinning": "commit-sha",
+        "reference": "actions/stale@997185467fa4f803885201cee163a9f38240193d"
+      },
+      {
+        "file": ".github/workflows/update-challenges-ebook.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 16,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-challenges-ebook.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 26,
+        "pinning": "commit-sha",
+        "reference": "stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842"
+      },
+      {
+        "file": ".github/workflows/update-challenges-www-legacy.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 17,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-challenges-www-legacy.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 23,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-challenges-www-legacy.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 45,
+        "pinning": "commit-sha",
+        "reference": "stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842"
+      },
+      {
+        "file": ".github/workflows/update-challenges-www.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 17,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-challenges-www.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 23,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-challenges-www.yml",
+        "job": "UpdateChallengesOnWebsite",
+        "kind": "github_action",
+        "line": 45,
+        "pinning": "commit-sha",
+        "reference": "stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842"
+      },
+      {
+        "file": ".github/workflows/update-news-www-legacy.yml",
+        "job": "UpdateNewsOnWebsite",
+        "kind": "github_action",
+        "line": 12,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-news-www-legacy.yml",
+        "job": "UpdateNewsOnWebsite",
+        "kind": "github_action",
+        "line": 20,
+        "pinning": "commit-sha",
+        "reference": "stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842"
+      },
+      {
+        "file": ".github/workflows/update-news-www.yml",
+        "job": "UpdateNewsOnWebsite",
+        "kind": "github_action",
+        "line": 12,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      },
+      {
+        "file": ".github/workflows/update-news-www.yml",
+        "job": "UpdateNewsOnWebsite",
+        "kind": "github_action",
+        "line": 20,
+        "pinning": "commit-sha",
+        "reference": "stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842"
+      },
+      {
+        "file": ".github/workflows/zap_scan.yml",
+        "job": "zap_scan",
+        "kind": "github_action",
+        "line": 13,
+        "pinning": "commit-sha",
+        "reference": "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8"
+      },
+      {
+        "file": ".github/workflows/zap_scan.yml",
+        "job": "zap_scan",
+        "kind": "github_action",
+        "line": 17,
+        "pinning": "commit-sha",
+        "reference": "zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25"
+      },
+      {
+        "file": ".gitlab-ci.yml",
+        "kind": "ci_include",
+        "line": 2,
+        "pinning": "none",
+        "reference": "template:Auto-DevOps.gitlab-ci.yml"
+      },
+      {
+        "file": "Dockerfile",
+        "kind": "base_image",
+        "line": 1,
+        "pinning": "tag",
+        "reference": "node:24"
+      },
+      {
+        "file": "Dockerfile",
+        "kind": "base_image",
+        "line": 22,
+        "pinning": "none",
+        "reference": "gcr.io/distroless/nodejs24-debian13"
+      },
+      {
+        "file": "test/smoke/Dockerfile",
+        "kind": "base_image",
+        "line": 1,
+        "pinning": "none",
+        "reference": "alpine"
+      }
+    ],
+    "installs": [
+      {
+        "command": "npm install --ignore-scripts",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "lint",
+        "line": 36,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --ignore-scripts",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "lint",
+        "line": 38,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "coding-challenge-rsn",
+        "line": 51,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "frontend-test",
+        "line": 71,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "server-test",
+        "line": 110,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "api-test",
+        "line": 147,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "custom-config-test",
+        "line": 203,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g @angular/cli",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "e2e-test",
+        "line": 236,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "e2e-test",
+        "line": 238,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g typescript@${{ env.TYPESCRIPT_VERSION }}",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "smoke-test",
+        "line": 282,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g @cyclonedx/cyclonedx-npm@$CYCLONEDX_NPM_VERSION",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "smoke-test",
+        "line": 283,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g grunt-cli",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "smoke-test",
+        "line": 284,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --production",
+        "ecosystem": "npm",
+        "file": ".github/workflows/ci.yml",
+        "job": "smoke-test",
+        "line": 292,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --ignore-scripts",
+        "ecosystem": "npm",
+        "file": ".github/workflows/frontend-bundle-analysis.yml",
+        "job": "bundle-analysis",
+        "line": 26,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --ignore-scripts",
+        "ecosystem": "npm",
+        "file": ".github/workflows/frontend-bundle-analysis.yml",
+        "job": "bundle-analysis",
+        "line": 31,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install playwright",
+        "ecosystem": "npm",
+        "file": ".github/workflows/frontend-bundle-analysis.yml",
+        "job": "bundle-analysis",
+        "line": 40,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --ignore-scripts",
+        "ecosystem": "npm",
+        "file": ".github/workflows/lint-fixer.yml",
+        "job": "LMLFTFY",
+        "line": 17,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --ignore-scripts --legacy-peer-deps",
+        "ecosystem": "npm",
+        "file": ".github/workflows/lint-fixer.yml",
+        "job": "LMLFTFY",
+        "line": 19,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g typescript@${{ env.TYPESCRIPT_VERSION }}",
+        "ecosystem": "npm",
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "line": 38,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g @cyclonedx/cyclonedx-npm@${{ env.CYCLONEDX_NPM_VERSION }}",
+        "ecosystem": "npm",
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "line": 39,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g grunt-cli",
+        "ecosystem": "npm",
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "line": 40,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --production",
+        "ecosystem": "npm",
+        "file": ".github/workflows/release.yml",
+        "job": "package",
+        "line": 55,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g typescript@^6.0.3",
+        "ecosystem": "npm",
+        "file": "Dockerfile",
+        "line": 4,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install --omit=dev",
+        "ecosystem": "npm",
+        "file": "Dockerfile",
+        "line": 5,
+        "lockfile_enforced": false
+      },
+      {
+        "command": "npm install -g @cyclonedx/cyclonedx-npm@$CYCLONEDX_NPM_VERSION",
+        "ecosystem": "npm",
+        "file": "Dockerfile",
+        "line": 19,
+        "lockfile_enforced": false
+      }
+    ],
+    "outputs": [
+      {
+        "destination": {
+          "registry": "docker.io",
+          "repository": "bkimminich/juice-shop"
+        },
+        "dockerfile": "Dockerfile",
+        "file": ".github/workflows/ci.yml",
+        "job": "docker",
+        "kind": "container_image",
+        "line": 338,
+        "pushed": true
+      },
+      {
+        "destination": {
+          "registry": "docker.io",
+          "repository": "bkimminich/juice-shop"
+        },
+        "dockerfile": "Dockerfile",
+        "file": ".github/workflows/release.yml",
+        "job": "docker",
+        "kind": "container_image",
+        "line": 86,
+        "pushed": true
+      }
+    ],
+    "version": 1,
+    "workflows": [
+      {
+        "builds_container_image": true,
+        "file": ".github/workflows/ci.yml",
+        "publishes_packages": [],
+        "pushes_container_image": true,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/codeql-analysis.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "per-job"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/frontend-bundle-analysis.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/image_actions.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/lint-fixer.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/lock.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "workflow"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/pr-compliance.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "workflow"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/rebase.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": true,
+        "file": ".github/workflows/release.yml",
+        "publishes_packages": [],
+        "pushes_container_image": true,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/stale.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/update-challenges-ebook.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/update-challenges-www-legacy.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/update-challenges-www.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/update-news-www-legacy.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/update-news-www.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".github/workflows/zap_scan.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "default"
+      },
+      {
+        "builds_container_image": false,
+        "file": ".gitlab-ci.yml",
+        "publishes_packages": [],
+        "pushes_container_image": false,
+        "token_permissions": "unknown"
+      }
+    ]
+  },
+  "version": 1,
+  "violations": 25
+}

@@ -324,7 +324,7 @@ def test_id_patterns_are_canonical(schema_files):
             if prefix.startswith("["):
                 continue
             # Strip `{min,max}` quantifier tail.
-            if prefix not in ("F", "T", "M", "C", "TH", "CC", "AF", "A"):
+            if prefix not in ("F", "T", "M", "C", "TH", "CC", "AF", "A", "W"):
                 violations.append(f"{path.name} at {pointer}: unusual ID prefix {prefix!r} in pattern {pat!r}")
     assert not violations, "\n".join(violations)
 
@@ -421,3 +421,16 @@ def test_stride_lens_contracts_share_bounded_plugin_owned_names():
     for lens in ("rag", "mcp"):
         assert f"agents/stride-lenses/{lens}.md" in prompt
         assert (REPO_ROOT / f"agents/stride-lenses/{lens}.md").is_file()
+
+
+def test_portable_output_schema_declares_every_nested_field_of_the_base_model():
+    """The v2 schema re-declares v1 objects; a field added to v1 alone fails publication."""
+    import yaml
+
+    base = yaml.safe_load((REPO_ROOT / "schemas/threat-model.output.schema.yaml").read_text())["properties"]
+    portable = yaml.safe_load((REPO_ROOT / "schemas/threat-model.output-v2.schema.yaml").read_text())["properties"]
+    assert set(base) <= set(portable)
+    for name, definition in base.items():
+        mirrored = portable[name]
+        if isinstance(definition, dict) and "properties" in definition and "properties" in mirrored:
+            assert set(definition["properties"]) <= set(mirrored["properties"]), name

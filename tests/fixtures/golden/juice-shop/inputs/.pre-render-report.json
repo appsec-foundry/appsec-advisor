@@ -1,0 +1,13 @@
+{
+  "passed": [
+    "ms-anti-patterns.json",
+    "ms-critical-attack-tree.json",
+    "ms-verdict.json",
+    "security-posture-attack-paths.json"
+  ],
+  "failed": [],
+  "missing_required": [],
+  "skipped": [
+    "abuse-cases.json"
+  ]
+}

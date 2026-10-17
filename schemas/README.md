@@ -39,6 +39,7 @@ template, emitted deterministically on context-v2, and validated through
 | `evidence-verifier-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/post-stride/evidence-sample.json` | `scripts/contexts/build_post_stride_contexts.py` | evidence verifier and controller-owned canonical annotation |
 | `post-stride-generated-threats.schema.json` | `$OUTPUT_DIR/.dispatch-context/post-stride/generated-threats.json` | `scripts/contexts/build_post_stride_contexts.py` | post-STRIDE synthesizer |
 | `post-stride-proposed-mitigations.schema.json` | `$OUTPUT_DIR/.dispatch-context/post-stride/proposed-mitigations.json` | `scripts/contexts/build_post_stride_contexts.py` | post-STRIDE synthesizer |
+| `abuse-case-deriver-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/abuse-cases/deriver.json` | `scripts/model/derive_abuse_cases.py` | the abuse-case deriver job (thorough depth) |
 | `abuse-case-verifier-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/abuse-cases/<candidate-id>.json` | `scripts/contexts/build_abuse_case_contexts.py` | one abuse-case verifier job |
 | `merge-decisions.schema.json` | `$OUTPUT_DIR/.merge-decisions.json` | `appsec-threat-merger` (Phase 9) | `scripts/model/merge_threats.py finalize` |
 | `triage-flags.schema.yaml` | `$OUTPUT_DIR/.triage-flags.json` | `appsec-triage-validator` (Phase 10b) | Phase 11 rendering, QA reviewer |

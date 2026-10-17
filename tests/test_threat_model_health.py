@@ -72,14 +72,21 @@ def test_freshness_no_yaml_no_md(tmp_path):
     res = tmh.check_freshness(tmp_path, tmp_path)
     assert res["verdict"] == "NO_MODEL"
     assert res["recommend"] == "full"
-    assert "no threat-model.yaml" in res["reason"]
+    assert "no assessment model" in res["reason"]
+
+
+def test_freshness_refuses_a_directory_with_both_naming_sets(tmp_path):
+    (tmp_path / "threat-model.yaml").write_text("meta: {}\n")
+    (tmp_path / "security-assessment.yaml").write_text("meta: {}\n")
+    res = tmh.check_freshness(tmp_path, tmp_path)
+    assert res["verdict"] == "UNKNOWN" and "both" in res["reason"]
 
 
 def test_freshness_legacy_md_only(tmp_path):
     (tmp_path / "threat-model.md").write_text("legacy")
     res = tmh.check_freshness(tmp_path, tmp_path)
     assert res["verdict"] == "NO_MODEL"
-    assert "legacy" in res["reason"]
+    assert "without a model" in res["reason"]
     assert res["recommend"] == "full"
 
 

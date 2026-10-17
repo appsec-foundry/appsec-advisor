@@ -1,0 +1,949 @@
+{
+  "component_inventory_fingerprint": "sha256:3e08c3679335e0bed1f41559cdd7b1b4bf13010b2ed9308b6f3721a6e8602f75",
+  "data_flows": [
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/chat.ts",
+            "line": 110
+          }
+        ],
+        "scheme": "api-key",
+        "scope": "LLM_API_KEY environment value passed as provider apiKey; endpoint from application.chatBot.llmApiUrl"
+      },
+      "data_classification": "Confidential",
+      "diagram_label": "Chat prompts",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "routes/chat.ts",
+          "line": 108
+        }
+      ],
+      "from": "component-1f61b207923dbaf5",
+      "id": "df-001",
+      "label": "Chatbot prompts sent to configurable OpenAI-compatible LLM endpoint",
+      "protocol": "HTTP",
+      "provenance": "recon",
+      "to": "external",
+      "to_entity": "ext-e31c1c80c5971647"
+    },
+    {
+      "data_classification": "Internal",
+      "diagram_label": "Requester-chosen URL fetch",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 24
+        }
+      ],
+      "from": "component-1f61b207923dbaf5",
+      "id": "df-002",
+      "label": "Server-side fetch of requester-chosen image URL (user-controlled destination)",
+      "protocol": "HTTP",
+      "provenance": "recon",
+      "to": "external"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/nftMint.ts",
+            "line": 18
+          }
+        ],
+        "scheme": "api-key",
+        "scope": "ALCHEMY_API_KEY embedded in wss URL path",
+        "transport": "protected"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "Blockchain RPC events",
+      "direction": "bidirectional",
+      "evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 18
+        },
+        {
+          "file": "routes/web3Wallet.ts",
+          "line": 20
+        }
+      ],
+      "from": "component-6ffadbc3868c2a3b",
+      "id": "df-003",
+      "label": "Contract event subscription over Sepolia RPC WebSocket (NFT mint and wallet exploit listeners)",
+      "protocol": "WebSocket",
+      "provenance": "recon",
+      "to": "external",
+      "to_entity": "ext-e70869cf742e2aa9"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "models/index.ts",
+            "line": 34
+          }
+        ],
+        "scheme": "none",
+        "scope": "Embedded SQLite engine inside the application process; the engine has no login of its own."
+      },
+      "data_classification": "Confidential",
+      "diagram_label": "Application records",
+      "direction": "bidirectional",
+      "evidence": [
+        {
+          "file": "models/index.ts",
+          "line": 30
+        }
+      ],
+      "from": "component-290ae722e9565831",
+      "id": "df-004",
+      "label": "Sequelize ORM reads and writes to embedded SQLite database",
+      "protocol": "SQLite (embedded)",
+      "provenance": "recon",
+      "to": "component-b213d5ab01236933"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "data/mongodb.ts",
+            "line": 9
+          },
+          {
+            "file": "data/mongodb.ts",
+            "line": 10
+          }
+        ],
+        "scheme": "none",
+        "scope": "Embedded MarsDB engine inside the application process; the engine has no login of its own."
+      },
+      "data_classification": "Confidential",
+      "diagram_label": "Reviews and orders",
+      "direction": "bidirectional",
+      "evidence": [
+        {
+          "file": "data/mongodb.ts",
+          "line": 9
+        },
+        {
+          "file": "data/mongodb.ts",
+          "line": 10
+        }
+      ],
+      "from": "component-1f61b207923dbaf5",
+      "id": "df-005",
+      "label": "Reviews and orders collections in embedded MarsDB",
+      "protocol": "MarsDB (embedded)",
+      "provenance": "recon",
+      "to": "component-790db1fed70651aa"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "frontend/src/app/login/login.component.ts",
+            "line": 31
+          },
+          {
+            "file": "frontend/src/app/login/login.component.ts",
+            "line": 148
+          }
+        ],
+        "flow": "implicit",
+        "scheme": "oauth2",
+        "scope": "The identity provider authenticates the user at its sign-in endpoint",
+        "transport": "protected"
+      },
+      "data_classification": "Confidential",
+      "direction": "unidirectional",
+      "evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 31
+        },
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 148
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-006",
+      "label": "OAuth authorization",
+      "protocol": "HTTPS",
+      "provenance": "recon",
+      "to": "external",
+      "to_entity": "ext-idp-89a8000a68d759c6"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "frontend/src/app/Services/user.service.ts",
+            "line": 68
+          }
+        ],
+        "scheme": "bearer",
+        "scope": "The provider checks the OAuth access token sent with the request",
+        "transport": "protected"
+      },
+      "data_classification": "Confidential",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 68
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-007",
+      "label": "OAuth profile request",
+      "protocol": "HTTPS",
+      "provenance": "recon",
+      "to": "external",
+      "to_entity": "ext-idp-89a8000a68d759c6"
+    },
+    {
+      "access_group": {
+        "id": "api-component-6ffaf23414c56207-component-1f61b207923dbaf5",
+        "label": "API access",
+        "mode": "alternatives"
+      },
+      "authentication": {
+        "evidence": [
+          {
+            "file": "lib/insecurity.ts",
+            "line": 52
+          },
+          {
+            "file": "routes/dataExport.ts",
+            "line": 18
+          },
+          {
+            "file": "routes/orderHistory.ts",
+            "line": 13
+          },
+          {
+            "file": "lib/insecurity.ts",
+            "line": 156
+          }
+        ],
+        "scheme": "bearer",
+        "scope": "the handler checks a bearer credential and rejects the request without it"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/complaint.service.ts",
+          "line": 21
+        },
+        {
+          "file": "frontend/src/app/Services/recycle.service.ts",
+          "line": 27
+        },
+        {
+          "file": "frontend/src/app/Services/basket.service.ts",
+          "line": 44
+        },
+        {
+          "file": "frontend/src/app/Services/basket.service.ts",
+          "line": 52
+        },
+        {
+          "file": "server.ts",
+          "line": 382
+        },
+        {
+          "file": "server.ts",
+          "line": 386
+        },
+        {
+          "file": "server.ts",
+          "line": 426
+        },
+        {
+          "file": "server.ts",
+          "line": 427
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-008",
+      "label": "API requests (bearer)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "GET /rest/basket/:id",
+        "GET /rest/order-history",
+        "GET /rest/order-history/orders",
+        "PATCH /rest/products/reviews",
+        "POST /api/BasketItems",
+        "POST /api/Complaints",
+        "POST /api/Recycles",
+        "POST /rest/basket/:id/checkout",
+        "POST /rest/products/reviews",
+        "POST /rest/user/data-export",
+        "PUT /api/BasketItems/:id",
+        "PUT /rest/basket/:id/coupon/:coupon",
+        "PUT /rest/order-history/:id/delivery-status"
+      ],
+      "to": "component-1f61b207923dbaf5"
+    },
+    {
+      "access_group": {
+        "id": "api-component-6ffaf23414c56207-component-1f61b207923dbaf5",
+        "label": "API access",
+        "mode": "alternatives"
+      },
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/recycles.ts",
+            "line": 23
+          },
+          {
+            "file": "server.ts",
+            "line": 197
+          },
+          {
+            "file": "server.ts",
+            "line": 203
+          },
+          {
+            "file": "routes/metrics.ts",
+            "line": 63
+          },
+          {
+            "file": "lib/antiCheat.ts",
+            "line": 51
+          },
+          {
+            "file": "server.ts",
+            "line": 315
+          },
+          {
+            "file": "routes/verify.ts",
+            "line": 84
+          },
+          {
+            "file": "lib/insecurity.ts",
+            "line": 186
+          }
+        ],
+        "scheme": "none",
+        "scope": "no credential check in the resolved handler chain"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/recycle.service.ts",
+          "line": 21
+        },
+        {
+          "file": "frontend/src/app/Services/feedback.service.ts",
+          "line": 27
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 38
+        },
+        {
+          "file": "frontend/src/app/Services/security-question.service.ts",
+          "line": 25
+        },
+        {
+          "file": "server.ts",
+          "line": 385
+        },
+        {
+          "file": "server.ts",
+          "line": 402
+        },
+        {
+          "file": "server.ts",
+          "line": 404
+        },
+        {
+          "file": "server.ts",
+          "line": 406
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-009",
+      "label": "API requests (none)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "GET /api/Recycles",
+        "GET /rest/admin/application-configuration",
+        "GET /rest/admin/application-version",
+        "GET /rest/captcha",
+        "GET /rest/continue-code",
+        "GET /rest/continue-code-findIt",
+        "GET /rest/continue-code-fixIt",
+        "GET /rest/country-mapping",
+        "GET /rest/languages",
+        "GET /rest/memories",
+        "GET /rest/products/search",
+        "GET /rest/repeat-notification",
+        "GET /rest/track-order/:id",
+        "GET /rest/user/security-question",
+        "GET /snippets/:challenge",
+        "GET /snippets/fixes/:key",
+        "POST /api/Feedbacks",
+        "POST /api/Users",
+        "POST /snippets/fixes",
+        "POST /snippets/verdict",
+        "PUT /rest/continue-code-findIt/apply/:continueCode",
+        "PUT /rest/continue-code-fixIt/apply/:continueCode",
+        "PUT /rest/continue-code/apply/:continueCode"
+      ],
+      "to": "component-1f61b207923dbaf5"
+    },
+    {
+      "access_group": {
+        "id": "api-component-6ffaf23414c56207-component-1f61b207923dbaf5",
+        "label": "API access",
+        "mode": "alternatives"
+      },
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/chat.ts",
+            "line": 223
+          }
+        ],
+        "scheme": "none",
+        "scope": "token decoded without signature verification"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/chat.service.ts",
+          "line": 37
+        },
+        {
+          "file": "server.ts",
+          "line": 638
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-010",
+      "label": "API requests (none)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "POST /rest/chat"
+      ],
+      "to": "component-1f61b207923dbaf5"
+    },
+    {
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/photo-wall.service.ts",
+          "line": 24
+        },
+        {
+          "file": "frontend/src/app/Services/payment.service.ts",
+          "line": 21
+        },
+        {
+          "file": "frontend/src/app/Services/payment.service.ts",
+          "line": 34
+        },
+        {
+          "file": "frontend/src/app/Services/payment.service.ts",
+          "line": 26
+        },
+        {
+          "file": "server.ts",
+          "line": 312
+        },
+        {
+          "file": "server.ts",
+          "line": 439
+        },
+        {
+          "file": "server.ts",
+          "line": 441
+        },
+        {
+          "file": "server.ts",
+          "line": 442
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-011",
+      "label": "API requests (unknown authentication)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "DELETE /api/Addresss/:id",
+        "DELETE /api/Cards/:id",
+        "GET /api/Addresss",
+        "GET /api/Addresss/:id",
+        "GET /api/Cards",
+        "GET /api/Cards/:id",
+        "GET /api/Deliverys",
+        "GET /api/Deliverys/:id",
+        "GET /rest/deluxe-membership",
+        "GET /rest/image-captcha",
+        "GET /rest/products/:id/reviews",
+        "GET /rest/user/change-password",
+        "GET /rest/user/whoami",
+        "GET /rest/wallet/balance",
+        "POST /rest/deluxe-membership",
+        "POST /rest/memories",
+        "POST /rest/user/data-export",
+        "PUT /rest/products/:id/reviews",
+        "PUT /rest/wallet/balance"
+      ],
+      "to": "component-1f61b207923dbaf5"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/checkKeys.ts",
+            "line": 34
+          },
+          {
+            "file": "server.ts",
+            "line": 197
+          },
+          {
+            "file": "server.ts",
+            "line": 203
+          },
+          {
+            "file": "routes/metrics.ts",
+            "line": 63
+          },
+          {
+            "file": "lib/antiCheat.ts",
+            "line": 51
+          },
+          {
+            "file": "server.ts",
+            "line": 315
+          },
+          {
+            "file": "routes/verify.ts",
+            "line": 84
+          },
+          {
+            "file": "lib/insecurity.ts",
+            "line": 186
+          }
+        ],
+        "scheme": "none",
+        "scope": "no credential check in the resolved handler chain"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/keys.service.ts",
+          "line": 16
+        },
+        {
+          "file": "frontend/src/app/Services/keys.service.ts",
+          "line": 25
+        },
+        {
+          "file": "server.ts",
+          "line": 642
+        },
+        {
+          "file": "server.ts",
+          "line": 643
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-012",
+      "label": "API requests (none)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "GET /rest/web3/nftMintListen",
+        "GET /rest/web3/nftUnlocked"
+      ],
+      "to": "component-6ffadbc3868c2a3b"
+    },
+    {
+      "access_group": {
+        "id": "api-component-6ffaf23414c56207-component-dff0840e0f4855be",
+        "label": "API access",
+        "mode": "alternatives"
+      },
+      "authentication": {
+        "evidence": [
+          {
+            "file": "lib/insecurity.ts",
+            "line": 52
+          }
+        ],
+        "scheme": "bearer",
+        "scope": "the handler checks a bearer credential and rejects the request without it"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 44
+        },
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 49
+        },
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 57
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 29
+        },
+        {
+          "file": "server.ts",
+          "line": 463
+        },
+        {
+          "file": "server.ts",
+          "line": 465
+        },
+        {
+          "file": "server.ts",
+          "line": 471
+        },
+        {
+          "file": "server.ts",
+          "line": 601
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-013",
+      "label": "API requests (bearer)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "GET /rest/2fa/status",
+        "GET /rest/user/authentication-details",
+        "POST /rest/2fa/disable",
+        "POST /rest/2fa/setup"
+      ],
+      "to": "component-dff0840e0f4855be"
+    },
+    {
+      "access_group": {
+        "id": "api-component-6ffaf23414c56207-component-dff0840e0f4855be",
+        "label": "API access",
+        "mode": "alternatives"
+      },
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/login.ts",
+            "line": 18
+          },
+          {
+            "file": "server.ts",
+            "line": 197
+          },
+          {
+            "file": "server.ts",
+            "line": 203
+          },
+          {
+            "file": "routes/metrics.ts",
+            "line": 63
+          },
+          {
+            "file": "lib/antiCheat.ts",
+            "line": 51
+          },
+          {
+            "file": "server.ts",
+            "line": 315
+          },
+          {
+            "file": "routes/verify.ts",
+            "line": 84
+          },
+          {
+            "file": "lib/insecurity.ts",
+            "line": 186
+          }
+        ],
+        "scheme": "none",
+        "scope": "no credential check in the resolved handler chain"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 46
+        },
+        {
+          "file": "frontend/src/app/Services/user.service.ts",
+          "line": 59
+        },
+        {
+          "file": "server.ts",
+          "line": 596
+        },
+        {
+          "file": "server.ts",
+          "line": 598
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-014",
+      "label": "API requests (none)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "POST /rest/user/login",
+        "POST /rest/user/reset-password"
+      ],
+      "to": "component-dff0840e0f4855be"
+    },
+    {
+      "data_classification": "Internal",
+      "diagram_label": "API requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "frontend/src/app/Services/payment.service.ts",
+          "line": 30
+        },
+        {
+          "file": "frontend/src/app/Services/address.service.ts",
+          "line": 30
+        },
+        {
+          "file": "frontend/src/app/Services/address.service.ts",
+          "line": 35
+        },
+        {
+          "file": "frontend/src/app/Services/two-factor-auth-service.ts",
+          "line": 37
+        },
+        {
+          "file": "server.ts",
+          "line": 438
+        },
+        {
+          "file": "server.ts",
+          "line": 448
+        },
+        {
+          "file": "server.ts",
+          "line": 450
+        },
+        {
+          "file": "server.ts",
+          "line": 458
+        }
+      ],
+      "from": "component-6ffaf23414c56207",
+      "id": "df-015",
+      "label": "API requests (unknown authentication)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "GET /rest/saveLoginIp",
+        "POST /api/Addresss",
+        "POST /api/Cards",
+        "POST /rest/2fa/verify",
+        "PUT /api/Addresss/:id"
+      ],
+      "to": "component-dff0840e0f4855be"
+    },
+    {
+      "authentication": {
+        "evidence": [
+          {
+            "file": "routes/profileImageFileUpload.ts",
+            "line": 35
+          },
+          {
+            "file": "routes/profileImageUrlUpload.ts",
+            "line": 21
+          },
+          {
+            "file": "routes/userProfile.ts",
+            "line": 34
+          },
+          {
+            "file": "routes/updateUserProfile.ts",
+            "line": 17
+          },
+          {
+            "file": "routes/dataErasure.ts",
+            "line": 26
+          },
+          {
+            "file": "routes/dataErasure.ts",
+            "line": 76
+          }
+        ],
+        "scheme": "cookie",
+        "scope": "the handler checks a cookie credential and rejects the request without it"
+      },
+      "data_classification": "Internal",
+      "diagram_label": "Direct requests",
+      "direction": "request-response",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 310
+        },
+        {
+          "file": "server.ts",
+          "line": 311
+        },
+        {
+          "file": "server.ts",
+          "line": 666
+        },
+        {
+          "file": "server.ts",
+          "line": 667
+        }
+      ],
+      "from": "external",
+      "id": "df-016",
+      "label": "Direct requests (cookie)",
+      "protocol": "HTTP",
+      "provenance": "route-extraction",
+      "route_refs": [
+        "GET /",
+        "GET /profile",
+        "POST /",
+        "POST /profile",
+        "POST /profile/image/file",
+        "POST /profile/image/url"
+      ],
+      "to": "component-1f61b207923dbaf5"
+    }
+  ],
+  "external_entities": [
+    {
+      "description": "OpenAI-compatible model endpoint configured via application.chatBot.llmApiUrl and called by the chatbot.",
+      "evidence": [
+        {
+          "file": "routes/chat.ts",
+          "line": 108
+        }
+      ],
+      "id": "ext-e31c1c80c5971647",
+      "kind": "external-service",
+      "name": "LLM provider",
+      "service_roles": [
+        {
+          "evidence": [
+            {
+              "file": "routes/chat.ts",
+              "line": 108
+            }
+          ],
+          "role": "llm-inference"
+        }
+      ]
+    },
+    {
+      "description": "Ethereum Sepolia RPC WebSocket at eth-sepolia.g.alchemy.com used for contract event listening.",
+      "evidence": [
+        {
+          "file": "routes/nftMint.ts",
+          "line": 18
+        }
+      ],
+      "id": "ext-e70869cf742e2aa9",
+      "kind": "external-service",
+      "name": "Alchemy Sepolia RPC",
+      "service_roles": [
+        {
+          "evidence": [
+            {
+              "file": "routes/nftMint.ts",
+              "line": 18
+            }
+          ],
+          "role": "blockchain-rpc"
+        }
+      ]
+    },
+    {
+      "description": "OAuth authorization: https://accounts.google.com. Activation depends on deployment configuration.",
+      "evidence": [
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 31
+        },
+        {
+          "file": "frontend/src/app/login/login.component.ts",
+          "line": 148
+        }
+      ],
+      "id": "ext-idp-89a8000a68d759c6",
+      "kind": "identity-provider",
+      "name": "Identity provider \u00b7 accounts.google.com",
+      "service_roles": [
+        {
+          "evidence": [
+            {
+              "file": "frontend/src/app/login/login.component.ts",
+              "line": 31
+            },
+            {
+              "file": "frontend/src/app/login/login.component.ts",
+              "line": 148
+            }
+          ],
+          "role": "oauth-authorization-server"
+        },
+        {
+          "evidence": [
+            {
+              "file": "frontend/src/app/Services/user.service.ts",
+              "line": 68
+            }
+          ],
+          "role": "oauth-resource-server"
+        }
+      ]
+    },
+    {
+      "access": "internet-priv-user",
+      "description": "Application role with elevated rights, evidenced by its access check.",
+      "evidence": [
+        {
+          "file": "frontend/src/app/app.guard.ts",
+          "line": 54
+        }
+      ],
+      "id": "ext-privileged-role",
+      "kind": "legitimate-role",
+      "name": "Admin"
+    }
+  ],
+  "schema_version": 1
+}

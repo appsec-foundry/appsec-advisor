@@ -73,13 +73,6 @@ def test_is_stride_output_rejects_each_reserved_name():
 # ---------------------------------------------------------------------------
 
 
-def test_watchdog_scan_counts_only_components(tmp_path):
-    import runtime.skill_watchdog as skill_watchdog
-
-    out = _make_run(tmp_path, ["auth"])
-    assert skill_watchdog._scan_stride(out)["stride_count"] == 1
-
-
 def test_merge_loader_yields_only_component_ids(tmp_path):
     import model.merge_threats as merge_threats
 
@@ -94,42 +87,6 @@ def test_baseline_hashes_only_components(tmp_path):
     assert list(baseline_state._hash_stride_files(out)) == ["auth"]
 
 
-def test_reanalyzed_ids_ignore_legacy_sidecar_keys(tmp_path):
-    """A baseline written before the fix carries sidecar ids. Their content
-    changes nearly every run, so they must not surface as changed components."""
-    import model.build_threat_model_yaml as build_threat_model_yaml
-
-    out = _make_run(tmp_path, ["auth"])
-    cache = out / ".appsec-cache"
-    cache.mkdir()
-    (cache / "baseline.json").write_text(
-        json.dumps(
-            {
-                "stride_files": {
-                    "auth": {"path": ".stride-auth.json", "sha256": "sha256:stale"},
-                    "dispatch-manifest": {"path": ".stride-dispatch-manifest.json", "sha256": "sha256:stale"},
-                    "analyst-context": {"path": ".stride-analyst-context.json", "sha256": "sha256:stale"},
-                    "repository-registry": {
-                        "path": ".stride-repository-registry.json",
-                        "sha256": "sha256:stale",
-                    },
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    assert build_threat_model_yaml._reanalyzed_component_ids(out) == {"auth"}
-
-
-def test_durations_ignore_sidecars(tmp_path):
-    import runtime.record_component_durations as record_component_durations
-
-    out = _make_run(tmp_path, ["auth"])
-    # Legacy mtime fallback path — the sidecars must not appear as components.
-    durations = record_component_durations._stride_durations(out, phase_9_start=1)
-    assert set(durations) <= {"auth"}
-
-
 # ---------------------------------------------------------------------------
 # Drift guard — new consumers must use the helper
 # ---------------------------------------------------------------------------
@@ -141,7 +98,6 @@ _BROAD_GLOB_ALLOWED = {
     "runtime/stride_outputs.py",  # defines the pattern
     "orchestrator/orchestration_controller.py",  # full/rebuild cleanup
     "runtime/runtime_cleanup.py",  # cleanup whitelist (docstring)
-    "model/publish_threat_model.py",  # never-publish list
     "validators/validate_cache.py",  # JSON-validity sweep
 }
 

@@ -66,6 +66,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from shared._finding_locator import CODE_EXTENSIONS, NOEXT_CODE_FILES
 from shared._paths import strip_dot_slash
 
 try:
@@ -100,6 +101,63 @@ _ASSESSMENT_RUNTIME_MARKERS = frozenset(
     }
 )
 _ASSESSMENT_FINAL_PAIR = frozenset({"threat-model.md", "threat-model.yaml"})
+# Data, configuration and documentation formats in CODE_EXTENSIONS; a run output
+# holds these, so they never show that program code shares its directory.
+_NON_PROGRAM_SUFFIXES = frozenset(
+    "html htm css scss sass less yml yaml json jsonc toml ini cfg conf config env properties "
+    "xml plist lock mod sum txt md csv".split()
+)
+_PRIVATE_OUTPUT_TREES = frozenset(
+    {".assessment-work", ".appsec-cache", ".fragments", ".dispatch-context", ".active-tool-calls"}
+)
+# Plugin run-state files, wherever a run or its hooks wrote them; these names
+# carry no application meaning.
+_OWNED_STATE_FILES = frozenset({".assessment-state.json", ".budget-state.json", ".assessment-summary-emitted"})
+# Run products within a detected output directory. A marker pair must never
+# hide arbitrary application files that happen to share that directory.
+_ASSESSMENT_PRODUCT_PATTERNS = (
+    "threat-model.*",
+    "threat-model-*.md",
+    "threat-model-*.yaml",
+    "threat-model-*.pdf",
+    "analysis-model.md",
+    "pentest-tasks.yaml",
+    ".components.json",
+    ".assets.json",
+    ".security-controls.json",
+    ".trust-boundaries.json",
+    ".data-flows.json",
+    ".source-auth-findings.json",
+    ".config-scan-findings.json",
+    ".dep-scan.json",
+    ".threats-merged.json",
+    ".triage-flags.json",
+    ".recon-summary.md",
+    ".recon-signals.json",
+    ".recon-patterns.json",
+    ".route-inventory.json",
+    ".deployment-inventory.json",
+    ".supply-chain-view.json",
+    ".abuse-case-*.json",
+    ".stride-*.json",
+    ".trust-boundary-*.json",
+    ".component-inventory-finalization.json",
+    ".arch-design-signals.json",
+    ".impl-design-signals.json",
+    ".finding-design-signals.json",
+    ".impl-strategy.json",
+    ".architect-review.json",
+    ".architect-review.md",
+    ".business-context-input.md",
+    ".business-context-preview.json",
+    ".business-context-raw.md",
+    ".org-context.md",
+    ".org-context-manifest.json",
+    ".requirements.yaml",
+    ".context-routing-plan.receipt.json",
+    ".run-issues.json",
+    ".headless-result.json",
+)
 
 
 def _yaml_path() -> Path:
@@ -246,6 +304,61 @@ def is_excluded(
 # ---------------------------------------------------------------------------
 # Assessment-output detection
 # ---------------------------------------------------------------------------
+
+
+def declared_repository_input(path: PurePosixPath) -> bool:
+    """Whether a repository file is an assessment input the user keeps beside reports."""
+    return path.name in {"business-context.md", "requirements.yaml", "requirements.yml"} or any(
+        part in {".appsec", "abuse-cases", "known-threats"} for part in path.parts
+    )
+
+
+def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
+    """Identify old outputs using only a caller's admitted file inventory.
+
+    No filesystem walk or cached state can expand the caller's authority.
+    Declared repository inputs survive a report stored beside them. A report
+    in the repository root excludes its products, never the whole repository.
+    """
+    inventory = {PurePosixPath(path) for path in paths}
+    names: dict[PurePosixPath, set[str]] = {}
+    for path in inventory:
+        names.setdefault(path.parent, set()).add(path.name)
+    outputs = {
+        parent
+        for parent, children in names.items()
+        if _ASSESSMENT_FINAL_PAIR <= children or len(_ASSESSMENT_RUNTIME_MARKERS & children) >= 2
+    }
+    # An output copy without program code (a renamed or archived report) is
+    # excluded whole: older plugin versions wrote products no list names. With
+    # code beside it, or in the repository root, only listed products go.
+    code_dirs = {parent for path in inventory if _is_program_code(path) for parent in path.parents}
+    whole = {output for output in outputs if output != PurePosixPath(".") and output not in code_dirs}
+    artifacts = set()
+    for path in inventory:
+        # Private output trees cannot become source by imitating an input name.
+        # `.active-tool-calls` is the plugin hooks' per-session registry: any
+        # Claude Code session using the plugin in the checkout rewrites it.
+        if any(part in _PRIVATE_OUTPUT_TREES for part in path.parts):
+            artifacts.add(path.as_posix())
+            continue
+        if declared_repository_input(path):
+            continue
+        owned = fnmatch.fnmatchcase(path.name, ".abuse-case-verdict-*.json") or path.name in _OWNED_STATE_FILES
+        product = path.name in _ASSESSMENT_RUNTIME_MARKERS or any(
+            fnmatch.fnmatchcase(path.name, pattern) for pattern in _ASSESSMENT_PRODUCT_PATTERNS
+        )
+        if owned or (path.parent in outputs and product) or whole.intersection(path.parents):
+            artifacts.add(path.as_posix())
+    return artifacts
+
+
+def _is_program_code(path: PurePosixPath) -> bool:
+    """Whether a file is program source rather than data, configuration or documentation."""
+    suffix = path.suffix.lower().lstrip(".")
+    if not suffix:
+        return path.name.lower() in NOEXT_CODE_FILES
+    return suffix in CODE_EXTENSIONS and suffix not in _NON_PROGRAM_SUFFIXES
 
 
 def is_assessment_output_dir(path: Path) -> bool:

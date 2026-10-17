@@ -45,6 +45,8 @@ HOOK_SCRIPT_IDS = {
 # Phase budgets for the live-view age cutoff. Falls back to 300 s when the
 # loader is unavailable.
 sys.path.insert(0, str(HERE))
+from shared.artifact_names import ArtifactSetError, model_path, report_path  # noqa: E402
+
 try:
     import runtime.phase_budgets as phase_budgets  # type: ignore
 except Exception:  # pragma: no cover
@@ -145,6 +147,21 @@ def _installed_skills() -> list[str]:
     if not skills_dir.is_dir():
         return []
     return sorted(path.parent.name for path in skills_dir.glob("*/SKILL.md") if path.is_file())
+
+
+def _assessment_directory(repo_root: Path) -> Path:
+    """The directory whose assessment the repository's consumers read (decision AS-1).
+
+    The legacy ``docs/security`` of a checkout that has not been migrated yet
+    is read when only it holds an assessment.
+    """
+    from shared.assessment_location import LocationError, locate
+
+    try:
+        return locate(repo_root)[0]
+    except (LocationError, OSError):
+        # No user data directory: only a legacy assessment can exist.
+        return repo_root / "docs" / "security"
 
 
 def _skills_status(output_dir: Path) -> dict:
@@ -288,7 +305,7 @@ def _org_profile_status(output_dir: Path) -> dict:
             "configured": True,
             "path": block["path"],
             "default_preset": block.get("default_preset"),
-            "note": "configured via config.json — run create-threat-model to resolve",
+            "note": "configured via config.json — run appsec-analyzer to resolve",
         }
     return {"active": False, "configured": False}
 
@@ -365,14 +382,17 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
     verdict via dirty-set when the fast-path classified files as
     security-relevant.
 
-    The two-step sequence mirrors the create-threat-model skill so the
+    The two-step sequence mirrors the appsec-analyzer skill so the
     /appsec-advisor:status fast-path-preview prediction is exactly what
     the next run would do — no separate "would it short-circuit?"
     heuristic that drifts away from the actual decision tree.
 
     Returns None if no baseline yaml exists yet.
     """
-    yaml_path = output_dir / "threat-model.yaml"
+    try:
+        yaml_path = model_path(output_dir)
+    except ArtifactSetError:
+        return None
     if not yaml_path.is_file():
         return None
     code, out, _ = _run_helper(
@@ -486,7 +506,10 @@ def _cutoff_verdict(output_dir: Path, *, live_snapshot: dict | None = None) -> d
 
     Otherwise returns ``{"kind": ..., "block": ...}`` from ``cutoff_cause``.
     """
-    if (output_dir / "threat-model.md").is_file():
+    try:
+        if report_path(output_dir).is_file():
+            return None
+    except ArtifactSetError:
         return None
     if not ((output_dir / ".agent-run.log").is_file() or (output_dir / ".appsec-checkpoint").is_file()):
         return None
@@ -741,7 +764,9 @@ def render_text(data: dict) -> str:
     buf.append(_emit_table("Configuration sources", data["config"]))
 
     fp = data.get("fast_path")
-    if fp:
+    if fp and fp.get("status") == "unsupported":
+        buf.append(_emit_table("Fast-path preview (vs. current working tree)", [("Decision", str(fp.get("reason")))]))
+    elif fp:
         rows = [
             ("Baseline SHA", (fp.get("baseline_sha") or "?")[:12]),
             ("HEAD SHA", (fp.get("head_sha") or "?")[:12]),
@@ -762,7 +787,7 @@ def render_text(data: dict) -> str:
             rows.append(("Files (filtered)", f"{sec_count} relevant, {noise_count} noise"))
 
         # Decision text: factor in the dirty-set refinement when present
-        # (matches the create-threat-model SKILL decision tree exactly).
+        # (matches the appsec-analyzer SKILL decision tree exactly).
         cc_exit = fp.get("exit")
         ds_exit = fp.get("dirty_set_exit")
         ds = fp.get("dirty_set") or {}
@@ -1043,7 +1068,7 @@ USAGE
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repository's assessment directory)
   --json            Emit the status as machine-readable JSON
   --live            Print only the in-flight run snapshot (active tool calls,
                     per-component progress, heartbeat freshness). Honours --json.
@@ -1061,7 +1086,7 @@ ARGUMENT_ERROR = """Error: unknown argument '{token}'
 
 /appsec-advisor:status accepts only:
   --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --output <path>   Output directory to inspect (default: the repository's assessment directory)
   --json            Emit the status as machine-readable JSON
   --live            Print only the in-flight run snapshot (cron-style polling)
   --check-updates   Check the baseline and core versions against their sources
@@ -1104,7 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
         "--output-dir",
         dest="output_dir",
         default=None,
-        help="Override output directory (default: <repo>/docs/security).",
+        help="Override output directory (default: the repository's assessment directory).",
     )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     p.add_argument(
@@ -1129,7 +1154,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     repo_root = Path(args.repo_root).resolve()
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else _assessment_directory(repo_root)
 
     if args.live:
         snap = _live_snapshot(output_dir)
@@ -1147,8 +1172,8 @@ def main(argv: list[str] | None = None) -> int:
     capsules = {
         "coach": {"state": coach_state, "note": coach_note},
     }
-    if _skill_exists("create-threat-model"):
-        capsules["threat_assessment"] = {"command": "/appsec-advisor:create-threat-model"}
+    if _skill_exists("appsec-analyzer"):
+        capsules["threat_assessment"] = {"command": "/appsec-advisor:appsec-analyzer"}
     if _skill_exists("audit-security-requirements"):
         capsules["requirements_audit"] = {"command": "/appsec-advisor:audit-security-requirements"}
 

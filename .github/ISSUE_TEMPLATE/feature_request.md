@@ -14,14 +14,10 @@ labels: enhancement
 
 **Which part of the plugin is affected?**
 
-- [ ] `create-threat-model` runtime/controller
-- [ ] `appsec-context-resolver` (sub-agent)
-- [ ] `appsec-dep-scanner` (sub-agent)
-- [ ] `appsec-stride-analyzer-v2` (sub-agent)
-- [ ] `appsec-qa-reviewer` (sub-agent)
-- [ ] `create-threat-model` skill
-- [ ] `update-threat-model` skill
-- [ ] `check-appsec-requirements` skill
+- [ ] `appsec-analyzer` skill or controller
+- [ ] An analysis role (for example `appsec-stride-analyzer-v2` or `appsec-triage-validator`)
+- [ ] A consumer skill (`ask-`, `show-`, `triage-`, `export-security-assessment`, `security-assessment-health`)
+- [ ] `audit-security-requirements` or `verify-requirements` skill
 - [ ] MCP context server
 - [ ] Documentation
 

@@ -17,9 +17,18 @@ Git is read without side effects of repository or user configuration:
 
 Ignored files are never admitted and appear only as a count. Symlinks,
 submodules, nested repositories, special files, binaries, oversized files,
-sensitive files, and files beyond the job limits are recorded as exclusions.
+files named like key or environment files, and files beyond the job limits are
+recorded as exclusions. A detected secret value inside an otherwise admitted
+file is replaced by a marker that keeps every line in place, and the entry
+lists the redacted lines; a file whose secrets cannot all be replaced is
+excluded as sensitive.
 Worktree renames appear as a deletion plus an addition. Nothing here writes
 outside the job root or runs repository code.
+
+An exploring job (REQ-ANA-011) also gets ``explore/``: a copy of every file of
+the frozen proposed view that the same rules admit, with the same redaction,
+so a citation of that copy can be admitted and checked like any other context.
+A design request that explores freezes ``HEAD`` for this view.
 """
 
 from __future__ import annotations
@@ -69,6 +78,7 @@ SENSITIVE_NAMES = (
     "*.jks",
 )
 BINARY_PROBE_BYTES = 8192
+REDACTION = "[REDACTED secret value]"
 MAX_EXCLUDED_ENTRIES = 1900
 VIEW_FILE = ".view.json"
 SUBMODULE_MODE = "160000"
@@ -175,6 +185,20 @@ def _safe_path(path: str) -> bool:
     )
 
 
+def rejection_reason(path: str, content: bytes, limits: dict) -> str | None:
+    """Why the snapshot would exclude this file on its own, before any job limit; ``None`` to admit."""
+    if not _safe_path(path):
+        return "special_file"
+    name = PurePosixPath(path).name
+    if any(fnmatch.fnmatch(name, pattern) for pattern in SENSITIVE_NAMES):
+        return "sensitive"
+    if len(content) > limits["file_kib"] * 1024:
+        return "too_large"
+    if b"\0" in content[:BINARY_PROBE_BYTES]:
+        return "binary"
+    return None
+
+
 @dataclass
 class _Capture:
     repo: Path
@@ -192,21 +216,15 @@ class _Capture:
             self.excluded.append({"path": path, "reason": reason, "count": 1})
 
     def reason_to_reject(self, path: str, content: bytes) -> str | None:
-        if not _safe_path(path):
-            return "special_file"
-        name = PurePosixPath(path).name
-        if any(fnmatch.fnmatch(name, pattern) for pattern in SENSITIVE_NAMES):
-            return "sensitive"
-        if len(content) > self.limits["file_kib"] * 1024:
-            return "too_large"
-        if b"\0" in content[:BINARY_PROBE_BYTES]:
-            return "binary"
-        if scan_text(content.decode("utf-8", "replace")):
-            return "sensitive"
-        return None
+        return rejection_reason(path, content, self.limits)
 
     def admit(self, path: str, side: str, change: str, content: bytes, previous: str | None = None) -> None:
         reason = self.reason_to_reject(path, content)
+        redacted_lines: list[int] = []
+        if reason is None:
+            content, redacted_lines = _redact_secrets(content)
+            if content is None:
+                reason = "sensitive"
         if reason is None and (
             len(self.admitted) >= self.limits["admitted_files"]
             or self.total + len(content) > self.limits["job_kib"] * 1024
@@ -229,11 +247,40 @@ class _Capture:
         }
         if previous is not None:
             entry["previous_path"] = previous
+        if redacted_lines:
+            entry["redacted_lines"] = redacted_lines
         self.admitted.append(entry)
         self.total += len(content)
 
     def excluded_entries(self) -> list[dict]:
         return self.excluded + [{"reason": r, "count": n} for r, n in sorted(self.counts.items())]
+
+
+def _redact_secrets(content: bytes) -> tuple[bytes | None, list[int]]:
+    """Replace every detected secret value; return the content and its redacted lines.
+
+    The marker keeps each line break of the value, so line numbers cited as
+    evidence still point at the same code. Returns ``(None, [])`` when a value
+    cannot be located or a secret is still detected afterwards.
+    """
+    text = content.decode("utf-8", "replace")
+    hits = scan_text(text)
+    if not hits:
+        return content, []
+    lines: set[int] = set()
+    for hit in hits:
+        if not hit.value:
+            return None, []
+        span = hit.value.count("\n")
+        start = text.find(hit.value)
+        while start != -1:
+            first = text.count("\n", 0, start) + 1
+            lines.update(range(first, first + span + 1))
+            start = text.find(hit.value, start + 1)
+        text = text.replace(hit.value, "\n".join([REDACTION] * (span + 1)))
+    if scan_text(text):
+        return None, []
+    return text.encode("utf-8"), sorted(lines)
 
 
 def _excluded_by_mode(capture: _Capture, path: str, mode: str) -> bool:
@@ -353,10 +400,43 @@ def capture(request: dict, job: Job, design_text: str | None = None) -> dict:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
         objects["design_sha256"] = scope["content_sha256"]
+        if request.get("explore"):
+            objects["head"] = _commit(repo, "HEAD")
+            view = {
+                p: ["blob", oid]
+                for p, (mode, oid) in _tree(repo, objects["head"]).items()
+                if mode not in (SUBMODULE_MODE, SYMLINK_MODE)
+            }
     else:
-        objects["head"] = _commit(repo, scope["head"] if scope["kind"] == "commits" else "HEAD")
+        revision = scope["revision"] if scope["kind"] == "hypothesis" else scope.get("head", "HEAD")
+        objects["head"] = _commit(repo, revision)
         head_tree = _tree(repo, objects["head"])
-        if scope["kind"] == "commits":
+        if scope["kind"] == "hypothesis":
+            for selected in scope["paths"]:
+                if not any(p == selected or p.startswith(selected + "/") for p in head_tree):
+                    cap.exclude(selected, "outside_scope")
+            for path, (mode, oid) in sorted(head_tree.items()):
+                if not any(path == p or path.startswith(p + "/") for p in scope["paths"]):
+                    continue
+                if _excluded_by_mode(cap, path, mode):
+                    continue
+                if not _safe_path(path):
+                    cap.exclude(None, "special_file")
+                    continue
+                if len(cap.admitted) >= cap.limits["admitted_files"]:
+                    cap.exclude(path, "limit_reached")
+                    continue
+                size = int(_git(repo, "cat-file", "-s", oid))
+                if size > cap.limits["file_kib"] * 1024:
+                    cap.exclude(path, "too_large")
+                    continue
+                if cap.total + size > cap.limits["job_kib"] * 1024:
+                    cap.exclude(path, "limit_reached")
+                    continue
+                cap.admit(path, "proposed", "context", _blobs(repo, [oid])[oid])
+                if any(e["path"] == path for e in cap.admitted):
+                    view[path] = ["blob", oid]
+        elif scope["kind"] == "commits":
             objects["base"] = _commit(repo, scope["base"])
             baseline_commit = objects["base"]
             if scope["comparison"] == "merge_base":
@@ -394,6 +474,59 @@ def capture(request: dict, job: Job, design_text: str | None = None) -> dict:
     return snapshot
 
 
+def export_view(request: dict, job: Job, snapshot: dict, limits: dict) -> dict:
+    """Write the redacted explore copy of the frozen proposed view; return its counts.
+
+    Each file passes the snapshot's own rejection and redaction rules, so the
+    copy holds exactly what ``admit_context`` would admit for the same path.
+    A worktree view contributes tracked files and the files of the change
+    itself, not other untracked files. The copy stops at ``explore_files``
+    files or ``explore_kib`` KiB.
+    """
+    with open(job.root / "source" / VIEW_FILE, encoding="utf-8") as handle:
+        view = json.load(handle)
+    repo = Path(request["repository"]["root"])
+    if any(kind == "worktree" for kind, _oid in view.values()):
+        keep = set(_index(repo)) | {e["path"] for e in snapshot["admitted"] if e["side"] == "proposed"}
+        view = {p: v for p, v in view.items() if p in keep}
+    root = job.root / "explore"
+    root.mkdir(mode=0o700)
+    cap = _Capture(repo, job, request["limits"])
+    written = total = 0
+    blobs = _blobs(repo, sorted({oid for kind, oid in view.values() if kind == "blob"}))
+    for path in sorted(view):
+        kind, oid = view[path]
+        if kind == "blob":
+            content = blobs[oid]
+        else:
+            content = _read_worktree(repo, path)
+            if _hash_blob(repo, content) != oid:
+                raise SnapshotError("worktree changed since capture")
+        reason = cap.reason_to_reject(path, content)
+        if reason is None:
+            content, _lines = _redact_secrets(content)
+            reason = "sensitive" if content is None else None
+        if reason is None and (
+            written >= limits["explore_files"] or total + len(content) > limits["explore_kib"] * 1024
+        ):
+            reason = "limit_reached"
+        if reason is not None:
+            cap.counts[reason] = cap.counts.get(reason, 0) + 1
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+        written += 1
+        total += len(content)
+    return {
+        "files": written,
+        "bytes": total,
+        "excluded": [{"reason": r, "count": n} for r, n in sorted(cap.counts.items())],
+    }
+
+
 def _read_design(path: str) -> bytes:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as handle:
@@ -408,6 +541,12 @@ def _write_view(job: Job, view: dict) -> None:
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(view, handle)
+
+
+def view_paths(job: Job) -> set[str]:
+    """Paths of the frozen proposed view; empty for a design without exploration."""
+    with open(job.root / "source" / VIEW_FILE, encoding="utf-8") as handle:
+        return set(json.load(handle))
 
 
 def admit_context(request: dict, job: Job, snapshot: dict, path: str) -> dict:
