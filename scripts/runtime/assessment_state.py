@@ -21,6 +21,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+import yaml
 from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json, atomic_write_text
 
@@ -55,6 +56,10 @@ _IDENTITY_LABELS = (
 # resume check never counts a receipt the run's accounting has not charged.
 JOBS_NAME = "jobs"
 CACHE_NAME = "cache"
+# The changelog of the completed assessment a new scan replaces (REQ-USE-004).
+# It lives under the work directory, so a resume and a restart after an
+# interruption still continue it; --rebuild drops it with the earlier run.
+HISTORY_NAME = "history.json"
 MAX_STATE_BYTES = 2_097_152
 MAX_DELIVERABLE_BYTES = 67_108_864
 
@@ -126,6 +131,7 @@ class AssessmentState:
         self.output = scope.output
         self.path = self.output / STATE_NAME
         self.directory = self.output / WORK_NAME
+        self._history = None
         self.lock = self.output / ".appsec-lock"
         self.identity = {
             "scope_sha256": scope.inventory()["scope_sha256"],
@@ -205,7 +211,7 @@ class AssessmentState:
         if self.resume:
             if self.state["identity"] != self.identity:
                 again = (
-                    "run again with --rebuild"
+                    "run again without --resume"
                     if self.state["status"] == "complete"
                     else "run again without --resume; unchanged model steps are reused"
                 )
@@ -253,6 +259,27 @@ class AssessmentState:
                 "deliverables": {},
             }
             self.directory.mkdir(mode=0o700, exist_ok=True)
+            if self._history is not None:
+                atomic_write_json(self.directory / HISTORY_NAME, self._history)
+
+    @property
+    def history_path(self) -> Path | None:
+        """The changelog this run continues, or None when it starts a new history."""
+        path = self.directory / HISTORY_NAME
+        return path if path.is_file() and not path.is_symlink() else None
+
+    def _earlier_history(self, earlier) -> list | None:
+        """The changelog of the earlier run's own, unchanged model deliverable."""
+        name = "threat-model.yaml"
+        try:
+            if _deliverable(self.output, name) != earlier["deliverables"].get(name):
+                return None
+            changelog = yaml.safe_load((self.output / name).read_text(encoding="utf-8")).get("changelog")
+        except (ExchangeError, OSError, ValueError, AttributeError, yaml.YAMLError):
+            return None
+        if isinstance(changelog, list) and changelog and all(isinstance(entry, dict) for entry in changelog):
+            return changelog
+        return None
 
     def _continues_after_plugin_change(self, earlier) -> bool:
         """Whether --resume may continue an unfinished run whose only change is the plugin.
@@ -280,10 +307,10 @@ class AssessmentState:
         Only its own state file and work directory qualify, and only while the
         state is not complete. Its accepted jobs move to the cache that the job
         layer rechecks against each new request; --rebuild drops them with the
-        cache, so no session reuses them. A completed run, a deliverable
-        or any other file still blocks, so a fresh start never erases a report
-        or a user's file; only --rebuild removes an earlier run's own files.
-        The refusal names why the earlier run cannot continue.
+        cache, so no session reuses them. A completed run is replaced when it
+        owns every file, as with --rebuild, and its changelog carries over;
+        any other file still blocks, so a fresh start never erases a user's
+        file. The refusal names why the earlier run cannot continue.
 
         In a sole checkout's `docs/security` (MR-6) only the controller's own
         files count: inputs and a legacy report beside them are kept as they are.
@@ -309,6 +336,8 @@ class AssessmentState:
                     _real_directory(self.directory)
                     keep = set() if self.replace else {JOBS_NAME, CACHE_NAME}
                     for child in self.directory.iterdir():
+                        if child.name == HISTORY_NAME and not self.replace and self.history_path:
+                            continue
                         if child.name in keep:
                             _real_directory(child)
                         elif child.is_dir() and not child.is_symlink():
@@ -324,24 +353,25 @@ class AssessmentState:
                 earlier = _read_state(self.path)
             except ExchangeError:
                 earlier = None
-            foreign = self._remove_earlier_run(earlier, leftovers) if self.replace and earlier is not None else None
+            # A new scan replaces a completed run as --rebuild does, under the
+            # same ownership check, but continues its history.
+            replaces = earlier is not None and (self.replace or earlier["status"] == "complete")
+            if replaces and not self.replace:
+                self._history = self._earlier_history(earlier)
+            foreign = self._remove_earlier_run(earlier, leftovers) if replaces else None
             if foreign == []:
                 return
+            self._history = None
             fresh = "choose another --output or empty this one"
             if earlier is None:
                 message = f"holds an unreadable earlier assessment; {fresh}"
-            elif self.replace:
+            elif foreign is not None:
                 shown = ", ".join(foreign[:3]) + (", ..." if len(foreign) > 3 else "")
                 message = f"holds files the earlier assessment did not write or that changed since ({shown}); {fresh}"
             elif earlier["identity"] != self.identity:
                 message = (
                     "holds an earlier assessment that cannot be continued because "
                     f"{self._changed(earlier['identity'])} changed since it started. A new scan is required: "
-                    f"add --rebuild to replace it, or {fresh}"
-                )
-            elif earlier["status"] == "complete":
-                message = (
-                    "holds a completed combined assessment with nothing left to continue. For a new scan, "
                     f"add --rebuild to replace it, or {fresh}"
                 )
             else:

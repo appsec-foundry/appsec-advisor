@@ -3791,7 +3791,9 @@ def _write_assessment_stage_stats(workspace: Path, timing: dict) -> None:
         (workspace / ".stage-stats.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, captured, progress) -> list[str]:
+def _assessment_render(
+    scope, jobs, names, cfg, workspace: Path, root: Path, *, captured, progress, history: Path | None = None
+) -> list[str]:
     """Run the existing deterministic Stage-1 tail, Stage 2 and QA gates in the workspace.
 
     Returns a warning per tolerated step failure, so a report built without a
@@ -3858,12 +3860,18 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     from orchestrator.assessment_workspace import source_repositories
 
     model_path = workspace / "threat-model.yaml"
+    if isinstance(cfg.get("assessment_started_at"), int):
+        # The builder's changelog run identity: one entry per assessment, however
+        # often this run rebuilds the model, and a new entry for the next scan.
+        atomic_write_text(workspace / ".scan-start-epoch", str(cfg["assessment_started_at"]))
 
     def build_model(step: str) -> None:
         progress(step)
         _run_script(
             "model/build_threat_model_yaml.py",
-            [str(workspace), "--repo-root", str(root), "--plugin-root", str(PLUGIN_ROOT)],
+            [str(workspace), "--repo-root", str(root), "--plugin-root", str(PLUGIN_ROOT)]
+            # REQ-USE-004: the workspace starts empty, so the replaced assessment's changelog comes along.
+            + (["--history", str(history)] if history else []),
         )
         model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
         # Name every selected checkout before enrichment seals the model.
@@ -4255,7 +4263,15 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     )
                     warnings.extend(
                         _assessment_render(
-                            scope, jobs, names, settings, workspace, root, captured=captured, progress=say
+                            scope,
+                            jobs,
+                            names,
+                            settings,
+                            workspace,
+                            root,
+                            captured=captured,
+                            progress=say,
+                            history=state.history_path,
                         )
                     )
                     _export_pentest_tasks_if_configured(workspace, settings)
