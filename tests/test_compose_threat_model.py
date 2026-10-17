@@ -1706,7 +1706,7 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     assert "1 additional trust boundary row(s)" in rendered
     # Every row is `detected` → no Source column; the footnote states it once.
     assert "| Source |" not in rendered
-    assert "source evidence and provenance are retained in `threat-model.yaml`" in rendered
+    assert "source evidence and provenance are retained in `security-assessment.yaml`" in rendered
     assert "control effectiveness is not established" in rendered
     assert "raw risk" not in rendered
 
@@ -1935,7 +1935,7 @@ def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(
     assert "detected" not in header
     body = rendered.split("| ID |", 1)[1].split("\n_Exposure", 1)[0]
     assert "confirmed" not in body and "resolved" not in body
-    assert "source evidence and provenance are retained in `threat-model.yaml`" in rendered
+    assert "source evidence and provenance are retained in `security-assessment.yaml`" in rendered
     assert all(row["confidence"] == "confirmed" and row["sources"] == ["detected"] for row in rows)
     assert "`detected`" not in rendered
     # The dropped column's vocabulary legend goes with it.
@@ -1958,7 +1958,7 @@ def test_trust_boundary_varying_provenance_is_retained_in_the_model(tmp_path: Pa
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
     assert header.endswith("| Required condition | Findings / open question |")
     assert "| Source |" not in rendered
-    assert "source evidence and provenance are retained in `threat-model.yaml`" in rendered
+    assert "source evidence and provenance are retained in `security-assessment.yaml`" in rendered
     assert [row["sources"] for row in rows] == [["detected"], ["repo-declared"]]
 
 
