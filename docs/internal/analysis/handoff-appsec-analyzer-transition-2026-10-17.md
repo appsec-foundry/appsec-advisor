@@ -17,17 +17,17 @@ Status: open, 2026-10-17. Working record for the transition described in [the se
 | `a886d531` | `skills/create-threat-model/` removed; `appsec-analyzer` is the packaged required skill, banner and status command |
 | `96f43cda` | Seven protocol-only schemas removed |
 | `9d299be8` | REQ-TRU-002 guarded at `redact_known_secrets.py`; `postscan_secret_check.py` removed |
+| `44014dec` | Decisions `OR-7`, `CE-5` and `IN-3` retired, `OR-1` reworded for controller-launched roles (operator-approved, `specs/changes/retire-session-protocol-decisions/`) |
 
 Operator decisions taken in this work: incremental updates dropped for now; free-text focus refused; rerender and the QA reviewer not rebuilt; legacy agents removed and `config_scanner_model` / `context_resolver_model` accepted without effect; main skill named `appsec-analyzer`; consumer skills keep the `*-security-assessment` names from the concept.
 
 ## Open, in order
 
-1. **Decision register (needs operator confirmation).** `tests/test_decision_register.py` fails for two entries since the removals: `OR-7` names the deleted guard `test_boundary_reports_by_default_and_aborts_only_under_strict` (telemetry consistency belonged to the session protocol), and `CE-5` cites the deleted `skills/create-threat-model/SKILL-thin-stage1-v2.md`. Both look retirable; propose exact wording and get approval before editing `docs/internal/decisions.md`, and record the change under `specs/changes/`. Check the other `OR-*`, `CE-*` and context-v2 entries for the same reason.
-2. **Requirements (needs operator confirmation).** `REQ-USE-004` (incremental) and `REQ-FLW-009` (focus) promise removed capabilities. Guards lost without replacement: one each for REQ-BIZ-010, REQ-FLW-006, REQ-MOD-002, REQ-MOD-004, REQ-PUR-001, REQ-BIZ-005.
-3. **Documentation.** `docs/headless-mode.md`, `docs/threat-modeler.md`, `docs/model-selection.md`, `README.md` and `docs/internal/contracts/context-routing.md` still describe the legacy skill, its modes and flags. Rewrite them together with B and C so names and paths change once.
-4. **B: consumer skill renames** (`ask-`, `show-`, `triage-`, `export-`, `eval-security-assessment`, `security-assessment-health`, `update-threat-model` removed), plus about 160 files that mention `create-threat-model` in text. Internal caller IDs such as the `create-threat-model` caller in `requirements/fetch_requirements.py` are separate; decide whether they rename.
-5. **C: artifacts and storage** — `security-assessment.*` basenames, external default destination, permissions, migration with `--migrate-legacy` / `--ignore-legacy`.
-6. **Changelog** for the user-visible changes, after B and C.
+1. **Requirements (needs operator confirmation).** `REQ-USE-004` (incremental) and `REQ-FLW-009` (focus) promise removed capabilities. Guards lost without replacement: one each for REQ-BIZ-010, REQ-FLW-006, REQ-MOD-002, REQ-MOD-004, REQ-PUR-001, REQ-BIZ-005. The former `IN-3` guards in `tests/test_resolve_config.py` (`test_changed_context_is_flagged_on_an_incremental_run`, `test_unchanged_context_is_not_flagged`) go with the `REQ-USE-004` change.
+2. **Documentation.** `docs/headless-mode.md`, `docs/threat-modeler.md`, `docs/model-selection.md`, `README.md` and `docs/internal/contracts/context-routing.md` still describe the legacy skill, its modes and flags. Rewrite them together with B and C so names and paths change once. `APPSEC_TELEMETRY_STRICT` is read by no script any more but still appears in `agents/shared/logging-standard.md`, `docs/internal/runbooks/acceptance-cohort.md` and `scripts/live_canary.py`.
+3. **B: consumer skill renames** (`ask-`, `show-`, `triage-`, `export-`, `eval-security-assessment`, `security-assessment-health`, `update-threat-model` removed), plus about 160 files that mention `create-threat-model` in text. Internal caller IDs such as the `create-threat-model` caller in `requirements/fetch_requirements.py` are separate; decide whether they rename.
+4. **C: artifacts and storage** — `security-assessment.*` basenames, external default destination, permissions, migration with `--migrate-legacy` / `--ignore-legacy`.
+5. **Changelog** for the user-visible changes, after B and C.
 
 ## Known state
 
