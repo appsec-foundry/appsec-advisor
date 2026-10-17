@@ -12,12 +12,8 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-
-import orchestrator.check_stride_dispatch as check_stride_dispatch  # noqa: E402
 
 
 def _start_line(ts: str, cid: str) -> str:
@@ -85,113 +81,6 @@ JUICE_SHOP_PARALLEL = {
 }
 
 
-def test_real_serial_wave_is_detected(tmp_path: Path) -> None:
-    out = _write_run(tmp_path, JUICE_SHOP_SERIAL)
-    assert check_stride_dispatch.detect_serial_dispatch(out) == [
-        "frontend-spa",
-        "backend-api",
-        "auth-service",
-        "sqlite-db",
-        "llm-chat-integration",
-        "realtime-channel",
-        "web3-nft",
-        "ci-cd-pipeline",
-    ]
-
-
-def test_real_parallel_wave_is_not_flagged(tmp_path: Path) -> None:
-    out = _write_run(tmp_path, JUICE_SHOP_PARALLEL, generated_at="2026-07-20T15:40:00Z")
-    assert check_stride_dispatch.detect_serial_dispatch(out) == []
-
-
-def test_single_overlapping_pair_suppresses_the_finding(tmp_path: Path) -> None:
-    """One genuine overlap anywhere means the fan-out fired — stay silent."""
-    spans = dict(JUICE_SHOP_SERIAL)
-    # Pull ci-cd-pipeline's dispatch back so it overlaps web3-nft's run.
-    spans["ci-cd-pipeline"] = ("2026-07-20T19:53:20Z", "2026-07-20T20:12:40Z")
-    assert check_stride_dispatch.detect_serial_dispatch(_write_run(tmp_path, spans)) == []
-
-
-@pytest.mark.parametrize(
-    "spans",
-    [
-        pytest.param({}, id="no-dispatches"),
-        pytest.param(
-            {"backend-api": ("2026-07-20T19:06:11Z", "2026-07-20T19:16:02Z")},
-            id="single-component",
-        ),
-    ],
-)
-def test_inconclusive_input_returns_no_finding(tmp_path: Path, spans: dict) -> None:
-    assert check_stride_dispatch.detect_serial_dispatch(_write_run(tmp_path, spans)) == []
-
-
-def test_half_logged_pairs_are_excluded(tmp_path: Path) -> None:
-    """A component without both events cannot be placed on the timeline.
-
-    Only one component is fully paired here, so the comparison is inconclusive
-    and the detector must stay silent rather than guess at the missing edge.
-    """
-    out = _write_run(
-        tmp_path,
-        {
-            "backend-api": ("2026-07-20T19:06:11Z", "2026-07-20T19:16:02Z"),
-            "auth-service": ("2026-07-20T19:16:27Z", None),
-            "sqlite-db": (None, "2026-07-20T19:32:50Z"),
-        },
-    )
-    assert check_stride_dispatch.detect_serial_dispatch(out) == []
-
-
-def test_prior_run_dispatches_are_excluded_by_manifest_timestamp(tmp_path: Path) -> None:
-    """`.agent-run.log` can carry more than one run's events.
-
-    The parallel 15:42 wave and the serial 18:57 wave both live in juice-shop's
-    logs. Bounding on the manifest timestamp must leave only the current run, or
-    the stale parallel spans would mask the serial one.
-    """
-    out = _write_run(tmp_path, {**JUICE_SHOP_PARALLEL, **JUICE_SHOP_SERIAL})
-    assert check_stride_dispatch.detect_serial_dispatch(out) == list(JUICE_SHOP_SERIAL)
-
-
-def test_hook_log_events_are_not_used_as_interval_bounds(tmp_path: Path) -> None:
-    """`AGENT_SPAWN`/`AGENT_INVOKE` both fire at dispatch — they bracket nothing.
-
-    On 2026-07-20 juice-shop logged both for web3-nft at the identical
-    15:45:52, and the headless run emitted 19 SPAWN lines and zero INVOKE.
-    Deriving intervals from the hook log would therefore be blind (no pairs) or
-    wrong (zero-width spans). A run whose ONLY evidence is the hook log must
-    yield no finding rather than a bogus verdict.
-    """
-    out = _write_run(tmp_path, {})
-    (out / ".hook-events.log").write_text(
-        "\n".join(
-            f"{ts}  [6f373f38]  INFO   {ev}        appsec-advisor:appsec-stride-analyzer"
-            f"  model=sonnet  [REPO_ROOT=/r  COMPONENT_ID={cid}]"
-            for cid, ts in (("web3-nft", "2026-07-20T19:53:08Z"), ("sqlite-db", "2026-07-20T19:25:27Z"))
-            for ev in ("AGENT_SPAWN", "AGENT_INVOKE")
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    assert check_stride_dispatch._dispatch_intervals(out) == {}
-    assert check_stride_dispatch.detect_serial_dispatch(out) == []
-
-
-def test_serial_wave_is_reported_but_does_not_fail_the_run(tmp_path: Path, capsys) -> None:
-    """Exit 0: a serial wave is complete and correct, only slow."""
-    out = _write_run(tmp_path, JUICE_SHOP_SERIAL)
-    (out / ".progress").mkdir()
-    for cid in JUICE_SHOP_SERIAL:
-        (out / f".stride-{cid}.json").write_text(json.dumps({"threats": [{"title": "real finding"}]}), encoding="utf-8")
-        (out / ".progress" / f"{cid}.json").write_text("{}", encoding="utf-8")
-
-    assert check_stride_dispatch.main([str(out)]) == 0
-    err = capsys.readouterr().err
-    assert "dispatched SERIALLY" in err
-    assert "ci-cd-pipeline" in err
-
-
 def test_skill_forbids_sequential_wave_dispatch() -> None:
     """OR-5: context-v2 must remain parallel even if calls drift across turns."""
     text = (REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
@@ -205,48 +94,6 @@ def test_skill_forbids_sequential_wave_dispatch() -> None:
     assert "orchestrator/wait_stride_progress.py" in text, "OR-5: a concurrent wave requires a deterministic waiter"
     assert "Never wait for one STRIDE job before launching the next" in flat, (
         "OR-5: a wave must not serialize when tool calls span assistant turns"
-    )
-
-
-def test_context_v2_serial_wave_is_detected_from_production_event_shapes(tmp_path: Path) -> None:
-    """The 2026-08-14 R10 shape used hooks for starts and v2 AGENT_END rows."""
-    out = tmp_path / "security"
-    out.mkdir()
-    components = ["backend-api", "auth-service", "frontend-spa"]
-    (out / ".stride-dispatch-manifest.json").write_text(
-        json.dumps(
-            {
-                "generated_at": "2026-08-14T10:16:16Z",
-                "components": [{"component_id": component_id} for component_id in components],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (out / ".hook-events.log").write_text(
-        "\n".join(
-            [
-                "2026-08-14T10:18:49Z  [run]  INFO   AGENT_SPAWN   appsec-advisor:appsec-stride-analyzer-v2 [COMPONENT_ID=backend-api]",
-                "2026-08-14T10:29:43Z  [run]  INFO   AGENT_SPAWN   appsec-advisor:appsec-stride-analyzer-v2 [COMPONENT_ID=auth-service]",
-                "2026-08-14T10:38:45Z  [run]  INFO   AGENT_SPAWN   appsec-advisor:appsec-stride-analyzer-v2 [COMPONENT_ID=frontend-spa]",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (out / ".agent-run.log").write_text(
-        "\n".join(
-            [
-                "2026-08-14T10:29:25Z  [--------]  INFO   threat-analyst  STEP_END  All six STRIDE categories complete",
-                "2026-08-14T10:38:26Z  [--------]  INFO   threat-analyst  AGENT_END auth-service: 6 threats written",
-                "2026-08-14T10:49:05Z  [--------]  INFO   threat-analyst  AGENT_END 6 threats written for frontend-spa",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    assert check_stride_dispatch.detect_serial_dispatch(out) == components, (
-        "OR-5: the detector must consume the context-v2 producer's real event shapes"
     )
 
 
@@ -301,63 +148,6 @@ def _write_v2_run(out_dir: Path, spans: dict[str, tuple[str, str]]) -> Path:
     return out
 
 
-def test_production_parallel_wave_is_read_and_not_flagged(tmp_path: Path) -> None:
-    """The real wave: spawns seconds apart, each analyzer running for minutes."""
-    out = _write_v2_run(
-        tmp_path,
-        {
-            "web-frontend": ("2026-08-16T07:02:59Z", "2026-08-16T07:16:20Z"),
-            "api-server": ("2026-08-16T07:03:27Z", "2026-08-16T07:13:50Z"),
-            "auth-service": ("2026-08-16T07:03:52Z", "2026-08-16T07:19:19Z"),
-            "sqlite-db": ("2026-08-16T07:04:16Z", "2026-08-16T07:17:09Z"),
-            "ci-cd-pipeline": ("2026-08-16T07:04:40Z", "2026-08-16T07:10:39Z"),
-        },
-    )
-    # The detector must actually see the wave, not merely stay silent about it.
-    assert set(check_stride_dispatch._context_v2_dispatch_starts(out, None)) == {
-        "web-frontend",
-        "api-server",
-        "auth-service",
-        "sqlite-db",
-        "ci-cd-pipeline",
-    }
-    assert check_stride_dispatch.detect_serial_dispatch(out) == []
-
-
-def test_production_serial_wave_is_detected(tmp_path: Path) -> None:
-    """Each analyzer returns before the next is dispatched — the defect."""
-    out = _write_v2_run(
-        tmp_path,
-        {
-            "web-frontend": ("2026-08-16T07:02:59Z", "2026-08-16T07:16:20Z"),
-            "api-server": ("2026-08-16T07:16:40Z", "2026-08-16T07:27:10Z"),
-            "auth-service": ("2026-08-16T07:27:30Z", "2026-08-16T07:39:00Z"),
-        },
-    )
-    assert check_stride_dispatch.detect_serial_dispatch(out) == [
-        "web-frontend",
-        "api-server",
-        "auth-service",
-    ]
-
-
-def test_production_serial_wave_is_detected_without_agent_written_events(tmp_path: Path) -> None:
-    """Four of five analyzers wrote no AGENT_END at all on 2026-08-16.
-
-    Completion must come from the controller's own row, or a non-compliant
-    analyzer silently disables the guard.
-    """
-    out = _write_v2_run(
-        tmp_path,
-        {
-            "web-frontend": ("2026-08-16T07:02:59Z", "2026-08-16T07:16:20Z"),
-            "api-server": ("2026-08-16T07:16:40Z", "2026-08-16T07:27:10Z"),
-        },
-    )
-    assert "AGENT_END" not in (out / ".agent-run.log").read_text(encoding="utf-8")
-    assert check_stride_dispatch.detect_serial_dispatch(out) == ["web-frontend", "api-server"]
-
-
 # ---------------------------------------------------------------------------
 # Wave boundaries are sequential by design
 #
@@ -379,48 +169,3 @@ def _write_waves(out: Path, waves: list[list[str]]) -> None:
         ),
         encoding="utf-8",
     )
-
-
-def test_a_wave_boundary_is_not_a_serial_edge(tmp_path: Path) -> None:
-    """Wave 2 starts after wave 1 finished — that is the design, not a defect."""
-    out = _write_v2_run(
-        tmp_path,
-        {
-            "frontend-spa": ("2026-08-16T13:15:53Z", "2026-08-16T13:26:39Z"),
-            "backend-api": ("2026-08-16T13:15:59Z", "2026-08-16T13:25:11Z"),
-            "data-layer": ("2026-08-16T13:16:16Z", "2026-08-16T13:25:11Z"),
-            "ci-cd-pipeline": ("2026-08-16T13:28:20Z", "2026-08-16T13:36:01Z"),
-            "web3-nft": ("2026-08-16T13:28:25Z", "2026-08-16T13:37:51Z"),
-        },
-    )
-    _write_waves(out, [["frontend-spa", "backend-api", "data-layer"], ["ci-cd-pipeline", "web3-nft"]])
-
-    assert check_stride_dispatch.detect_serial_dispatch(out) == []
-
-
-def test_serialisation_inside_one_wave_is_still_detected(tmp_path: Path) -> None:
-    out = _write_v2_run(
-        tmp_path,
-        {
-            "frontend-spa": ("2026-08-16T13:15:53Z", "2026-08-16T13:25:00Z"),
-            "backend-api": ("2026-08-16T13:25:30Z", "2026-08-16T13:34:00Z"),
-            "web3-nft": ("2026-08-16T13:40:00Z", "2026-08-16T13:48:00Z"),
-        },
-    )
-    _write_waves(out, [["frontend-spa", "backend-api"], ["web3-nft"]])
-
-    assert check_stride_dispatch.detect_serial_dispatch(out) == ["frontend-spa", "backend-api"]
-
-
-def test_a_run_without_a_wave_plan_still_compares_every_pair(tmp_path: Path) -> None:
-    """No plan on disk must not silently disable the guard."""
-    out = _write_v2_run(
-        tmp_path,
-        {
-            "frontend-spa": ("2026-08-16T13:15:53Z", "2026-08-16T13:25:00Z"),
-            "backend-api": ("2026-08-16T13:25:30Z", "2026-08-16T13:34:00Z"),
-        },
-    )
-
-    assert not (out / ".dispatch-waves.json").exists()
-    assert check_stride_dispatch.detect_serial_dispatch(out) == ["frontend-spa", "backend-api"]

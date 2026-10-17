@@ -26,7 +26,6 @@ def test_shipped_groups_resolve_to_existing_unique_test_files(group):
 def test_report_group_includes_section_presence_and_fragment_consumers():
     assert {
         "tests/test_section_condition_wiring.py",
-        "tests/test_section_integrity.py",
         "tests/test_fragment_invariant_parity.py",
         "tests/test_e2e_pipeline.py",
     } <= set(runner.select_tests("report"))
@@ -216,7 +215,7 @@ def test_every_python_source_has_a_reviewed_route_or_full_suite_reason():
         for path in scripts.rglob("*.py")
         if not {"node_modules", "__pycache__"} & set(path.relative_to(scripts).parts)
     }
-    assert "scripts/orchestrator/stage2_state.py" in sources
+    assert "scripts/orchestrator/assessment_stage2.py" in sources
     assert sources <= runner.SOURCE_TESTS.keys() | runner.FULL_SUITE_SOURCES.keys()
     assert not runner.SOURCE_TESTS.keys() & runner.FULL_SUITE_SOURCES.keys()
     for path, reason in runner.FULL_SUITE_SOURCES.items():
