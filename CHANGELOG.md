@@ -11,44 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Headless assessments accept HTTPS and SSH Git URLs alongside local repositories, with token or SSH authentication and automatic temporary checkout cleanup, and `--width <columns>` to wrap console output at a fixed width.
-- Experimental: the headless runner assesses several local checkouts as one system when `--repo` is repeated, producing one threat model, report, and Figure 1 that name the repository of every component and finding; it connects calls between the selected repositories, including through proxies, when a Kubernetes Service, a compose file, or the repository name at an exposed port identifies the receiver, and replaces an earlier combined report in the same output directory only with `--rebuild`.
-- Experimental: `/appsec-advisor:create-threat-model2` assesses one repository through the deterministic controller in the background, asks the business-context questions, writes its report to `docs/security`, limits cost by depth unless you set a budget, and stops with `--stop`. While it runs, the conversation shows each phase, each finished component and a rough remaining time, and the run closes with its summary or a plain outcome.
-- Standard and thorough runs check business abuse cases such as access to other users' data or a bypassed approval, thorough runs add up to three application-specific cases, and repositories and organization profiles can add their own as one-sentence checks. Confirmed cases enter the register, at High for access to other users' data, extra rights, or a misused privileged function, and appear on the findings they confirm, cases with cited code but no control found enter it as unproven, and unresolved cases can become team questions.
-- `/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin and recorded result, and `/appsec-advisor:abuse-cases <ID>` explains one case step by step.
-- The Threat Analyst checks concrete threat hypotheses or a single defined abuse case (`--abuse-case <ID>`) against selected files at a Git revision and rates each attack-chain step with evidence; it can explore a redacted, read-only copy of the repository with `--explore`, answers a concrete question about a change with `--question`, and recommends controls linked to existing threat-model findings.
-- Rerunning `/appsec-advisor:create-threat-model` over an existing model, or passing `--incremental`, re-analyzes only components whose files changed and carries the others' STRIDE results, and is refused before any change when the previous model cannot be carried.
-- Figure 1 marks network trust boundaries within a column and into every data store, and Figure 1b draws evidenced build trust boundaries at the column borders they cross, pale when only inferred.
+- Experimental: repeat `--repo` in the headless runner to assess several local checkouts as one system, with evidenced cross-repository calls and repository attribution in the model, report, and Figure 1; replacing an earlier combined report requires `--rebuild`.
+- Standard and thorough runs check business abuse cases, thorough runs add application-specific cases, and repositories and organization profiles can supply their own checks; `/appsec-advisor:abuse-cases` lists cases and results or explains a selected case.
+- The Threat Analyst checks concrete hypotheses or a selected abuse case against code at a Git revision, answers change-specific questions with `--question`, and supports read-only repository exploration for design questions and reviews with `--explore`.
+- Experimental: `/appsec-advisor:create-threat-model2` runs a single-repository assessment in the background with business-context questions, depth-based cost limits, live progress, and `--stop`.
+- Headless assessments accept HTTPS and SSH Git URLs with token or SSH authentication and automatic temporary checkout cleanup.
+- Rerunning `/appsec-advisor:create-threat-model`, or passing `--incremental`, re-analyzes changed components and reuses unchanged STRIDE results, refusing the run before any change if the previous model cannot be carried forward.
 
 ### Changed
 
-- `scripts/run-headless.sh` with a single `--repo` runs the headless controller assessment; `--incremental`, `--rerender`, `--pr-mode` and the other modes it does not support stop such a run, and `--audit-requirements` runs the requirements audit in the repository `--repo` names.
-- Headless controller assessments are faster and cheaper: they analyze up to four components at a time within the same cost budget, hand each model call its cited source up front, skip source files without a security signal, and run repository discovery on Sonnet 5.5 instead of Haiku so large repositories no longer stall there.
-- Headless controller assessments reserve resources for required completion, replace optional model work when budgets run short, and retain a clearly incomplete snapshot when required work cannot finish; optional work the budget skips is summarized in one information line.
-- The headless console shows progress per running component with a spinner and bar in a terminal, lists each STRIDE component and verified abuse case with its title, groups corrected model answers and coverage notes into one line per phase unless `--verbose` lists them, ends with one line per delivered file, and is coloured in a terminal while honouring `NO_COLOR` and `FORCE_COLOR`; logs and CI output stay plain.
-- Headless controller threat analysis rates a finding as confirmed exploitable when the source shows the insecure code, an input an attacker can reach and no stopping control, instead of leaving most findings unproven; a source target it could not decide is reported with its file and reason.
-- The Management Summary merges Top Weaknesses and Top Mitigations into Remediation Priorities, which follows the verdict and lists the measures to do first under each root cause together with its lasting fix; root causes are ranked by the most severe finding they resolve, and only P1 and P2 measures appear as measures to do first.
-- The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding, including OS command injection and caller-controlled authentication bypasses, to its weakness record and the structural fix that closes it.
-- The report's Scope section names how many source files per component had no route, lead or security signal and were not individually examined, how many program files belong to no component at all, and lists unresolved analysis questions individually.
-- The Figure 1 legend keeps three columns with narrower sections when the diagram is slightly narrower than three standard sections.
-- A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.
-- Threat Analyst design questions, reviews, and hypothesis checks use the repository's threat model as context unless you pass `--isolated`, and a review also reads the files the change imports and the files earlier findings cite.
-- `appsec-reviewer-cli` refuses a repository that carries its own Claude Code configuration unless you pass `--trust-mode trusted`.
-- Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
+- The Management Summary groups remediation priorities by root cause and severity, and Critical Findings by Root Cause replaces the Critical Attack Tree with links to weakness records and structural fixes.
+- Headless controller assessments analyze up to four components concurrently within the same cost budget, reserve resources for required completion, and retain a clearly incomplete snapshot when required work cannot finish.
+- Headless findings count as confirmed exploitable when source evidence establishes insecure code, attacker reachability, and no stopping control; reports identify unresolved checks and source coverage gaps.
+- Figure 1 and Figure 1b show network and build trust boundaries more precisely, and Figure 1 distinguishes unauthenticated client requests and maps more client calls to their routes.
+- Threat Analyst design questions, reviews, and hypothesis checks use existing threat-model context unless `--isolated` is passed, and reviews also inspect relevant imports and files cited by earlier findings.
+- `scripts/run-headless.sh` uses the controller for single-repository assessments and rejects unsupported modes such as `--incremental`, `--rerender`, and `--pr-mode`; `--audit-requirements` audits the repository named by `--repo`.
+- Headless output shows component progress and delivered files, groups routine diagnostics unless `--verbose` is set, and supports fixed-width wrapping with `--width`.
+- Repository abuse cases now belong in `docs/security/abuse-cases/`; the legacy `.appsec/abuse-cases/` path remains supported.
 
 ### Fixed
 
-- Hardcoded secrets that a finding cites, including keys passed directly as call arguments, are masked in every report output, and the secret gate fails when one remains.
-- Trust boundaries are detected regardless of source layout, keep separately deployed targets and build channels apart, and link only to findings whose weakness fits them; outbound calls to external services and to request-chosen URLs become data flows with their own trust boundaries.
-- Routes guarded by `express-jwt`, `koa-jwt`, `express-oauth2-jwt-bearer` (`auth`) or `express-basic-auth`, also through a repository helper, are recognised as authenticated with their credential type; a route whose handler module default-exports an anonymous function or a factory is attributed to that module instead of a wrapper such as an async-error helper.
-- Figure 1 shows which client API requests need no authentication and maps requests built from a service's base-URL field or constant to their routes, instead of marking most of them as unknown; routes that no client code calls add a direct-request line when their authentication method is not shown yet.
-- Ownership middleware suppresses a source finding only when its defining module and execution order establish the matching request-field binding for every recognized handler registration.
-- Abuse-case chains no longer credit CI, documentation, or test findings, or findings that share only a CWE family; abuse cases that were matched but never verified are retried once and otherwise named in Section 9 and the run issues; an invalid, oversized, or symlinked repository abuse-case file is rejected on its own instead of silently dropping every abuse case.
-- A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
-- Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped immediately after rendering.
-- A renamed or archived copy of an earlier report that holds no program code is no longer read as source code, so its old results are not cited as evidence.
-- `update-baseline` keeps user scope when the project is the home directory and falls back to the signed updater when delegation fails.
-- The Threat Analyst honors the organization's Opus ban and reports evidence it could not obtain, and `appsec-reviewer-cli` no longer reports a verdict file from the checkout as its own result.
+- Hardcoded secrets cited by findings, including keys passed as call arguments, are masked in every report output, and the secret gate fails if one remains.
+- `appsec-reviewer-cli` rejects repository-local Claude Code configuration unless `--trust-mode trusted` is passed and no longer accepts checkout verdict files as its own results; the Threat Analyst honors organization Opus bans.
+- Authentication checks recognize more JavaScript middleware and imported handlers, and ownership middleware suppresses findings only when its binding and execution order protect every recognized handler registration.
+- Abuse-case verification no longer credits unrelated or non-runtime findings, marks confirmed findings as verified, reports unresolved checks, and rejects invalid case files without dropping valid ones.
+- Trust-boundary detection handles different source layouts, distinguishes separately deployed targets and build channels, and includes outbound calls to external services and request-chosen URLs.
+- Source analysis no longer cites archived reports as code evidence or misreports wildcard CORS without credentials, and now detects OAuth implicit-flow tokens read from `location.hash`.
+- Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped after rendering.
 
 ## 0.6.0-beta.4 (2026-10-06)
 
