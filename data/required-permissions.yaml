@@ -110,7 +110,7 @@ required:
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"
-    reason: "QA re-render loop edits threat-model.md and fragment files in place"
+    reason: "left from the removed QA re-render loop; no current skill or agent edits files under OUTPUT_DIR in place"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/.*)"
