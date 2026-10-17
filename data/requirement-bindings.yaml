@@ -1295,12 +1295,15 @@ requirements:
       - scripts/runtime/resolve_config.py
       - scripts/orchestrator/orchestration_controller.py
       - scripts/model/persist_run_baseline.py
+      - scripts/runtime/assessment_state.py
       - skills/appsec-analyzer/**
     decisions: []
     documents:
       - docs/threat-modeler.md
-    coverage: advisory
-    guards: []
+    coverage: direct
+    guards:
+      - tests/test_single_repo_controller.py::test_a_new_scan_continues_the_history_and_a_rebuild_resets_it
+      - tests/test_assessment_state.py::test_a_new_scan_replaces_a_completed_run_and_carries_its_changelog
 
   REQ-USE-005:
     applies_to:

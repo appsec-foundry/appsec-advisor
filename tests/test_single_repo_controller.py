@@ -127,6 +127,26 @@ def test_docs_security_keeps_foreign_files_and_overwrites_a_legacy_report(tmp_pa
     assert (reports / "business-context.md").is_file() and (reports / ".run-issues.json").is_file()
 
 
+@pytest.mark.parametrize("names", [("solo",), ("frontend", "backend")])
+def test_a_new_scan_continues_the_history_and_a_rebuild_resets_it(tmp_path, monkeypatch, names):
+    """REQ-USE-004: a rerun over a completed assessment keeps its changelog; --rebuild starts a new one."""
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    outcome, host, out = _assess(tmp_path, monkeypatch, names, ("--no-pdf",))
+    assert outcome["status"] == "complete"
+    first = yaml.safe_load((out / "threat-model.yaml").read_text())["changelog"]
+    argv = [*[arg for name in names for arg in ("--repo", str(tmp_path / name))], "--output", str(out)]
+    argv += ["--hard-budget", "5", "--trust-mode", "trusted", "--model", "haiku", "--no-pdf"]
+
+    def changelog(*extra):
+        result = controller.assess_repositories([*argv, *extra], host_factory=host.factory, progress=lambda t: None)
+        assert result["status"] == "complete"
+        return yaml.safe_load((out / "threat-model.yaml").read_text())["changelog"]
+
+    second = changelog()
+    assert len(second) == len(first) + 1 and second[-len(first) :] == first
+    assert len(changelog("--rebuild")) == 1
+
+
 def _budget(argv):
     ns, rest = controller._assessment_argument_parser().parse_known_args(["--repo", "r", "--output", "o", *argv])
     return controller._assessment_budget(ns, rest).max_usd

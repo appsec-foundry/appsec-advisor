@@ -118,16 +118,17 @@ follow the returned `instruction_file`, with `$REPO` and `$OUTPUT_DIR` as above.
 
 An earlier controller assessment is replaced, whatever its status: no live
 run holds the directory any more (**Running assessment** above), so it is
-complete, failed or abandoned.
+complete, failed or abandoned. A completed one keeps its history in the new
+report.
 
 ```bash
 python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' \
   "$OUTPUT_DIR/.assessment-state.json" 2>/dev/null || true
 ```
 
-Add `--rebuild` to the launch when this prints anything. When it prints
-something other than `complete`, print one line, `Replacing the earlier
-unfinished assessment.`, and say nothing else about it.
+When this prints something other than `complete`, add `--rebuild` to the
+launch, print one line, `Replacing the earlier unfinished assessment.`, and
+say nothing else about it.
 
 The whole assessment runs as one background command, so its output panel
 scrolls on from the first phase to the last instead of starting over at each

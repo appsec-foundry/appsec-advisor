@@ -3238,6 +3238,12 @@ def main() -> int:
     ap.add_argument("--repo-root", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(os.environ.get("CLAUDE_PLUGIN_ROOT", _SCRIPT_DIR.parent)))
     ap.add_argument("--dry-run", action="store_true", help="Print the composed yaml to stdout instead of writing.")
+    ap.add_argument(
+        "--history",
+        type=Path,
+        default=None,
+        help="JSON changelog of the assessment this run replaces; used when output_dir holds no changelog.",
+    )
     args = ap.parse_args()
 
     od = args.output_dir
@@ -3492,6 +3498,14 @@ def main() -> int:
     # claiming this is the initial scan — a false "first scan" is exactly the
     # kind of misleading audit claim the changelog must never make.
     existing_changelog = (prior_yaml or {}).get("changelog")
+    if not existing_changelog and args.history is not None:
+        # The controller builds in a fresh workspace and passes the replaced
+        # assessment's changelog explicitly (REQ-USE-004).
+        _history = _load_json(args.history, required=True)
+        if not isinstance(_history, list) or not all(isinstance(entry, dict) for entry in _history):
+            sys.stderr.write(f"FATAL: --history must hold a changelog list: {args.history}\n")
+            return 2
+        existing_changelog = _history
     if not existing_changelog:
         _baseline = _load_json(od / ".appsec-cache" / "baseline.json")
         _mirror = (_baseline or {}).get("changelog_mirror")

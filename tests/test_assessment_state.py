@@ -239,7 +239,7 @@ def test_resume_after_a_plugin_change_still_refuses_a_completed_run_or_unknown_c
     with lifecycle(scope).hold() as state:
         (scope.output / "threat-model.yaml").write_text("version: 2\n")
         state.complete(["threat-model.yaml"])
-    with pytest.raises(ExchangeError, match="the plugin version changed .*run again with --rebuild"):
+    with pytest.raises(ExchangeError, match="the plugin version changed .*run again without --resume"):
         with lifecycle(scope, resume=True, runtime_sha256="b" * 64).hold():
             pytest.fail("A completed run must not be continued after a plugin change")
     # Unchanged plugin: a completed run still reopens as before.
@@ -700,25 +700,16 @@ def _completed(scope, **changes):
         state.complete(["threat-model.md"])
 
 
-@pytest.mark.parametrize(
-    "field,value,named",
-    [
-        ("runtime_sha256", "b" * 64, "the plugin version"),
-        ("configuration", {"stride_model": "sonnet"}, "the assessment settings"),
-    ],
-)
-def test_a_report_that_cannot_continue_names_why_a_new_scan_is_required(scope, field, value, named):
-    _completed(scope)
-    with pytest.raises(
-        ExchangeError, match=f"cannot be continued because {named} changed.*new scan is required.*--rebuild"
-    ):
-        with lifecycle(scope, **{field: value}).hold():
-            pytest.fail("A fresh start must not replace a report without --rebuild")
-    assert (scope.output / "threat-model.md").read_text() == "report\n"
-    # An unchanged completed run has nothing to continue either.
-    with pytest.raises(ExchangeError, match="completed combined assessment.*--rebuild"):
-        with lifecycle(scope).hold():
-            pytest.fail("A fresh start must not replace a report without --rebuild")
+@pytest.mark.parametrize("changes", [{}, {"runtime_sha256": "b" * 64}, {"configuration": {"stride_model": "sonnet"}}])
+def test_a_new_scan_replaces_a_completed_run_and_carries_its_changelog(scope, changes):
+    """REQ-USE-004: a new scan needs no --rebuild and continues the replaced run's history."""
+    with lifecycle(scope).hold() as state:
+        (scope.output / "threat-model.yaml").write_text("changelog:\n- date: '2026-10-17'\n")
+        state.complete(["threat-model.yaml"])
+    with lifecycle(scope, **changes).hold() as fresh:
+        assert fresh.state["status"] == "running"
+        assert not (scope.output / "threat-model.yaml").exists()
+        assert json.loads(fresh.history_path.read_text()) == [{"date": "2026-10-17"}]
 
 
 def test_rebuild_replaces_only_an_earlier_run_that_owns_every_file(scope):
@@ -727,16 +718,18 @@ def test_rebuild_replaces_only_an_earlier_run_that_owns_every_file(scope):
         assert fresh.state["status"] == "running"
         assert not (scope.output / "threat-model.md").exists()
         assert not (fresh.directory / "jobs").exists()
+        assert fresh.history_path is None
 
 
+@pytest.mark.parametrize("replace", [True, False])
 @pytest.mark.parametrize("extra", ["edited-report", "user-file"])
-def test_rebuild_keeps_a_directory_with_edited_or_foreign_files(scope, extra):
+def test_rebuild_keeps_a_directory_with_edited_or_foreign_files(scope, extra, replace):
     _completed(scope)
     kept = scope.output / ("threat-model.md" if extra == "edited-report" else "notes.txt")
     kept.write_text("mine\n")
     with pytest.raises(ExchangeError, match=rf"did not write or that changed since \({kept.name}\)"):
-        with lifecycle(scope, replace=True).hold():
-            pytest.fail("--rebuild must not erase a user's file")
+        with lifecycle(scope, replace=replace).hold():
+            pytest.fail("A new scan must not erase a user's file")
     assert kept.read_text() == "mine\n" and (scope.output / ".assessment-state.json").exists()
 
 
