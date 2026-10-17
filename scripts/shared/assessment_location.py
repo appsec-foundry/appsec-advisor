@@ -15,18 +15,33 @@ or expose (``REQ-TRU-005``).
 
 from __future__ import annotations
 
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import argparse
 import hashlib
+import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import urllib.parse
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
+from shared.artifact_names import ArtifactSetError, artifact_stem
+
 APP_DIRECTORY = "appsec-advisor"
 ASSESSMENTS_DIRECTORY = "assessments"
 NAME_LIMIT = 40
+LEGACY_DIRECTORY = Path("docs") / "security"
+GIT_TIMEOUT = 10
 _SCP_REMOTE = re.compile(r"^(?:[^@/\s]+@)?(?P<host>[^:/\s]+):(?P<path>.+)$")
 
 
@@ -163,3 +178,76 @@ def _check_private(path: Path) -> None:
             raise LocationError(f"{path.name} in the assessment destination belongs to another user")
         if info.st_mode & 0o077:
             raise LocationError(f"{path.name} in the assessment destination is accessible to other users")
+
+
+def remote_of(repo_root: Path) -> str | None:
+    """The checkout's ``origin`` URL, read without hooks, system or global configuration."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.hooksPath=/dev/null", "-C", str(repo_root), "remote", "get-url", "origin"],
+            capture_output=True,
+            env=env,
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = proc.stdout[:4096].decode("utf-8", "replace").strip()
+    return value if proc.returncode == 0 and value and "\n" not in value else None
+
+
+def application_directory(repo_root: Path, base: Path | None = None) -> Path:
+    """The external directory of the checkout at ``repo_root``."""
+    return assessment_directory(application_name(repo_root, remote_of(repo_root)), base)
+
+
+def locate(repo_root: Path, base: Path | None = None) -> tuple[Path, bool]:
+    """``(directory, legacy)`` of the assessment a consumer reads for ``repo_root``.
+
+    The external directory wins whenever it holds an assessment. A
+    ``docs/security`` set in the same checkout is read only as the legacy
+    fallback this release keeps for migration; otherwise the external
+    directory is returned, assessment or not.
+    """
+    directory = application_directory(repo_root, base)
+    if artifact_stem(directory) is not None:
+        return directory, False
+    legacy = Path(os.path.realpath(repo_root)) / LEGACY_DIRECTORY
+    if artifact_stem(legacy) is not None:
+        return legacy, True
+    return directory, False
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Resolve the assessment directory of a checkout.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        ("destination", "Print where a new assessment of the checkout is written."),
+        ("locate", "Print the directory whose assessment consumers read."),
+    ):
+        command = sub.add_parser(name, help=help_text)
+        command.add_argument("--repo", type=Path, required=True)
+        command.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.repo.is_dir():
+        print("Error: --repo is not a directory", file=sys.stderr)
+        return 2
+    try:
+        if args.command == "destination":
+            directory, legacy = application_directory(args.repo), False
+        else:
+            directory, legacy = locate(args.repo)
+    except (LocationError, ArtifactSetError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"directory": str(directory), "legacy": legacy}))
+    else:
+        print(directory)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

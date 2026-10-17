@@ -61,6 +61,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared._requirements_gate import load_requirements, violated_requirements  # noqa: E402
+from shared.artifact_names import MODEL, ArtifactSetError, model_path  # noqa: E402
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 _KNOWN_SEVERITIES = set(_SEVERITY_ORDER)
@@ -1022,14 +1023,18 @@ def _emit_no_model(output_dir: Path, as_json: bool) -> None:
     if as_json:
         print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
     else:
-        print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
+        print(f"No threat model found at {output_dir / MODEL}.")
         print("Run /appsec-advisor:appsec-analyzer to generate one.")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     output_dir = Path(args.output_dir).resolve()
-    yaml_path = output_dir / "threat-model.yaml"
+    try:
+        yaml_path = model_path(output_dir)
+    except ArtifactSetError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     if not yaml_path.is_file():
         _emit_no_model(output_dir, args.json)
