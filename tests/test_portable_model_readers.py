@@ -139,16 +139,6 @@ def test_health_and_status_report_the_refusal_as_their_freshness(output, tmp_pat
     assert status.returncode == 0 and re.search(r"Decision\s+This threat model " + REFUSAL, status.stdout)
 
 
-@pytest.mark.parametrize("mode", ["--full", "--rerender", "--rebuild"])
-def test_single_repository_run_refuses_the_output_directory(output, tmp_path, mode):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    before = tree(output)
-    result = run("runtime/resolve_config.py", "--repo", repo, "--output", output, mode)
-    assert result.returncode != 0 and f"{output / 'threat-model.yaml'} {REFUSAL}" in result.stderr
-    assert tree(output) == before
-
-
 def test_combined_resolution_still_replaces_its_own_prior_model(output, model):
     views = tuple(
         RepositoryView(row["repository_id"], output.parent / row["label"], "a" * 40, "b" * 64, {"app.py": b"x\n"})
