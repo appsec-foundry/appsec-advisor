@@ -147,6 +147,23 @@ def test_a_replaced_file_is_read_from_its_start_and_from_end_skips_old_records(t
     assert [r["event"] for r in console.records(path, from_end=True, sleep=writer)] == ["phase_done", "end"]
 
 
+def test_follow_ends_without_end_once_the_live_run_released_its_directory(tmp_path):
+    path = tmp_path / "progress.jsonl"
+    path.write_text(_line(RUN[1]))
+    states = iter([True, False])
+    writer = _Writer(path, [("a", _line(RUN[2]))])
+    events = [r["event"] for r in console.records(path, sleep=writer, running=lambda: next(states))]
+    assert events == ["phase_start", "phase_done"]
+
+
+def test_follow_keeps_waiting_while_the_run_has_not_taken_its_directory_yet(tmp_path):
+    path = tmp_path / "progress.jsonl"
+    states = iter([False, False, True, False])
+    writer = _Writer(path, [("w", ""), ("a", _line(RUN[1])), ("a", "")])
+    events = [r["event"] for r in console.records(path, sleep=writer, running=lambda: next(states))]
+    assert events == ["phase_start"]
+
+
 def test_follow_flushes_each_line(tmp_path):
     path = tmp_path / "progress.jsonl"
     path.write_text("".join(_line(record) for record in RUN))
