@@ -1439,6 +1439,17 @@ requirements:
       - tests/test_assessment_host.py::test_unauthorized_proposals_fail_before_another_model_call
       - tests/test_analyst_host.py::test_only_an_exploring_session_gets_read_only_file_tools
 
+  REQ-TRU-005:
+    applies_to:
+      - scripts/orchestrator/orchestration_controller.py
+      - scripts/runtime/ensure_output_gitignore.py
+    decisions:
+      - AS-1
+    documents:
+      - docs/threat-modeler.md
+    coverage: advisory
+    guards: []
+
   REQ-FLW-006:
     applies_to:
       - scripts/runtime/remote_repositories.py
