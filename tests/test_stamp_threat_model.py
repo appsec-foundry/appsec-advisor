@@ -54,6 +54,24 @@ def test_explicit_slug_stamps_set_and_rewrites_figure_ref(tmp_path):
     assert (tmp_path / "threat-model.figure2.svg").is_file()
 
 
+def test_a_published_set_is_stamped_under_its_own_name(tmp_path):
+    (tmp_path / "security-assessment.md").write_text("![Figure 1](security-assessment.figure1.svg)\n")
+    (tmp_path / "security-assessment.yaml").write_text("meta: {}\n")
+    (tmp_path / "security-assessment.figure1.svg").write_text("<svg/>\n")
+    (tmp_path / "security-assessment.sarif.json").write_text("{}\n")
+    r = _run("--output-dir", str(tmp_path), "--slug", "a3f9")
+    assert r.returncode == 0, r.stderr
+    stamped = {path.name for path in tmp_path.glob("*-a3f9*")}
+    assert stamped == {
+        "security-assessment-a3f9.md",
+        "security-assessment-a3f9.yaml",
+        "security-assessment-a3f9.figure1.svg",
+        "security-assessment-a3f9.sarif.json",
+    }
+    text = (tmp_path / "security-assessment-a3f9.md").read_text()
+    assert "security-assessment-a3f9.figure1.svg" in text and "(security-assessment.figure1.svg)" not in text
+
+
 def test_default_slug_is_random_hex(tmp_path):
     _seed_model(tmp_path)
     r = _run("--output-dir", str(tmp_path))

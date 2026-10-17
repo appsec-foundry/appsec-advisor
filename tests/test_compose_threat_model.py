@@ -6310,10 +6310,11 @@ def test_render_figure1_svg_default_is_file_reference(tmp_path: Path) -> None:
 
 
 def test_figure_basename_for_md_derives_from_stem() -> None:
-    assert compose._figure_basename_for_md("threat-model.md") == "threat-model.figure1.svg"
+    # The figure carries the published name the report is delivered under.
+    assert compose._figure_basename_for_md("threat-model.md") == "security-assessment.figure1.svg"
     assert (
         compose._figure_basename_for_md("threat-model-juice-shop-quick.md")
-        == "threat-model-juice-shop-quick.figure1.svg"
+        == "security-assessment-juice-shop-quick.figure1.svg"
     )
     assert compose._figure_basename_for_md("analysis-model.md") == "analysis-model.figure1.svg"
 

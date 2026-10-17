@@ -79,6 +79,13 @@ import validators.validate_intermediate as intermediate_contract  # noqa: E402
 from renderers.term_style import ANSI_RE, SPINNER, Style, logo, plugin_version  # noqa: E402
 from runtime.event_log import format_line  # noqa: E402
 from shared._fragment_ownership import FORCE_REGENERATED_FRAGMENTS  # noqa: E402
+from shared.artifact_names import (  # noqa: E402
+    LEGACY_MODEL,
+    LEGACY_REPORT,
+    MODEL,
+    REPORT,
+    published_name,
+)
 
 SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
     "abuse_case_deriver": {
@@ -769,10 +776,16 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
 
 
 # Which deterministic yaml-derived exports a run can request, and the script
-# that produces each. These take the same `--threat-model` / `--output` pair.
+# that produces each under its published name. These take the same
+# `--threat-model` / `--output` pair.
 _YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
-    ("write_sarif", "exporters/export_sarif.py", "threat-model.sarif.json"),
-    ("write_threatdragon", "exporters/export_threat_dragon.py", "threat-model.threatdragon.json"),
+    ("write_sarif", "exporters/export_sarif.py", "security-assessment.sarif.json"),
+    ("write_threatdragon", "exporters/export_threat_dragon.py", "security-assessment.threatdragon.json"),
+)
+# The document exports, converted from the published report.
+_DOCUMENT_EXPORTS: tuple[tuple[str, str, str, list[str]], ...] = (
+    ("write_pdf", "exporters/export_pdf.py", "security-assessment.pdf", []),
+    ("write_html", "exporters/export_html.py", "security-assessment.html", ["--require-mermaid"]),
 )
 
 # `pentest-tasks` needs its own argv shape (merged findings, dialect, target
@@ -2190,16 +2203,30 @@ _ASSESSMENT_UNSUPPORTED = (
     "--check-requirements",
     "--max-wall-time",
 )
+# Workspace files the run publishes, by their workspace names. The report is
+# renamed on publication; compose already names the figures it links to.
 _ASSESSMENT_PUBLISHED = (
-    "threat-model.md",
-    "threat-model.figure1.svg",
-    "threat-model.figure1-dark.svg",
-    "threat-model.figure1-detail.svg",
-    "threat-model.figure1b.svg",
-    "threat-model.figure1b-dark.svg",
-    "threat-model.figure2.svg",
-    "threat-model.figure2-dark.svg",
+    LEGACY_REPORT,
+    "security-assessment.figure1.svg",
+    "security-assessment.figure1-dark.svg",
+    "security-assessment.figure1-detail.svg",
+    "security-assessment.figure1b.svg",
+    "security-assessment.figure1b-dark.svg",
+    "security-assessment.figure2.svg",
+    "security-assessment.figure2-dark.svg",
     "pentest-tasks.yaml",
+)
+# The fixed product names an earlier, legacy-named report left in the output
+# directory. Publication removes them after installing the new set, so the
+# directory never holds a report or model under both names.
+_LEGACY_PUBLISHED = (
+    LEGACY_MODEL,
+    LEGACY_REPORT,
+    "threat-model.pdf",
+    "threat-model.html",
+    "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
+    *(name.replace("security-assessment.", "threat-model.", 1) for name in _ASSESSMENT_PUBLISHED[1:-1]),
 )
 
 
@@ -2374,7 +2401,7 @@ def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
     if len(undecided) > 1 and not verbose:
         undecided = [
             f"{len(undecided)} security-relevant code locations stayed open: the model read them but could not "
-            "judge them; threat-model.yaml and --verbose list them"
+            f"judge them; {MODEL} and --verbose list them"
         ]
     entries = [entry for entry in entries if "component" in entry]
     if verbose or len(entries) <= 1:
@@ -3401,15 +3428,11 @@ def _assessment_artifacts(cfg: dict[str, Any]) -> str:
     header never promises an export the run skips. A figure or export that cannot
     be produced is dropped there and reported in the closing block.
     """
-    names = ["threat-model.md", "threat-model.yaml", "threat-model.figure*.svg (diagrams)"]
+    names = [REPORT, MODEL, "security-assessment.figure*.svg (diagrams)"]
     names += [basename for key, _script, basename in _YAML_DERIVED_EXPORTS if cfg.get(key)]
     if cfg.get("write_pentest_tasks"):
         names.append("pentest-tasks.yaml")
-    names += [
-        basename
-        for key, basename in (("write_pdf", "threat-model.pdf"), ("write_html", "threat-model.html"))
-        if cfg.get(key)
-    ]
+    names += [basename for key, _script, basename, _extra in _DOCUMENT_EXPORTS if cfg.get(key)]
     if str(cfg.get("slug") or "").strip():
         names.append(f"copies stamped with --slug {str(cfg['slug']).strip()}")
     return "\n".join(names)
@@ -3990,33 +4013,28 @@ def _assessment_publish(
     staging.mkdir()
     delivered: dict[str, str] = {}
     text = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
-    atomic_write_text(staging / "threat-model.yaml", text)
-    delivered["threat-model.yaml"] = hashlib.sha256(text.encode()).hexdigest()
+    atomic_write_text(staging / MODEL, text)
+    delivered[MODEL] = hashlib.sha256(text.encode()).hexdigest()
     for name in _ASSESSMENT_PUBLISHED:
         source = workspace / name
         if source.is_file():
             data = source.read_bytes()
-            (staging / name).write_bytes(data)
-            delivered[name] = hashlib.sha256(data).hexdigest()
+            (staging / published_name(name)).write_bytes(data)
+            delivered[published_name(name)] = hashlib.sha256(data).hexdigest()
     for key, script, basename in _YAML_DERIVED_EXPORTS:
         if cfg.get(key):
-            _run_script(
-                script, ["--threat-model", str(staging / "threat-model.yaml"), "--output", str(staging / basename)]
-            )
+            _run_script(script, ["--threat-model", str(staging / MODEL), "--output", str(staging / basename)])
             delivered[basename] = hashlib.sha256((staging / basename).read_bytes()).hexdigest()
     if cfg.get("write_pentest_tasks") and "pentest-tasks.yaml" not in delivered:
         raise ControllerError("pentest tasks were requested but could not be produced")
     # Document exports need pandoc and a browser; like the single-repository
     # completion they are non-fatal, but a failure stays visible.
     warnings: list[str] = []
-    for key, script, basename, extra in (
-        ("write_pdf", "exporters/export_pdf.py", "threat-model.pdf", []),
-        ("write_html", "exporters/export_html.py", "threat-model.html", ["--require-mermaid"]),
-    ):
+    for key, script, basename, extra in _DOCUMENT_EXPORTS:
         if not cfg.get(key):
             continue
         failure = _script_failure(
-            script, [*extra, "--input", str(staging / "threat-model.md"), "--output", str(staging / basename)]
+            script, [*extra, "--input", str(staging / REPORT), "--output", str(staging / basename)]
         )
         if failure or not (staging / basename).is_file():
             warnings.append(f"{basename} was not exported: {_cap_reason(failure or 'no output')}")
@@ -4031,6 +4049,8 @@ def _assessment_publish(
                 delivered[stamped] = digest
     for name in delivered:
         os.replace(staging / name, output / name)
+    for name in _LEGACY_PUBLISHED:
+        (output / name).unlink(missing_ok=True)
     shutil.rmtree(staging, ignore_errors=True)
     # Appended: warnings collected before publication, such as excluded files, stay named.
     delivered_warnings.extend(warnings)
@@ -4275,7 +4295,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                         )
                     )
                     _export_pentest_tasks_if_configured(workspace, settings)
-                say("Publishing the threat model")
+                say("Publishing the security assessment")
                 delivered = _assessment_publish(scope, original, names, workspace, cfg, warnings)
                 state.complete(delivered)
                 _phase_result(say, "Finalization", "report published")
@@ -4322,7 +4342,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 _assessment_discard_workspace(workspace, len(labels), cfg)
         except ScopeError as exc:
             raise ControllerError(f"selected source state changed or became unreadable: {exc}") from exc
-    violations = _assessment_gate_violations(scope.output / "threat-model.yaml", ns.fail_on) if ns.fail_on else []
+    violations = _assessment_gate_violations(scope.output / MODEL, ns.fail_on) if ns.fail_on else []
     return {
         "status": "complete",
         "fail_on": ns.fail_on,
@@ -4571,7 +4591,7 @@ def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> N
     """
     from renderers.summarize_threat_model import completion_rows
 
-    kind = "Combined threat model" if len(outcome["repositories"]) > 1 else "Threat model"
+    kind = "Combined security assessment" if len(outcome["repositories"]) > 1 else "Security assessment"
     head = f"✓ {kind} of {', '.join(outcome['repositories'])} written in {elapsed}"
     cost = f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
     if _AssessmentConsole.max_columns and len(head) + 1 + len(cost) > _AssessmentConsole.columns() - 1:
@@ -4619,7 +4639,7 @@ def _completion_step_rows(output: Path, deliverables) -> list[tuple[str, str, st
     from renderers.summarize_threat_model import completion_severity_counts
 
     metrics = {"threats_by_sev": completion_severity_counts(output)}
-    cfg = {"write_sarif": "threat-model.sarif.json" in deliverables}
+    cfg = {"write_sarif": "security-assessment.sarif.json" in deliverables}
     rows: list[tuple[str, str, str | None]] = []
     for key, steps in (
         ("Next", build_next_steps(output, output, metrics, cfg)[1:]),

@@ -751,7 +751,7 @@ class TestReadLivePluginMeta:
 
 class TestFigureBasenameForMd:
     def test_default(self):
-        assert compose._figure_basename_for_md("threat-model.md") == "threat-model.figure1.svg"
+        assert compose._figure_basename_for_md("threat-model.md") == "security-assessment.figure1.svg"
 
     def test_custom_stem(self):
         assert compose._figure_basename_for_md("tm-juice-quick.md") == "tm-juice-quick.figure1.svg"

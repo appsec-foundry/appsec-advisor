@@ -1081,17 +1081,17 @@ class TestNextSteps:
     def test_sarif_hint_is_a_follow_up_not_an_alternative(self, tmp_path):
         # Uploading the SARIF is something a reader does as well as reading the
         # report; chained into the alternatives it read as instead of.
-        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        (tmp_path / "security-assessment.sarif.json").write_text("{}")
         cfg = self._cfg(write_sarif=True)
         steps = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), cfg)
         follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), cfg)
 
-        assert not any("threat-model.sarif.json" in l for l in steps)
-        assert any("threat-model.sarif.json" in l for l in follow_ups)
+        assert not any("security-assessment.sarif.json" in l for l in steps)
+        assert any("security-assessment.sarif.json" in l for l in follow_ups)
 
     def test_the_sarif_hint_names_a_tool_class_not_three_products(self, tmp_path):
         # A reader has one SARIF consumer; the product list read as a menu.
-        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        (tmp_path / "security-assessment.sarif.json").write_text("{}")
         follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), self._cfg(write_sarif=True))
         assert any("your SARIF consumer" in l for l in follow_ups)
 

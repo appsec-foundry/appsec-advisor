@@ -221,11 +221,11 @@ def test_single_repository_controller_publishes_a_complete_report(tmp_path, monk
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
     outcome, host, out = _assess(tmp_path, monkeypatch, (name,), ("--no-pdf",))
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     # MR-8: one repository publishes the version-1 single-repository contract.
     assert "source_inventory" not in model
     assert model["meta"]["schema_version"] == 1
-    report = (out / "threat-model.md").read_text()
+    report = (out / "security-assessment.md").read_text()
     assert "app.py" in report and f"{name}/app.py" not in report
     assert "NARRATIVE_PLACEHOLDER" not in report
     assert "ms_renderer" in host.roles
@@ -281,23 +281,23 @@ def test_publication_keeps_the_rendered_figure_1a_detail_and_its_stamped_link(tm
         yaml_data=view,
         triage={},
         fragments_dir=workspace / ".fragments",
-        figure_basename="threat-model.figure1.svg",
+        figure_basename="security-assessment.figure1.svg",
     )
     report = compose._render_figure1_svg(ctx, {}, compose._load_attack_class_taxonomy())
     assert "Figure 1a" in report and not ctx.warnings
     (workspace / "threat-model.md").write_text(report)
     (workspace / "unpublished.svg").write_text("diagnostic only")
     delivered = controller._assessment_publish(scope, original, names, workspace, {"slug": label}, [])
-    detail = "threat-model.figure1-detail.svg"
+    detail = "security-assessment.figure1-detail.svg"
     assert (workspace / detail).is_file() is (count > 8)
     assert (detail in delivered) is (count > 8)
     assert (scope.output / detail).is_file() is (count > 8)
     if count > 8:
-        assert f"]({detail})" in (scope.output / "threat-model.md").read_text()
+        assert f"]({detail})" in (scope.output / "security-assessment.md").read_text()
         assert delivered[detail] == hashlib.sha256((scope.output / detail).read_bytes()).hexdigest()
-        stamped = f"threat-model-{label}.figure1-detail.svg"
+        stamped = f"security-assessment-{label}.figure1-detail.svg"
         assert stamped in delivered and (scope.output / stamped).read_bytes() == (workspace / detail).read_bytes()
-        assert f"]({stamped})" in (scope.output / f"threat-model-{label}.md").read_text()
+        assert f"]({stamped})" in (scope.output / f"security-assessment-{label}.md").read_text()
     assert "unpublished.svg" not in delivered and not (scope.output / "unpublished.svg").exists()
 
 
@@ -305,29 +305,29 @@ def test_publication_keeps_the_rendered_figure_1a_detail_and_its_stamped_link(tm
 def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch, names, depth):
     outcome, host, out = _assess(tmp_path, monkeypatch, names, ("--assessment-depth", depth))
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert model["meta"]["schema_version"] == 2
     labels = {row["label"] for row in model["source_inventory"]["repositories"]}
     assert labels == set(names)
     owners = {row["repository_id"] for t in model["threats"] for row in t.get("evidence") or []}
     assert owners == {row["repository_id"] for row in model["source_inventory"]["repositories"]}
-    report = (out / "threat-model.md").read_text()
+    report = (out / "security-assessment.md").read_text()
     for name in names:
         assert f"{name}/app.py" in report
         assert f"[{name}]" in report
-    assert report.startswith(f"# Threat Model - Combined system ({len(names)} repositories)")
+    assert report.startswith(f"# Security Assessment Report - Combined system ({len(names)} repositories)")
     assert f"together as one system ({', '.join(sorted(names))})" in report
     assert "**Repositories:**" in report and "github.com" not in report.split("## 2.")[0]
-    figure = (out / "threat-model.figure1.svg").read_text()
+    figure = (out / "security-assessment.figure1.svg").read_text()
     assert all(f"[{name}]" in figure for name in names)
     # The published model never names a workspace or combined-root path.
-    text = (out / "threat-model.yaml").read_text()
+    text = (out / "security-assessment.yaml").read_text()
     assert ".assessment-work" not in text and "appsec-combined-" not in text
     assert not (out / ".assessment-work" / "render").exists()
     assert "trust_boundary_analyst" in host.roles and "post_stride_synthesizer" in host.roles
     assert {"actor_discoverer", "ms_renderer", "secarch_renderer"} <= set(host.roles)
     assert ({"architect_reviewer", "abuse_case_deriver"} <= set(host.roles)) == (depth == "thorough")
-    assert not list(out.glob("threat-model-*"))
+    assert not list(out.glob("security-assessment-*"))
 
 
 class _Clock:
@@ -672,20 +672,20 @@ def test_console_header_names_the_files_the_run_will_write_and_its_settings():
 
     plain = rows({})
     assert plain["Artifacts"].splitlines() == [
-        "threat-model.md",
-        "threat-model.yaml",
-        "threat-model.figure*.svg (diagrams)",
+        "security-assessment.md",
+        "security-assessment.yaml",
+        "security-assessment.figure*.svg (diagrams)",
     ]
     assert plain["Options"].splitlines() == ["project: Shop", "exit status fails on high or worse"]
     # Only requested exports are promised; the stamped copies name their slug.
     exports = rows({"write_sarif": True, "write_pdf": True, "write_pentest_tasks": True, "slug": " v2 "})
     assert exports["Artifacts"].splitlines()[3:] == [
-        "threat-model.sarif.json",
+        "security-assessment.sarif.json",
         "pentest-tasks.yaml",
-        "threat-model.pdf",
+        "security-assessment.pdf",
         "copies stamped with --slug v2",
     ]
-    assert "threat-model.html" not in exports["Artifacts"]
+    assert "security-assessment.html" not in exports["Artifacts"]
     assert (
         rows({"check_requirements": True, "requirements_label": "enabled (--requirements)"})["Options"].splitlines()[1]
         == "enabled (--requirements)"
@@ -771,18 +771,18 @@ def test_a_declaration_naming_no_component_stops_before_any_boundary_job(tmp_pat
 def test_slug_adds_a_stamped_copy_of_the_combined_deliverables(tmp_path, monkeypatch, slug):
     outcome, _, out = _assess(tmp_path, monkeypatch, ("edge", "service"), ("--slug", slug))
     assert outcome["status"] == "complete"
-    for name in ("threat-model.md", "threat-model.yaml", "threat-model.figure1.svg"):
-        stamped = name.replace("threat-model", f"threat-model-{slug}", 1)
+    for name in ("security-assessment.md", "security-assessment.yaml", "security-assessment.figure1.svg"):
+        stamped = name.replace("security-assessment", f"security-assessment-{slug}", 1)
         assert (out / name).is_file() and (out / stamped).is_file()
         assert stamped in outcome["deliverables"]
-    report = (out / f"threat-model-{slug}.md").read_text()
-    assert f"threat-model-{slug}.figure1.svg" in report
+    report = (out / f"security-assessment-{slug}.md").read_text()
+    assert f"security-assessment-{slug}.figure1.svg" in report
 
 
 def test_invalid_slug_stops_the_run_before_publication(tmp_path, monkeypatch):
     with pytest.raises((SystemExit, controller.CallError)):
         _assess(tmp_path, monkeypatch, ("edge", "service"), ("--slug", "../escape"))
-    assert not (tmp_path / "out" / "threat-model.yaml").exists()
+    assert not (tmp_path / "out" / "security-assessment.yaml").exists()
 
 
 @pytest.mark.parametrize("names", [("caller", "receiver"), ("west", "east")])
@@ -851,7 +851,7 @@ def test_resume_reuses_accepted_jobs_after_an_interrupted_render(tmp_path, monke
     host.stage2 = interrupted
     with pytest.raises(ExchangeError):
         controller.assess_repositories(argv, host_factory=host.factory, progress=lambda text: None)
-    assert not (tmp_path / "out" / "threat-model.yaml").exists()
+    assert not (tmp_path / "out" / "security-assessment.yaml").exists()
     first = list(host.roles)
     host.roles.clear()
     host.stage2 = original
@@ -933,7 +933,7 @@ def test_changed_source_stops_publication(tmp_path, monkeypatch):
             host_factory=host.factory,
             progress=lambda text: None,
         )
-    assert not (tmp_path / "out" / "threat-model.yaml").exists()
+    assert not (tmp_path / "out" / "security-assessment.yaml").exists()
 
 
 @pytest.mark.parametrize(
@@ -1015,11 +1015,11 @@ def test_declared_context_and_a_run_wide_catalog_reach_the_combined_model(tmp_pa
 
     outcome, host, out = _assess(tmp_path, monkeypatch, ("alpha", "beta"), ("--requirements", str(catalog)), seed=seed)
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     trace = model["business_context_trace"]
     assert "alpha/docs/security/business-context.md" in trace["source"]
     assert model["meta"]["check_requirements"] is True
-    report = (out / "threat-model.md").read_text()
+    report = (out / "security-assessment.md").read_text()
     assert "Requirements" in report
 
 
@@ -1056,7 +1056,7 @@ def test_selection_order_does_not_change_the_combined_model(tmp_path, monkeypatc
             host_factory=host.factory,
             progress=lambda text: None,
         )
-        models.append(yaml.safe_load((out / "threat-model.yaml").read_text()))
+        models.append(yaml.safe_load((out / "security-assessment.yaml").read_text()))
     first, second = models
     assert first["source_inventory"] == second["source_inventory"]
     assert [c["id"] for c in first["components"]] == [c["id"] for c in second["components"]]
@@ -1662,10 +1662,10 @@ def test_single_repository_controller_carries_oauth_provider_into_figure_1(tmp_p
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
     outcome, _, out = _assess(tmp_path, monkeypatch, ("portal",), ("--no-pdf",), seed=seed, host=OAuthHost())
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     provider = next(e for e in model["external_entities"] if e["kind"] == "identity-provider")
     assert any(f.get("to_entity") == provider["id"] for f in model["data_flows"])
-    assert "login.example.invalid" in (out / "threat-model.figure1.svg").read_text()
+    assert "login.example.invalid" in (out / "security-assessment.figure1.svg").read_text()
 
 
 @pytest.mark.parametrize("kind", ["authored", "unknown", "network", "application", "shared"])
@@ -1743,13 +1743,13 @@ def test_single_repository_controller_carries_embedded_authentication_into_figur
     monkeypatch.setattr(sys.modules[__name__], "FullHost", EmbeddedHost)
     outcome, _, out = _assess(tmp_path, monkeypatch, ("records",), ("--no-pdf",), seed=seed)
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     auth = model["data_flows"][0]["authentication"]
     assert auth["scheme"] == "none"
     # MR-8: a one-repository model ships plain repository-relative evidence.
     assert "source_inventory" not in model and "repository_id" not in auth["evidence"][0]
     assert auth["evidence"][0]["file"] == "app.py" and auth["evidence"][0]["line"] == 2
-    assert 'data-authentication="0"' in (out / "threat-model.figure1.svg").read_text()
+    assert 'data-authentication="0"' in (out / "security-assessment.figure1.svg").read_text()
 
 
 def test_assets_get_fragment_ids_in_a_stable_order(tmp_path):
@@ -1889,13 +1889,13 @@ def test_every_stride_component_and_abuse_case_gets_its_own_line(capsys, live):
 
 def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path, monkeypatch, capsys):
     delivered = [
-        "threat-model.yaml",
-        "threat-model.md",
-        "threat-model.figure1.svg",
-        "threat-model.figure1-dark.svg",
-        "threat-model.pdf",
+        "security-assessment.yaml",
+        "security-assessment.md",
+        "security-assessment.figure1.svg",
+        "security-assessment.figure1-dark.svg",
+        "security-assessment.pdf",
     ]
-    (tmp_path / "threat-model.yaml").write_text(
+    (tmp_path / "security-assessment.yaml").write_text(
         "meta: {project: {name: Edge}}\nthreats:\n  - {t_id: T-001, risk: High}\n"
         "mitigations:\n  - {id: M-001, priority: P1}\n"
     )
@@ -1903,14 +1903,14 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
     monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "deliverables": delivered})
     assert controller.assess_main(["--repo", "edge"]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert re.fullmatch(r"✓ Threat model of edge written in \S+ \(3 model calls, ≈ USD 1\.00\)", out[0])
+    assert re.fullmatch(r"✓ Security assessment of edge written in \S+ \(3 model calls, ≈ USD 1\.00\)", out[0])
     assert out[1:] == [
         "  Findings    1 · High 1",
         "  Mitigations 1 · 1 fix first (P1)",
         # The report first; figures are counted on their own row, other exports stay listed.
-        f"  Report      {tmp_path / 'threat-model.md'}",
-        f"              {tmp_path / 'threat-model.yaml'}",
-        f"              {tmp_path / 'threat-model.pdf'}",
+        f"  Report      {tmp_path / 'security-assessment.md'}",
+        f"              {tmp_path / 'security-assessment.yaml'}",
+        f"              {tmp_path / 'security-assessment.pdf'}",
         "              + 2 figures",
         # The single-repository summary's rules: findings to triage, then questions about them.
         "  Next        Triage the findings — /appsec-advisor:triage-security-assessment",
@@ -1922,7 +1922,7 @@ def test_a_completed_assessment_states_its_result_files_and_next_steps(tmp_path,
 
 
 def _closing_lines(tmp_path, monkeypatch, capsys, yaml_text, deliverables):
-    (tmp_path / "threat-model.yaml").write_text(yaml_text)
+    (tmp_path / "security-assessment.yaml").write_text(yaml_text)
     outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 1, "spent_usd": 0.1}
     monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "deliverables": deliverables})
     assert controller.assess_main(["--repo", "edge"]) == 0
@@ -1930,16 +1930,18 @@ def _closing_lines(tmp_path, monkeypatch, capsys, yaml_text, deliverables):
 
 
 def test_a_clean_run_offers_questions_about_its_scope_and_nothing_to_triage(tmp_path, monkeypatch, capsys):
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md"])
     assert not any("triage-security-assessment" in line for line in out)
     assert '                "What did the scan cover?"' in out
 
 
 def test_a_delivered_sarif_file_is_named_as_an_additional_step(tmp_path, monkeypatch, capsys):
-    (tmp_path / "threat-model.sarif.json").write_text("{}")
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md", "threat-model.sarif.json"])
-    assert any(line.startswith("  Also        Upload threat-model.sarif.json") for line in out)
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    (tmp_path / "security-assessment.sarif.json").write_text("{}")
+    out = _closing_lines(
+        tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md", "security-assessment.sarif.json"]
+    )
+    assert any(line.startswith("  Also        Upload security-assessment.sarif.json") for line in out)
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md"])
     assert not any(line.startswith("  Also") for line in out)
 
 
@@ -1947,32 +1949,32 @@ def test_a_recorded_error_closes_with_the_report_error_pointer(tmp_path, monkeyp
     monkeypatch.delenv("APPSEC_PLUGIN_DEV", raising=False)
     issue = ("agent_error", "error", "STRIDE job Gateway was replaced after a model failure (timeout)")
     controller._write_run_issues(tmp_path, {}, [issue])
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md"])
     assert any("Top issue" in line and "STRIDE job Gateway" in line for line in out)
     assert any("/appsec-advisor:report-error" in line for line in out)
     controller._write_run_issues(tmp_path, {}, [])
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md"])
     assert not any("Run Issues" in line for line in out)
 
 
 def test_a_report_git_would_commit_closes_with_the_security_notice(tmp_path, monkeypatch, capsys):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md"])
     assert "Security Notice" in out and "    /appsec-advisor:export-security-assessment" in out
-    (tmp_path / ".gitignore").write_text("threat-model.*\n")
-    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
+    (tmp_path / ".gitignore").write_text("security-assessment.*\n")
+    out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["security-assessment.md"])
     assert "Security Notice" not in out
 
 
 def test_the_whole_closing_block_is_kept_as_plain_text_in_the_work_directory(tmp_path, monkeypatch, capsys):
     (tmp_path / ".assessment-work").mkdir()
-    (tmp_path / "threat-model.yaml").write_text("threats:\n  - {t_id: T-001, risk: High}\n")
+    (tmp_path / "security-assessment.yaml").write_text("threats:\n  - {t_id: T-001, risk: High}\n")
     outcome = {
         "repositories": ["edge"],
         "output": str(tmp_path),
         "calls": 3,
         "spent_usd": 1.0,
-        "deliverables": ["threat-model.md"],
+        "deliverables": ["security-assessment.md"],
         "warnings": ["one optional job was replaced"],
         "infos": ["3 program files belong to no component"],
         "gate_violations": ["T-001(high)"],
@@ -1983,7 +1985,7 @@ def test_the_whole_closing_block_is_kept_as_plain_text_in_the_work_directory(tmp
     console = capsys.readouterr()
     saved = (tmp_path / ".assessment-work" / controller.ASSESSMENT_SUMMARY_NAME).read_text()
     # The head, which a tail of the log loses first, and every line after it, without colour codes.
-    assert saved.startswith("✓ Threat model of edge written in ")
+    assert saved.startswith("✓ Security assessment of edge written in ")
     assert "  Next        " in saved and "⚠ one optional job was replaced" in saved
     assert saved.rstrip().endswith("✗ PR gate: 1 new threat(s) at or above 'high': T-001(high)")
     assert "\033[" not in saved
@@ -2159,7 +2161,7 @@ def test_budget_stop_keeps_accepted_candidates_in_a_separate_incomplete_report(t
     report = stopped.value.report.read_text()
     assert "Incomplete assessment" in report and r"app\.py" in report
     assert "stride" in report and "stage2:security" in report
-    assert not (out / "threat-model.md").exists() and not (out / "threat-model.yaml").exists()
+    assert not (out / "security-assessment.md").exists() and not (out / "security-assessment.yaml").exists()
     state = json.loads((out / ".assessment-state.json").read_text())
     assert state["status"] == "interrupted" and state["partial_report"]["findings"]
 
@@ -2189,9 +2191,9 @@ def test_tight_budget_skips_optional_jobs_and_still_publishes_a_gated_report(tmp
     assert not any("budget" in warning for warning in outcome["warnings"])
     issues = json.loads((out / ".run-issues.json").read_text())
     assert not any("budget reserve" in json.dumps(issue) for issue in issues.get("issues", []))
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert all(t.get("evidence_check") != "verified" for t in model["threats"])
-    assert "NARRATIVE_PLACEHOLDER" not in (out / "threat-model.md").read_text()
+    assert "NARRATIVE_PLACEHOLDER" not in (out / "security-assessment.md").read_text()
     assert not (out / ".assessment-work/budget-report.md").exists()
 
 
@@ -2229,7 +2231,7 @@ def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_
     outcome, host, out = _assess(
         tmp_path, monkeypatch, ("edge", "service"), ("--assessment-depth", "thorough"), host=host
     )
-    assert outcome["status"] == "complete" and (out / "threat-model.md").is_file()
+    assert outcome["status"] == "complete" and (out / "security-assessment.md").is_file()
     failed = set(host.roles) & set(OPTIONAL_ROLES)
     assert {"evidence_verifier", "ms_renderer", "post_stride_synthesizer"} <= failed
     replaced = " ".join(w for w in outcome["warnings"] if "replaced after a model failure" in w)
@@ -2243,7 +2245,7 @@ def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_
     assert errors and all("replaced after a model failure" in title for title in errors)
     assert issues["summary"]["errors"] == len(errors) and user_visible_issues(issues["issues"])
     # Findings no independent review read stay unproven.
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert model["threats"] and all(t.get("evidence_check") != "verified" for t in model["threats"])
 
 
@@ -2269,10 +2271,10 @@ def test_a_failed_requirements_or_actor_job_after_stride_is_replaced_not_fatal(t
     catalog = tmp_path / "catalog.yaml"
     catalog.write_text(CATALOG.replace("priority: high", "priority: MUST"))
     outcome, _, out = _assess(tmp_path, monkeypatch, ("edge", "service"), ("--requirements", str(catalog)))
-    assert outcome["status"] == "complete" and (out / "threat-model.md").is_file()
+    assert outcome["status"] == "complete" and (out / "security-assessment.md").is_file()
     assert any(selector in w and "replaced after a model failure" in w for w in outcome["warnings"])
     if selector == "stage2:requirements-compliance":
-        assert "not assessed" in (out / "threat-model.md").read_text().lower()
+        assert "not assessed" in (out / "security-assessment.md").read_text().lower()
 
 
 def test_an_oversized_lockfile_is_excluded_and_named_not_rejecting_the_run(tmp_path, monkeypatch):
@@ -2284,7 +2286,7 @@ def test_an_oversized_lockfile_is_excluded_and_named_not_rejecting_the_run(tmp_p
 
     monkeypatch.setattr(multi_repo_scope, "MAX_FILE_BYTES", 600)
     outcome, _, out = _assess(tmp_path, monkeypatch, ("edge", "service"), seed=seed)
-    assert outcome["status"] == "complete" and (out / "threat-model.md").is_file()
+    assert outcome["status"] == "complete" and (out / "security-assessment.md").is_file()
     assert any("over 1 MiB were not analysed: edge/package-lock.json" in w for w in outcome["warnings"])
 
 
@@ -2293,7 +2295,7 @@ def test_an_oversized_lockfile_is_excluded_and_named_not_rejecting_the_run(tmp_p
 def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role):
     with pytest.raises(Exception, match="no_result"):
         _assess(tmp_path, monkeypatch, ("edge", "service"), host=_FailingHost([role]))
-    assert not (tmp_path / "out" / "threat-model.md").exists()
+    assert not (tmp_path / "out" / "security-assessment.md").exists()
     # The failed run leaves its reason where report-error and diagnose-run read it.
     issues = json.loads((tmp_path / "out" / ".run-issues.json").read_text())
     assert [(i["category"], i["severity"]) for i in issues["issues"]] == [("run_incomplete", "error")]
@@ -2350,7 +2352,7 @@ def test_root_causes_are_synthesized_after_abuse_verification(tmp_path, monkeypa
     outcome, _, out = _assess(tmp_path, monkeypatch, names, ("--no-pdf",), host=host)
     assert outcome["status"] == "complete" and before
     assert "post_stride_synthesizer" not in before and "post_stride_synthesizer" in host.roles
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert "Unvalidated request input" in json.dumps(model["tier_root_causes"])
     # The rebuild for the synthesis must not reset the verified abuse-case analysis.
     assert model["abuse_case_analysis"]["status"] != "not_run"

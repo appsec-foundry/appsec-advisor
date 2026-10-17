@@ -11,8 +11,8 @@
 #                           Repeat to assess several checkouts as one system
 #   --output <path>         Output directory (default: <repo>/docs/security)
 #   --yaml                  (no-op) yaml is always written by default
-#   --no-yaml               Suppress threat-model.yaml
-#   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
+#   --no-yaml               Suppress security-assessment.yaml
+#   --sarif                 Also write security-assessment.sarif.json (SARIF v2.1.0)
 #   --threatdragon          Also write threat-model.threatdragon.json (ALPHA)
 #   --requirements [<src>]   Enable requirements check (optionally from an
 #                            http(s):// URL or a local file path)
@@ -114,8 +114,8 @@ Options:
                              and --soft-budget or --hard-budget
   --output <path>            Output directory (default: <repo>/docs/security)
   --yaml                     (no-op) yaml is always written by default
-  --no-yaml                  Suppress threat-model.yaml output
-  --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
+  --no-yaml                  Suppress security-assessment.yaml output
+  --sarif                    Also write security-assessment.sarif.json (SARIF v2.1.0)
   --threatdragon             Also write threat-model.threatdragon.json
                              (OWASP Threat Dragon v2 — ALPHA, opt-in only)
   --slug [<value>]           Also write a copy set named threat-model-<value>.*
