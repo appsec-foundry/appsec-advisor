@@ -521,3 +521,43 @@ def test_the_run_creates_files_for_its_owner_only_and_restores_the_umask(monkeyp
         assert seen == [0o077] and os.umask(0o022) == 0o022
     finally:
         os.umask(before)
+
+
+def test_a_finished_docs_security_assessment_is_imported_on_request_and_its_history_continues(tmp_path, monkeypatch):
+    """REQ-USE-004 / REQ-EVO-003: the import carries results and history; the checkout's files stay."""
+    from shared.assessment_location import application_directory
+
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", lambda: "a" * 64)
+    root = tmp_path / "solo"
+    checkout(root)
+    legacy = root / "docs" / "security"
+    host = FullHost()
+    real_admit = multi_repo_scope.admit
+
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
+        return host.scope
+
+    monkeypatch.setattr(multi_repo_scope, "admit", admit)
+    argv = ["--repo", str(root), "--hard-budget", "5", "--trust-mode", "trusted", "--model", "haiku", "--no-pdf"]
+
+    def run(*extra):
+        outcome = controller.assess_repositories([*argv, *extra], host_factory=host.factory, progress=lambda t: None)
+        assert outcome["status"] == "complete"
+        return outcome
+
+    run("--output", str(legacy))
+    first = yaml.safe_load((legacy / "security-assessment.yaml").read_text())["changelog"]
+    before = sorted(path.name for path in legacy.iterdir() if not path.name.startswith("."))
+    with pytest.raises(controller.CallError, match="--migrate-legacy"):
+        controller.assess_repositories(argv, host_factory=host.factory, progress=lambda t: None)
+    outcome = run("--migrate-legacy")
+    destination = application_directory(root)
+    assert Path(outcome["output"]) == destination
+    second = yaml.safe_load((destination / "security-assessment.yaml").read_text())["changelog"]
+    assert len(second) == len(first) + 1 and second[-len(first) :] == first
+    assert any(info.startswith("imported the earlier assessment") for info in outcome["infos"])
+    assert sorted(path.name for path in legacy.iterdir() if not path.name.startswith(".")) == before

@@ -36,6 +36,8 @@ from runtime.multi_repo_scope import AssessmentScope
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
+# Written by runtime/legacy_import.py when a docs/security assessment was imported.
+IMPORT_NAME = ".assessment-import.json"
 # `assess-stop` names the run to stop here; the run reads it at each checkpoint.
 STOP_NAME = ".assessment-stop"
 # The run's issues and the diagnoses derived from them, where report-error and
@@ -352,9 +354,9 @@ class AssessmentState:
                         self._move_jobs_to_cache()
                 self.path.unlink()
                 return
-        if STATE_NAME in leftovers:
+        if STATE_NAME in leftovers or IMPORT_NAME in leftovers:
             try:
-                earlier = _read_state(self.path)
+                earlier = _read_state(self.path) if STATE_NAME in leftovers else self._imported_run()
             except ExchangeError:
                 earlier = None
             # A new scan replaces a completed run as --rebuild does, under the
@@ -431,7 +433,7 @@ class AssessmentState:
         directory, so a rebuild never erases a user's file. Returns those
         files, sorted; an empty list means the earlier run was removed.
         """
-        owned = {STATE_NAME, WORK_NAME}
+        owned = {STATE_NAME, WORK_NAME, IMPORT_NAME}
         for name, expected in earlier["deliverables"].items():
             try:
                 if _deliverable(self.output, name) == expected:
@@ -448,8 +450,21 @@ class AssessmentState:
             shutil.rmtree(self.directory)
         for name in sorted(leftovers - {STATE_NAME, WORK_NAME}):
             (self.output / name).unlink()
-        self.path.unlink()
+        self.path.unlink(missing_ok=True)
         return []
+
+    def _imported_run(self):
+        """An imported legacy assessment, shaped as the completed run it replaces.
+
+        Its identity is this run's own: an import has none, and a completed
+        run is replaced whatever its identity.
+        """
+        from runtime.legacy_import import read_receipt
+
+        receipt = read_receipt(self.output)
+        if receipt is None:
+            raise ExchangeError("Assessment import receipt is unreadable or malformed")
+        return {"status": "complete", "identity": self.identity, "deliverables": receipt["deliverables"]}
 
     def _check_receipts(self, accounting):
         """Require state accounting to cover every accepted job receipt.

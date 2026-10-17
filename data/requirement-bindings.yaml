@@ -1056,6 +1056,7 @@ requirements:
       - schemas/threat-model.output.schema.yaml
       - schemas/org-profile.schema.yaml
       - scripts/check_release_meta.py
+      - scripts/runtime/legacy_import.py
     decisions:
       - EX-1
     documents:
@@ -1064,6 +1065,9 @@ requirements:
     coverage: partial
     guards:
       - tests/test_prepare_trust_boundary_context.py::test_normalize_migrates_legacy_without_promoting_absence
+      - tests/test_single_repo_controller.py::test_a_finished_docs_security_assessment_is_imported_on_request_and_its_history_continues
+      - tests/test_legacy_import.py::test_an_interrupted_or_broken_run_is_reported_and_never_imported
+      - tests/test_legacy_import.py::test_without_a_choice_the_run_stops_with_the_instruction
       - tests/test_analysis_version_upgrade.py::test_analysis_v5_declares_prior_read_compatibility
       - tests/test_check_release_meta.py::test_main_invalid_analysis_compatibility_fails
 
@@ -1309,6 +1313,7 @@ requirements:
     coverage: direct
     guards:
       - tests/test_single_repo_controller.py::test_a_new_scan_continues_the_history_and_a_rebuild_resets_it
+      - tests/test_single_repo_controller.py::test_a_finished_docs_security_assessment_is_imported_on_request_and_its_history_continues
       - tests/test_assessment_state.py::test_a_new_scan_replaces_a_completed_run_and_carries_its_changelog
 
   REQ-USE-005:

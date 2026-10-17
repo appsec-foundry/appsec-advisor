@@ -120,6 +120,26 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" a
 On an error, print it and stop. Otherwise read the returned `preview` file and
 follow the returned `instruction_file`, with `$REPO` and `$OUTPUT_DIR` as above.
 
+## Earlier assessment in the repository
+
+Skip this section when the arguments contain `--migrate-legacy` or
+`--ignore-legacy`. Otherwise run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/legacy_import.py" check --repo "$REPO" --output "$OUTPUT_DIR"
+```
+
+On `none`, continue. On `incomplete: <reason>`, print one line, `The earlier
+assessment in docs/security is incomplete (<reason>); it is not imported and
+this run starts a new one.`, and continue. On `offer`, ask one
+`AskUserQuestion`: "<REPO>/docs/security holds an earlier assessment. Import
+it into <OUTPUT_DIR> before this run?" Offer **Import it (Recommended)**,
+"Results, history and triage carry over; the files in the repository stay",
+and **Start without it**, "This run starts a new history; the files in the
+repository stay". Only an explicit **Import it** adds `--migrate-legacy` to the
+launch below and **Start without it** adds `--ignore-legacy`; every other
+answer, including free text, stops.
+
 ## Launch
 
 An earlier controller assessment is replaced, whatever its status: no live

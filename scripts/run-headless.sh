@@ -115,6 +115,10 @@ Options:
                              and --soft-budget or --hard-budget
   --output <path>            Output directory (default: the application's private
                              directory under the user data directory)
+  --migrate-legacy           Import a finished assessment from <repo>/docs/security
+                             first; its files there stay
+  --ignore-legacy            Start without that assessment; a run that finds one
+                             and has neither option stops
   --yaml                     (no-op) yaml is always written by default
   --no-yaml                  Suppress security-assessment.yaml output
   --sarif                    Also write security-assessment.sarif.json (SARIF v2.1.0)

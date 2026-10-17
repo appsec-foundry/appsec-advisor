@@ -2245,6 +2245,10 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     # Redo every model job instead of reusing an earlier run's accepted ones.
     parser.add_argument("--rebuild", action="store_true")
+    # A finished assessment in the checkout's docs/security, from before decision AS-1.
+    legacy = parser.add_mutually_exclusive_group()
+    legacy.add_argument("--migrate-legacy", action="store_true", help="Import it into the destination first.")
+    legacy.add_argument("--ignore-legacy", action="store_true", help="Start without it; its files stay.")
     parser.add_argument(
         "--soft-budget",
         "--max-cost",
@@ -4206,6 +4210,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     _AssessmentConsole.ROLE_LABELS.get(role, role.replace("_", " ")),
                 )
 
+        imported = _assessment_legacy(ns, scope.output)
+        if imported:
+            infos.append(imported)
         try:
             session = _assessment_session(
                 scope, rest, budget=budget, host_factory=factory, resume=ns.resume, model=ns.model, rebuild=ns.rebuild
@@ -4415,6 +4422,40 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         "spent_usd": round(budget.spent_usd, 2),
         "calls": budget.calls,
     }
+
+
+def _assessment_legacy(ns, output: Path) -> str | None:
+    """Import or refuse a finished assessment the checkout's docs/security still holds.
+
+    Only a sole repository whose destination holds no assessment yet is
+    affected; --resume and --rebuild continue or replace the destination's own
+    run. Without --migrate-legacy or --ignore-legacy the run stops with the
+    instruction, so a headless run never migrates or starts over silently.
+    Returns the note the closing block shows, or None.
+    """
+    from runtime.legacy_import import LegacyImportError, import_legacy, offer
+
+    if len(ns.repo) != 1 or ns.resume or ns.rebuild:
+        return None
+    legacy = offer(Path(ns.repo[0]), output)
+    if legacy is None:
+        return None
+    if not legacy.complete:
+        return f"the earlier assessment in {legacy.directory} is incomplete ({legacy.reason}) and was not imported"
+    if ns.ignore_legacy:
+        return None
+    if not ns.migrate_legacy:
+        raise CallError(
+            f"{legacy.directory} holds an earlier assessment. Add --migrate-legacy to import it into {output} "
+            "first (results and history carry over, the files in the checkout stay), or --ignore-legacy to start "
+            "without it"
+        )
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        delivered = import_legacy(legacy, output)
+    except (LegacyImportError, OSError) as exc:
+        raise CallError(f"the earlier assessment could not be imported: {exc}") from exc
+    return f"imported the earlier assessment from {legacy.directory} ({len(delivered)} files); its files there stay"
 
 
 def _assessment_retry_warning(retries: list[dict]) -> str | None:

@@ -467,16 +467,14 @@ def test_resume_after_a_fresh_start_that_never_reached_a_cached_job(scope, rebui
         pass  # the adopted or redone receipt is covered by the accounting
 
 
-@pytest.mark.parametrize("extra", ["completed", "user-file", "malformed-state"])
+# A completed run that owns every remaining file is replaced by a new scan
+# (REQ-USE-004); test_rebuild_keeps_a_directory_with_edited_or_foreign_files
+# covers a completed run beside an edited or foreign file.
+@pytest.mark.parametrize("extra", ["user-file", "malformed-state"])
 def test_fresh_start_still_refuses_a_report_or_foreign_files(scope, extra):
     _fail(lifecycle(scope))
     preserved = scope.output / ".assessment-state.json"
-    if extra == "completed":
-        with lifecycle(scope, resume=True).hold() as state:
-            (scope.output / "threat-model.md").write_text("report\n")
-            state.complete(["threat-model.md"])
-        (scope.output / "threat-model.md").unlink()
-    elif extra == "user-file":
+    if extra == "user-file":
         preserved = scope.output / "notes.txt"
         preserved.write_text("preserve")
     else:
