@@ -2601,13 +2601,13 @@ class _AssessmentConsole:
         ("Ranking findings", "Consolidation"),
         # The model is built before abuse verification, which binds its steps
         # to the ranked findings.
-        ("Building the threat model", "Consolidation"),
+        ("Building the assessment model", "Consolidation"),
         ("Matching abuse cases", "Abuse cases"),
         ("Deriving application-specific business abuse cases", "Abuse cases"),
         ("Verifying abuse case", "Abuse cases"),
         # Root causes cover the findings abuse verification adds.
         ("Synthesizing cross-finding", "Finalization"),
-        ("Rebuilding the threat model", "Finalization"),
+        ("Rebuilding the assessment model", "Finalization"),
         ("Rendering the report", "Finalization"),
         ("Stage 2:", "Finalization"),
         ("Running the quality gates", "Finalization"),
@@ -3936,7 +3936,7 @@ def _assessment_render(
     # Abuse matching binds its steps to the ranked findings, so the model is
     # built before it; the root-cause synthesis then covers the findings that
     # abuse verification adds, and the model is built again with them.
-    build_model("Building the threat model")
+    build_model("Building the assessment model")
     receipts += run_abuse_cases(
         scope,
         jobs,
@@ -3946,12 +3946,12 @@ def _assessment_render(
         cfg,
         instructions=_assessment_role_instructions,
         run_script=_run_script,
-        rebuild=lambda: build_model("Rebuilding the threat model with the verified abuse cases"),
+        rebuild=lambda: build_model("Rebuilding the assessment model with the verified abuse cases"),
         progress=progress,
     )
     if json.loads((workspace / ".threats-merged.json").read_text(encoding="utf-8")).get("threats"):
         _assessment_synthesis(jobs, workspace, progress=progress)
-        build_model("Rebuilding the threat model with the root causes")
+        build_model("Rebuilding the assessment model with the root causes")
         _run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
         if not cfg.get("skip_abuse_case_verification"):
             from orchestrator.assessment_review import persist_abuse_cases
