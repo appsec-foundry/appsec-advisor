@@ -2,9 +2,9 @@
 
 This directory holds example inputs to copy into your own setup and a sample report from the requirements audit.
 
-## Threat model reports
+## Security assessment report
 
-Complete threat model reports live in the companion repository [appsec-advisor-examples](https://github.com/appsec-foundry/appsec-advisor-examples). Its README lists the runs by target application and assessment depth, with the exported artifacts of each run. Use them to see the report structure, depth levels, and export formats before you run an assessment.
+The companion repository [appsec-advisor-examples](https://github.com/appsec-foundry/appsec-advisor-examples) contains one complete [standard assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/security-assessment-juice-shop-standard-v0.6.0b5.md), with its diagrams and exports. Use it to see the report structure and export formats before you run an assessment. The [Security Assessment guide](../docs/security-assessment.md#assessment-depth--cost-control) compares assessment depths.
 
 ## Threat model inputs
 
