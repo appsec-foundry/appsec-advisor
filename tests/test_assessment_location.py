@@ -198,3 +198,17 @@ def test_hooks_and_exports_find_the_checkouts_assessment_from_any_subdirectory(t
     legacy.mkdir(parents=True)
     (legacy / "threat-model.md").write_text("x")
     assert loc.default_report(repo) == legacy.resolve() / "threat-model.md"
+
+
+def test_cli_creates_the_destination_privately_on_request(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(loc.sys, "platform", "linux")
+    repo = _clone(tmp_path / "repo", None)
+    assert loc.main(["destination", "--repo", str(repo)]) == 0
+    directory = Path(capsys.readouterr().out.strip())
+    assert not directory.exists()
+    assert loc.main(["destination", "--repo", str(repo), "--create"]) == 0
+    assert directory.is_dir() and directory.stat().st_mode & 0o777 == 0o700
+    (tmp_path / "data" / "appsec-advisor").chmod(0o755)
+    assert loc.main(["destination", "--repo", str(repo), "--create"]) == 2
+    assert "accessible to other users" in capsys.readouterr().err

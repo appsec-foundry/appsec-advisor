@@ -232,7 +232,7 @@ def run(args: argparse.Namespace) -> int:
     effective = rrs._load_effective(output_dir / ".org-profile-effective.json")
     legacy = rrs._load_legacy_default(plugin_root)
     demo_path = str(plugin_root / "examples" / "appsec-requirements-example.yaml") if args.demo else None
-    local_path = rstate.local_repo_source(output_dir)
+    local_path = rstate.local_repo_source(Path(args.catalog_dir) if args.catalog_dir else output_dir)
     remembered = rstate.read_sidecar(sidecar_file)
     src = rrs.resolve(
         args.requirements,
@@ -396,6 +396,12 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic fetch-or-abort gate for security requirements.",
     )
     p.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"), required=False)
+    # The local catalog is a repository input; reports may be written elsewhere.
+    p.add_argument(
+        "--catalog-dir",
+        default=None,
+        help="directory of a developer-authored requirements.yaml (default: --output-dir)",
+    )
     p.add_argument(
         "--requirements", default=None, help="requirements source override: http(s):// URL or a local file path"
     )

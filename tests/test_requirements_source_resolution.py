@@ -281,6 +281,20 @@ def test_main_resolves_local_repo_catalog_and_prints_json(tmp_path, capsys):
     assert out["url"] == str(tmp_path / "requirements.yaml")
 
 
+def test_the_local_catalog_is_read_from_the_repository_when_reports_go_elsewhere(tmp_path, capsys):
+    repo_catalog = tmp_path / "repo" / "docs" / "security"
+    repo_catalog.mkdir(parents=True)
+    (repo_catalog / "requirements.yaml").write_text("categories: []\n", encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / ".org-profile-effective.json").write_text(json.dumps(EFFECTIVE), encoding="utf-8")
+
+    assert rrs.main(["--output-dir", str(reports), "--catalog-dir", str(repo_catalog)]) == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["source"] == "local" and out["url"] == str(repo_catalog / "requirements.yaml")
+
+
 def test_main_uses_demo_path_when_requested(tmp_path, capsys):
     assert rrs.main(["--output-dir", str(tmp_path), "--demo", "--plugin-root", str(REPO_ROOT)]) == 0
 
