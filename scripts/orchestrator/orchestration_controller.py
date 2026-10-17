@@ -2607,7 +2607,7 @@ class _AssessmentConsole:
         ("Verifying abuse case", "Abuse cases"),
         # Root causes cover the findings abuse verification adds.
         ("Synthesizing cross-finding", "Finalization"),
-        ("Rebuilding the assessment model", "Finalization"),
+        ("Updating the assessment model", "Finalization"),
         ("Rendering the report", "Finalization"),
         ("Stage 2:", "Finalization"),
         ("Running the quality gates", "Finalization"),
@@ -3946,12 +3946,12 @@ def _assessment_render(
         cfg,
         instructions=_assessment_role_instructions,
         run_script=_run_script,
-        rebuild=lambda: build_model("Rebuilding the assessment model with the verified abuse cases"),
+        rebuild=lambda: build_model("Updating the assessment model with the verified abuse cases"),
         progress=progress,
     )
     if json.loads((workspace / ".threats-merged.json").read_text(encoding="utf-8")).get("threats"):
         _assessment_synthesis(jobs, workspace, progress=progress)
-        build_model("Rebuilding the assessment model with the root causes")
+        build_model("Updating the assessment model with the root causes")
         _run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
         if not cfg.get("skip_abuse_case_verification"):
             from orchestrator.assessment_review import persist_abuse_cases
