@@ -211,19 +211,22 @@ def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, 
     (e2e_run / ".fragments/security-posture-attack-paths.json").write_text(json.dumps(paths))
     if fallback:
         monkeypatch.setattr(figure1_dfd, "check_diagram", lambda *a, **kw: ("", ["test forces SVG fallback"]))
+        with pytest.raises(compose.FigureError, match="data-flow diagram failed its self-check"):
+            compose.render(CONTRACT, e2e_run)
+        assert not (e2e_run / "figure1.svg").exists()
+        return
     markdown, warnings = compose.render(CONTRACT, e2e_run)
     svg = (e2e_run / "figure1.svg").read_text()
     svg_text = " ".join(" ".join(ET.fromstring(svg).itertext()).split())
-    assert (ET.fromstring(svg).find("{*}g[@data-legend-section='notation']") is not None) != fallback
-    assert not warnings or fallback
-    for text in (markdown, svg_text) if fallback else (markdown,):
+    assert ET.fromstring(svg).find("{*}g[@data-legend-section='notation']") is not None
+    assert not warnings
+    for text in (markdown,):
         assert ("because registration is open" in text) == registration
         assert ("because the source repository is public" in text) == public_source
         assert ("Each finding retains its login and privilege requirements." in text) == (registration or public_source)
-    if not fallback:
-        assert ("Self-registered users" in svg_text) == registration
-        assert ("Public-source readers" in svg_text) == public_source
-        assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
+    assert ("Self-registered users" in svg_text) == registration
+    assert ("Public-source readers" in svg_text) == public_source
+    assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
     assert "it is shown distinctly" not in markdown
     # The privileged attacker keeps its own row, coded like its Figure 1 card.
     assert re.search(r"^\| (A\d+ · )?Privileged User \| Attacker \|", markdown, re.M)

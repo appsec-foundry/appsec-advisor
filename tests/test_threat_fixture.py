@@ -190,8 +190,8 @@ def _prepare_source(dest: Path) -> Path:
     # Skip — rather than error — when it is absent so a fresh checkout / CI stays
     # green. This is the sole `_LAST_RUN` consumer, so it gates every freeze/replay
     # test (directly or via the `frozen` fixture) without touching the unit tests.
-    if not (_LAST_RUN / "threat-model.yaml").is_file():
-        pytest.skip("_last-run fixture absent (git-ignored; regenerate via `make e2e-full`)")
+    if not (_LAST_RUN / "threat-model.yaml").is_file() or not (_LAST_RUN / ".fragments/ms-verdict.json").is_file():
+        pytest.skip("_last-run fixture absent or incomplete (git-ignored; regenerate via `make e2e-full`)")
     shutil.copytree(_LAST_RUN, dest)
     cfg_path = dest / ".skill-config.json"
     cfg = json.loads(cfg_path.read_text())

@@ -194,7 +194,7 @@ class TestRenderTitleMetaFallback:
         assert "appsec-advisor v9.9.9" in out
         assert "analysis v2" in out
 
-    def test_no_plugin_version_title_only(self, tmp_path, monkeypatch):
+    def test_no_plugin_version_keeps_focus_without_generator(self, tmp_path, monkeypatch):
         monkeypatch.setattr(compose, "_read_live_plugin_meta", lambda: (None, None))
         ctx = _mk_ctx(
             tmp_path,
@@ -202,7 +202,7 @@ class TestRenderTitleMetaFallback:
             yaml_data={"meta": {}},
         )
         out = compose._render_title(ctx)
-        assert out == "# TM\n"
+        assert out == "# TM\n\n_Analysis of security architecture and threats_\n"
 
     def test_live_meta_exception_swallowed(self, tmp_path, monkeypatch):
         def _boom():

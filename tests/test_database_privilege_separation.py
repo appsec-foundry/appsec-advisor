@@ -11,6 +11,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "analyzers/database_privilege_separation.py"
 CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
+POSTURE = REPO_ROOT / "scripts" / "model/assessment_posture.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import analyzers.database_privilege_separation as dbsep  # noqa: E402
@@ -130,12 +131,14 @@ def test_non_thorough_depth_is_a_no_scan_sidecar(tmp_path: Path, monkeypatch) ->
 
 
 def test_runtime_wiring_keeps_database_separation_thorough_only() -> None:
-    text = CONTROLLER.read_text(encoding="utf-8")
-    start = text.index("def _prepasses(")
+    text = POSTURE.read_text(encoding="utf-8")
+    start = text.index("def _coverage(")
     block = text[start : text.index("\ndef ", start + 1)]
     assert 'if depth == "thorough"' in block
-    assert "analyzers/database_privilege_separation.py" in block
-    assert '"--assessment-depth",\n                    "thorough"' in block
+    assert "database_privilege_separation._main(argv)" in block
+    assert '"--assessment-depth", "thorough"' in block
+    assert "_coverage(root, output, depth, rules)" in text
+    assert "assessment_posture.run(scope, names, workspace, cfg" in CONTROLLER.read_text(encoding="utf-8")
 
 
 def _clients(repo: Path) -> None:

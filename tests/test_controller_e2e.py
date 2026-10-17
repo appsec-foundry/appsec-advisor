@@ -29,7 +29,7 @@ from tests.test_multi_repo_controller import checkout
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKE_CLAUDE = ROOT / "tests" / "e2e" / "fake_claude.py"
-DELIVERABLES = ("threat-model.md", "threat-model.yaml", "threat-model.figure1.svg")
+DELIVERABLES = ("security-assessment.md", "security-assessment.yaml", "security-assessment.figure1.svg")
 
 
 def _system(tmp_path, names, faults=""):
@@ -73,7 +73,7 @@ def _headless(argv, env, *extra):
 def _assert_published(out, repositories):
     for name in DELIVERABLES:
         assert (out / name).is_file(), name
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert model["meta"]["schema_version"] == (1 if repositories == 1 else 2)
     assert model["threats"] and validate_threat_model_output(model)[0]
 
@@ -97,7 +97,7 @@ def test_a_login_failure_stops_with_its_reason_and_publishes_nothing(tmp_path):
     assert result.returncode != 0
     assert "authentication_failed" in result.stderr and "/login" in result.stderr
     assert "Traceback" not in result.stderr
-    assert not (out / "threat-model.md").exists()
+    assert not (out / "security-assessment.md").exists()
     # A login failure is never retried.
     assert len(_calls(state)) == 1
 
@@ -142,14 +142,14 @@ def test_a_text_answer_is_paid_for_again_only_once(tmp_path, in_process):
     with pytest.raises(TransportError, match="no_structured_output"):
         in_process(argv, env)
     assert [call["fault"] for call in _calls(state) if call["role"] == "stride_analyzer"] == ["text", "text"]
-    assert not (out / "threat-model.md").exists()
+    assert not (out / "security-assessment.md").exists()
 
 
 def test_a_run_stopped_by_a_persistent_api_failure_resumes_without_redoing_accepted_jobs(tmp_path, in_process):
     argv, env, out, state = _system(tmp_path, ("solo",), faults="stride_analyzer:server_error:4")
     with pytest.raises(TransportError, match="server_error.*--resume"):
         in_process(argv, env)
-    assert not (out / "threat-model.md").exists()
+    assert not (out / "security-assessment.md").exists()
     before = _calls(state)
     assert [call["fault"] for call in before if call["role"] == "stride_analyzer"] == ["server_error"] * 4
 

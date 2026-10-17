@@ -1580,11 +1580,11 @@ def _unpriced_token_lines(unpriced: int) -> list[str]:
 # — which is how a `--pdf --html --pentest-tasks` run printed "Assessment
 # complete" while producing none of the three (juice-shop 2026-08-18).
 _REQUESTABLE_DELIVERABLES: tuple[tuple[str, str, str], ...] = (
-    ("write_sarif", "SARIF", "threat-model.sarif.json"),
-    ("write_threatdragon", "Threat Dragon", "threat-model.threatdragon.json"),
+    ("write_sarif", "SARIF", "security-assessment.sarif.json"),
+    ("write_threatdragon", "Threat Dragon", "security-assessment.threatdragon.json"),
     ("write_pentest_tasks", "Pentest tasks", "pentest-tasks.yaml"),
-    ("write_pdf", "PDF", "threat-model.pdf"),
-    ("write_html", "HTML", "threat-model.html"),
+    ("write_pdf", "PDF", "security-assessment.pdf"),
+    ("write_html", "HTML", "security-assessment.html"),
 )
 
 
@@ -1599,9 +1599,15 @@ def missing_deliverables(output_dir: Path, cfg: dict) -> list[str]:
 
 def render_files(output_dir: Path, cfg: dict) -> list[str]:
     lines = ["", "Outputs"]
-    lines.append(f"  Report     : {output_dir}/threat-model.md")
+    report = output_dir / "security-assessment.md"
+    if not report.is_file() and (output_dir / "threat-model.md").is_file():
+        report = output_dir / "threat-model.md"
+    lines.append(f"  Report     : {report}")
     if cfg.get("write_yaml", True):
-        lines.append(f"  YAML       : {output_dir}/threat-model.yaml")
+        model = output_dir / "security-assessment.yaml"
+        if not model.is_file() and (output_dir / "threat-model.yaml").is_file():
+            model = output_dir / "threat-model.yaml"
+        lines.append(f"  YAML       : {model}")
     for key, label, basename in _REQUESTABLE_DELIVERABLES:
         if not cfg.get(key):
             continue
@@ -1630,8 +1636,8 @@ def render_files(output_dir: Path, cfg: dict) -> list[str]:
 # not start. The summary prints the command itself so the closing message never
 # needs wording of its own.
 _REEXPORT_SCRIPTS: dict[str, tuple[str, ...]] = {
-    "threat-model.pdf": ("exporters/export_pdf.py",),
-    "threat-model.html": ("exporters/export_html.py", "--require-mermaid"),
+    "security-assessment.pdf": ("exporters/export_pdf.py",),
+    "security-assessment.html": ("exporters/export_html.py", "--require-mermaid"),
 }
 
 
@@ -1643,7 +1649,10 @@ def _reexport_commands(output_dir: Path, absent: list[str]) -> list[str]:
         if script is None:
             continue
         argv = ["python3", str(scripts_dir / script[0]), *script[1:]]
-        argv += ["--input", str(output_dir / "threat-model.md"), "--output", str(output_dir / basename)]
+        report = output_dir / "security-assessment.md"
+        if not report.is_file() and (output_dir / "threat-model.md").is_file():
+            report = output_dir / "threat-model.md"
+        argv += ["--input", str(report), "--output", str(output_dir / basename)]
         if not lines:
             lines.append("    Export from a terminal (needs headless Chrome), or prefix with ! in the session:")
         lines.append(f"      {shlex.join(argv)}")
@@ -2696,8 +2705,8 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
 
 # Mirrors orchestration_controller._YAML_DERIVED_EXPORTS. Keep the two in sync.
 _YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
-    ("write_sarif", "exporters/export_sarif.py", "threat-model.sarif.json"),
-    ("write_threatdragon", "exporters/export_threat_dragon.py", "threat-model.threatdragon.json"),
+    ("write_sarif", "exporters/export_sarif.py", "security-assessment.sarif.json"),
+    ("write_threatdragon", "exporters/export_threat_dragon.py", "security-assessment.threatdragon.json"),
 )
 
 
@@ -2721,7 +2730,9 @@ def _export_deliverables_if_configured(output_dir: Path) -> None:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
-    yaml_path = output_dir / "threat-model.yaml"
+    yaml_path = output_dir / "security-assessment.yaml"
+    if not yaml_path.is_file():
+        yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
         return
     for key, script, basename in _YAML_DERIVED_EXPORTS:

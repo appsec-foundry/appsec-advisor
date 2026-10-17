@@ -4190,7 +4190,11 @@ def test_trust_boundary_header_is_identical_in_all_three_modules():
     prose = _load("repairs.apply_prose_fixes")
     header = compose._BOUNDARY_ASSUMPTION_HEADER
     assert all(header in form for form in prose._TRUST_BOUNDARY_TABLE_HEADERS)
-    assert all(header in form for form in compose._FIXED_LAYOUT_TABLE_HEADERS if form[0] == "ID")
+    assert all(
+        header in form
+        for form in compose._FIXED_LAYOUT_TABLE_HEADERS
+        if form[:3] == ("ID", "Boundary / crossing", "Exposure")
+    )
     qa_forms = [spec[0] for spec in qa._FIXED_LAYOUT_SPECS if spec[0][:3] == ("ID", "Boundary / crossing", "Exposure")]
     assert qa_forms and all(header in form for form in qa_forms)
     # The prose exemption indexes the column by position, so the header's slot

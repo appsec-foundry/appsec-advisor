@@ -181,9 +181,11 @@ def test_stage1_gates_evidence_content_not_just_existence() -> None:
     The pre-seed is schema-clean with every count at zero, so an existence check
     passes while triage silently loses the entire refutation signal.
     """
-    text = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
-    assert "validators/guard_evidence_verification.py" in text, (
-        "the content detector exists but is not invoked where its consumer runs"
+    controller = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
+    emitter = (REPO_ROOT / "scripts" / "auto_emitter_pass.sh").read_text(encoding="utf-8")
+    assert 'str(SCRIPT_DIR / "auto_emitter_pass.sh")' in controller
+    assert emitter.index("validators/guard_evidence_verification.py") < emitter.index(
+        "model/emit_review_mitigations.py"
     )
 
 
