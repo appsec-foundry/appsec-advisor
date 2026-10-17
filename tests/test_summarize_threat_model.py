@@ -402,7 +402,7 @@ def test_render_text_compact(tmp_path):
     data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
-    assert "Threat Model — Demo App (1.2.3)" in out
+    assert "Security Assessment — Demo App (1.2.3)" in out
     assert "Top Critical (2)" in out
     # compact mode does not expand the full by-severity grouping (that is --all)
     assert "High (1)" not in out
@@ -519,7 +519,7 @@ def test_cli_against_repo_fixture():
     fixture = REPO_ROOT / "tests" / "fixtures" / "compose"
     res = _run(["--output-dir", str(fixture)])
     assert res.returncode == 0
-    assert "Threat Model —" in res.stdout
+    assert "Security Assessment —" in res.stdout
 
 
 # ---------------------------------------------------------------------------
