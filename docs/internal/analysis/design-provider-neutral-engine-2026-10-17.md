@@ -145,6 +145,18 @@ Claude CLI retains its host-reported accounting. API and gateway profiles requir
 
 Run statistics distinguish reported or estimated cost from conservative budget charges and identify the pricing source and revision. Aggregate gateway budgets may add a limit, but never replace the controller's completion reserve.
 
+## Implementation scope and risk
+
+The bounded first delivery has moderate technical risk. Keep Claude CLI as the unchanged default, qualify one direct API provider and one gateway dialect with fixed model aliases, and select one host per run. The existing transport seam, deterministic validation, and budget admission reduce the amount of behavior that needs to change. This is an engineering assessment, not a measured failure probability or a claim that compatibility has already been demonstrated.
+
+The main uncertainties are preserving canonical schema semantics, bounding charges after timeouts and retries, and obtaining acceptable assessment quality from each selected model. HTTP connectivity alone does not resolve them. Representative schema exchanges, budget and interruption cases, and a complete small assessment provide early evidence before expanding support.
+
+Dynamic gateway routing, automatic provider fallbacks, and package extraction introduce additional uncertainty. Keep them separate from the initial compatibility work. Packaging affects resource loading, subprocess entry points, runtime identity, and plugin distribution; its scope becomes clearer after those dependencies are traced.
+
+Plan the collaborative implementation by verified milestones: preserve Claude behavior behind the adapter boundary, centralize configuration, complete the direct API path, qualify the gateway path, then extract the package. Each milestone ends with the relevant acceptance evidence below. Code changes and focused verification can proceed together; real provider runs and resulting corrections determine how many iterations are needed.
+
+No fixed person-day or elapsed-time estimate is assigned at this stage. The operator supplies provider/model choices and authorized test access; implementation, focused tests, and defect correction proceed within each milestone. Reassess the remaining scope after the first complete API run, using observed schema failures, cost behavior, and result quality. Gateway deployment and administration remain outside this work.
+
 ## Delivery order and acceptance
 
 Provider neutrality is the first project. Package extraction follows only after the complete API path works.
