@@ -2,31 +2,31 @@
 
 > **Alpha.** The mapping may change between releases. Request this format explicitly; `--formats all` does not include it.
 
-Export a finished threat model as OWASP Threat Dragon v2 JSON. Open the file in [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) or import it into [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) through **Diagram → Import**.
+Export architecture and findings from a finished Security Assessment as OWASP Threat Dragon v2 JSON for use in a separate threat-modeling workflow. Open the file in [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) or import it into [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) through **Diagram → Import**.
 
 ## Running it
 
 During a scan, so the file is written alongside the report:
 
-```
-/appsec-advisor:create-threat-model --threatdragon
+```text
+/appsec-advisor:appsec-analyzer --threatdragon
 ```
 
 Or from an existing assessment, without re-scanning:
 
-```
+```text
 /appsec-advisor:export-security-assessment --formats threatdragon
 ```
 
-Or directly:
+Or directly from the plugin checkout, replacing the paths with your assessment file and export destination:
 
 ```bash
 python3 scripts/exporters/export_threat_dragon.py \
-  --threat-model docs/security/threat-model.yaml \
-  --output       docs/security/threat-model.threatdragon.json
+  --threat-model /path/to/assessment/security-assessment.yaml \
+  --output /path/to/exports/security-assessment.threatdragon.json
 ```
 
-The exporter reads `threat-model.yaml` and writes `<exports-dir>/threat-model.threatdragon.json`. The same YAML produces the same bytes. It writes no other files and makes no network calls.
+The export skill reads `security-assessment.yaml` from the application's assessment directory and writes `<exports-dir>/security-assessment.threatdragon.json`. The standalone script uses the input and output paths you pass; its input flag remains `--threat-model`. The same YAML produces the same bytes. The script writes no other files and makes no network calls. See [where assessments are stored](security-assessment.md#where-results-are-stored) for directory selection and legacy imports.
 
 ## Why Threat Dragon and not a ThreatAtlas format
 
@@ -34,7 +34,7 @@ ThreatAtlas accepts its own diagram and product exports, draw.io XML, and Threat
 
 ## What lands where
 
-| Threat model | Threat Dragon |
+| Assessment data | Threat Dragon |
 |---|---|
 | `meta.project`, `meta.team_owner` | diagram title and owner |
 | `components[]` | DFD elements: `tier: client` → actor, `application` → process, `data` → store (legacy `kind` is the fallback, unknown defaults to process) |
@@ -51,18 +51,17 @@ ThreatAtlas accepts its own diagram and product exports, draw.io XML, and Threat
 | `mitigations[].fulfills_requirements`, `mitigations[].blueprint` | bounded requirement and implementation-blueprint text in the mitigation field |
 | `mitigations[].kind: accept_risk` | threat status `Accepted`, when no other mitigation is linked |
 
-Threat titles retain their report anchor, for example `[F-012] Missing authorization on …`. Each description ends with a reference to `threat-model.md`.
+Threat titles retain their report anchor, for example `[F-012] Missing authorization on …`. Descriptions currently still name `threat-model.md`; for a current assessment, open the same finding anchor in `security-assessment.md`.
 
 ## What is lost
 
-Threat Dragon has no native fields for several report dimensions. The export includes the CVSS v4 vector, CWE, evidence summary and location, evidence tier, finding source, mitigation priority and effort, requirements traceability, abuse-case links, and business-context use as bounded text. Requirement and abuse-case rows beyond the stated limits remain only in `threat-model.yaml` and `threat-model.md`. Actors, attack surface, assets, walkthroughs, and the weakness register are omitted.
+Threat Dragon has no native fields for several report dimensions. The export includes the CVSS v4 vector, CWE, evidence summary and location, evidence tier, finding source, mitigation priority and effort, requirements traceability, abuse-case links, and business-context use as bounded text. Requirement and abuse-case rows beyond the stated limits remain only in `security-assessment.yaml` and `security-assessment.md`. Actors, attack surface, assets, walkthroughs, and the weakness register are omitted.
 
 The exporter reports counted warnings for requirements, abuse cases, and business context whose semantics had to be folded into text. It never represents those records as synthetic threats, so finding counts remain stable.
 
-**Trust boundaries are not drawn.** The source model describes crossings with endpoints, a kind, and an assumption. Threat Dragon requires a geometric box or curve, and ThreatAtlas skips boundary curves on import. The exporter reports the omitted count. Referenced crossings remain in threat descriptions, for example `tb-2 external → rest-api (internet-facing)`. Flows across confirmed internet crossings receive `isPublicNetwork`. The complete catalog remains in `threat-model.yaml` and SARIF.
+**Trust boundaries are not drawn.** The source model describes crossings with endpoints, a kind, and an assumption. Threat Dragon requires a geometric box or curve, and ThreatAtlas skips boundary curves on import. The exporter reports the omitted count. Referenced crossings remain in threat descriptions, for example `tb-2 external → rest-api (internet-facing)`. Flows across confirmed internet crossings receive `isPublicNetwork`. The complete catalog remains in `security-assessment.yaml` and SARIF.
 
-`threat-model.md` remains the authoritative report; this export is for
-threat-modeling tools, SARIF for scanners.
+`security-assessment.md` remains the authoritative report; this export is for threat-modeling tools, SARIF for scanners.
 
 ## Known alpha limitations
 
