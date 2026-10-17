@@ -6,6 +6,8 @@
 
 **Goal:** run assessments through Claude CLI, direct model APIs, or an operator-selected AI gateway such as LiteLLM. Configure hosts and models in one place while preserving deterministic validation, budget accounting, and source authorization. Extract an installable Python engine only after a second provider works through the complete pipeline.
 
+The [AppSec product architecture](../../proposals/appsec-product-architecture-concept.md) uses this design as technical groundwork for AppSec Analyzer. This document owns provider and engine behavior; that concept owns the target repository split and distribution. The agreed package, CLI, and skill name is `appsec-analyzer`, with `/appsec-advisor:appsec-analyzer` as the plugin command.
+
 ## Current state
 
 The implementation references below were checked on 2026-10-17. They describe the controller path, not every plugin entry point.
@@ -182,9 +184,9 @@ These are future implementation acceptance criteria. No runtime checks or provid
 
 ## Follow-up: engine and plugin separation
 
-Keep the engine and plugin in this repository while they share releases and ownership. The engine contains orchestration, scanners, validators, renderers, exports, schemas, data, templates, role prompts, and provider adapters. The Claude Code plugin retains skills, hooks, and interactive integration and calls the same engine as the standalone CLI.
+Keep the engine and plugin in this repository during provider qualification and initial package extraction. The final repository split follows the [product architecture](../../proposals/appsec-product-architecture-concept.md) after installed-package verification. The engine contains orchestration, scanners, validators, renderers, exports, schemas, data, templates, role prompts, and provider adapters. It supplies the thin `appsec-analyzer` entry skill. The Claude Code plugin retains host-specific hooks and interactive integration, assembles the selected skills, and calls the same engine as the standalone CLI. Runtime controls remain enforced inside the engine for standalone callers.
 
-The intended entry point is `appsec-assess`; its installation and invocation remain proposed. A marketplace install cannot assume that it runs `pip install`. Prefer a plugin artifact that vendors the engine at the same version; define its dependency bootstrap and version check before changing distribution.
+The intended entry point is `appsec-analyzer`; its installation and invocation remain proposed. A marketplace install cannot assume that it runs `pip install`. Prefer a plugin artifact that vendors an exact tested engine release; engine and plugin version numbers need not match. Define dependency bootstrap and interface compatibility checks before changing distribution.
 
 Package extraction includes:
 
@@ -196,7 +198,7 @@ Package extraction includes:
 - Testing an installed wheel outside the source checkout through assessment, resume, rendering, and affected exports; repeat the relevant integration checks for the plugin's vendored artifact.
 - Preparing dependency locking, trusted publication and release provenance under the [release runbook](../../releasing.md), with compatibility and rollback behavior defined before publication.
 
-Other skills need an individual ownership assessment before moving into the engine. Removing the legacy path and splitting repositories are outside this proposal.
+Other skills need an individual ownership assessment before moving into the engine. Removing the legacy path and splitting repositories are outside this provider implementation scope; the product architecture describes the subsequent ownership and migration milestones.
 
 ## Open work before implementation
 
