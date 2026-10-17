@@ -19,7 +19,6 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "authnz-review" / "SKILL.md"
 SAVE_AND_EXPORT = SKILL.parent / "save-and-export.md"
-ORG_PROFILE = ROOT / "tests" / "fixtures" / "org-profiles" / "acme" / "org-profile.yaml"
 
 
 def _skill_text() -> str:
@@ -85,29 +84,6 @@ def _route_inventory() -> dict:
 # ---------------------------------------------------------------------------
 # Org-profile defaults the skill reads
 # ---------------------------------------------------------------------------
-
-
-def test_resolver_supplies_the_three_pentest_defaults():
-    """The skill reads `defaults.{write_pentest_tasks,pentest_format,
-    pentest_target}` from this exact CLI, so both it and create-threat-model
-    answer to one profile."""
-    out = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts" / "runtime/resolve_org_profile.py"),
-            "--org-profile",
-            str(ORG_PROFILE),
-            "--preset",
-            "release-review",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    defaults = json.loads(out.stdout)["defaults"]
-    assert defaults["write_pentest_tasks"] is True
-    assert defaults["pentest_format"] == "generic"
-    assert "pentest_target" in defaults
 
 
 def test_resolver_stays_silent_without_a_profile(tmp_path):
@@ -215,7 +191,9 @@ def test_slug_names_the_task_file():
     assert "--slug <value>" in text
     assert "PENTEST_FILE=pentest-tasks-authnz-<SLUG>.yaml" in text
     assert "PENTEST_FILE=pentest-tasks-authnz.yaml" in text
-    assert '--output "$REPO_ROOT/docs/security/$PENTEST_FILE"' in text
+    assert '--output "$PENTEST_DIR/$PENTEST_FILE"' in text
+    # The task file never lands in the checkout (REQ-TRU-005).
+    assert "docs/security/$PENTEST_FILE" not in text
     assert "[A-Za-z0-9._-]" in text
 
 

@@ -35,6 +35,9 @@ def _run(event: dict, cwd: Path, extra_env: dict | None = None) -> str:
         env.pop(name, None)
     env.update(extra_env or {})
     env["CLAUDE_PLUGIN_ROOT"] = str(SCRIPTS.parent)
+    if (cwd / "docs" / "security").is_dir():
+        # The logger writes only into an output directory it is given or can resolve.
+        env["OUTPUT_DIR"] = str(cwd / "docs" / "security")
     subprocess.run(
         [sys.executable, str(SCRIPT)], input=json.dumps(event), capture_output=True, text=True, cwd=str(cwd), env=env
     )

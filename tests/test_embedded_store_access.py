@@ -6,7 +6,6 @@ from pathlib import Path
 
 import analyzers.embedded_store_access as access
 import jsonschema
-import orchestrator.orchestration_controller as controller
 import pytest
 from validators.validate_fragment import repository_path_errors
 
@@ -134,18 +133,3 @@ def test_open_accesses_to_linked_embedded_stores_record_no_authentication(tmp_pa
     schema = json.loads((ROOT / "schemas/fragments/data-flows.schema.json").read_text())
     jsonschema.validate(result, schema)
     assert repository_path_errors("data-flows", result, repo) == []
-
-
-def test_controller_handoff_records_embedded_access(tmp_path):
-    repo, out = _repo(tmp_path / "repo"), tmp_path / "out"
-    out.mkdir()
-    components = _components(paths=["models/**"])
-    receipt = {"component_inventory_fingerprint": "sha256:" + "a" * 64, "component_ids": ["api", "store"]}
-    (out / ".components.json").write_text(json.dumps({"components": components}))
-    (out / ".component-inventory-finalization.json").write_text(json.dumps(receipt))
-    (out / ".data-flows.json").write_text(
-        json.dumps(_document(_flow("df-001", "api", "store", ("routes/login.ts", 1))))
-    )
-    controller._bind_finalized_component_fingerprint(out, repo)
-    flow = json.loads((out / ".data-flows.json").read_text())["data_flows"][0]
-    assert flow["authentication"]["scheme"] == "none"

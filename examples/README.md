@@ -2,16 +2,16 @@
 
 This directory holds example inputs to copy into your own setup and a sample report from the requirements audit.
 
-## Threat model reports
+## Security assessment report
 
-Complete threat model reports live in the companion repository [appsec-advisor-examples](https://github.com/appsec-foundry/appsec-advisor-examples). Its README lists the runs by target application and assessment depth, with the exported artifacts of each run. Use them to see the report structure, depth levels, and export formats before you run an assessment.
+The companion repository [appsec-advisor-examples](https://github.com/appsec-foundry/appsec-advisor-examples) contains one complete [standard assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/security-assessment-juice-shop-standard-v0.6.0b5.md), with its diagrams and exports. Use it to see the report structure and export formats before you run an assessment. The [Security Assessment guide](../docs/security-assessment.md#assessment-depth--cost-control) compares assessment depths.
 
 ## Threat model inputs
 
 Copy these files into the repository you assess and adapt them.
 
-- [`known-threats.yaml`](known-threats.yaml) records prior pentest findings, accepted risks, and known issues for OWASP Juice Shop. Place your version at `docs/known-threats.yaml`, as described in [Known threats](../docs/threat-modeler.md#known-threats--docsknown-threatsyaml).
-- [`abuse-cases.yaml`](abuse-cases.yaml) is a commented abuse case that documents every field and the values it accepts. Place your version under `.appsec/abuse-cases/`, as described in [Abuse cases](../docs/org-profiles.md#abuse-cases).
+- [`known-threats.yaml`](known-threats.yaml) records prior pentest findings, accepted risks, and known issues for OWASP Juice Shop. Place your version at `docs/known-threats.yaml`, as described in [Known threats](../docs/security-assessment.md#known-threats--docsknown-threatsyaml).
+- [`abuse-cases.yaml`](abuse-cases.yaml) is a commented abuse case that documents every field and the values it accepts. Place your version under `docs/security/abuse-cases/`, as described in [Abuse cases](../docs/org-profiles.md#abuse-cases).
 
 ## Requirements catalog
 

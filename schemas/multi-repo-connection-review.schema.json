@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/multi-repo-connection-review.schema.json",
+  "title": "Semantic decisions on evidenced cross-repository connection candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scope_sha256",
+    "candidates_sha256",
+    "decisions",
+    "component_inventory_fingerprint"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "candidates_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "disposition",
+          "reason",
+          "evidence"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "pattern": "^connection-[a-f0-9]{16}$"
+          },
+          "disposition": {
+            "enum": [
+              "resolved",
+              "unresolved",
+              "rejected"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 1000
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "file",
+                "line",
+                "quote",
+                "repository_id"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000,
+                  "pattern": "^[^\\r\\n]+$"
+                },
+                "repository_id": {
+                  "type": "string",
+                  "pattern": "^repo-[a-f0-9]{16}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "component_inventory_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

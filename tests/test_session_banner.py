@@ -189,7 +189,7 @@ def test_missing_model_leaves_the_threat_model_line_out(tmp_path):
     assert identity_line(message).startswith(f"appsec-advisor {MANIFEST['version']}")
     assert "/appsec-advisor:help" in identity_line(message)
     assert "threat model" not in message
-    assert "create-threat-model" not in message
+    assert "appsec-analyzer" not in message
 
 
 def test_reports_existing_model(tmp_path):
@@ -200,7 +200,20 @@ def test_reports_existing_model(tmp_path):
     assert "2 total" in line
     assert "27 Jul 2026" in line
     # Default fixture has no Critical/High → calm → no review command.
-    assert "/appsec-advisor:review-threat-model" not in line
+    assert "/appsec-advisor:triage-security-assessment" not in line
+
+
+def test_the_external_assessment_wins_over_a_legacy_docs_security_model(tmp_path, monkeypatch):
+    from shared.assessment_location import application_directory
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    write_model(tmp_path)
+    external = application_directory(tmp_path)
+    external.mkdir(parents=True)
+    legacy = (tmp_path / "docs" / "security" / "threat-model.yaml").read_text()
+    (external / "security-assessment.yaml").write_text(legacy.replace("acme-api", "external-api"))
+    line = tm_line(run_hook(str(tmp_path)))
+    assert "external-api" in line and "acme-api" not in line
 
 
 def test_assessment_depth_is_left_out(tmp_path):
@@ -367,7 +380,7 @@ def test_critical_and_high_are_counted_severity_first(tmp_path):
     write_severities(tmp_path, "effective_severity", ["Critical", "Critical", "High", "Medium"])
     line = plain(tm_line(run_hook(str(tmp_path))))
     assert line.startswith("threat model · acme-api · 2 CRITICAL · 1 high · 4 total")
-    assert "/appsec-advisor:review-threat-model" in line
+    assert "/appsec-advisor:triage-security-assessment" in line
 
 
 def test_effective_severity_wins_over_risk(tmp_path):
@@ -392,7 +405,7 @@ def test_clean_model_shows_no_severity_marks(tmp_path):
     line = tm_line(run_hook(str(tmp_path)))
     assert "2 total" in line
     assert "CRITICAL" not in line and " high" not in line
-    assert "/appsec-advisor:review-threat-model" not in line
+    assert "/appsec-advisor:triage-security-assessment" not in line
 
 
 def test_state_line_names_what_the_numbers_are(tmp_path):
@@ -453,12 +466,12 @@ def test_banner_carries_no_ansi_escapes(tmp_path):
 
 def test_critical_findings_offer_review(tmp_path):
     write_severities(tmp_path, "effective_severity", ["Critical"])
-    assert "/appsec-advisor:review-threat-model" in tm_line(run_hook(str(tmp_path)))
+    assert "/appsec-advisor:triage-security-assessment" in tm_line(run_hook(str(tmp_path)))
 
 
 def test_high_findings_offer_review(tmp_path):
     write_severities(tmp_path, "effective_severity", ["High"])
-    assert "/appsec-advisor:review-threat-model" in tm_line(run_hook(str(tmp_path)))
+    assert "/appsec-advisor:triage-security-assessment" in tm_line(run_hook(str(tmp_path)))
 
 
 def test_calm_current_model_offers_no_threat_model_command(tmp_path):
@@ -477,15 +490,15 @@ def test_stale_model_offers_full_refresh_not_review(tmp_path):
     for i in range(session_banner.STALE_COMMITS):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     line = tm_line(session_banner.build_banner(str(tmp_path)))
-    assert line.endswith("/appsec-advisor:create-threat-model --full")
-    assert "review-threat-model" not in line
+    assert line.endswith("/appsec-advisor:appsec-analyzer")
+    assert "triage-security-assessment" not in line
 
 
 def test_incompatible_model_demands_rebuild(tmp_path):
     write_model(tmp_path, analysis_version=max(MANIFEST["compatible_analysis_versions"]) + 1)
     line = tm_line(session_banner.build_banner(str(tmp_path)))
     assert "incompatible" in line
-    assert line.endswith("/appsec-advisor:create-threat-model --full --rebuild")
+    assert line.endswith("/appsec-advisor:appsec-analyzer --rebuild")
 
 
 def test_running_scan_offers_status(tmp_path, monkeypatch):
@@ -522,7 +535,7 @@ def test_an_organizations_baseline_appears_under_its_own_name(tmp_path, monkeypa
     repo = tmp_path / "repo"
     repo.mkdir()
     write_model(repo)
-    root = packaged_root(tmp_path, ["create-threat-model", "install-baseline"], monkeypatch)
+    root = packaged_root(tmp_path, ["appsec-analyzer", "install-baseline"], monkeypatch)
     (root / "config.json").write_text(
         json.dumps({"baseline": {"enabled": True, "id": "acme-sec-1.0", "name": "ACME Secure Baseline"}}),
         encoding="utf-8",
@@ -665,7 +678,7 @@ def test_no_baseline_configured_drops_the_line(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     write_model(repo)
-    packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
+    packaged_root(tmp_path, ["appsec-analyzer"], monkeypatch)
     lines = session_banner.build_banner(str(repo)).splitlines()
     assert baseline_line("\n".join(lines)) is None
     assert len(lines) == 2
@@ -812,14 +825,14 @@ def test_examples_live_on_the_help_page_not_in_the_banner(tmp_path):
     write_model(tmp_path)
     message = run_hook(str(tmp_path))
     assert "/appsec-advisor:help" in message
-    assert "ask-threat-model" not in message
+    assert "ask-security-assessment" not in message
     help_page = SCRIPT.parents[2] / "skills" / "help" / "SKILL.md"
     assert "what are the critical findings?" in help_page.read_text(encoding="utf-8")
 
 
 def test_example_question_is_taken_from_the_ask_skill(tmp_path):
     """A question the skill does not advertise could route somewhere else."""
-    skill = SCRIPT.parents[2] / "skills" / "ask-threat-model" / "SKILL.md"
+    skill = SCRIPT.parents[2] / "skills" / "ask-security-assessment" / "SKILL.md"
     description = " ".join(skill.read_text(encoding="utf-8").split())
     assert '"what are the critical findings?"' in description
 
@@ -832,8 +845,8 @@ def test_example_question_is_taken_from_the_ask_skill(tmp_path):
 def configured(tmp_path, banner: dict, monkeypatch) -> Path:
     """Fake a plugin root carrying ``banner`` in its config.json."""
     root = tmp_path / "configured"
-    (root / "skills" / "create-threat-model").mkdir(parents=True)
-    (root / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    (root / "skills" / "appsec-analyzer").mkdir(parents=True)
+    (root / "skills" / "appsec-analyzer" / "SKILL.md").write_text("x", encoding="utf-8")
     (root / "skills" / "help").mkdir(parents=True)
     (root / "skills" / "help" / "SKILL.md").write_text("x", encoding="utf-8")
     (root / ".claude-plugin").mkdir()
@@ -943,10 +956,10 @@ def test_dropped_skills_leave_no_dangling_commands(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     write_severities(repo, "effective_severity", ["Critical"])
-    packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
+    packaged_root(tmp_path, ["appsec-analyzer"], monkeypatch)
     lines = session_banner.build_banner(str(repo)).splitlines()
     assert lines[0] == "appsec-advisor"
-    assert not any("review-threat-model" in line or ":help" in line for line in lines)
+    assert not any("triage-security-assessment" in line or ":help" in line for line in lines)
     assert tm_line("\n".join(lines)).startswith("threat model")
 
 
@@ -957,16 +970,16 @@ def test_packaged_build_uses_full_refresh_for_stale_model(tmp_path, monkeypatch)
     write_model(repo, generated="2026-01-01T00:00:00Z")
     for i in range(session_banner.STALE_COMMITS):
         commit(repo, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
-    packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
+    packaged_root(tmp_path, ["appsec-analyzer"], monkeypatch)
     line = tm_line(session_banner.build_banner(str(repo)))
     assert "update-threat-model" not in line
-    assert line.endswith("/appsec-advisor:create-threat-model --full")
+    assert line.endswith("/appsec-advisor:appsec-analyzer")
 
 
 def test_create_threat_model_is_always_available(tmp_path, monkeypatch):
-    """apply_skill_policy pins create-threat-model, so the fallbacks are safe."""
+    """apply_skill_policy pins appsec-analyzer, so the fallbacks are safe."""
     policy_source = (SCRIPT.parents[1] / "package_internal_plugin.py").read_text(encoding="utf-8")
-    assert 'required={"create-threat-model"}' in policy_source
+    assert 'required={"appsec-analyzer"}' in policy_source
 
 
 def test_namespace_literals_are_rewritable_by_packaging(tmp_path):
@@ -1017,7 +1030,7 @@ def test_incompatible_analysis_version_demands_a_rebuild(tmp_path):
     write_model(tmp_path, analysis_version=max(MANIFEST["compatible_analysis_versions"]) + 1)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert "incompatible" in tm_line("\n".join(lines))
-    assert tm_line("\n".join(lines)).endswith("/appsec-advisor:create-threat-model --full --rebuild")
+    assert tm_line("\n".join(lines)).endswith("/appsec-advisor:appsec-analyzer --rebuild")
 
 
 def test_supported_analysis_version_is_silent(tmp_path):
@@ -1044,7 +1057,7 @@ def test_stale_model_recommends_full_refresh(tmp_path):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     message = session_banner.build_banner(str(tmp_path))
     assert f"+{session_banner.STALE_COMMITS} commits" in message
-    assert tm_line(message).endswith("/appsec-advisor:create-threat-model --full")
+    assert tm_line(message).endswith("/appsec-advisor:appsec-analyzer")
 
 
 def test_fresh_model_below_threshold_is_not_stale(tmp_path):
@@ -1056,7 +1069,7 @@ def test_fresh_model_below_threshold_is_not_stale(tmp_path):
     commit(tmp_path, "only.txt", "2026-02-01T12:00:00+00:00")
     line = tm_line(session_banner.build_banner(str(tmp_path)))
     assert "+1 commits" in line
-    assert "/appsec-advisor:review-threat-model" in line
+    assert "/appsec-advisor:triage-security-assessment" in line
     assert "update-threat-model" not in line
 
 

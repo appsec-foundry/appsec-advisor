@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,17 +10,6 @@ from pathlib import Path
 import orchestrator.wait_agent_calls as wac
 import pytest
 import runtime.agent_lifecycle as agent_lifecycle
-
-SKILL_DIR = Path(__file__).resolve().parents[1] / "skills" / "create-threat-model"
-# Runtimes whose dispatches this join owns (OR-24). Stage 1 joins its STRIDE
-# waves with orchestrator/wait_stride_progress.py and every other dispatch here; Stage 1d
-# dispatches only the abuse wave, which orchestrator/wait_abuse_progress.py joins.
-LIFECYCLE_JOINED_RUNTIMES = (
-    "SKILL-thin-stage1-v2.md",
-    "SKILL-thin-stage2.md",
-    "SKILL-thin-stage3.md",
-    "SKILL-thin-stage4.md",
-)
 
 
 def _iso(epoch: float) -> str:
@@ -226,19 +214,6 @@ def test_the_join_reads_state_the_real_lifecycle_writes(tmp_path):
     assert _join(tmp_path, since) == 0
 
 
-@pytest.mark.parametrize("runtime", LIFECYCLE_JOINED_RUNTIMES)
-def test_every_runtime_that_dispatches_agents_joins_them(runtime):
-    """OR-24. Stage 1 names no agent type; its dispatches come from `dispatch_jobs[]`.
-
-    Without this join the Stage-1 orchestrator joined recon, architecture, and
-    the other single jobs with the STRIDE waiter, which cannot see them, so each
-    step idled a full waiter slice after its agent had finished.
-    """
-    text = (SKILL_DIR / runtime).read_text(encoding="utf-8")
-    if re.search(r"appsec-advisor:appsec-[a-z-]+|dispatch_jobs\[\]", text):
-        assert "scripts/orchestrator/wait_agent_calls.py" in text, f"{runtime} dispatches agents but never joins them"
-
-
 @pytest.mark.parametrize(
     "shape", ["running", "stopped", "done", "past_deadline", "handed_back_at_limit", "handed_back_just_now"]
 )
@@ -256,12 +231,3 @@ def test_still_waiting_is_the_rule_the_join_and_the_boundaries_share(shape):
     }[shape]
     waiting = shape in {"running", "handed_back_just_now"}
     assert wac.still_waiting([call], now, deadline) == ([call] if waiting else [])
-
-
-@pytest.mark.parametrize("runtime", LIFECYCLE_JOINED_RUNTIMES)
-def test_runtime_join_commands_use_real_flags(runtime):
-    accepted = set(re.findall(r"--[a-z-]+", wac.build_parser().format_help()))
-    text = (SKILL_DIR / runtime).read_text(encoding="utf-8")
-    for command in re.findall(r"wait_agent_calls\.py[^`\n]*", text):
-        for flag in re.findall(r"--[a-z-]+", command):
-            assert flag in accepted, f"{runtime}: {flag} is not a orchestrator/wait_agent_calls.py flag"

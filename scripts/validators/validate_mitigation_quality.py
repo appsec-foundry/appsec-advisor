@@ -18,6 +18,7 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +32,30 @@ def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def preserves_vulnerability(fix: dict) -> bool:
+    """Reject explicit preservation instructions, not inferred risk acceptance.
+
+    This is a narrow contradiction guard, not semantic proof that a fix works.
+    Ordinary preservation of compatibility, controls or legitimate behavior
+    is outside the signal. Review and accepted-risk cards use their own kind.
+    """
+    texts = [fix.get("title"), *(fix.get("steps") or [])]
+    for value in texts:
+        text = _text(value)
+        clause = re.split(r"[.;\n]", text, maxsplit=1)[0]
+        if re.match(r"(?i)^(?:accept|tolerate)\s+(?:the\s+)?(?:(?:residual|remaining)\s+)?risk\b", clause):
+            return True
+        if not re.match(r"(?i)^(?:preserve|retain|keep|maintain|allow)\b", clause):
+            continue
+        if re.search(r"(?i)\b(?:defen\w*|protect\w*|prevent\w*|block\w*|reject\w*|tests?|detection)\b", clause):
+            continue
+        if re.search(r"(?i)\b(?:out\s+of|disabled|impossible)\b", clause):
+            continue
+        if re.search(r"(?i)\b(?:vulnerabilit\w*|injection|xss|unsafe|insecure|bypass\w*)\b", clause):
+            return True
+    return False
+
+
 def validate(data: dict) -> list[str]:
     """Return human-actionable errors for P1/P2 fix-card gaps."""
     errors: list[str] = []
@@ -42,6 +67,8 @@ def validate(data: dict) -> list[str]:
         if kind in _NON_FIX_KINDS:
             continue
         mid = _text(mitigation.get("id") or mitigation.get("m_id")) or "<unknown mitigation>"
+        if preserves_vulnerability(mitigation):
+            errors.append(f"{mid}: preserving a vulnerability or accepting its risk is not a fix")
         has_code = bool(_text(mitigation.get("how_code")) or _text(mitigation.get("code_example")))
         has_location = bool(_text(mitigation.get("file") or mitigation.get("location")))
         if has_code and not has_location:

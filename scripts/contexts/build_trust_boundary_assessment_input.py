@@ -12,16 +12,20 @@ if not __package__:
 
 
 import argparse
+import copy
 import hashlib
 import json
 import re
 import sys
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 import validators.validate_intermediate as intermediate_contract
 import yaml
+from analyzers import supply_chain_facts
+from analyzers.scan_excludes import repo_inventory
 from model.finalize_component_inventory import validate_receipt
 from shared._atomic_io import atomic_write_json
 from validators.validate_fragment import (
@@ -172,7 +176,167 @@ def _signal_id(signal_class: str, source: str, target: str) -> str:
     return f"signal-{signal_class}-{source}-to-{target}"
 
 
-def _signal_specs(flow: dict[str, Any], components: dict[str, dict[str, Any]]) -> list[tuple[str, str, list[str]]]:
+def _in_paths(path: str, patterns: list[str]) -> bool:
+    """``path`` is one of the component's files: a glob match or a file under a listed directory."""
+    for raw in patterns:
+        pattern = raw.removeprefix("./").rstrip("/")
+        if pattern and (fnmatchcase(path, pattern) or path.startswith(pattern + "/")):
+            return True
+    return False
+
+
+def _scope_slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")[:60].strip("-") or "unnamed"
+
+
+# (input kind, scope, trigger, false-positive exclusions) of third-party code a build runs.
+_BUILD_INPUT_SCOPES = (
+    (
+        "github_action",
+        "actions",
+        "a workflow runs third-party GitHub Actions on the build runner",
+        ["action owned by the same organization", "inactive example workflow"],
+    ),
+    (
+        "base_image",
+        "base-images",
+        "a container build or CI job starts from an image pulled from a registry",
+        ["image used only for local development", "inactive example Dockerfile"],
+    ),
+    (
+        "remote_script",
+        "remote-scripts",
+        "a build step pipes a downloaded script into a shell on the runner",
+        ["script fetched from the repository itself", "inactive example workflow"],
+    ),
+    (
+        "ci_include",
+        "ci-includes",
+        "a pipeline includes CI configuration from another project, a remote URL or a template",
+        ["configuration from a project owned by the same organization", "inactive example pipeline"],
+    ),
+)
+
+
+def _supply_chain_signals(
+    components: list[dict[str, Any]], facts: dict[str, Any], repo_root: Path
+) -> list[dict[str, Any]]:
+    """Scoped build-and-deployment signals of each build-zone component from the supply-chain facts.
+
+    A build component holds several crossings with different enforcement
+    points: packages from a dependency registry, third-party actions, base
+    images, piped installers and included CI configuration enter the build, and pushed images or
+    published packages leave it for an artifact registry. Each gets its own
+    signal, scoped by kind, ecosystem or destination, with the exact lines that
+    evidence it. Only facts in the component's own files count. No deploy
+    signal is derived: a push never proves what production runs (RA-30).
+    """
+    signals: list[dict[str, Any]] = []
+    for component in components:
+        if not (_material_zones(component) & _BUILD_ZONES):
+            continue
+        cid, paths = component["id"], component.get("paths") or []
+
+        def own(rows: Any, paths: list[str] = paths) -> list[dict[str, Any]]:
+            return [
+                row
+                for row in rows or []
+                if isinstance(row, dict) and isinstance(row.get("file"), str) and _in_paths(row["file"], paths)
+            ]
+
+        groups: list[tuple[str, str, str, str, list[str], list[dict[str, Any]]]] = []
+        installs = own(facts.get("installs"))
+        for ecosystem in dict.fromkeys(str(row.get("ecosystem")) for row in installs):
+            groups.append(
+                (
+                    f"{ecosystem}-dependencies",
+                    "external",
+                    cid,
+                    f"the build installs {_scope_slug(ecosystem)} packages from a dependency registry",
+                    ["install step only in a test job that publishes nothing", "vendored or offline package source"],
+                    [row for row in installs if str(row.get("ecosystem")) == ecosystem],
+                )
+            )
+        inputs = own(facts.get("inputs"))
+        for kind, scope, trigger, exclusions in _BUILD_INPUT_SCOPES:
+            rows = [row for row in inputs if row.get("kind") == kind]
+            if rows:
+                groups.append((scope, "external", cid, trigger, exclusions, rows))
+        pushes: dict[str, list[dict[str, Any]]] = {}
+        for row in own(facts.get("outputs")):
+            if row.get("kind") == "package":
+                scope = f"publish-{row.get('ecosystem') or 'package'}"
+            elif row.get("kind") == "container_image" and row.get("pushed"):
+                destination = row.get("destination") or {}
+                target = f"{destination.get('registry', '')}/{destination.get('repository', '')}"
+                scope = "push-" + (target if destination else "image")
+            else:
+                continue
+            pushes.setdefault(scope, []).append(row)
+        for scope, rows in pushes.items():
+            groups.append(
+                (
+                    scope,
+                    cid,
+                    "external",
+                    "the build pushes an image or publishes a package to an artifact registry",
+                    ["push disabled for pull requests and forks", "inactive example workflow"],
+                    rows,
+                )
+            )
+        for scope, source, target, trigger, exclusions, rows in groups:
+            evidence = _safe_evidence(rows, repo_root)
+            if not evidence:
+                continue
+            sid = f"{_signal_id('build-and-deployment', source, target)}-{_scope_slug(scope)}"
+            signals.append(
+                {
+                    "id": sid,
+                    "class": "build-and-deployment",
+                    "from": source,
+                    "to": target,
+                    "mandatory": True,
+                    "trigger": trigger,
+                    "false_positive_exclusions": exclusions,
+                    "evidence": evidence,
+                    "provenance": ["supply-chain-facts"],
+                    "flow_ids": [],
+                }
+            )
+    return signals
+
+
+def _crossing_connections(flows: list[dict[str, Any]], components: dict[str, dict[str, Any]]) -> set[str]:
+    """Reviewed connections whose sending and receiving sources share no repository.
+
+    A broker holds evidence from both sides, so the comparison uses the
+    connection's outer endpoints rather than each hop's endpoints.
+    """
+    if not any(flow.get("connection_id") for flow in flows):
+        return set()
+    from contexts.multi_repo_analysis import connection_relays
+
+    relays = connection_relays(flows)
+    sides: dict[str, tuple[set[str], set[str]]] = {}
+    for flow in flows:
+        key = flow.get("connection_id")
+        if not key:
+            continue
+        senders, receivers = sides.setdefault(key, (set(), set()))
+        if flow["from"] not in relays[key]:
+            senders.update((components.get(flow["from"]) or {}).get("repository_ids") or [])
+        if flow["to"] not in relays[key]:
+            receivers.update((components.get(flow["to"]) or {}).get("repository_ids") or [])
+    return {
+        key for key, (senders, receivers) in sides.items() if senders and receivers and senders.isdisjoint(receivers)
+    }
+
+
+def _signal_specs(
+    flow: dict[str, Any],
+    components: dict[str, dict[str, Any]],
+    crossing_connections: frozenset[str] | set[str] = frozenset(),
+) -> list[tuple[str, str, list[str]]]:
     source, target = flow["from"], flow["to"]
     left, right = components.get(source), components.get(target)
     text = f"{flow.get('label', '')} {flow.get('protocol', '')}"
@@ -231,6 +395,16 @@ def _signal_specs(flow: dict[str, Any], components: dict[str, dict[str, Any]]) -
                 ["development tooling", "build-only dependency unless kind is build"],
             )
         )
+    if flow.get("connection_id") in crossing_connections:
+        # Review the evidenced communication, not repository membership. The
+        # analyst may establish same-trust or leave the crossing unresolved.
+        result.append(
+            (
+                "third-party-or-cross-repository",
+                "reviewed runtime communication connects separately owned source implementations",
+                ["same process or trust domain established by deployment evidence", "connection does not change trust"],
+            )
+        )
     if _IDENTITY_WORDS.search(text):
         result.append(
             (
@@ -263,11 +437,13 @@ def _signals(
     flows: list[dict[str, Any]],
     components: list[dict[str, Any]],
     source_context: dict[str, Any],
+    build_signals: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     by_id = {row["id"]: row for row in components}
+    crossings = _crossing_connections(flows, by_id)
     merged: dict[str, dict[str, Any]] = {}
     for flow in flows:
-        for signal_class, trigger, exclusions in _signal_specs(flow, by_id):
+        for signal_class, trigger, exclusions in _signal_specs(flow, by_id, crossings):
             sid = _signal_id(signal_class, flow["from"], flow["to"])
             row = merged.setdefault(
                 sid,
@@ -312,8 +488,15 @@ def _signals(
                 "flow_ids": [],
             },
         )
+    # Scoped signals from supply-chain facts replace the placement-only signal
+    # of their component; placement alone remains the signal of a build
+    # component whose files hold no such fact.
+    scoped = set()
+    for row in build_signals or []:
+        merged.setdefault(row["id"], row)
+        scoped.update({row["from"], row["to"]})
     for component in components:
-        if not (_material_zones(component) & _BUILD_ZONES):
+        if not (_material_zones(component) & _BUILD_ZONES) or component["id"] in scoped:
             continue
         sid = _signal_id("build-and-deployment", "external", component["id"])
         merged.setdefault(
@@ -537,38 +720,6 @@ def _flow_identity(row: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
-def _preserve_incremental_flow_ids(output_dir: Path, flow_doc: dict[str, Any]) -> dict[str, Any]:
-    config = _read_json(output_dir / ".skill-config.json", {}) or {}
-    if not config.get("incremental"):
-        return flow_doc
-    prior_path = output_dir / "threat-model.yaml"
-    if not prior_path.is_file():
-        return flow_doc
-    try:
-        prior = yaml.safe_load(prior_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return flow_doc
-    prior_rows = prior.get("data_flows") if isinstance(prior, dict) else None
-    if not isinstance(prior_rows, list):
-        return flow_doc
-    prior_by_identity = {
-        _flow_identity(row): row["id"]
-        for row in prior_rows
-        if isinstance(row, dict) and re.fullmatch(r"df-[0-9]{3,}", str(row.get("id", "")))
-    }
-    current_rows = flow_doc["data_flows"]
-    desired = [prior_by_identity.get(_flow_identity(row), row["id"]) for row in current_rows]
-    if len(desired) != len(set(desired)):
-        return flow_doc
-    if desired == [row["id"] for row in current_rows]:
-        return flow_doc
-    stabilized = dict(flow_doc)
-    stabilized["data_flows"] = [dict(row, id=flow_id) for row, flow_id in zip(current_rows, desired, strict=True)]
-    _validate(stabilized, FLOW_SCHEMA)
-    atomic_write_json(output_dir / ".data-flows.json", stabilized, sort_keys=False)
-    return stabilized
-
-
 def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
     receipt = validate_receipt(output_dir, repo_root)
@@ -576,7 +727,6 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     flow_doc = _read_json(output_dir / ".data-flows.json")
     if not isinstance(flow_doc, dict):
         raise ValueError("missing required Stage-1a artifact .data-flows.json")
-    flow_doc = _preserve_incremental_flow_ids(output_dir, flow_doc)
     _semantic_flow_validation(flow_doc, receipt)
     evidence_errors = repository_path_errors("data-flows", flow_doc, repo_root)
     if evidence_errors:
@@ -596,7 +746,14 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
         "components": components,
         "data_flows": flows,
         "external_entities": flow_doc.get("external_entities") or [],
-        "signals": _signals(flows, components, source_context),
+        "signals": _signals(
+            flows,
+            components,
+            source_context,
+            _supply_chain_signals(
+                components, supply_chain_facts.collect(repo_root, repo_inventory(repo_root)), repo_root
+            ),
+        ),
         "prior_boundary_identity_hints": _prior_identity_hints(output_dir),
         "source_context": source_context,
     }
@@ -607,6 +764,209 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     _validate(body, INPUT_SCHEMA)
     atomic_write_json(output_dir / ".trust-boundary-assessment-input.json", body, sort_keys=False)
     return body
+
+
+def build_assessment(scope, components, receipt, flow_doc, source_context, depth) -> dict[str, Any]:
+    """Build the controller-held crossing inventory from admitted v2 topology.
+
+    The controller supplies measured, qualified source context. This function
+    cannot invent a primary root or interpret missing measurements as false.
+    Model jobs receive a single-signal projection of the returned inventory.
+    """
+    from shared.assessment_sources import source_rows
+    from validators.validate_assessment_architecture import validate_flows, validate_source
+
+    from contexts.multi_repo_analysis import contract
+
+    validate_flows(scope, components, receipt, flow_doc)
+    schema = contract("trust-boundary-assessment-input-v2.schema.json")
+    context = copy.deepcopy(source_context)
+    jsonschema.Draft202012Validator(schema["properties"]["source_context"]).validate(context)
+    for evidence in source_rows(context):
+        validate_source(scope, evidence, path_key="file")
+    cards = []
+    for component in components["components"]:
+        card = {
+            "id": component["id"],
+            "name": component["name"][:80],
+            "tier": component["tier"],
+            "deployment_zones": copy.deepcopy(component.get("deployment_zones", [])),
+            "handles_sensitive_data": component.get("handles_sensitive_data", False),
+            "repository_ids": list(component["repository_ids"]),
+            "paths": copy.deepcopy(component["paths"]),
+        }
+        if component.get("workload_zones"):
+            card["workload_zones"] = copy.deepcopy(component["workload_zones"])
+        cards.append(card)
+    # Connection receipts establish review signals, not trust. Keep them in
+    # the canonical topology; the bounded boundary contract carries only its
+    # declared flow fields after the signals have been derived.
+    flow_fields = set(schema["properties"]["data_flows"]["items"]["properties"])
+    flows = [
+        {key: copy.deepcopy(value) for key, value in flow.items() if key in flow_fields}
+        for flow in flow_doc["data_flows"]
+    ]
+    body = {
+        "schema_version": 2,
+        "source_scope_sha256": scope.inventory()["scope_sha256"],
+        "component_inventory_fingerprint": receipt["component_inventory_fingerprint"],
+        "assessment_input_fingerprint": "sha256:" + "0" * 64,
+        "assessment_depth": depth,
+        "components": cards,
+        "data_flows": flows,
+        "external_entities": copy.deepcopy(flow_doc.get("external_entities", [])),
+        "signals": _signals(flow_doc["data_flows"], cards, context),
+        "prior_boundary_identity_hints": [],
+        "source_context": context,
+    }
+    _assessment_input_fingerprint(body)
+    jsonschema.Draft202012Validator(schema).validate(body)
+    scope.verify_unchanged()
+    return body
+
+
+_RECON_EVIDENCE_PER_SIGNAL = 3
+
+
+def _is_ci_definition(path: str) -> bool:
+    if path in supply_chain_facts.GITLAB_CI_PATHS:
+        return True
+    return any(
+        fnmatchcase(path, pattern) or fnmatchcase(path, pattern.removeprefix("**/"))
+        for pattern in supply_chain_facts.WORKFLOW_GLOBS
+    )
+
+
+def _qualified_evidence(repo, path: str, line: int) -> dict[str, Any]:
+    return {
+        "repository_id": repo.repository_id,
+        "file": path,
+        "line": line,
+        "sha256": hashlib.sha256(repo.files[path]).hexdigest(),
+    }
+
+
+def assessment_source_context(scope, route_inventories: dict[str, dict] | None = None) -> dict[str, Any]:
+    """Measure the boundary source context of every admitted repository.
+
+    Trusted scanners read only frozen snapshots, and every evidence row names
+    its repository and file hash. The scanners prove presence, not absence:
+    a recon signal without supporting evidence stays null instead of false.
+    ``route_inventories`` reuses inventories the controller already built
+    from the same snapshots; ``verify_unchanged`` keeps them current.
+    """
+    from analyzers.route_inventory import _AUTHN_PRESENT, _AUTHZ_PRESENT, build_inventory
+    from orchestrator.assessment_declarations import declaration_summary
+
+    scope.verify_unchanged()
+    per_repository: list[list[dict[str, Any]]] = []
+    ci_evidence: list[dict[str, Any]] = []
+    for repo in sorted(scope.repositories, key=lambda row: row.repository_id):
+        if route_inventories and repo.repository_id in route_inventories:
+            inventory = route_inventories[repo.repository_id]
+        else:
+            with scope.scanner_snapshot(repo.repository_id) as root:
+                inventory = build_inventory(root)
+        _validate(inventory, ROUTE_SCHEMA)
+        cards = []
+        for row in inventory["routes"]:
+            if row["handler_file"] not in repo.files:
+                raise ValueError(f"route {row['route_id']} has invalid repository evidence")
+            cards.append(
+                {
+                    "route_id": row["route_id"],
+                    "method": row["method"],
+                    "path": _bounded_text(row["path"], 180),
+                    "authn_signal": row["authn_signal"],
+                    "authz_signal": row["authz_signal"],
+                    "management_surface": row["management_surface"],
+                    "evidence": [_qualified_evidence(repo, row["handler_file"], row["handler_line"])],
+                }
+            )
+        per_repository.append(cards)
+        ci_evidence.extend(_qualified_evidence(repo, path, 1) for path in sorted(repo.files) if _is_ci_definition(path))
+
+    # Interleave repositories so the route cap cannot drop a whole repository;
+    # renumbering keeps route IDs unique across the combined inventory.
+    routes = [
+        cards[rank]
+        for rank in range(max(map(len, per_repository), default=0))
+        for cards in per_repository
+        if rank < len(cards)
+    ]
+    supporting = {
+        "has_public_routes": [row for row in routes if row["authn_signal"] == "absent"],
+        "has_auth_surface": [row for row in routes if row["authn_signal"] in _AUTHN_PRESENT],
+        "has_role_concept": [row for row in routes if row["authz_signal"] in _AUTHZ_PRESENT],
+    }
+    recon_evidence: list[dict[str, Any]] = []
+    for row in [
+        row["evidence"][0] for rows in supporting.values() for row in rows[:_RECON_EVIDENCE_PER_SIGNAL]
+    ] + ci_evidence[:_RECON_EVIDENCE_PER_SIGNAL]:
+        if row not in recon_evidence:
+            recon_evidence.append(row)
+    values: dict[str, bool | None] = dict.fromkeys(_RECON_SIGNAL_KEYS)
+    values.update({key: True for key, rows in supporting.items() if rows})
+    if ci_evidence:
+        values["has_ci_pipeline"] = True
+    routes = routes[:100]
+    for index, row in enumerate(routes, 1):
+        row["route_id"] = f"R-{index:03d}"
+    return {
+        "route_inventory": {"status": "present", "routes": routes},
+        "attack_surface_additions": [],
+        "cross_repository": {"status": "missing", "entries": []},
+        "recon_signals": {"values": values, "evidence": recon_evidence[:12]},
+        # Validated, repository-namespaced keys; the rows reach promotion separately.
+        "boundary_declarations": declaration_summary(scope),
+        "incremental": False,
+    }
+
+
+def _assessment_input_fingerprint(body):
+    fingerprint_body = {key: value for key, value in body.items() if key != "assessment_input_fingerprint"}
+    encoded = json.dumps(fingerprint_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    body["assessment_input_fingerprint"] = "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def project_assessment_signal(assessment, signal_id, topology):
+    """Admit only the crossing endpoints and their cited context to one job.
+
+    ``topology`` is the canonical flow list with its connection identities;
+    the bounded assessment input omits them.
+    """
+    from contexts.multi_repo_analysis import contract, scope_relays, source_selection
+
+    signal = next((row for row in assessment["signals"] if row["id"] == signal_id), None)
+    if signal is None:
+        raise ValueError("Boundary job requires a controller-selected crossing signal")
+    if {row["id"] for row in topology} != {row["id"] for row in assessment["data_flows"]}:
+        raise ValueError("Boundary job topology does not match its assessment input")
+    result = copy.deepcopy(assessment)
+    ids = {signal["from"], signal["to"]} - {"external"}
+    connections = {
+        row["connection_id"] for row in topology if row["id"] in signal["flow_ids"] and row.get("connection_id")
+    }
+    result["components"] = scope_relays(
+        [row for row in result["components"] if row["id"] in ids], topology, connections
+    )
+    result["data_flows"] = [row for row in result["data_flows"] if row["id"] in signal["flow_ids"]]
+    result["signals"] = [copy.deepcopy(signal)]
+    external_ids = {row[key] for row in result["data_flows"] for key in ("from_entity", "to_entity") if key in row}
+    result["external_entities"] = [row for row in result["external_entities"] if row["id"] in external_ids]
+    allowed = source_selection(result["components"])
+    context = result["source_context"]
+    context["route_inventory"]["routes"] = [
+        row
+        for row in context["route_inventory"]["routes"]
+        if any((ev["repository_id"], ev["file"]) in allowed for ev in row["evidence"])
+    ]
+    context["recon_signals"]["evidence"] = [
+        row for row in context["recon_signals"]["evidence"] if (row["repository_id"], row["file"]) in allowed
+    ]
+    _assessment_input_fingerprint(result)
+    jsonschema.Draft202012Validator(contract("trust-boundary-assessment-input-v2.schema.json")).validate(result)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

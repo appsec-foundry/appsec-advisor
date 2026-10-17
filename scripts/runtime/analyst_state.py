@@ -68,7 +68,7 @@ JOB_FILES = frozenset(
         "result.md",
     }
 )
-TEMP_DIRS = frozenset({"source", "prompt", "work"})
+TEMP_DIRS = frozenset({"source", "prompt", "work", "explore"})
 CANCEL_MARKER = "cancel"
 LOCK_FILE = "lock"
 OUTPUT_MARKER = ".appsec-analyst-output"

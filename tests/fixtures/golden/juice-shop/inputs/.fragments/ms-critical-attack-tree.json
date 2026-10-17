@@ -1,0 +1,81 @@
+{
+  "root_goal": "3 Critical findings",
+  "critical_count": 3,
+  "mermaid": {
+    "orientation": "TD",
+    "nodes": [
+      {
+        "id": "GOAL",
+        "label": "3 Critical findings",
+        "class": "goal"
+      },
+      {
+        "id": "W001",
+        "label": "W-001 \u00b7 Database access relies on concatenated queries",
+        "class": "rootcause"
+      },
+      {
+        "id": "T006",
+        "label": "T-006 SQL injection",
+        "class": "leaf",
+        "detail": "search.ts"
+      },
+      {
+        "id": "T012",
+        "label": "T-012 SQL injection in login email lookup",
+        "class": "leaf",
+        "detail": "login.ts"
+      },
+      {
+        "id": "W005",
+        "label": "W-005 \u00b7 Authorization is implemented route by route",
+        "class": "rootcause"
+      },
+      {
+        "id": "T008",
+        "label": "T-008 Broken authorization",
+        "class": "leaf",
+        "detail": "dataExport.ts"
+      }
+    ],
+    "edges": [
+      {
+        "from": "W001",
+        "to": "GOAL"
+      },
+      {
+        "from": "T006",
+        "to": "W001"
+      },
+      {
+        "from": "T012",
+        "to": "W001"
+      },
+      {
+        "from": "W005",
+        "to": "GOAL"
+      },
+      {
+        "from": "T008",
+        "to": "W005"
+      }
+    ]
+  },
+  "fixes": [
+    {
+      "weakness": "W-001",
+      "recommendation": "provide one parameterised repository or query-builder path and prohibit application-value interpolation in database queries",
+      "findings": [
+        "T-006",
+        "T-012"
+      ]
+    },
+    {
+      "weakness": "W-005",
+      "recommendation": "enforce authorization through a shared server-side policy layer and make ownership and tenant scope mandatory inputs to data access",
+      "findings": [
+        "T-008"
+      ]
+    }
+  ]
+}

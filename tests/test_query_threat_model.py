@@ -14,6 +14,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "model/query_threat_model.py"
 
@@ -330,7 +332,7 @@ def test_cli_json_is_valid(tmp_path):
 def test_cli_no_model_exit_1(tmp_path):
     r = _run(["--output-dir", str(tmp_path)])
     assert r.returncode == 1
-    assert "create-threat-model" in r.stdout
+    assert "appsec-analyzer" in r.stdout
 
 
 def test_cli_empty_model_exit_1(tmp_path):
@@ -364,7 +366,7 @@ def test_cli_grep_and_id_mutually_exclusive(tmp_path):
 # Custom requirements — the compliance lane
 #
 # When a team wires up their own requirement catalog at scan time
-# (create-threat-model --requirements), asking "which requirements do we
+# (appsec-analyzer --requirements), asking "which requirements do we
 # break?" must be answerable here. Before this, the facts index carried only
 # meta's "Requirements checked: yes" — and `--grep REQ-AUTH-01` returned ZERO
 # findings even when one violated exactly that id, which reads as a truthful
@@ -466,7 +468,7 @@ def test_no_catalog_means_no_requirement_signal(tmp_path):
 
 def test_bundled_baseline_is_not_a_custom_requirement(tmp_path):
     """The zero-config OWASP fallback must never be presented as a team's own
-    requirement catalog — same gate review-threat-model applies."""
+    requirement catalog — same gate triage-security-assessment applies."""
     bundled = dict(_CATALOG, source="bundled-bestpractices")
     assert _req_facts(tmp_path, catalog=bundled)["requirements"]["integrated"] is False
 
@@ -818,3 +820,157 @@ def test_cli_severity_filter_is_case_insensitive(tmp_path):
     assert r.returncode == 0
     assert "MATCHES for severity Critical — 1 finding(s)" in r.stdout
     assert "F-002" not in r.stdout.split("FINDINGS", 1)[1]
+
+
+def _two_origin_facts(boundary: str, origins: tuple[str, ...], extra: str = "") -> dict:
+    import yaml
+
+    model = yaml.safe_load(textwrap.dedent(SYS_SAMPLE))
+    refs = [
+        {"boundary_id": boundary, "origin_component_id": origin, "rationale": f"Reached from {origin}."}
+        for origin in origins
+    ]
+    if extra:
+        refs.append({"boundary_id": extra, "origin_component_id": origins[0], "rationale": "Second crossing."})
+    model["threats"][0]["boundary_refs"] = refs
+    return qtm.build_facts(model, None)
+
+
+@pytest.mark.parametrize(("boundary", "origins"), [("tb-1", ("backend-api", "user-db")), ("tb-2", ("ledger", "api"))])
+def test_a_boundary_cited_from_two_origins_is_listed_once_with_both(boundary, origins):
+    facts = _two_origin_facts(boundary, origins)
+    detail = qtm.render_detail(qtm.lookup_id(facts, "F-001"))
+    line = next(row for row in detail.splitlines() if "Trust boundary gap(s):" in row)
+    assert line.count(boundary) == 1
+    assert f"{boundary} ({origins[0]}, {origins[1]}): Reached from {origins[0]}." in line
+    linked = qtm.lookup_id(facts, boundary)
+    assert [finding["id"] for finding in linked["findings"]] == ["F-001"]
+
+
+def test_distinct_boundaries_stay_separate_entries():
+    detail = qtm.render_detail(qtm.lookup_id(_two_origin_facts("tb-1", ("backend-api",), extra="tb-2"), "F-001"))
+    assert "tb-1 (backend-api): Reached from backend-api., tb-2 (backend-api): Second crossing." in detail
+
+
+# --------------------------------------------------------------------------
+# Abuse-case outcomes recorded in abuse_case_analysis
+# --------------------------------------------------------------------------
+
+
+def _abuse_case(case_id: str, title: str, source: str, verdict: str, findings: list[str], **extra) -> dict:
+    return {
+        "id": case_id,
+        "title": title,
+        "source": source,
+        "actor": "Authenticated customer",
+        "goal": "Obtain goods without paying.",
+        "prerequisite": "",
+        "combined_risk": "High" if findings else None,
+        "chain_verdict": verdict,
+        "verification_complete": verdict != "inconclusive",
+        "unverified_steps": [],
+        "matched_finding_ids": findings,
+        "blocking_mitigation_ids": [],
+        "steps": [
+            {
+                "step": 1,
+                "outcome": "The order total is accepted from the client.",
+                "verdict": "confirmed" if findings else "inconclusive",
+                "finding_id": findings[0] if findings else None,
+                "evidence": None,
+                "controls_found": [],
+                "unverified": not findings,
+            }
+        ],
+        **extra,
+    }
+
+
+def _abuse_model(cases: list[dict], evaluated=(), not_performed=()) -> str:
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SAMPLE))
+    analysis = {
+        "status": "completed",
+        "reason": None,
+        "cases": cases,
+        "catalog_evaluated": list(evaluated),
+    }
+    if not_performed:
+        analysis["not_performed"] = list(not_performed)
+    data["abuse_case_analysis"] = analysis
+    return yaml.safe_dump(data, sort_keys=False)
+
+
+def test_cli_lists_recorded_abuse_case_outcomes(tmp_path):
+    body = _abuse_model(
+        [_abuse_case("AC-001", "Client-controlled order total", "descriptive", "fully_viable", ["F-001"])],
+        evaluated=[
+            {"id": "AC-T-004", "title": "Webhook replay", "source": "mandatory", "reason": "no webhook receiver"}
+        ],
+        not_performed=[{"id": "AC-007", "title": "Coupon stacking", "requested": False, "reason": "depth limit"}],
+    )
+    _write_model(tmp_path, body)
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 0, r.stderr
+    block = r.stdout.split("ABUSE CASES — verification completed", 1)[1]
+    assert "AC-001" in block and "fully_viable" in block and "findings: F-001" in block
+    assert "AC-T-004" in block and "did not apply" in block and "no webhook receiver" in block
+    assert "AC-007" in block and "not performed" in block and "depth limit" in block
+
+
+def test_grep_narrows_abuse_cases_to_one_case_and_marks_model_derived():
+    import yaml
+
+    data = yaml.safe_load(
+        _abuse_model(
+            [
+                _abuse_case("ORG-AC-012", "Refund to a foreign account", "descriptive", "partially_blocked", ["F-002"]),
+                _abuse_case(
+                    "MODEL-AC-001",
+                    "Approve own expense claim",
+                    "descriptive",
+                    "inconclusive",
+                    [],
+                    open_questions=["Who may approve a claim above the limit?"],
+                ),
+            ]
+        )
+    )
+    facts = qtm.build_facts(data, "MODEL-AC-001")
+    assert [c["id"] for c in facts["abuse_cases"]["cases"]] == ["MODEL-AC-001"]
+    text = qtm.render_text(facts)
+    assert "model-derived" in text and "verification incomplete" in text
+    assert "open question: Who may approve a claim above the limit?" in text
+    assert "ORG-AC-012" not in text
+
+
+def test_model_without_abuse_analysis_renders_no_abuse_block():
+    facts = _facts()
+    assert facts["abuse_cases"]["cases"] == []
+    assert "ABUSE CASES" not in qtm.render_text(facts)
+
+
+@pytest.mark.parametrize(
+    ("reason", "header"),
+    [
+        ("skipped (auto - quick depth)", "ABUSE CASES — verification skipped (auto - quick depth)"),
+        ("operator opted out", "ABUSE CASES — verification skipped: operator opted out"),
+    ],
+)
+def test_abuse_header_states_the_status_once(reason, header):
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SAMPLE))
+    data["abuse_case_analysis"] = {"status": "skipped", "reason": reason, "cases": [], "catalog_evaluated": []}
+    assert header in qtm.render_text(qtm.build_facts(data, None)).splitlines()
+
+
+def test_cli_reads_a_published_set_and_refuses_a_mixed_one(tmp_path):
+    legacy = _write_model(tmp_path, SAMPLE)
+    published = legacy.rename(tmp_path / "security-assessment.yaml")
+    r = _run(["--output-dir", str(tmp_path), "--id", "F-001"])
+    assert r.returncode == 0 and r.stdout.startswith("F-001 (T-001)")
+    legacy.write_text(published.read_text(encoding="utf-8"), encoding="utf-8")
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 2 and "both" in r.stderr and not r.stdout

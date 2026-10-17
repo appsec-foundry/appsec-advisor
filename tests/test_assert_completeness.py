@@ -136,3 +136,23 @@ def _stamp_yaml(output_dir):
     data = yaml.safe_load(path.read_text())
     stamp(data)
     path.write_text(yaml.safe_dump(data))
+
+
+def test_build_phase_blocks_a_control_that_reaches_no_section_6_heading(tmp_path: Path, plugin_root: Path) -> None:
+    _write_yaml(
+        tmp_path,
+        "threats: []\nmitigations: []\nsecurity_controls:\n  - {control: Opaque Guard, domain: Misc, effectiveness: Weak}\n",
+    )
+
+    assert completeness.run(tmp_path, plugin_root, "build") == 2
+
+
+def test_build_phase_accepts_controls_placed_by_a_partial_section_6_title(tmp_path: Path, plugin_root: Path) -> None:
+    _write_yaml(
+        tmp_path,
+        "threats: []\nmitigations: []\nsecurity_controls:\n"
+        "  - {control: Opaque Guard, domain: Data Protection, effectiveness: Weak}\n"
+        "  - {control: Session Cookie Flags, domain: Session and Token Controls, effectiveness: Partial}\n",
+    )
+
+    assert completeness.run(tmp_path, plugin_root, "build") == 0

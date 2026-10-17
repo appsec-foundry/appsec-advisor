@@ -60,7 +60,7 @@ def test_cli_url_wins():
         "https://cli.example.test/y.yaml",
         False,
         "standard",
-        "create-threat-model",
+        "appsec-analyzer",
         EFFECTIVE,
         LEGACY,
     )
@@ -70,20 +70,20 @@ def test_cli_url_wins():
 
 
 def test_no_requirements_wins_over_profile():
-    result = rrs.resolve(None, True, "standard", "create-threat-model", EFFECTIVE, LEGACY)
+    result = rrs.resolve(None, True, "standard", "appsec-analyzer", EFFECTIVE, LEGACY)
     assert result["enabled"] is False
     assert result["source"] == "disabled"
 
 
 def test_profile_used_when_no_cli_override():
-    result = rrs.resolve(None, False, "standard", "create-threat-model", EFFECTIVE, LEGACY)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", EFFECTIVE, LEGACY)
     assert result["enabled"] is True
     assert result["source"] == "org-profile"
     assert result["url"] == PROFILE_RS["requirements_yaml_url"]
 
 
 def test_quick_default_inactive_disables_for_quick_mode():
-    result = rrs.resolve(None, False, "quick", "create-threat-model", EFFECTIVE, LEGACY)
+    result = rrs.resolve(None, False, "quick", "appsec-analyzer", EFFECTIVE, LEGACY)
     assert result["enabled"] is False
     assert result["source"] == "org-profile"
     # URL stays present so status output can still show where it would
@@ -98,7 +98,7 @@ def test_quick_default_active_enables_when_profile_allows():
             "create_threat_model": {"default_active": True, "quick_default_active": True},
         }
     }
-    result = rrs.resolve(None, False, "quick", "create-threat-model", effective, LEGACY)
+    result = rrs.resolve(None, False, "quick", "appsec-analyzer", effective, LEGACY)
     assert result["enabled"] is True
 
 
@@ -122,14 +122,14 @@ def test_org_profile_defaults_and_verify_caller_are_enabled():
 def test_org_profile_cache_false_is_preserved():
     effective = {"requirements_source": {**PROFILE_RS, "cache": False}}
 
-    result = rrs.resolve(None, False, "standard", "create-threat-model", effective, LEGACY)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", effective, LEGACY)
 
     assert result["source"] == "org-profile"
     assert result["cache"] is False
 
 
 def test_legacy_fallback_when_no_profile_active():
-    result = rrs.resolve(None, False, "standard", "create-threat-model", None, LEGACY)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", None, LEGACY)
     assert result["source"] == "legacy"
     assert result["enabled"] is False
 
@@ -137,7 +137,7 @@ def test_legacy_fallback_when_no_profile_active():
 def test_legacy_url_source_is_enabled_by_default():
     legacy = {"requirements_source": {"requirements_yaml_url": "https://legacy.example/reqs.yaml"}}
 
-    result = rrs.resolve(None, False, "standard", "create-threat-model", None, legacy)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", None, legacy)
 
     assert result["source"] == "legacy"
     assert result["enabled"] is True
@@ -147,7 +147,7 @@ def test_legacy_url_source_is_enabled_by_default():
 def test_legacy_terminal_fallback_can_enable_without_url():
     legacy = {"requirements_source": {"enabled": True, "requirements_yaml_url": None}}
 
-    result = rrs.resolve(None, False, "standard", "create-threat-model", None, legacy)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", None, legacy)
 
     assert result["source"] == "legacy"
     assert result["enabled"] is True
@@ -207,14 +207,14 @@ def test_remembered_used_when_nothing_else_and_audit():
 
 def test_remembered_not_auto_enabled_for_threat_model():
     remembered = {"url": "https://security.example/x"}
-    result = rrs.resolve(None, False, "standard", "create-threat-model", None, LEGACY, remembered=remembered)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", None, LEGACY, remembered=remembered)
     assert result["source"] == "remembered"
     assert result["enabled"] is False  # leftover sidecar must not switch CTM on
 
 
 def test_org_profile_beats_remembered():
     remembered = {"url": "https://security.example/x"}
-    result = rrs.resolve(None, False, "standard", "create-threat-model", EFFECTIVE, LEGACY, remembered=remembered)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", EFFECTIVE, LEGACY, remembered=remembered)
     assert result["source"] == "org-profile"
 
 
@@ -260,7 +260,7 @@ def test_org_audit_disabled_false_when_enabled():
 
 
 def test_org_audit_disabled_not_set_for_threat_model_caller():
-    result = rrs.resolve(None, False, "standard", "create-threat-model", DISABLED_EFFECTIVE, LEGACY)
+    result = rrs.resolve(None, False, "standard", "appsec-analyzer", DISABLED_EFFECTIVE, LEGACY)
     assert result["org_audit_disabled"] is False
 
 
@@ -279,6 +279,20 @@ def test_main_resolves_local_repo_catalog_and_prints_json(tmp_path, capsys):
     assert out["source"] == "local"
     assert out["surfaced"] is True
     assert out["url"] == str(tmp_path / "requirements.yaml")
+
+
+def test_the_local_catalog_is_read_from_the_repository_when_reports_go_elsewhere(tmp_path, capsys):
+    repo_catalog = tmp_path / "repo" / "docs" / "security"
+    repo_catalog.mkdir(parents=True)
+    (repo_catalog / "requirements.yaml").write_text("categories: []\n", encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / ".org-profile-effective.json").write_text(json.dumps(EFFECTIVE), encoding="utf-8")
+
+    assert rrs.main(["--output-dir", str(reports), "--catalog-dir", str(repo_catalog)]) == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["source"] == "local" and out["url"] == str(repo_catalog / "requirements.yaml")
 
 
 def test_main_uses_demo_path_when_requested(tmp_path, capsys):

@@ -285,7 +285,8 @@ def test_backlog_and_coverage(tmp_path):
     assert summary["coverage"] == {"with_mitigation": 2, "uncovered": 1}
 
     out = stm.render_text(summary, None, show_all=False)
-    assert "Backlog    1× P1 · 2× P2" in out
+    # The priority bands count mitigations and say so; no unitless "Backlog" line.
+    assert "Mitigations 4 · 1 fix first (P1) · 2 P2" in out and "Backlog" not in out
     assert "Coverage   2/3 findings have a mitigation · 1 without" in out
 
 
@@ -401,7 +402,7 @@ def test_render_text_compact(tmp_path):
     data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
-    assert "Threat Model — Demo App (1.2.3)" in out
+    assert "Security Assessment — Demo App (1.2.3)" in out
     assert "Top Critical (2)" in out
     # compact mode does not expand the full by-severity grouping (that is --all)
     assert "High (1)" not in out
@@ -500,7 +501,7 @@ def test_render_zero_findings_points_to_create(tmp_path):
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
     assert "Findings   0 findings" in out
-    assert "create-threat-model to (re)scan" in out
+    assert "appsec-analyzer to (re)scan" in out
     # no noise blocks when there is nothing to summarize
     assert "Critical" not in out and "Backlog" not in out
 
@@ -518,7 +519,7 @@ def test_cli_against_repo_fixture():
     fixture = REPO_ROOT / "tests" / "fixtures" / "compose"
     res = _run(["--output-dir", str(fixture)])
     assert res.returncode == 0
-    assert "Threat Model —" in res.stdout
+    assert "Security Assessment —" in res.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +529,7 @@ def test_cli_against_repo_fixture():
 
 def test_render_text_names_the_ask_and_review_lanes(tmp_path):
     """The overview is the FIXED fact set; questions needing an arbitrary subset
-    belong to ask-threat-model. Skill routing between the two is description-
+    belong to ask-security-assessment. Skill routing between the two is description-
     based and imperfect, so the rendered block names the other lanes itself —
     a deterministic correction when the router lands here by mistake.
     """
@@ -539,13 +540,13 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
 
-    assert "/appsec-advisor:ask-threat-model" in out, "overview must point at the Q&A lane"
-    assert "/appsec-advisor:review-threat-model" in out, "overview must point at the triage lane"
+    assert "/appsec-advisor:ask-security-assessment" in out, "overview must point at the Q&A lane"
+    assert "/appsec-advisor:triage-security-assessment" in out, "overview must point at the triage lane"
     # Near the top, not at the foot: a reader whose question this block cannot
     # answer must see the other lane before scrolling 40 lines of numbers — and
     # a trailing pointer is the line the invoking agent trims first.
     lines = out.splitlines()
-    ask_at = next(i for i, ln in enumerate(lines) if "ask-threat-model" in ln)
+    ask_at = next(i for i, ln in enumerate(lines) if "ask-security-assessment" in ln)
     findings_at = next(i for i, ln in enumerate(lines) if ln.startswith("Findings"))
     assert ask_at < findings_at
 
@@ -564,3 +565,54 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
 )
 def test_worst_case_row_leads_with_the_scenario_sentence(bullet, rows):
     assert stm.render_worst_case_table([bullet], indent="") == rows
+
+
+def test_completion_rows_share_the_overview_numbers(tmp_path):
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: Critical, mitigation_ids: [M-001]}
+          - {t_id: T-002, risk: High}
+        mitigations:
+          - {id: M-001, priority: P1}
+          - {id: M-002, priority: P3}
+    """
+    _write_model(tmp_path, body)
+    assert stm.completion_rows(tmp_path) == [
+        ("Findings", "2 · Critical 1 · High 1"),
+        ("Mitigations", "2 · 1 fix first (P1) · 1 P3"),
+    ]
+    # Without a readable model the closing summary names only its files.
+    assert stm.completion_rows(tmp_path / "missing") == []
+    (tmp_path / "threat-model.yaml").write_text(": not yaml: [")
+    assert stm.completion_rows(tmp_path) == []
+
+
+def test_completion_rows_name_the_register_count_when_practice_sites_fold(tmp_path):
+    """The console states the §8 card count whenever the headline folds practice
+    sites, as the show-security-assessment overview does."""
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: High}
+          - {t_id: T-002, risk: High, evidence_tier: insecure-practice}
+        weaknesses:
+          - kind: implementation
+            severity: Medium
+            severity_basis: observed-practice
+            observable_backing: {practice_evidence: [{file: a.ts, line: 1, id: T-002}]}
+    """
+    _write_model(tmp_path, body)
+    rows = stm.completion_rows(tmp_path)
+    assert rows[0] == ("Findings", "1 · High 1")
+    assert rows[1] == ("", "§8 register lists 2; practice sites fold into weaknesses")
+
+
+def test_cli_reads_a_published_set_and_refuses_a_mixed_one(tmp_path):
+    legacy = _write_model(tmp_path, SAMPLE)
+    published = legacy.rename(tmp_path / "security-assessment.yaml")
+    res = _run(["--output-dir", str(tmp_path), "--json"])
+    assert res.returncode == 0, res.stderr
+    legacy.write_text(published.read_text(encoding="utf-8"), encoding="utf-8")
+    res = _run(["--output-dir", str(tmp_path)])
+    assert res.returncode == 2 and "both" in res.stderr and not res.stdout

@@ -38,14 +38,9 @@ SCRIPTS = REPO_ROOT / "scripts"
 INVOCATIONS: dict[str, list[str]] = {
     "runtime/log_event.py": ["info", "EVENT", "detail"],
     "runtime/log_agent_end.py": ["agent", "model", "0"],
-    "orchestrator/batch_checkpoint.py": ["--phase", "p", "--step", "s", "--status", "x"],
     "runtime/aggregate_run_issues.py": [],
     "runtime/measure_run.py": [],
-    "runtime/skill_watchdog.py": [],
     "runtime/runtime_cleanup.py": [],
-    "runtime/stall_notice.py": [],
-    "renderers/render_editorial_receipt.py": [],
-    "renderers/render_qa_receipt.py": [],
 }
 
 _POSITIONAL_OUTPUT_DIR = re.compile(r"""add_argument\(\s*["']output_dir["']""")

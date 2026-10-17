@@ -31,10 +31,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import orchestrator.check_stride_dispatch as check_stride_dispatch  # noqa: E402
 import runtime.aggregate_run_issues as aggregate_run_issues  # noqa: E402
 import runtime.event_log as event_log  # noqa: E402
-import runtime.record_component_durations as record_component_durations  # noqa: E402
 
 CORPUS = Path(__file__).parent / "fixtures" / "logs" / "context-v2-run.log"
 
@@ -76,27 +74,6 @@ def test_the_corpus_carries_the_events_consumers_key_on():
     assert {"AGENT_SPAWN", "AGENT_USAGE", "PHASE_START", "PHASE_END", "SESSION_STOP"} <= events
 
 
-def test_serial_dispatch_detection_sees_the_wave(run_dir: Path):
-    """OR-5 — a detector that reads nothing can never report a defect."""
-    starts = check_stride_dispatch._context_v2_dispatch_starts(run_dir, None)
-
-    assert set(starts) == STRIDE_COMPONENTS
-    # This corpus is a real parallel wave, so the verdict is "no finding" — but
-    # now on evidence rather than on an empty read.
-    assert check_stride_dispatch.detect_serial_dispatch(run_dir) == []
-
-
-def test_component_durations_are_recorded_from_the_corpus(run_dir: Path):
-    assert record_component_durations.main([str(run_dir)]) == 0
-
-    baseline = json.loads((run_dir / ".appsec-cache" / "baseline.json").read_text(encoding="utf-8"))
-    assert baseline["component_durations"] == {
-        "web-frontend": 801,
-        "api-server": 623,
-        "ci-cd-pipeline": 359,
-    }
-
-
 def test_stride_model_drift_is_visible_on_a_context_v2_run(run_dir: Path):
     """`--reasoning-model opus` silently ignored is exactly what this advisory exists for."""
     (run_dir / ".skill-config.json").write_text(json.dumps({"stride_model": "claude-opus-4-8"}), encoding="utf-8")
@@ -105,14 +82,6 @@ def test_stride_model_drift_is_visible_on_a_context_v2_run(run_dir: Path):
     issues = aggregate_run_issues._extract_stride_model_mismatch(run_dir, log, [])
 
     assert issues, "the corpus dispatches sonnet against an opus setting and must be reported"
-
-
-def test_phase_nine_is_anchored_without_a_bracketed_boundary(run_dir: Path):
-    """The context-v2 runtime logs `PHASE_START <label>`, with no [Phase N/M]."""
-    log = run_dir / ".agent-run.log"
-    assert "[Phase 9/" not in log.read_text(encoding="utf-8")
-
-    assert record_component_durations._read_phase_9_start(log) is not None
 
 
 def test_watchdog_events_never_lose_the_agent_that_emitted_them():

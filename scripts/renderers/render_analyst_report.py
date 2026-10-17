@@ -57,85 +57,290 @@ def block(text: str) -> str:
     return f"{fence}text\n{text.rstrip()}\n{fence}"
 
 
-def _location(loc: dict) -> str:
-    where = f"{loc['path']}:{loc['line_start']}" + (
+MODE_TITLE = {"design": "design analysis", "review": "change review", "hypothesis": "hypothesis check"}
+CONCLUSION = {
+    "supported": ("SUPPORTED", "the checked files contain code that supports the threat."),
+    "not_confirmed": (
+        "NOT CONFIRMED",
+        "the checked files do not show the threat; files outside them were not read. This is not a safe result.",
+    ),
+    "unresolved": (
+        "NOT SETTLED",
+        "the checked files cannot decide it; see what is still open. This is not a safe result.",
+    ),
+}
+_ABUSE_CASE_LINE = re.compile(r"^Abuse case ([A-Z][A-Z0-9-]{1,40}) \(")
+STATE = {
+    "complete": "Analysis complete",
+    "incomplete": "Analysis incomplete",
+    "failed": "Analysis failed",
+    "awaiting_answers": "Waiting for your answers",
+    "cancelled": "Analysis cancelled",
+    "rejected": "Request rejected",
+}
+SIDE = {"baseline": "before the change", "proposed": "after the change"}
+NOT_SAFE = "Not confirmed does not mean disproved or safe. Conclusions apply only to the inspected scope."
+
+
+def _where(loc: dict) -> str:
+    return f"{loc['path']}:{loc['line_start']}" + (
         f"-{loc['line_end']}" if loc["line_end"] != loc["line_start"] else ""
     )
-    return f"- {loc['side']}: {code(where)}\n\n{block(loc['excerpt'])}"
+
+
+def _location(loc: dict, mode: str) -> str:
+    side = f" ({SIDE[loc['side']]})" if mode == "review" else ""
+    return f"- {code(_where(loc))}{side}\n\n{block(loc['excerpt'])}"
+
+
+def _lines(spans: list[tuple[int, int]]) -> str:
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in sorted(set(spans)))
+
+
+def _file_overview(result: dict) -> list[str]:
+    """One line per file: where the result cites it, or that nothing in it was cited."""
+    cited: dict[str, dict] = {}
+
+    def note(loc: dict, label: str) -> None:
+        entry = cited.setdefault(loc["path"], {"spans": [], "labels": []})
+        entry["spans"].append((loc["line_start"], loc["line_end"]))
+        if label not in entry["labels"]:
+            entry["labels"].append(label)
+
+    assessment = result.get("hypothesis_assessment") or {}
+    for loc in assessment.get("evidence", []):
+        note(loc, "conclusion")
+    for step in assessment.get("steps") or []:
+        for loc in step["evidence"]:
+            note(loc, f"step {step['step']}")
+    for f in result["findings"]:
+        for loc in f["evidence"] + f.get("comparison", []):
+            note(loc, f["id"])
+    for a in result["assumptions"]:
+        for loc in a.get("evidence", []):
+            note(loc, a["id"])
+    for o in result["requirement_observations"]:
+        for loc in o.get("evidence", []):
+            note(loc, f"requirement {o['requirement_ref']}")
+    cov = result["coverage"]
+    redacted = {e["path"]: e["lines"] for e in cov.get("redacted", [])}
+    out = []
+    for path in sorted(cited):
+        entry = cited[path]
+        line = f"- {code(path)} — cited at line {_lines(entry['spans'])} ({', '.join(entry['labels'])})"
+        if path in redacted:
+            line += f"; secret value redacted at line {_lines([(n, n) for n in redacted[path]])}"
+        out.append(line)
+    selected = result["scope"].get("paths", []) if result["mode"] == "hypothesis" else []
+    for path in selected:
+        if path in cited:
+            continue
+        inside = [c for c in cited if c.startswith(path + "/")]
+        if inside:
+            out.append(f"- {code(path + '/')} — no other file in it is cited")
+        else:
+            out.append(f"- {code(path)} — read; nothing in it is cited for this question")
+    for path, lines in sorted(redacted.items()):
+        if path not in cited:
+            out.append(f"- {code(path)} — read; secret value redacted at line {_lines([(n, n) for n in lines])}")
+    for e in cov["excluded"]:
+        out.append(
+            f"- Not read: {e['count']} × {e['reason'].replace('_', ' ')}"
+            + (f" ({code(e['path'])})" if "path" in e else "")
+        )
+    return out
+
+
+def _step_titles(hypothesis: str) -> dict[int, str]:
+    """Step number -> its short title, from the ``- Step N: Title. Detail`` lines."""
+    titles = {}
+    for match in re.finditer(r"^- Step (\d+): (.+)$", hypothesis, re.M):
+        titles[int(match.group(1))] = match.group(2).split(". ")[0].rstrip(".")
+    return titles
+
+
+def _source(result: dict, kind: str) -> str:
+    found = [s for s in result["coverage"]["sources"] if s["kind"] == kind]
+    return found[0]["status"] if found else "not used"
+
+
+def _related(item: dict) -> str:
+    refs = item.get("related_threats") or []
+    return f" Related threat-model findings: {', '.join(code(r) for r in refs)}." if refs else ""
 
 
 def render(result: dict) -> str:
     errors = validate_result(result)
     if errors:
         raise RenderError("; ".join(errors))
-    out = [f"# Threat analysis {code(result['job_id'])}", "", f"> {ADVISORY}", ""]
-    out += [
-        f"- State: **{result['state']}** ({inline(result['terminal_reason'])})",
-        f"- Mode: {result['mode']}",
-        f"- Input fingerprint: {code(result['input_fingerprint'])}",
-        "",
-        "## Summary",
-        "",
-        inline(result["summary"]) or "No summary.",
-        "",
-    ]
+    mode = result["mode"]
+    assessment = result.get("hypothesis_assessment")
+    out = [f"# Threat analysis: {MODE_TITLE[mode]}", ""]
+    if mode == "hypothesis":
+        label, meaning = CONCLUSION[assessment["status"]] if assessment else CONCLUSION["unresolved"]
+    elif mode == "design":
+        scenarios, questions = len(result["scenarios"]), len(result["questions"])
+        label = (
+            f"{scenarios} SCENARIO{'' if scenarios == 1 else 'S'}, {questions} QUESTION{'' if questions == 1 else 'S'}"
+        )
+        meaning = (
+            "design analysis with repository exploration; the files it cites are listed below."
+            if "exploration" in result["coverage"]
+            else "design analysis; no repository source was inspected."
+        )
+    else:
+        count = len(result["findings"])
+        label = f"{count} FINDING" + ("" if count == 1 else "S")
+        meaning = "each finding cites the code it is based on."
+    out += [f"**RESULT: {label}** — {meaning}", ""]
+    settled_open = bool(assessment) and assessment["status"] == "unresolved"
+    if result["state"] != "complete" and not settled_open:
+        out += [
+            f"{STATE.get(result['state'], result['state'])}: {inline(result['terminal_reason'].replace('_', ' '))}.",
+            "",
+        ]
+    out += [inline(result["summary"]) or "No summary.", "", f"> {ADVISORY}", ""]
+
+    out += ["## What it checks" if mode == "hypothesis" else "## What was checked", ""]
+    if mode == "hypothesis":
+        out += [
+            f"- {inline(line.strip().removeprefix('- '))}"
+            for line in str(result["hypothesis"]).splitlines()
+            if line.strip()
+        ]
+        out += [f"- Revision: {code(result['objects'].get('head', 'unavailable'))}"]
+    if result.get("question"):
+        out += [f"- Question: {inline(result['question'])}"]
+    exploration = result["coverage"].get("exploration")
+    if exploration is not None:
+        out += [f"- Repository source: explored, a redacted copy of {exploration['files']} tracked files"]
+    elif mode == "design":
+        out += ["- Repository source: not read"]
+    out += [f"- Threat model: {_source(result, 'threat_model')}"]
+    out += [f"- Requirements: {_source(result, 'requirements')}", ""]
+
+    files = _file_overview(result)
+    if files:
+        out += ["## Where", ""] + files + [""]
+
+    if mode == "hypothesis":
+        steps = sorted((assessment or {}).get("steps") or [], key=lambda st: st["step"])
+        if steps:
+            titles = _step_titles(str(result["hypothesis"]))
+            out += ["## Steps", "", "| # | Result | Step | Where | Note |", "|---|---|---|---|---|"]
+            for st in steps:
+                where = ", ".join(code(_where(loc)) for loc in st["evidence"]) or "no code cited"
+                out.append(
+                    f"| {st['step']} | {CONCLUSION[st['status']][0]} | {inline(titles.get(st['step'], ''))} "
+                    f"| {where} | {inline(st['note'])} |"
+                )
+            out.append("")
+        out += ["## Why", ""]
+        if assessment:
+            out += [inline(assessment["explanation"]), ""]
+            out += [_location(loc, mode) for loc in assessment["evidence"]]
+            out += ["", f"Next step: {inline(assessment['next_action'])}", ""]
+        else:
+            out += ["Unresolved: no validated conclusion is available.", ""]
+        out += [NOT_SAFE, ""]
+
     if result["findings"]:
         out += ["## Findings", ""]
         for f in result["findings"]:
-            out += [
-                f"### {f['id']} {inline(f['title'])}",
-                "",
-                f"Severity: **{f['severity']}**. {RELATIONSHIP[f['change_relationship']]}.",
-                "",
-            ]
-            out += [inline(f["explanation"]), "", "Evidence:", ""]
-            out += [_location(loc) for loc in f["evidence"] + f.get("comparison", [])]
-            out += ["", f"Next action: {inline(f['next_action'])}", ""]
+            where = (
+                "observed in the inspected revision" if mode == "hypothesis" else RELATIONSHIP[f["change_relationship"]]
+            )
+            out += [f"### {f['id']} {inline(f['title'])}", "", f"Severity: **{f['severity']}**, {where}.", ""]
+            out += [inline(f["explanation"]), ""]
+            out += [_location(loc, mode) for loc in f["evidence"] + f.get("comparison", [])]
+            out += ["", f"Fix: {inline(f['next_action'])}{_related(f)}", ""]
             if f.get("requirement_refs"):
                 out += ["Requirements: " + ", ".join(code(r) for r in f["requirement_refs"]), ""]
-    if result["scenarios"]:
-        out += ["## Scenarios", ""]
-        for s in result["scenarios"]:
-            out += [
-                f"- **{s['id']} {inline(s['title'])}.** {inline(s['description'])} Next action: {inline(s['next_action'])}"
-            ]
-        out.append("")
-    if result["assumptions"]:
-        out += ["## Assumptions", ""]
-        out += [f"- {a['id']} ({a['status']}): {inline(a['statement'])}" for a in result["assumptions"]]
-        out.append("")
+
+    if result.get("recommendations"):
+        out += ["## Recommendations", ""]
+        for r in result["recommendations"]:
+            line = f"- **{r['id']}** {inline(r['title'])}: {inline(r['rationale'])} Trade-off: {inline(r['trade_off'])}"
+            if r.get("requirement_refs"):
+                line += " Requirements: " + ", ".join(code(ref) for ref in r["requirement_refs"]) + "."
+            out += [line + _related(r)]
+        out += [""]
+
+    cov = result["coverage"]
+    still_open = [f"- {inline(a['statement'])}" for a in result["assumptions"] if a["status"] == "unresolved"]
+    still_open += [f"- {inline(item)}" for item in result["limitations"]]
+    still_open += [
+        f"- Requested file {code(e['path'])} was {e['status'].replace('_', ' ')}: {inline(e['detail'])} "
+        f"Requested because: {inline(e['reason'])}"
+        for e in cov.get("evidence_requests", [])
+        if e["status"] != "admitted"
+    ]
     if result["questions"]:
-        out += ["## Open questions", ""]
         for q in result["questions"]:
             need = "required" if q["required"] else "optional"
-            out += [
+            still_open += [
                 f"- **{q['id']}** ({need}): {inline(q['asks'])} Why: {inline(q['why'])} Affects: {inline(q['affects'])}"
             ]
-        out.append("")
-    if result["requirement_observations"]:
-        out += ["## Requirement observations", ""]
-        out += [
-            f"- {code(o['requirement_ref'])}: {inline(o['observation'])}" for o in result["requirement_observations"]
-        ]
-        out.append("")
-    if result["methodology_observations"]:
-        out += ["## Methodology observations", ""]
-        out += [f"- {code(o['criterion_ref'])}: {inline(o['observation'])}" for o in result["methodology_observations"]]
-        out.append("")
-    cov = result["coverage"]
-    out += ["## Coverage", "", f"- Admitted files: {cov['admitted_files']}"]
+    if still_open:
+        out += ["## Still open", ""] + still_open + [""]
+
+    if mode == "hypothesis":
+        cases = [m.group(1) for line in str(result["hypothesis"]).splitlines() if (m := _ABUSE_CASE_LINE.match(line))]
+        nxt = ["- Read more files: run the check again with `--path <file or directory>`."]
+        for cid in cases:
+            nxt.append(f"- Result of a full run: {code('/appsec-advisor:abuse-cases ' + cid)}")
+        if _source(result, "threat_model") != "delivered":
+            nxt.append(f"- Use earlier findings as context: {code('/appsec-advisor:appsec-analyzer')}")
+        out += ["## Next", ""] + nxt + [""]
+
+    background = [
+        f"- Scenario {s['id']}, {inline(s['title'])}: {inline(s['description'])} Next step: {inline(s['next_action'])}"
+        f"{_related(s)}"
+        for s in result["scenarios"]
+    ]
+    background += [
+        f"- Assumption {a['id']} ({a['status']}): {inline(a['statement'])}"
+        for a in result["assumptions"]
+        if a["status"] != "unresolved"
+    ]
+    background += [
+        f"- Requirement {code(o['requirement_ref'])}: {inline(o['observation'])}"
+        for o in result["requirement_observations"]
+    ]
+    background += [
+        f"- Criterion {code(o['criterion_ref'])}: {inline(o['observation'])}"
+        for o in result["methodology_observations"]
+    ]
+    if background:
+        out += ["## Background", ""] + background + [""]
+
+    out += ["## Technical details", ""]
     out += [
-        f"- Excluded: {e['count']} × {e['reason']}" + (f" ({code(e['path'])})" if "path" in e else "")
-        for e in cov["excluded"]
+        f"- Job: {code(result['job_id'])}",
+        f"- State: {result['state']} ({inline(result['terminal_reason'])})",
+        f"- Input fingerprint: {code(result['input_fingerprint'])}",
+        f"- Admitted files: {cov['admitted_files']}",
+        *([f"- Model: {code(result['costs']['model'])}"] if result.get("costs", {}).get("model") else []),
+        f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}",
     ]
     out += [f"- Source {s['kind']} ({inline(s['label'])}): {s['status']}" for s in cov["sources"]]
-    out += [f"- Question not considered: {code(q['ref'])} ({inline(q['reason'])})" for q in cov["omitted_questions"]]
-    out += [f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}", ""]
-    out += ["## Packages", ""]
     out += [
-        f"- {code(p['id'])} {p['version']} ({p['authority']}), source: {inline(p['provenance']['source'])}, revision {inline(p['provenance']['revision'])}"
+        f"- Context added before analysis: {code(c['path'])} ({inline(c['reason'])})"
+        for c in cov.get("context_selection", [])
+    ]
+    if exploration is not None:
+        out += [
+            f"- Explore copy: {exploration['files']} files, {exploration['bytes']} bytes"
+            + "".join(f"; {e['count']} × {e['reason'].replace('_', ' ')} not copied" for e in exploration["excluded"])
+        ]
+    out += [f"- Question not considered: {code(q['ref'])} ({inline(q['reason'])})" for q in cov["omitted_questions"]]
+    out += [
+        f"- Evidence {code(e['path'])}: {e['status']}. {inline(e['detail'])}"
+        for e in cov.get("evidence_requests", [])
+        if e["status"] == "admitted"
+    ]
+    out += [
+        f"- Package {code(p['id'])} {p['version']} ({p['authority']}), source: {inline(p['provenance']['source'])}, revision {inline(p['provenance']['revision'])}"
         for p in result["packages"]
     ]
-    if result["limitations"]:
-        out += ["", "## Limitations", ""] + [f"- {inline(item)}" for item in result["limitations"]]
     return "\n".join(out).rstrip() + "\n"

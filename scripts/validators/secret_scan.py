@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Detect raw, unmasked secrets in rendered threat-model artifacts.
 
-Single source of truth used by both:
-  - scripts/validators/qa_checks.py            (mandatory per-run QA gate)
-  - scripts/model/publish_threat_model.py (publish-time gate)
+Single source of truth for these patterns: the mandatory per-run QA gate
+(scripts/validators/qa_checks.py) and the other secret checks import it.
 
 A hit means the value still looks like a raw, reusable secret. Values that
 contain any masking marker (``****``, ``[REDACTED]``, ``<…>``, ``XXXX``,
@@ -206,7 +205,7 @@ _SOURCE_FILE_EXTENSIONS = (
 # ``deadbeef1234``) are NOT excluded — those stay flagged.
 _CODE_REFERENCE_RE = re.compile(
     r"^(?:"
-    r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"  # dotted path:  security.hash
+    r"[A-Za-z_]+(?:\??\.[A-Za-z_]+)+"  # dotted path:  security.hash, user.password?.replace
     r"|[a-z]+[A-Z][A-Za-z]*"  # camelCase:    publicKey
     r"|[A-Z][a-z]+[A-Z][A-Za-z]*"  # PascalCase:   PublicKey
     r"|[a-z]+(?:_[a-z]+)+"  # snake_case:   read_unsigned_jwt_claims

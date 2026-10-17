@@ -10,7 +10,7 @@ A report has these chapters, in this order. Chapters in *italics* appear only un
 
 1. Front matter: info box, *Changelog*, *quick-mode notice*, Table of Contents
 2. Management Summary
-3. *Critical Attack Tree*
+3. *Critical Findings by Root Cause*
 4. §1 System Overview
 5. §2 Architecture Diagrams
 6. *§3 Attack Walkthroughs*
@@ -49,22 +49,21 @@ Covers the overall verdict, the systemic weaknesses, the most important threats,
 
 - `## Management Summary` — always. Its blocks appear in this order:
   - `### Verdict` — always. A 🟢, 🟡, or 🔴 rating with a highlighted statement citing at least two findings, then **About this assessment**, **Method and limits**, **Risk distribution**, and the security concerns behind the rating.
-  - `### Top Weaknesses` — only when the Weakness Register has entries. One bullet per weakness with severity and a one-sentence summary.
+  - `### Remediation Priorities` — always. What to fix first: one row per mitigation, grouped under the top root causes. The root-cause cell spans its group's rows and names the lasting fix. Every mitigation that fixes a Critical finding is listed; one without a root cause appears under *No root cause linked*.
+    - Table: `| Root cause → lasting fix | Do first | Resolves | Effort |` The HTML root-cause cell spans its group's rows.
   - `### Open Questions for the Team` — only when a decision is open that only the team can settle. At most three questions.
   - `### Security Posture & Top Threats` — always. **Figure 1a** (runtime architecture and threats), **Figure 1b** (supply chain and build, only when a build is evidenced), **Figure 2** (attack routes and impact), and the threat actors behind the routes. Every route in Figure 2 has exactly one table row, and every row links its findings into §8.
     - Table: `| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |`
-  - `### Top Mitigations` — always.
-    - Table: `| # | Component | Mitigation | Addresses | Effort |`
   - `### AI / LLM Exposure` — only when the system has an LLM or AI surface. One bullet per affected OWASP LLM Top 10 category with its findings.
   - `### Requirements Compliance` — only when a requirements catalog was checked. The overall result: **Baseline**, **Overall status**, and **Result**. The per-requirement detail is in §7b.
   - `### Operational Strengths` — always, closing with a **Bottom line**.
     - Table: `| Strength | What's in Place | Effectiveness |`
 
-## Critical Attack Tree
+## Critical Findings by Root Cause
 
-Covers how the Critical findings combine toward the attacker's goal.
+Covers which weakness each Critical finding traces back to and which structural fix closes it.
 
-- `## Critical Attack Tree` — only when there are at least two Critical findings. One goal-decomposition diagram.
+- `## Critical Findings by Root Cause` — only when there are at least two Critical findings. One diagram linking each Critical finding to its weakness records, with Critical findings that have none in a separate node, followed by the list of **Structural fixes**.
 
 ## §1 System Overview
 
@@ -76,7 +75,7 @@ Covers what the system is, what was analyzed and what was not, who interacts wit
     - Table, only when actor roles were resolved: `| Actor | Type | Access | Scenarios | Attributed findings |`
     - Table, only when no actor role was resolved: `| Actor | Role | Reach | Findings | Components |`
   - `### Trust Boundaries` — only when trust boundaries were derived.
-    - Table: `| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |`
+    - Table: `| ID | Crossing | Required condition | Findings / open question |`
 
 ## §2 Architecture Diagrams
 
@@ -207,7 +206,7 @@ Covers which abuse scenarios were checked against the code and with what outcome
 - `## 9. Abuse Cases` — always.
   - `### AC-T-NNN — <title>` — only when a scenario was checked. A summary line with **Source**, **Actor**, **Combined Risk**, and **Verdict**, then **Goal**, **Prerequisite** when one exists, **Attack chain**, and **Scenario impact** and **Blocking mitigations** when they exist.
     - Table: `| Step | Finding | Outcome |`
-  - `### Generic catalog — evaluated, not applicable` — only when catalog scenarios were ruled out.
+  - `### Technical abuse cases — evaluated, not applicable` — only when technical abuse cases were ruled out.
     - Table: `| Scenario | Source | Why not applicable |`
 
 ## §10 Mitigation Register

@@ -1,0 +1,106 @@
+# Generic business abuse cases (descriptive, schema_version 2).
+#
+# Each case says in one sentence what a user must not be able to do. The
+# abuse-case verifier derives the actor, the operations, and the boundary from
+# that check and the code, and cites source for every verdict. These cases
+# cover business rules that a code pattern cannot express. Standard and
+# thorough assessments load this file with the technical abuse cases in
+# technical.yaml unless the organization profile sets
+# abuse_cases.inherit_defaults: false. Teams add their own cases in
+# <repo>/docs/security/abuse-cases/ or through the organization profile.
+#
+# Fields:
+# - check: the rule to verify. Write the outcome, not the implementation.
+# - exclusions: who or what the rule does not cover.
+# - open_questions: business facts the code cannot answer.
+# - finding: how a confirmed case is classified. Omitted fields default to
+#   CWE-840, Elevation of Privilege, and Medium.
+# - scope_qualifier: where a case can apply. It only decides whether the case
+#   runs and which files the verifier reads first; the verifier follows the
+#   code from there. Every required_signals entry must hold (names from
+#   schemas/recon-signals.schema.json), and at least one locator must find
+#   runtime source:
+#   - path_patterns: file or directory names, ignoring case. "*role*" selects
+#     roleService.ts, RoleController.java, and every file below a roles/
+#     directory. "[!d]" keeps "*share[!d]*" from selecting shared/ helpers.
+#   - route_patterns: route paths in the route inventory, ignoring case.
+#   - detector_rules: source-scanner check IDs whose findings mark a file.
+#
+# Business abuse cases use AC-B ids; the technical abuse cases in
+# technical.yaml use AC-T ids.
+schema_version: 2
+abuse_cases:
+- id: AC-B-001
+  kind: descriptive
+  title: User reads or changes data of another user or tenant
+  check: Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.
+  exclusions: [Data intended to be public or shared by design., Platform operators whose role spans all users or tenants by design.]
+  finding: {cwe: CWE-639, stride: Information Disclosure, severity: High, mitigation_title: Check resource ownership on every operation that returns or changes the data}
+  scope_qualifier:
+    required_signals: [has_auth_surface]
+    path_patterns: ['*tenant*', '*export*', '*download*', 'share', '*share[!d]*', '*report*']
+    detector_rules: [AUTHZ-001, AUTHZ-002, AUTHZ-301]
+    route_patterns: ['*tenant*', '*organization*', '*export*', '*download*', '*share*']
+- id: AC-B-002
+  kind: descriptive
+  title: User gains more rights than intended
+  check: Check whether a user can give themselves or others a role or permission beyond what their own role or delegation allows.
+  exclusions: [Administrators with unrestricted authority over every role.]
+  open_questions: ['Which roles may each administrator tier assign?']
+  finding: {cwe: CWE-269, severity: High, mitigation_title: Limit role and permission changes to the scope the acting user may grant}
+  scope_qualifier:
+    required_signals: [has_role_concept]
+    path_patterns: ['*role*', '*permission*', '*admin*']
+    detector_rules: [AUTHZ-003, AUTHZ-004, AUTHZ-101, AUTHZ-102, AUTHZ-008]
+    route_patterns: ['*role*', '*permission*', '*grant*']
+- id: AC-B-003
+  kind: descriptive
+  title: User takes over another account
+  check: Check whether anyone other than the verified owner can change an account's credentials or recovery data, such as email, phone number, or reset tokens.
+  exclusions: [Verified account owners changing their own recovery data after re-authentication.]
+  finding: {cwe: CWE-640, stride: Spoofing, mitigation_title: Require the verified owner to re-authenticate before credential or recovery changes}
+  scope_qualifier:
+    required_signals: [has_auth_surface]
+    path_patterns: ['*recover*', '*reset*', '*profile*', '*account*']
+    route_patterns: ['*recover*', '*reset*', '*profile*']
+- id: AC-B-004
+  kind: descriptive
+  title: User bypasses a required approval
+  check: Check whether a user can approve their own request where an independent approval is required, or change content after approval and keep the earlier approval.
+  exclusions: [Processes where self-approval is permitted by a sourced policy., Changes the process explicitly allows without re-approval.]
+  open_questions: ['Does the process require separation between requester and approver?']
+  finding: {stride: Tampering, mitigation_title: Enforce independent approval and invalidate approvals when the approved content changes}
+  scope_qualifier:
+    path_patterns: ['*approv*', '*review*', '*publish*', '*workflow*']
+    route_patterns: ['*approv*', '*publish*', '*review*']
+- id: AC-B-005
+  kind: descriptive
+  title: User exceeds a limit or a one-time entitlement
+  check: Check whether a one-time or limited entitlement, such as a coupon, voucher, quota, or balance, can be used more often or for more value than allowed, including by repeating or racing the operation.
+  exclusions: [Operations without a quantity or one-time limit.]
+  finding: {stride: Tampering, mitigation_title: Enforce the limit atomically on the server for every use of the entitlement}
+  scope_qualifier:
+    path_patterns: ['*coupon*', '*voucher*', '*redeem*', '*quota*', '*balance*', '*wallet*']
+    route_patterns: ['*coupon*', '*voucher*', '*redeem*']
+- id: AC-B-006
+  kind: descriptive
+  title: User keeps using a withdrawn right
+  check: Check whether a withdrawn role, permission, or account keeps working through an existing session, token, or cached authorization.
+  exclusions: [Short-lived tokens whose lifetime the policy explicitly accepts as revocation delay.]
+  open_questions: ['How quickly must a revocation take effect?']
+  finding: {cwe: CWE-613, mitigation_title: Re-check current roles and account status when a session or token is used}
+  scope_qualifier:
+    required_signals: [has_role_concept, has_auth_surface]
+    path_patterns: ['*session*', '*token*', '*revoke*']
+    detector_rules: [AUTHZ-009, AUTHZ-104]
+    route_patterns: ['*logout*', '*revoke*', '*session*', '*token*']
+- id: AC-B-007
+  kind: descriptive
+  title: User misuses a privileged function for another purpose
+  check: Check whether a user can make a privileged function, such as support impersonation, an administrative action, or a background job, act on resources or perform operations outside that user's own authority.
+  exclusions: [Operations explicitly permitted to the privileged role on the user's behalf.]
+  open_questions: ['Which operations may support staff perform while acting as a customer?']
+  finding: {cwe: CWE-285, severity: High, mitigation_title: Authorize privileged functions against the initiating user's own authority}
+  scope_qualifier:
+    path_patterns: ['*impersonat*', '*sudo*', '*job*', '*worker*', '*queue*', '*admin*']
+    route_patterns: ['*impersonat*', '*sudo*', '*job*', '*admin*']

@@ -48,13 +48,12 @@ document changed and avoids the duplicate `all` detector pass.
 
 `ms_structure` validates that `## Management Summary` is unnumbered and
 contains its required sub-sections in canonical order and places the optional
-team-question block directly after Top Weaknesses:
+team-question block directly after Remediation Priorities:
 
     ### Verdict (with a red HTML <blockquote …>)
-    ### Top Weaknesses (optional)
+    ### Remediation Priorities
     ### Open Questions for the Team (optional)
     ### Security Posture & Top Threats
-    ### Top Mitigations
     ### Operational Strengths
 
 Safe auto-repairs (numeric-prefix strip, legacy-name rename) are applied in
@@ -109,6 +108,8 @@ import renderers.team_questions as _team_questions
 import shared._safe_cond as _safe_cond
 from analyzers.perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 from shared._atomic_io import atomic_write_text
+from shared._fragment_ownership import locate_defect_fragments
+from shared._register_titles import HEADING_HARD_MAX, HEADING_SOFT_MAX
 
 from validators.check_reference_format import lint_text as _reference_format_lint
 from validators.secret_scan import PUBLISHED_ARTIFACTS as _PUBLISHED_ARTIFACTS
@@ -676,6 +677,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # imports qa_checks function-locally, so there is no import cycle.
     from renderers.compose_threat_model import (
         _is_bare_finding_ref_line,
+        _is_inline_finding_citation,
         _strip_trailing_locator,
     )
 
@@ -742,7 +744,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         # AND trigger heading_hygiene's `[…]([…]) — <text>` rule.
         if stripped_lstrip.startswith("#"):
             continue
-        # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+        # Bare-finding-ref lines (Open Questions, Critical Attack
         # Tree findings pointer) list BARE finding ids by design — a single
         # higher-level signal owns the context (user 2026-07-15). Their F-refs are
         # already linked by the composer, so skip label-suffix enrichment here;
@@ -752,7 +754,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             continue
         new_line = line
 
-        def _labelled(full: str, fallback_anchor: str) -> str:
+        def _labelled(full: str, fallback_anchor: str, offset: int | None = None) -> str:
             """Build `[ID](#anchor) — Label` when the YAML index has an entry
             for this ID, else `[ID](#fallback_anchor)`.
 
@@ -766,7 +768,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             entry = label_idx.get(full.upper())
             if entry:
                 label, anchor = entry
-                if in_section_7b:
+                if in_section_7b or (offset is not None and _is_inline_finding_citation(new_line, offset)):
                     return f"[{full}](#{anchor})"
                 return f"[{full}](#{anchor}) — {_canonical_label(label)}"
             return f"[{full}](#{fallback_anchor})"
@@ -794,7 +796,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('T', match.group(1))})"
-            return _labelled(full, _lowercase_anchor("T", match.group(1)))
+            return _labelled(full, _lowercase_anchor("T", match.group(1)), start)
 
         def sub_m(match: re.Match[str]) -> str:
             full = match.group(0)
@@ -832,7 +834,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('F', match.group(1))})"
-            return _labelled(full, _lowercase_anchor("F", match.group(1)))
+            return _labelled(full, _lowercase_anchor("F", match.group(1)), start)
 
         def sub_th(match: re.Match[str]) -> str:
             """Linkify bare TH-NN. Anchor target is `#th-NN` (zero-padded
@@ -877,6 +879,10 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             def sub_existing(match: re.Match[str]) -> str:
                 if in_section_7b:
                     return match.group(0)  # citation next to the assessor's own sentence
+                if match.group(1).upper().startswith(("F-", "T-")) and _is_inline_finding_citation(
+                    new_line, match.start()
+                ):
+                    return match.group(0)
                 ref = match.group(1).upper()
                 entry = label_idx.get(ref)
                 if not entry:
@@ -1088,9 +1094,45 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
                 f"{target.name}: {hit.render()} — mask the value "
                 "(tokens: first 4 chars + ****; passwords: **** plus length only)"
             )
+    report.issues.extend(_known_secret_value_issues(targets, output_dir))
     if not report.issues:
         report.ok = 1
     return report
+
+
+def _known_secret_value_issues(targets: list[Path], output_dir: Path | None) -> list[str]:
+    """Exact-value leaks of secrets the run itself knows about.
+
+    The pattern scan cannot see a raw value standing in prose. The redaction
+    pass masks every value from ``known_secret_values``; checking the same set
+    here means a value it missed fails the gate instead of shipping.
+    """
+    if output_dir is None:
+        return []
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return []
+    repo_root = cfg.get("repo_root") if isinstance(cfg, dict) else None
+    if not isinstance(repo_root, str) or not repo_root:
+        return []
+    from validators.redact_known_secrets import known_secret_values, unmasked_occurrences
+
+    known = known_secret_values(Path(repo_root), output_dir)
+    issues: list[str] = []
+    for target in targets:
+        try:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for value, mask in known.items():
+            count = unmasked_occurrences(text, value)
+            if count:
+                issues.append(
+                    f"{target.name}: known secret value {mask} appears {count}x unmasked — "
+                    "run validators/redact_known_secrets.py before this gate"
+                )
+    return issues
 
 
 # The composer's `Violates:` line, quoting the configured catalog: label plus a
@@ -1248,17 +1290,16 @@ def check_invariants(md_path: Path) -> Report:
 # defect the renderer must fix before releasing the file.
 _MS_REQUIRED_SUBSECTIONS: tuple[str, ...] = (
     "Verdict",
+    "Remediation Priorities",
     "Security Posture & Top Threats",
-    "Top Mitigations",
     "Operational Strengths",
 )
 
 _MS_CANONICAL_SUBSECTION_ORDER: tuple[str, ...] = (
     "Verdict",
-    "Top Weaknesses",
+    "Remediation Priorities",
     "Open Questions for the Team",
     "Security Posture & Top Threats",
-    "Top Mitigations",
     "AI / LLM Exposure",
     "Requirements Compliance",
     "Operational Strengths",
@@ -1279,7 +1320,7 @@ _VERDICT_BLOCKQUOTE_RE = re.compile(
     re.IGNORECASE,
 )
 # Matches the canonical unnumbered promoted block above §1.
-_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Attack Tree\s*$", re.MULTILINE)
+_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Findings by Root Cause\s*$", re.MULTILINE)
 
 
 def _slice_management_summary(text: str) -> tuple[int, int, str] | None:
@@ -1318,7 +1359,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     Flagged but NOT auto-rewritten (too destructive — require a full rerun):
         * Missing required sub-sections from the canonical set.
         * Missing red HTML blockquote inside the Verdict section.
-        * Missing `## Critical Attack Tree` section after MS when ≥2 Criticals.
+        * Missing `## Critical Findings by Root Cause` section after MS when ≥2 Criticals.
     """
     report = Report("ms_structure")
     original = md_path.read_text(encoding="utf-8")
@@ -1364,6 +1405,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         "Risk Distribution": None,  # forbidden — strip entire heading
         "STRIDE Coverage": None,  # forbidden — strip entire heading
         "Critical Attack Tree": None,  # must be ## (promoted), not ### inside MS
+        "Critical Findings by Root Cause": None,  # must be ## (promoted), not ### inside MS
         "Overall Security Rating": None,  # Verdict already carries the rating
         "Executive Overview": "Verdict",  # narrative-only → rename, body usually works as Verdict prose
     }
@@ -1469,7 +1511,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         report.issues.append("Management Summary contains duplicate '### Open Questions for the Team' sub-sections")
     if question_count == 1:
         question_index = names.index("Open Questions for the Team")
-        expected_previous = "Top Weaknesses" if "Top Weaknesses" in names else "Verdict"
+        expected_previous = "Remediation Priorities"
         if question_index == 0 or names[question_index - 1] != expected_previous:
             report.issues.append(
                 "Management Summary must place '### Open Questions for the Team' directly after "
@@ -1491,10 +1533,9 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
                 'style="border-left: 3px solid #dc2626; …"> worst-case-scenarios block'
             )
 
-    # --- Check 4: Critical Attack Tree is present.
-    # The cross-finding/strategic view is the standalone `## Critical Attack
-    # Tree` block between the Management Summary and §1. The §3.1 Attack
-    # Chain Overview was retired. Skipped when .skill-config.json sets
+    # --- Check 4: Critical Findings by Root Cause is present.
+    # The cross-finding view is the standalone `## Critical Findings by Root
+    # Cause` block between the Management Summary and §1. Skipped when .skill-config.json sets
     # SKIP_ATTACK_WALKTHROUGHS=true — a skip-notice stub is intentional then.
     rd = RISK_DIST_RE.search(text)
     critical_count = _rd_count(rd, 1)
@@ -1511,8 +1552,8 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     has_chain = bool(_CRITICAL_CHAIN_RE.search(text))
     if critical_count >= 2 and not has_chain and not _skip_walkthroughs:
         report.issues.append(
-            "Critical Attack Tree missing — required when Critical count ≥ 2. "
-            "Expected the `## Critical Attack Tree` section between the "
+            "Critical Findings by Root Cause missing — required when Critical count ≥ 2. "
+            "Expected the `## Critical Findings by Root Cause` section between the "
             "Management Summary and §1."
         )
 
@@ -1937,28 +1978,11 @@ _TABLE_SCHEMA_CHECKS: list[tuple[str, str, list[str]]] = [
     ),
     (
         "mitigations",
-        "Top Mitigations",
+        "Remediation Priorities",
         [
-            # 2026-06-03 — Priority column dropped: the rollout priority now
-            # rides on the linked mitigation as a leading prefix (2026-06-04
-            # Variant B: a monochrome circled digit, `❶`…`❹`), so the
-            # dedicated column is redundant.
-            "| # | Component | Mitigation | Addresses | Effort |",
-            # Post-2026-05-29 — numbered table with a dedicated Component
-            # column (label printed once per group, blank on continuation
-            # rows). Replaces the in-table divider-row form, which rendered
-            # the component label displaced in the `#`/ID column.
-            "| # | Priority | Component | Mitigation | Addresses | Effort |",
-            # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
-            # added so each data row carries an at-a-glance position; divider
-            # rows continue to carry the component label in the first cell.
-            "| # | Priority | Mitigation | Addresses | Effort |",
-            # Post-2026-05 iteration 1 — single central table, sub-grouped by
-            # component via divider rows; Component column dropped.
-            "| Priority | Mitigation | Addresses | Effort |",
-            # M3.10 legacy — kept as accepted form so legacy reports are not
-            # falsely flagged.
-            "| Priority | Mitigation | Component | Addresses | Effort |",
+            # Raw HTML (the root-cause cell spans its group's rows), matched
+            # through the `<th>` form derived from this signature.
+            "| Root cause → lasting fix | Do first | Resolves | Effort |",
         ],
     ),
 ]
@@ -2040,6 +2064,11 @@ BLOCKING_ACTION_TYPES = frozenset(
         "table_schema_drift",
     }
 )
+
+
+# Blocking checks whose issues name literal report text, so the producing
+# fragment can be located instead of guessed.
+_OWNER_RESOLVED_CHECKS = frozenset({"toc_closure", "xrefs", "reference_format", "heading_hygiene"})
 
 
 def _action_severity(action_type: str) -> str:
@@ -2137,6 +2166,70 @@ def _fragment_owning_mermaid_block(md_path: Path, raw_issue: str) -> Optional[st
     if top_score < 0.6 or (top_score - runner_up) < 0.2:
         return None
     return top_path
+
+
+_UNRESOLVED_ANCHOR_RE = re.compile(r"unresolved TOC/link anchor: #(\S+)")
+_REGISTER_ANCHOR_RE = re.compile(r"^([ftm])-(\d+)$")
+_ORPHAN_REF_RE = re.compile(r"orphaned-(?:threat|mitigation)-ref: ([FTM])-(\d+)\b")
+_QUOTED_SNIPPET_RE = re.compile(r"'([^']{3,})'")
+_SECTION_NUMBER_PREFIX_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+
+
+def _register_id_patterns(kind: str, number: str) -> list[re.Pattern[str]]:
+    """A register ID as authored: bare token (linkified by compose) or an anchor link.
+
+    A finding renders as F-NNN but fragments may still carry T-NNN.
+    """
+    letters = "FT" if kind.lower() in "ft" else "M"
+    return [
+        re.compile(rf"(?<![A-Za-z0-9-])[{letters}]-{number}(?!\d)"),
+        re.compile(rf"\(#[{letters.lower()}]-{number}\)"),
+    ]
+
+
+def _defect_text_patterns(check: str, raw: str) -> list[re.Pattern[str]]:
+    """Literal patterns for the text a blocking issue reports, or none when it names no text."""
+    if check == "toc_closure":
+        m = _UNRESOLVED_ANCHOR_RE.search(raw)
+        if not m:
+            return []
+        slug = m.group(1)
+        register = _REGISTER_ANCHOR_RE.match(slug)
+        patterns = [re.compile(re.escape(f"(#{slug})"))]
+        return patterns + (_register_id_patterns(*register.groups()) if register else [])
+    if check == "xrefs":
+        m = _ORPHAN_REF_RE.search(raw)
+        return _register_id_patterns(*m.groups()) if m else []
+    if check == "reference_format":
+        m = _QUOTED_SNIPPET_RE.search(raw)
+        return [re.compile(re.escape(m.group(1)))] if m else []
+    if check == "heading_hygiene" and ": `" in raw:
+        heading = _SECTION_NUMBER_PREFIX_RE.sub("", raw.rsplit(": `", 1)[1].rstrip("`")).strip()
+        return [re.compile(re.escape(heading))] if len(heading) >= 8 else []
+    return []
+
+
+def _resolve_defect_owners(check: str, issues: list[str], output_dir: Path) -> tuple[list[str], list[str]]:
+    """Return ``(fragments_to_rewrite, unresolved_issues)`` for one blocking check.
+
+    An issue is repairable only when its literal text occurs in a contract
+    fragment that survives recompose and in no regenerated one. Otherwise the
+    producer is deterministic code: naming a fragment would start the
+    non-convergent loop of 7ac5cfa, so the issue stays unresolved and the
+    release gate refuses it.
+    """
+    candidates = [p for paths in CONTRACT_SECTION_FRAGMENTS.values() for p in (paths or [])]
+    owners: set[str] = set()
+    unresolved: list[str] = []
+    for raw in issues:
+        persistent, regenerated = locate_defect_fragments(
+            output_dir / ".fragments", candidates, _defect_text_patterns(check, raw)
+        )
+        if persistent and not regenerated:
+            owners.update(persistent)
+        else:
+            unresolved.append(raw)
+    return sorted(owners), unresolved
 
 
 def _render_integrity_actions(output_dir: Path) -> tuple[list[str], list[dict]]:
@@ -2334,15 +2427,18 @@ def build_repair_plan(
         ),
     ):
         if issue_list:
-            actions.append(
-                {
-                    "raw_issue": "; ".join(issue_list),
-                    "type": check_name,
-                    "section_id": "cross_references",
-                    "fragments_to_rewrite": [],
-                    "remediation": remediation,
-                }
-            )
+            action = {
+                "raw_issue": "; ".join(issue_list),
+                "type": check_name,
+                "section_id": "cross_references",
+                "fragments_to_rewrite": [],
+                "remediation": remediation,
+            }
+            if check_name in _OWNER_RESOLVED_CHECKS:
+                action["fragments_to_rewrite"], action["unresolved_issues"] = _resolve_defect_owners(
+                    check_name, issue_list, output_dir
+                )
+            actions.append(action)
     if toc_contract_issues:
         actions.append(
             {
@@ -2426,19 +2522,19 @@ def build_repair_plan(
     # (that run delivered 12 of them while section_integrity and final_structure
     # both passed).
     #
-    # Deliberately NO `fragments_to_rewrite`: the check reports the dangling
-    # anchor, not the fragment that emitted it, and guessing would start the
-    # kind of non-convergent repair loop 7ac5cfa had to unwind. Blocking without
-    # a writable target classifies as `manual_review` (exit 3) — the defect
-    # blocks the clean fast path and goes to QA triage, but never spins the
-    # fragment-fixer.
+    # The fragment is named only when the dangling link literally occurs in a
+    # fragment that survives recompose (`_resolve_defect_owners`); guessing
+    # would start the non-convergent loop 7ac5cfa had to unwind. Issues without
+    # such an owner stay in `unresolved_issues`, which the release gate refuses.
     if toc_closure_issues:
+        toc_owners, toc_unresolved = _resolve_defect_owners("toc_closure", toc_closure_issues, output_dir)
         actions.append(
             {
                 "raw_issue": "; ".join(toc_closure_issues),
                 "type": "toc_closure",
                 "section_id": "toc",
-                "fragments_to_rewrite": [],
+                "fragments_to_rewrite": toc_owners,
+                "unresolved_issues": toc_unresolved,
                 "remediation": (
                     "One or more `[label](#anchor)` links resolve to nothing in "
                     "the rendered document. Locate the heading each anchor was "
@@ -4350,7 +4446,7 @@ def _annotate_id_refs(md_path: Path) -> int:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out.append(chunk)
         else:
-            # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+            # Bare-finding-ref lines (Open Questions, Critical Attack
             # Tree findings pointer) list BARE finding ids by design — a single
             # higher-level signal owns the context (user 2026-07-15). Skip the
             # F-dot retrofit on those lines only (M-refs are not present there, so
@@ -4508,6 +4604,17 @@ _REQ_MS_COL_WIDTHS = ("46%", "27%", "27%")
 #   stale ~44-char boundary. NOT applied to link-stack columns (Notes / Linked
 #   Threats) where each `<br/>` deliberately separates one finding per line.
 _FIXED_LAYOUT_SPECS = (
+    (
+        ("ID", "Crossing", "Required condition", "Findings / open question"),
+        ("7%", "25%", "36%", "32%"),
+        {
+            0: "white-space:nowrap",
+            1: "overflow-wrap:break-word",
+            2: "overflow-wrap:break-word",
+            3: "overflow-wrap:break-word",
+        },
+        frozenset(),
+    ),
     (_AS_TABLE_HEADERS, _AS_COL_WIDTHS, {1: "overflow-wrap:anywhere"}, frozenset()),
     (
         _ASSET_TABLE_HEADERS,
@@ -5012,22 +5119,36 @@ def _toc_contract_blocking_issues(report: dict) -> list[str]:
     return [i for i in report.get("issues", []) if not _TOC_ADVISORY_ISSUE_RE.match(i)]
 
 
-def cmd_final_structure(
+def final_structure_reports(
     md_path: Path,
     contract_path: Path = DEFAULT_CONTRACT_PATH,
-) -> int:
-    """Read-only final gate for the persisted Markdown after every mutator."""
+) -> tuple[dict, int]:
+    """Return the final-structure reports and their blocking issue count.
+
+    The one definition of a structurally unreleasable report: the completion
+    gate, the Stage-2 compose tail and the Stage-3 release gate all call it, so
+    Stage 3 cannot release what completion then rejects.
+    """
     reports = {
         "contract": check_contract(md_path, contract_path).as_dict(),
         "toc_contract": check_toc_contract(md_path, contract_path).as_dict(),
         "toc_closure": check_toc_closure(md_path).as_dict(),
     }
-    print(json.dumps(reports, indent=2))
     blocking = (
         reports["contract"]["issue_count"]
         + len(_toc_contract_blocking_issues(reports["toc_contract"]))
         + reports["toc_closure"]["issue_count"]
     )
+    return reports, blocking
+
+
+def cmd_final_structure(
+    md_path: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> int:
+    """Read-only final gate for the persisted Markdown after every mutator."""
+    reports, blocking = final_structure_reports(md_path, contract_path)
+    print(json.dumps(reports, indent=2))
     return 0 if blocking == 0 else 1
 
 
@@ -5123,16 +5244,16 @@ def check_heading_hygiene(md_path: Path) -> Report:
         #   > 100      : issue (flagged for repair)
         # Length includes the leading "N.M " prefix but excludes the `### `.
         heading_len = len(heading_text)
-        if heading_len > 100:
+        if heading_len > HEADING_HARD_MAX:
             report.issues.append(
-                f"heading length {heading_len} chars exceeds 100-char "
+                f"heading length {heading_len} chars exceeds {HEADING_HARD_MAX}-char "
                 f"hard limit — shorten the title (move the long form to "
                 f"the body): `{heading_text[:120]}`"
             )
             continue
-        if heading_len > 80:
+        if heading_len > HEADING_SOFT_MAX:
             report.warnings.append(
-                f"heading length {heading_len} chars exceeds 80-char "
+                f"heading length {heading_len} chars exceeds {HEADING_SOFT_MAX}-char "
                 f"soft limit — consider shortening the title: "
                 f"`{heading_text[:120]}`"
             )
@@ -8783,7 +8904,7 @@ def check_attack_tree_node_id_leak(md_path: Path) -> Report:
     report = Report("attack_tree_node_id_leak")
     text = _read_md(md_path)
 
-    m = re.search(r"^##\s+Critical Attack (?:Tree|Chain)\b.*$", text, re.MULTILINE)
+    m = re.search(r"^##\s+Critical (?:Attack (?:Tree|Chain)|Findings by Root Cause)\b.*$", text, re.MULTILINE)
     if not m:
         report.ok = 1
         return report

@@ -139,6 +139,68 @@ class TestSystemOverview:
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
         assert "as built, not as designed" in md
 
+    @pytest.mark.parametrize(
+        ("rows", "sentence"),
+        [
+            (
+                [{"component": "Order store", "files": 11}, {"component": "Build pipeline", "files": 4}],
+                "**Not individually examined:** 15 source files in 2 components had no route, lead or "
+                "security signal (Order store 11, Build pipeline 4).",
+            ),
+            (
+                [{"component": "Ledger API", "files": 1}],
+                "**Not individually examined:** 1 source file in 1 component had no route, lead or "
+                "security signal (Ledger API 1).",
+            ),
+        ],
+    )
+    def test_scope_names_source_files_no_target_covered(self, minimal_yaml_data, rows, sentence):
+        """REQ-FLW-005: a coverage gap the analysis recorded reaches the report, not only the console."""
+        minimal_yaml_data["meta"]["unexamined_source"] = rows
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert sentence in md
+        assert md.index(sentence) < md.index("**Out of scope:**")
+
+    def test_scope_without_unexamined_source_states_nothing(self, minimal_yaml_data):
+        assert "Not individually examined" not in pf.gen_system_overview(minimal_yaml_data)
+
+    def test_scope_names_targets_the_analysis_could_not_decide(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["undecided_targets"] = [
+            {"component": "Web", "target": "routes/redirect.ts: allow-list helper was not supplied"}
+        ]
+        md = pf.gen_system_overview(minimal_yaml_data)
+        # A coverage gap in one line, not a question list beside the team questions.
+        assert (
+            "**Not assessed:** 1 security-relevant code location was read but could not be judged (Web 1); "
+            "`security-assessment.yaml` records each with its reason under `meta.undecided_targets`."
+        ) in md
+        assert "Open analysis questions" not in md and "allow-list helper" not in md
+
+    @pytest.mark.parametrize("name", ["Orders API", "Billing worker"])
+    def test_scope_lists_components_and_counts_unassessed_locations(self, minimal_yaml_data, name):
+        minimal_yaml_data["components"] = [{"id": "service", "name": name}]
+        minimal_yaml_data["meta"]["undecided_targets"] = [
+            {"component": name, "target": f"module{i}.py: helper unavailable"} for i in range(12)
+        ]
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert f"\n- {name}\n" in md and f"**{name}**" not in md
+        assert (
+            f"**Not assessed:** 12 security-relevant code locations were read but could not be judged ({name} 12)" in md
+        )
+        assert "module0.py" not in md
+
+    def test_scope_names_program_files_outside_every_component(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["unowned_source"] = {
+            "files": 4,
+            "by_directory": [{"directory": "lib/", "files": 3}, {"directory": "(repository root)", "files": 1}],
+        }
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert (
+            "**Not assigned to any component:** 4 program files belong to no component and were not analysed "
+            "(`lib/` 3, `(repository root)` 1)." in md
+        )
+        assert "Not assigned to any component" not in pf.gen_system_overview({**minimal_yaml_data, "meta": {}})
+
     def test_method_boundary_is_independent_of_meta_scope(self):
         md = pf.gen_system_overview({"meta": {}, "components": []})
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
@@ -641,6 +703,33 @@ class TestCriticalAttackTree:
         }
         assert pf.gen_critical_attack_tree(d) is None
 
+    def test_a_practice_evidence_site_links_its_critical_to_the_weakness(self):
+        # Same ownership as the §7 register: practice sites count, not only
+        # confirmed instances, so a practice-tier Critical is not shown as unlinked.
+        d = dict(
+            self._CRIT_YAML,
+            weaknesses=[
+                {
+                    "id": "W-001",
+                    "title": "Tokens live in script-readable storage",
+                    "structural_recommendation": "keep tokens in HttpOnly cookies",
+                    "observable_backing": {"practice_evidence": [{"id": "T-001", "file": "a.ts"}]},
+                },
+                {
+                    "id": "W-002",
+                    "title": "Queries are concatenated",
+                    "structural_recommendation": "parameterize every query",
+                    "instances": [{"id": "T-006"}, {"id": "T-012"}],
+                },
+            ],
+        )
+        data = json.loads(pf.gen_critical_attack_tree(d))
+        assert [(f["weakness"], f["findings"]) for f in data["fixes"]] == [
+            ("W-001", ["T-001"]),
+            ("W-002", ["T-006", "T-012"]),
+        ]
+        assert not any(n["class"] == "unassigned" for n in data["mermaid"]["nodes"])
+
     def test_emits_tree_for_two_plus_criticals(self):
         out = pf.gen_critical_attack_tree(self._CRIT_YAML)
         assert out is not None
@@ -670,11 +759,82 @@ class TestCriticalAttackTree:
         for n in data["mermaid"]["nodes"]:
             assert re.match(r"^[A-Z][A-Z0-9_]*$", n["id"])
 
-    def test_capabilities_in_canonical_stride_order(self):
+    @staticmethod
+    def _with_weaknesses(*weaknesses):
+        model = json.loads(json.dumps(TestCriticalAttackTree._CRIT_YAML))
+        model["threats"][1]["evidence"] = [{"file": "routes/login.ts", "line": 34}]
+        model["weaknesses"] = [
+            {"id": wid, "title": title, "structural_recommendation": fix, "instances": [{"id": t} for t in ids]}
+            for wid, title, fix, ids in weaknesses
+        ]
+        return model
+
+    def test_groups_criticals_under_their_weakness_records(self):
+        model = self._with_weaknesses(
+            ("W-002", "Queries are concatenated", "use one parameterised query path", ["T-006", "T-020"]),
+            ("W-001", "Interpreters evaluate input", "replace evaluation with a parser", ["T-012"]),
+        )
+        data = json.loads(pf.gen_critical_attack_tree(model))
+        nodes = {n["id"]: n for n in data["mermaid"]["nodes"]}
+        edges = {(e["from"], e["to"]) for e in data["mermaid"]["edges"]}
+        assert nodes["GOAL"]["label"] == "3 Critical findings"
+        assert [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "rootcause"] == ["W001", "W002"]
+        assert nodes["W002"]["label"] == "W-002 · Queries are concatenated"
+        assert {("T006", "W002"), ("T012", "W001"), ("W001", "GOAL"), ("W002", "GOAL")} <= edges
+        assert nodes["T006"]["detail"] == "login.ts"
+        # The High T-020 in W-002 is no leaf; T-001 has no weakness and lands in the unlinked node.
+        assert "T020" not in nodes and ("T001", "UNLINKED") in edges
+        assert nodes["UNLINKED"]["class"] == "unassigned"
+        assert data["fixes"] == [
+            {"weakness": "W-001", "recommendation": "replace evaluation with a parser", "findings": ["T-012"]},
+            {"weakness": "W-002", "recommendation": "use one parameterised query path", "findings": ["T-006"]},
+        ]
+
+    def test_a_critical_under_two_weaknesses_is_one_leaf_with_two_links(self):
+        model = self._with_weaknesses(
+            ("W-003", "Sessions are not bound", "bind sessions", ["T-001", "T-006"]),
+            ("W-007", "Inputs are not validated", "validate at the boundary", ["T-006", "T-012"]),
+        )
+        data = json.loads(pf.gen_critical_attack_tree(model))
+        leaves = [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "leaf"]
+        assert sorted(leaves) == ["T001", "T006", "T012"]
+        edges = {(e["from"], e["to"]) for e in data["mermaid"]["edges"]}
+        assert {("T006", "W003"), ("T006", "W007")} <= edges
+        assert not any(n["class"] == "unassigned" for n in data["mermaid"]["nodes"])
+
+    def test_reads_t_id_and_skips_criticals_without_an_id(self):
+        model = {
+            "threats": [
+                {"t_id": "T-004", "title": "Command injection — run.go:9", "risk": "Critical"},
+                {"t_id": "T-009", "title": "Path traversal — files.go:3", "risk": "Critical"},
+                {"title": "Unnumbered — x.go:1", "risk": "Critical"},
+            ],
+            "weaknesses": [{"id": "W-002", "title": "Paths are joined from input", "instances": [{"t_id": "T-009"}]}],
+        }
+        data = json.loads(pf.gen_critical_attack_tree(model))
+        assert data["critical_count"] == 2
+        assert {n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "leaf"} == {"T004", "T009"}
+        assert ("T009", "W002") in {(e["from"], e["to"]) for e in data["mermaid"]["edges"]}
+
+    def test_without_weakness_records_every_critical_is_unlinked(self):
         data = json.loads(pf.gen_critical_attack_tree(self._CRIT_YAML))
-        caps = [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "or_node"]
-        # Tampering before Information Disclosure before Elevation of Privilege.
-        assert caps == ["CAP_TAMPER", "CAP_INFO", "CAP_EOP"]
+        assert data["fixes"] == []
+        assert {e["from"] for e in data["mermaid"]["edges"] if e["to"] == "UNLINKED"} == {"T001", "T006", "T012"}
+
+    def test_many_criticals_stay_within_the_schema_caps(self):
+        import jsonschema
+
+        threats = [{"id": f"T-{i:03d}", "title": f"Finding {i} — a.py:{i}", "risk": "Critical"} for i in range(40)]
+        weaknesses = [
+            {"id": f"W-{w:03d}", "title": f"Weakness {w}", "instances": [{"id": f"T-{i:03d}"} for i in range(w, 40, 9)]}
+            for w in range(9)
+        ]
+        data = json.loads(pf.gen_critical_attack_tree({"threats": threats, "weaknesses": weaknesses}))
+        schema = json.loads((REPO_ROOT / "schemas" / "fragments" / "critical-attack-tree.schema.json").read_text())
+        jsonschema.validate(data, schema)
+        assert data["critical_count"] == 40
+        leaves = [n for n in data["mermaid"]["nodes"] if n["class"] == "leaf"]
+        assert 0 < len(leaves) < 40
 
 
 class TestVerdict:
@@ -1447,7 +1607,7 @@ class TestSection2TrustBoundaries:
         block = self._block(md, "2.2 Container Architecture")
 
         assert "subgraph TBSERVER[" in block
-        assert "external → api (tb-1)" in block and "spa → api (tb-2)" in block
+        assert "external → API (tb-1)" in block and "SPA → API (tb-2)" in block
         # Application AND Data sit inside it; the client tier does not.
         assert block.index("subgraph TBSERVER") < block.index("subgraph Application")
         assert block.index("subgraph Client") < block.index("subgraph TBSERVER")
@@ -1463,7 +1623,7 @@ class TestSection2TrustBoundaries:
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-9", "api", "db")]))
         block = self._block(md, "2.2 Container Architecture")
 
-        assert 'subgraph TBDATA["Trust boundary · api → db (tb-9)"]' in block
+        assert 'subgraph TBDATA["Trust boundary · API → DB (tb-9)"]' in block
         assert "subgraph TBSERVER" not in block
         assert block.index("subgraph TBDATA") < block.index("subgraph Data")
 
@@ -1480,7 +1640,7 @@ class TestSection2TrustBoundaries:
             )
         )
 
-        assert "*Trust boundaries not drawn above: api → db (tb-2), api → external (tb-3)" in md
+        assert "*Trust boundaries not drawn above: API → DB (tb-2), API → external (tb-3)" in md
         assert "[§1 Trust Boundaries](#trust-boundaries)" in md
 
     @pytest.mark.parametrize(
@@ -1508,9 +1668,9 @@ class TestSection2TrustBoundaries:
         assert "tb-2" not in block
         if interface:
             assert not not_drawn
-            assert interfaces and "api → db (tb-2)" in interfaces[0]
+            assert interfaces and "API → DB (tb-2)" in interfaces[0]
         else:
-            assert not_drawn and "api → db (tb-2)" in not_drawn[0]
+            assert not_drawn and "API → DB (tb-2)" in not_drawn[0]
             assert not interfaces
 
     @pytest.mark.parametrize(
@@ -1559,7 +1719,7 @@ class TestSection2TrustBoundaries:
         block = self._block(md, "2.2 Container Architecture")
 
         assert "subgraph TBDATA" not in block
-        assert "*Internal interfaces (in-process, no trust transition): api → db (tb-9)" in md
+        assert "*Internal interfaces (in-process, no trust transition): API → DB (tb-9)" in md
 
     def test_unresolved_boundaries_are_never_drawn(self):
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api", status="unresolved")]))
@@ -3494,6 +3654,8 @@ def test_system_overview_renders_component_selection_transparency():
     yaml_data = {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
     out = mod.gen_system_overview(yaml_data)
     assert "**2 of 4**" in out
+    assert "\n- Web Frontend\n- Auth Service" in out
+    assert "**Web Frontend**" not in out
     assert "Not analysed at this depth: Worker, Database" in out
     assert "Selection criteria" in out
     assert "business-critical surface" not in out
@@ -3670,6 +3832,26 @@ class TestEmitV2SubcontrolBlock:
         assert "jwt-verification-legacy-unsigned" in ids
         assert "jwt-verification-signed-signedjwtservice" in ids
         assert ids.count("jwt-verification") == 1
+
+    @pytest.mark.parametrize("control", ["Build Pipeline and Dependency Controls", "JWT Verification"])
+    def test_grouped_controls_keep_unique_anchors_with_repeated_friendly_titles(self, control):
+        import re
+
+        lines = []
+        for idx, suffix in enumerate(("Service A", "Service B"), 1):
+            pf._emit_v2_grouped_control(
+                lines,
+                {"control": f"{control} ({suffix})"},
+                [],
+                [],
+                "6.2 Identity",
+                section_id="6.2",
+                idx=idx,
+            )
+        ids = re.findall(r'<a id="([^"]+)"></a>', "\n".join(lines))
+        assert len(ids) == len(set(ids)) == 3
+        assert ids.count(pf._v2_slug(control)) == 1
+        assert all(pf._v2_slug(f"{control} ({suffix})") in ids for suffix in ("Service A", "Service B"))
 
     def test_flow_type_diagram_placeholder(self):
         lines: list[str] = []
@@ -4134,6 +4316,63 @@ def test_assessment_intro_states_the_method_and_the_model_size():
     )
 
 
+@pytest.mark.parametrize(("first", "second"), [("frontend", "backend"), ("north", "south")])
+def test_combined_scope_groups_components_by_repository(first, second):
+    model = {
+        "meta": {
+            "project_name": "Combined system (2 repositories)",
+            "source_repositories": [{"label": first, "head": "a" * 40}, {"label": second, "head": "b" * 40}],
+        },
+        "components": [
+            {"id": "c1", "name": f"Web client [{first}]", "paths": [f"{first}/public/app.js"]},
+            {"id": "c2", "name": f"Order API [{second}]", "paths": [f"{second}/app.py"]},
+            {"id": "c3", "name": f"Edge proxy [{first}]", "paths": [f"{first}/nginx.conf"]},
+        ],
+    }
+    md = pf.gen_system_overview(model)
+    assert "This threat model covers 3 components in 2 repositories:" in md
+    assert f"- **{first}:** Web client, Edge proxy" in md and f"- **{second}:** Order API" in md
+    # A component spanning repositories keeps the flat sentence instead of a wrong grouping.
+    model["components"][0]["paths"].append(f"{second}/shared.py")
+    assert "in 2 repositories:" not in pf.gen_system_overview(model)
+
+
+@pytest.mark.parametrize("url", ["https://example.invalid/org/shop.git", "ssh://example.invalid/team/ledger.git"])
+def test_overview_of_one_selected_repository_reads_like_a_single_scan(url):
+    """One checkout shows its remote and description; several keep the repository list."""
+    sources = [{"label": "shop", "head": "a" * 40}]
+    meta = {
+        "project_name": "Shop",
+        "repo_url": url,
+        "project_description": "Order intake.",
+        "source_repositories": sources,
+    }
+    md = pf.gen_system_overview({"meta": meta, "components": [{"id": "api", "name": "Order API", "paths": ["app.py"]}]})
+    assert f"**Repository:** {url}" in md and "Repositories" not in md and "Order intake" in md
+    # Without a remote the one checkout is still named by its revision, as "Repository".
+    bare = pf.gen_system_overview({"meta": {**meta, "repo_url": None}, "components": []})
+    assert "**Repository:** `shop` (revision `aaaaaaaaaaaa`)" in bare
+    pair = {**meta, "source_repositories": [*sources, {"label": "billing", "head": "b" * 40}]}
+    assert "**Repositories:** `shop`" in pf.gen_system_overview({"meta": pair, "components": []})
+
+
+@pytest.mark.parametrize("labels", [["frontend", "backend"], ["north", "south", "east"]])
+def test_assessment_intro_names_the_repositories_of_a_combined_assessment(labels):
+    model = {
+        "meta": {
+            "project_name": "Shop",
+            "source_repositories": [{"label": label, "head": "a" * 40} for label in labels],
+        },
+        "components": [{"id": "api", "name": "Order API"}],
+    }
+    intro = pf.assessment_intro(model)
+    assert f" It analyzes {len(labels)} repositories together as one system ({', '.join(labels)});" in intro
+    assert "multi-repository assessment is experimental." in intro
+    # A single repository is not called a combined assessment.
+    single = {**model, "meta": {**model["meta"], "source_repositories": model["meta"]["source_repositories"][:1]}}
+    assert "repositories together" not in pf.assessment_intro(single)
+
+
 def test_assessment_intro_states_the_confirmed_use_case_in_plain_words():
     model = {
         "meta": {"project_name": "Shop"},
@@ -4481,6 +4720,24 @@ def test_ranked_verdict_floor_matches_the_gate(tmp_path, offset, prefix):
     assert set(ids[-8:]) <= cited
 
 
+def test_root_cause_fragment_replaces_an_agent_written_copy_and_clears_a_stale_one(tmp_path):
+    """The fragment is model-owned: no --force is needed to replace an earlier copy."""
+    frag = tmp_path / ".fragments" / "ms-critical-attack-tree.json"
+    frag.parent.mkdir()
+    frag.write_text(json.dumps({"mermaid": {"orientation": "TD", "nodes": [], "edges": []}}))
+    model = {
+        "threats": [{"id": f"T-{i:03d}", "title": f"Finding {i} — a.rb:{i}", "risk": "Critical"} for i in (3, 8)],
+        "weaknesses": [{"id": "W-005", "title": "Uploads are trusted", "instances": [{"id": "T-008"}]}],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert pf.main([str(tmp_path), "--only", "ms-critical-attack-tree.json"]) == 0
+    assert json.loads(frag.read_text())["critical_count"] == 2
+    model["threats"][0]["risk"] = "High"
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert pf.main([str(tmp_path), "--only", "ms-critical-attack-tree.json"]) == 0
+    assert not frag.exists()
+
+
 @pytest.mark.parametrize("wid,risk", [("W-031", "Critical"), ("W-204", "High")])
 def test_verdict_design_risk_has_its_own_evidence(tmp_path, wid, risk):
     import validators.validate_fragment as validate_fragment
@@ -4538,6 +4795,30 @@ def test_a_control_without_a_section_6_heading_stops_the_fragment():
     data = {"components": [], "threats": [], "security_controls": [{"control": "Bespoke thing", "domain": "Misc"}]}
     with pytest.raises(ValueError, match="Bespoke thing"):
         pf.gen_security_architecture_v2(data)
+
+
+@pytest.mark.parametrize(
+    "domain, heading",
+    [
+        ("Data Protection", "6.9 Cryptography Secrets and Data Protection"),
+        ("Data Access", "6.5 Query Construction and Data Access Controls"),
+        ("Input", "6.6 Input Boundary Validation Controls"),
+        ("Rendering", "6.7 Output Encoding and Rendering Controls"),
+    ],
+)
+def test_a_domain_naming_part_of_one_section_6_title_takes_that_section(domain, heading):
+    # A control whose name carries no hint word used to stop §6 generation.
+    control = {"control": "Opaque Guard", "domain": domain, "effectiveness": "Weak"}
+    assert pf._v2_canonical_section_for_control(control) == heading
+    assert not pf.unplaced_security_controls([control])
+    md = pf.gen_security_architecture_v2({"components": [], "threats": [], "security_controls": [control]})
+    assert "Opaque Guard" in _section(md, heading.split(" ", 1)[0])
+
+
+@pytest.mark.parametrize("domain", ["Data", "Misc", "Network Hardening"])
+def test_a_domain_shared_by_several_titles_or_by_none_stays_unplaced(domain):
+    control = {"control": "Opaque Guard", "domain": domain}
+    assert pf.unplaced_security_controls([control]) == [control]
 
 
 @pytest.mark.parametrize("cwe", ["CWE-345", "CWE-79"])

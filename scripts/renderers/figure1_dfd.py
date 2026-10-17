@@ -128,7 +128,11 @@ LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of t
 # The first lane keeps the geometry gate's 14-unit clearance from the gap coordinate.
 BARE_OFF, BARE_LANE0, BARE_LABEL_PAD = 32, 16, 60
 LEGEND_W = 350
+# Narrowest legend block that keeps three columns; below it the legend falls
+# back to fewer standard-width columns.
+LEGEND_MIN_W = 300
 LEGEND_GAP = 20
+LEGEND_SIDE_MIN = 8  # content clearance from a legend block's side edges
 LEGEND_HEAD = 26
 LEGEND_INSET = 14
 LEGEND_CONTENT_GAP = 10
@@ -229,7 +233,9 @@ def _boundary_gaps(d, nodes, tbs):
     Internal interfaces never mark a gap. An ``external`` endpoint takes the
     column of the drawn participant on a flow with the same canonical endpoints;
     ingress without such a flow comes from the untrusted column, while egress
-    without one cannot be placed and stays in the catalogue only.
+    without one cannot be placed and stays in the catalogue only. The overview
+    is a network view: an in-process trust change draws no line there and stays
+    in the detail view and the catalogue.
     """
     columns = {
         row["id"]: COLUMN[_zone_key(row)]
@@ -250,6 +256,8 @@ def _boundary_gaps(d, nodes, tbs):
         source, target = t.get("from"), t.get("to")
         if _internal_interface(t) or source == target == "external":
             continue
+        if d.get("_overview") and not _overview_crossing(t):
+            continue
         if source == "external":
             starts = drawn_columns(source, target, 0) or {0}
         else:
@@ -262,6 +270,56 @@ def _boundary_gaps(d, nodes, tbs):
                 if t["id"] not in gaps[gap]:
                     gaps[gap].append(t["id"])
     return {gap: sorted(ids, key=_tb_num) for gap, ids in sorted(gaps.items())}
+
+
+def _local_boundaries(nodes, tbs, gaps):
+    """Network trust boundaries no column line shows, keyed by the drawn node they guard.
+
+    A network crossing between components of one column has no gap to mark; the
+    overview places a local marker on its target (the entry it guards), else on
+    its source. The overview shows network and data-access crossings only: other
+    in-process trust changes and internal interfaces get no marker and remain in
+    the detail view and the catalogue. A boundary whose nodes are not drawn
+    stays catalogue-only.
+    """
+    lined = {tid for ids in gaps.values() for tid in ids}
+    local = collections.defaultdict(list)
+    for t in tbs:
+        if _internal_interface(t) or t["id"] in lined or not _overview_crossing(t):
+            continue
+        guarded = next(
+            (end for end in (t.get("to"), t.get("from")) if end not in (None, "external") and end in nodes),
+            None,
+        )
+        if guarded is not None and nodes[guarded].get("kind") != "ext":
+            local[guarded].append(t["id"])
+    return {nid: sorted(ids, key=_tb_num) for nid, ids in sorted(local.items())}
+
+
+def _overview_crossing(row):
+    """Whether the overview draws this crossing: a network crossing, or one into a data store (TB-13)."""
+    return _boundary_surface(row) == "network" or "data-access" in (row.get("transition") or [])
+
+
+def _boundary_surface(row):
+    """Stored crossing surface, or the one a legacy row's ``kind`` implies."""
+    if row.get("surface") in {"network", "in-process", "build-pipeline"}:
+        return row["surface"]
+    return {"process": "in-process", "build": "build-pipeline"}.get(row.get("kind"), "network")
+
+
+def _local_marker_label(rows):
+    """Visible marker text: existence and confidence, never a control verdict."""
+    inferred = sum(row.get("confidence") != "confirmed" for row in rows)
+    label = "TRUST CHANGE" if len(rows) == 1 else f"{len(rows)} TRUST CHANGES"
+    if inferred:
+        label += " · INFERRED" if inferred == len(rows) else f" · {inferred} INFERRED"
+    return label
+
+
+def _local_marker_width(rows):
+    """Drawn width of a node's local trust-change marker; layout reserves it on the top edge."""
+    return _tw(_local_marker_label(rows), 7.5) + 14
 
 
 @cache
@@ -1022,13 +1080,26 @@ def _project_name(d):
     return project.get("name") or d.get("project_name") or meta.get("project_name") or legacy
 
 
+def _role_prefix(d) -> str:
+    """The system name that prefixes a legitimate role, or "" when it names no product.
+
+    A combined assessment's system name covers several repositories (by
+    default "Combined system (N repositories)"), so "<name> User" would not
+    name a user population.
+    """
+    sources = (d.get("meta") or {}).get("source_repositories")
+    if isinstance(sources, list) and len(sources) > 1:
+        return ""
+    return str(_project_name(d) or "").strip()
+
+
 def _role_name(d, access):
     """`<project> <noun>` for a classified legitimate role; the noun alone without a project name."""
     entry = _role_labels().get(access) or {}
     noun = entry.get("legitimate_role_noun")
     if access == "internet-anon" and (d.get("meta") or {}).get("open_user_registration") is True:
         noun = entry.get("open_registration_role_noun") or noun
-    return " ".join(part for part in (str(_project_name(d) or "").strip(), noun) if part) if noun else None
+    return " ".join(part for part in (_role_prefix(d), noun) if part) if noun else None
 
 
 def _project_legitimate_roles(yaml_data):
@@ -1214,9 +1285,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         for cid in _affected_components(t):
             sev[cid][register_severity(t)] += 1
             stride[cid][(t.get("stride") or "?")[0].upper()] += 1
-        for b in t.get("boundary_refs") or []:
-            if isinstance(b, dict):
-                tb_threats[b.get("boundary_id")] += 1
+        # A merged finding may cite one boundary from both of its origins (FE-16); it is still one finding.
+        tb_threats.update({b.get("boundary_id") for b in t.get("boundary_refs") or [] if isinstance(b, dict)})
     tbs = _figure_boundaries(d)
     component_ids = {c["id"] for c in comps}
     exposed = {
@@ -1233,6 +1303,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     derived_capabilities = _finding_capabilities(reported, component_capabilities, component_ids)
     capability_severity = _capability_severity(reported, component_capabilities, component_ids)
     nodes = {}
+    repositories = (d.get("source_inventory") or {}).get("repositories", [])
+    repository_codes = {row["repository_id"]: f"R{i}" for i, row in enumerate(repositories, 1)}
     for comp in comps:
         cid = comp["id"]
         zk = _zone_key(comp)
@@ -1251,6 +1323,14 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
             "complex": comp.get("complexity") == "complex",
             "technology": _technology(comp),
+            "repository_lines": _legend_wrap(
+                "Repos: " + ", ".join(repository_codes[rid] for rid in comp.get("repository_ids", [])),
+                NODE_W - 52,
+                FS,
+            )
+            if repositories and comp.get("repository_ids")
+            else [],
+            "repository_ids": comp.get("repository_ids", []) if repositories else [],
             "capabilities": _capability_display(
                 _capability_rows(
                     [*(comp.get("capabilities") or []), *derived_capabilities.get(cid, [])],
@@ -1334,6 +1414,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             108
             + 13 * (node["title_lines"] - 2)
             + (TECH_H if node["technology"] else 0)
+            + 12 * len(node["repository_lines"])
             + _pill_height(node["capabilities"], NODE_W - 44)
             + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
             + (12 if node["weak_more_high"] else 0)
@@ -1344,7 +1425,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     nodes[USER_ID] = {
         "id": USER_ID,
         "kind": "ext",
-        "name": " ".join(part for part in (str(_project_name(d) or "").strip(), "User") if part),
+        "name": " ".join(part for part in (_role_prefix(d), "User") if part),
         "sub": "legitimate client"
         + (
             " · victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
@@ -2202,7 +2283,9 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True, roomy_
             if e in ui_entries[e["dst"]]:
                 entries = ui_entries[e["dst"]]
                 slot = entries.index(e)
-                px = t["x"] + t["w"] * (slot + 1) / (len(entries) + 1)
+                # A local trust-change marker occupies the right end of the top edge.
+                span = t["w"] - t.get("marker_reserve", 0)
+                px = t["x"] + span * (slot + 1) / (len(entries) + 1)
                 py = t["y"] - 16 - 12 * (len(entries) - slot - 1)
                 e["pts"] = [(s["x"] + s["w"], e["ys"]), (cx, e["ys"]), (cx, py), (px, py), (px, t["y"])]
                 e["ui_top_entry"] = True
@@ -2648,26 +2731,49 @@ def _legend_columns(sections, ncols):
     return min(eligible, key=lambda c: (c[1], c[0], c[2], c[3]))[3]
 
 
-def _place_legend(canvas, blocks, width, top):
+def _legend_layout(width, count, min_width=LEGEND_MIN_W):
+    """(columns, block width) for `count` legend sections in `width`.
+
+    Three columns are kept while each block stays at least `min_width` wide, so
+    a diagram slightly narrower than three standard blocks does not fall back to
+    two columns with one wide empty gap. Wider diagrams keep LEGEND_W blocks.
+    """
+    for ncols in range(min(3, count), 1, -1):
+        block = (width - (ncols - 1) * LEGEND_GAP) / ncols
+        if block >= min_width:
+            return ncols, min(LEGEND_W, block)
+    return 1, LEGEND_W
+
+
+def _legend_fits(blocks, width):
+    """Whether every section keeps the side clearance at block width `width`."""
+    return all(
+        min(min(b[0], width - b[2]) for b in block.legend_content) >= LEGEND_SIDE_MIN
+        for _key, block in blocks
+        if block.legend_content
+    )
+
+
+def _place_legend(canvas, blocks, width, top, block_width=LEGEND_W):
     """Place measured blocks below the graph without enlarging its width."""
-    ncols = min(3, len(blocks), max(1, int((width + LEGEND_GAP) // (LEGEND_W + LEGEND_GAP))))
+    ncols = _legend_layout(width, len(blocks), min_width=block_width)[0]
     columns = _legend_columns([(key, block.maxy) for key, block in blocks], ncols)
-    gap = (width - ncols * LEGEND_W) / (ncols - 1) if ncols > 1 else 0
+    gap = (width - ncols * block_width) / (ncols - 1) if ncols > 1 else 0
     bottoms = [top] * ncols
     for (key, block), col in zip(blocks, columns):
-        x, y = MARGIN + col * (LEGEND_W + gap), bottoms[col]
+        x, y = MARGIN + col * (block_width + gap), bottoms[col]
         canvas.add(
             f'<g data-legend-section="{key}" data-legend-column="{col + 1}" transform="translate({x:.1f} {y:.1f})">'
         )
         canvas.o.extend(block.o)
         canvas.add("</g>")
-        canvas.legend_boxes.append((x, y, x + LEGEND_W, y + block.maxy, key))
+        canvas.legend_boxes.append((x, y, x + block_width, y + block.maxy, key))
         if block.legend_content:
             canvas.legend_clearances.append(
                 (
                     key,
                     min(b[1] for b in block.legend_content) - LEGEND_HEAD,
-                    min(min(b[0], LEGEND_W - b[2]) for b in block.legend_content),
+                    min(min(b[0], block_width - b[2]) for b in block.legend_content),
                     block.maxy - max(b[3] for b in block.legend_content),
                 )
             )
@@ -2966,6 +3072,17 @@ def _render(
             c.text(x + w / 2 - 6, title_y + i * 13, line, size=11, weight="bold", track=title_key)
         c.add("</g>")
         ty = title_y + len(lines) * 13 + 2
+        if n.get("repository_lines"):
+            repo_key = f"node repositories {n['id']}"
+            c.label_owners[repo_key] = n["id"]
+            c.add(
+                f'<g data-repository-owner="{_esc(n["id"])}" '
+                f'data-repository-ids="{_esc(" ".join(n["repository_ids"]))}">'
+            )
+            for line in n["repository_lines"]:
+                c.text(x + w / 2 - 6, ty + 2, line, size=FS, fill=MUTED, track=repo_key)
+                ty += 12
+            c.add("</g>")
         if n.get("technology"):
             tech = n["technology"]
             tech_key = f"node technology {n['id']}"
@@ -3060,6 +3177,22 @@ def _render(
 
     for ch in chips:
         chip(ch["x"], ch["y"], ch["tb"])
+    # Overview: a trust change no column line shows is marked on the node it guards.
+    for nid, ids in (d.get("_local_boundaries") or {}).items():
+        n, rows = nodes[nid], [by_id[tid] for tid in ids]
+        label = _local_marker_label(rows)
+        w = _local_marker_width(rows)
+        mx, my = n["x"] + n["w"] - w - 8, n["y"] - 7
+        crossings = "; ".join(
+            f"{t['id']} " + " → ".join(cnums.get(t.get(key), "External") for key in ("from", "to")) for t in rows
+        )
+        c.add(f'<g data-boundary-local="{_esc(nid)}" data-boundary-ids="{_esc(" ".join(ids))}">')
+        c.add(f"<title>{_esc('Trust change inside this column: ' + crossings)}</title>")
+        confirmed = all(t.get("confidence") == "confirmed" for t in rows)
+        c.rect(mx, my, w, 14, fill="#ffffff", stroke=RED, sw=1.3, rx=7, dash=None if confirmed else "3 2")
+        c.text(mx + w / 2, my + 10, label, size=7.5, fill=RED, weight="bold")
+        c.add("</g>")
+        c.badges.append((mx, my, mx + w, my + 14, f"trust change on {nid}"))
     for n in nodes.values():  # boundary tags on the corner of the node they guard
         for i, tbid in enumerate(n.get("tags", [])):
             w = _chip_width(tbid, tb_threats.get(tbid, 0))
@@ -3112,10 +3245,18 @@ def _render(
                 c.add("</g>")
     _flow_labels(c, d, nodes, edges, [boundaries[g] for g in sorted(d.get("_boundary_gaps") or {})], zone_boxes)
 
-    blocks = _legend_blocks(
-        d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups
-    )
-    _place_legend(c, blocks, W - 2 * MARGIN, max(height, c.maxy + MARGIN) + 10)
+    legend_args = (d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups)
+    blocks = _legend_blocks(*legend_args)
+    block_width = _legend_layout(W - 2 * MARGIN, len(blocks))[1]
+    if block_width != LEGEND_W:
+        # Section count is known only after rendering; wrap again at the narrower
+        # width, and keep standard blocks when fixed content would not fit.
+        narrow = _legend_blocks(*legend_args, block_width=block_width)
+        if _legend_fits(narrow, block_width):
+            blocks = narrow
+        else:
+            block_width = LEGEND_W
+    _place_legend(c, blocks, W - 2 * MARGIN, max(height, c.maxy + MARGIN) + 10, block_width)
     H = max(height, c.maxy + MARGIN)
     c.o[0] = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="{FONT}">'
@@ -3125,42 +3266,75 @@ def _render(
     return "\n".join(c.o), c
 
 
-def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups):
+def _legend_blocks(
+    d,
+    nodes,
+    edges,
+    tbs,
+    tb_threats,
+    scenarios,
+    actor_colors,
+    dropped,
+    unattached_assets,
+    actor_groups,
+    block_width=LEGEND_W,
+):
     """Render independent sections at the origin before measuring their heights."""
     blocks = []
     lx = LEGEND_INSET - 10
-    lw = LEGEND_W - 2 * lx
+    lw = block_width - 2 * lx
     c = None
+
+    def note(x, y, text, size, **style):
+        """Draw a caption from x, wrapped to keep the side clearance; return the height it adds."""
+        lines = _legend_wrap(text, block_width - LEGEND_SIDE_MIN - x, size)
+        for i, line in enumerate(lines):
+            c.text(x, y + i * 12, line, size=size, anchor="start", **style)
+        return (len(lines) - 1) * 12
 
     def head(key, title):
         nonlocal c
         c = _Canvas()
         blocks.append((key, c))
-        c.rect(0, 0, LEGEND_W, LEGEND_HEAD, fill=NAVY, rx=4)
+        c.rect(0, 0, block_width, LEGEND_HEAD, fill=NAVY, rx=4)
         c.text(lx + lw / 2, 17, title, size=10.5, fill="#ffffff", weight="bold")
         c.legend_content = []
         return LEGEND_HEAD + LEGEND_CONTENT_GAP + 9
 
+    repositories = (d.get("source_inventory") or {}).get("repositories", [])
+    if repositories:
+        y = head("repositories", "Source repositories")
+        for i, repository in enumerate(repositories, 1):
+            c.add(f'<g data-repository-id="{_esc(repository["repository_id"])}">')
+            for line in _legend_wrap(f"R{i} · {repository['label']}", lw - 20, 9):
+                c.text(lx + 10, y, line, size=9, anchor="start")
+                y += 12
+            c.add("</g>")
+            y += 5
+        for line in _legend_wrap("Repository ownership does not establish a trust boundary.", lw - 20, 8.5):
+            c.text(lx + 10, y, line, size=8.5, anchor="start", fill=MUTED)
+            y += 12
+
     y = head("notation", "Notation")
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4)
-    c.text(lx + 40, y + 3, "external entity (actor, third party)", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "external entity (actor, third party)", 9)
     y += 20
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4, rx=7)
-    c.text(lx + 40, y + 3, "process (component); double line = complex", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "process (component); double line = complex", 9)
     y += 20
     c.path(
         f"M {lx + 10} {y - 8} H {lx + 32} M {lx + 10} {y + 6} H {lx + 32} M {lx + 10} {y - 8} V {y + 6} M {lx + 13} {y - 8} V {y + 6}",
         INK,
         sw=1.4,
     )
-    c.text(lx + 40, y + 3, "data store (evidenced asset locations)", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "data store (evidenced asset locations)", 9)
     y += 20
     if any(n.get("technology") for n in nodes.values()):
         c.text(lx + 21, y + 3, "[ ]", size=FS, fill=MUTED, italic=True)
-        c.text(lx + 40, y + 3, "framework · language; data store: engine", size=9, anchor="start")
+        y += note(lx + 40, y + 3, "framework · language; data store: engine", 9)
         y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", CLS_COL["Confidential"], sw=1.6, marker="arw-Confidential")
-    c.text(lx + 40, y + 3, "data flow · classification colour · two heads = bidirectional", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "data flow · classification colour · two heads = bidirectional", 9)
     y += 16
     xx = lx + 40
     for k, col in CLS_COL.items():
@@ -3170,84 +3344,53 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     y += 18
     if d.get("_boundary_gaps"):
         c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2, dash="6 4")
-        c.text(lx + 40, y + 3, "trust boundary crossed between these columns", size=9, anchor="start")
+        y += note(lx + 40, y + 3, "trust boundary crossed between these columns", 9)
+        y += 20
+    if d.get("_local_boundaries"):
+        c.rect(lx + 6, y - 8, 30, 12, fill="#ffffff", stroke=RED, sw=1.2, rx=6)
+        y += note(lx + 40, y + 3, "trust change within a column (dashed: inferred)", 9)
         y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", LINE, sw=1.2, dash="6 4")
-    c.text(lx + 40, y + 3, "dashed outline = zone, not itself a boundary", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "dashed outline = zone, not itself a boundary", 9)
     if not d.get("_overview"):
         y += 20
         c.rect(lx + 8, y - 9, 44, 16, fill="#ffffff", stroke=RED, sw=1.4, rx=8)
         c.text(lx + 14, y + 3, "tb ✕", size=8, anchor="start", fill=RED, weight="bold")
         c.rect(lx + 38, y - 7, 11, 12, fill=RED, rx=6)
         c.text(lx + 43.5, y + 3, "9", size=8, fill="#ffffff", weight="bold")
-        c.text(lx + 60, y + 3, "boundary: ✕ refuted · ✓ held · ? unverified", size=8.5, anchor="start")
+        y += note(lx + 60, y + 3, "boundary: ✕ refuted · ✓ held · ? unverified", 8.5)
         y += 13
-        c.text(
-            lx + 60,
-            y + 3,
-            "count = crossing threats · corner tag = guarded entry",
-            size=8.5,
-            anchor="start",
-            fill=MUTED,
-        )
+        y += note(lx + 60, y + 3, "count = crossing threats · corner tag = guarded entry", 8.5, fill=MUTED)
     y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=ATTACK_WIDTH, marker="arw-red")
-    c.text(
-        lx + 40,
-        y + 3,
-        "solid = direct attack · dashed = via user",
-        size=9,
-        anchor="start",
-    )
+    y += note(lx + 40, y + 3, "solid = direct attack · dashed = via user", 9)
     y += 20
     _globe(c, lx + 21, y - 2)
-    c.text(lx + 40, y + 3, "⊕ internet-exposed entry point", size=9, anchor="start")
+    y += note(lx + 40, y + 3, "⊕ internet-exposed entry point", 9)
     y += 20
     _stride_strip(c, lx + 10, y - 9, {"S": 1, "T": 1, "I": 1})
-    c.text(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", size=8.5, anchor="start")
-    y += 30
+    y += note(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", 8.5)
+    # The category example sits closer to its own caption than to the STRIDE
+    # caption above or the severity key below, so neither caption reads as
+    # belonging to the neighbouring sample.
+    y += 36
     _weak_line(c, lx + 10, y + 1, [("Unsafe Query Construction (SQLi)", 3, 0)], 200)
-    c.text(
-        lx + 10,
-        y + 28,
-        "All Critical · High fills to 5 · +N = omitted High categories",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
-    y += 38
+    y += note(lx + 10, y + 13, "All Critical · High fills to 5 · +N = omitted High categories", 8.5, fill=MUTED)
+    y += 32
     xx = lx + 10
     for s, col in SEV_COL.items():
-        c.circle(xx, y - 2, 4.5, fill=col)
-        c.text(xx + 8, y + 1, s, size=9, anchor="start")
+        # Left edge on the legend's symbol column, like every other sample.
+        c.circle(xx + 4.5, y - 2, 4.5, fill=col)
+        c.text(xx + 13, y + 1, s, size=9, anchor="start")
         xx += 70
-    c.text(
-        lx + 10,
-        y + 16,
-        "counts on a node = threats per severity · ①–⑨ = attack scenario",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
+    y += note(lx + 10, y + 16, "counts on a node = threats per severity · ①–⑨ = attack scenario", 8.5, fill=MUTED)
     y += 13
     if len(_attackers(nodes)) > 1:
-        c.text(
-            lx + 10,
-            y + 16,
-            "A1 ①② = scenarios of attacker A1 · A1 at an arrowhead = its attack",
-            size=8.5,
-            anchor="start",
-            fill=MUTED,
+        y += note(
+            lx + 10, y + 16, "A1 ①② = scenarios of attacker A1 · A1 at an arrowhead = its attack", 8.5, fill=MUTED
         )
         y += 13
-    c.text(
-        lx + 10,
-        y + 16,
-        "badges also count scenarios that hit an asset stored there",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
+    y += note(lx + 10, y + 16, "badges also count scenarios that hit an asset stored there", 8.5, fill=MUTED)
     y += 32
 
     overflow = [(n, cap["more"]) for n in nodes.values() for cap in n.get("capabilities") or [] if cap.get("more")]
@@ -3556,7 +3699,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
 def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
     problems = []
     for name, top, side, bottom in canvas.legend_clearances:
-        if top < LEGEND_CONTENT_GAP or side < 8 or bottom < LEGEND_CONTENT_GAP:
+        if top < LEGEND_CONTENT_GAP or side < LEGEND_SIDE_MIN or bottom < LEGEND_CONTENT_GAP:
             problems.append(f"legend padding: {name} (top={top:g}, side={side:g}, bottom={bottom:g})")
     rects = {n["id"]: (n["x"] + 1, n["y"] + 1, n["x"] + n["w"] - 1, n["y"] + n["h"] - 1) for n in nodes.values()}
     segs = []
@@ -3739,6 +3882,20 @@ def _audit(d, nodes, edges, chips, boundaries, canvas=None):
         for tid in {tid for ids in lines.values() for tid in ids}:
             if tid not in tbs or _internal_interface(tbs[tid]):
                 problems.append(f"{tid}: trust-boundary line without a resolved trust boundary")
+        if d.get("_overview"):
+            local = {
+                g.get("data-boundary-local"): g.get("data-boundary-ids", "").split()
+                for g in root.iter("{http://www.w3.org/2000/svg}g")
+                if g.get("data-boundary-local") is not None
+            }
+            expected = _local_boundaries(nodes, list(tbs.values()), lines)
+            if local != expected:
+                problems.append(f"local trust-change markers {local} do not match unlined boundaries {expected}")
+            for nid, ids in local.items():
+                for tid in ids:
+                    tb = tbs.get(tid)
+                    if tb is None or _internal_interface(tb) or nid not in (tb.get("from"), tb.get("to")):
+                        problems.append(f"{tid}: trust-change marker on {nid} without a matching boundary")
     placed = (
         {c["tb"] for c in chips}
         | explained_boundaries
@@ -3831,6 +3988,12 @@ def _build(
             edge["tb"] = []
         d["_overview_tbs"] = [t["id"] for t in tbs]
     d["_boundary_gaps"] = _boundary_gaps(d, nodes, tbs)
+    if not detail:
+        d["_local_boundaries"] = _local_boundaries(nodes, tbs, d["_boundary_gaps"])
+        rows_by_id = {t["id"]: t for t in tbs}
+        for nid, ids in d["_local_boundaries"].items():
+            # The marker and its 8-unit right inset; human interactions enter left of it.
+            nodes[nid]["marker_reserve"] = _local_marker_width([rows_by_id[tid] for tid in ids]) + 8
     flow_rows = {f["id"]: f for f in d.get("data_flows") or [] if isinstance(f, dict) and f.get("id")}
     for edge in edges:
         if edge.get("attack"):
@@ -4082,13 +4245,19 @@ def _self_check(state):
 
 def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None, *, detail=True):
     """Figure 1 for a threat model. Returns "" when there is nothing to draw."""
+    from shared.assessment_sources import presentation_model
+
     if not (yaml_data.get("components") or []):
+        # A legacy empty diagram remains supported. A v2 inventory cannot lose
+        # every selected component and silently publish an empty figure.
+        presentation_model(yaml_data)
         return ""
     if detail:
         from renderers.figure1_detail import needs_views
 
         if needs_views(yaml_data):
             return check_diagram(yaml_data, attack_paths_data, attack_taxonomy, actor_labels, detail=True)[0]
+    yaml_data = presentation_model(yaml_data)
     scenarios, actors = scenarios_from_attack_paths(
         yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
     )
@@ -4173,7 +4342,7 @@ def legitimate_role_people(yaml_data):
     flows = [f for f in d.get("data_flows") or [] if isinstance(f, dict)]
     rows = [(e["id"], e) for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role"]
     if any(f.get("from") == "external" and not f.get("from_entity") for f in flows):
-        rows.append((USER_ID, {"name": " ".join(p for p in (str(_project_name(d) or "").strip(), "User") if p)}))
+        rows.append((USER_ID, {"name": " ".join(p for p in (_role_prefix(d), "User") if p)}))
     return [
         {
             "name": entity["name"],
@@ -4235,6 +4404,9 @@ def check_diagram(
     yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None, scenarios=None, actors=None, *, detail=True
 ):
     """Render and verify; returns (svg, problems). Used by the tests and the CLI."""
+    from shared.assessment_sources import presentation_model
+
+    yaml_data = presentation_model(yaml_data)
     if scenarios is None:
         scenarios, actors = scenarios_from_attack_paths(
             yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels

@@ -163,6 +163,7 @@ The command accepts these flags:
 | `--org-profile <path>` / `--preset <name>` / `--no-org-profile` | Control org-profile source resolution |
 | `--md` / `--pdf` / `--json` | Save the report as Markdown / PDF / JSON (`--pdf` also writes the Markdown it is converted from; needs pandoc + weasyprint) |
 | `--save` | Save all formats (`--md`, `--pdf`, `--json`) |
+| `--output <dir>` | Write reports and run-state files to `<dir>` instead of the application's private directory outside the repository |
 | `--quiet` | Suppress the banner + findings; print only a one-line status and the saved file path(s) |
 | `--gate` | Enforce a CI gate: exit non-zero when a gating requirement fails (advisory otherwise) |
 | `--gate-on <fail\|partial>` | What gates: `fail` (default) or `fail`+`partial` |
@@ -170,7 +171,7 @@ The command accepts these flags:
 
 ## Structured verdict & CI gate
 
-A console-only run writes no report. `--md` and `--pdf` create human-readable reports. `--json`, `--save`, and `--gate` also write `docs/security/.requirements-audit.json`. The JSON contains the status, priority, scope, evidence, finding, and fix for each requirement.
+A console-only run writes no report. `--md` and `--pdf` create human-readable reports. `--json`, `--save`, and `--gate` also write `.requirements-audit.json`. Reports and the JSON go to the application's private directory (`<data dir>/appsec-advisor/assessments/<repo-name>-<hash8>`) outside the repository, or to `--output <dir>`. The JSON contains the status, priority, scope, evidence, finding, and fix for each requirement.
 
 The audit is advisory by default. `--gate` exits non-zero when an in-scope requirement at or above the priority floor is `FAIL`. Add `--gate-on partial` to block on `PARTIAL` results as well:
 

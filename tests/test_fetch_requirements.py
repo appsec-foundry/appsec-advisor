@@ -521,3 +521,15 @@ def test_main_requires_output_dir(monkeypatch, capsys):
     assert fr.main([]) == 3
 
     assert "--output-dir" in capsys.readouterr().err
+
+
+def test_a_repository_catalog_is_fetched_when_reports_go_elsewhere(tmp_path):
+    """--catalog-dir keeps the developer-authored catalog a repository input."""
+    catalog = tmp_path / "repo" / "docs" / "security"
+    catalog.mkdir(parents=True)
+    (catalog / "requirements.yaml").write_text("categories:\n  - id: SEC-LOCAL\n", encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    r = _run(reports, "--catalog-dir", str(catalog))
+    assert r.returncode == 0, r.stderr
+    assert "SEC-LOCAL" in (reports / ".requirements.yaml").read_text()

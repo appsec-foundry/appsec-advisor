@@ -33,6 +33,7 @@ from contexts.prepare_trust_boundary_context import boundary_endpoints_valid
 from shared._boundary_criticality import exposure_of, label_of, tier_of
 
 from renderers._severity_rollup import register_severity, register_threats
+from renderers.component_labels import component_names, crossing_text
 
 # ---- palette ---------------------------------------------------------------
 _FONT = "Helvetica, Arial, sans-serif"
@@ -463,12 +464,13 @@ def _boundary_meta(yaml_data: dict) -> dict[str, dict]:
     """`{id: boundary}` for every resolved boundary — the lookup that lets the
     figure NAME a boundary instead of printing its opaque id."""
     out: dict[str, dict] = {}
+    names = component_names(yaml_data)
     for tb in yaml_data.get("trust_boundaries") or []:
         if not isinstance(tb, dict) or tb.get("resolution_status") != "resolved":
             continue
         bid = str(tb.get("id") or "")
         if bid:
-            out[bid] = tb
+            out[bid] = {**tb, "_crossing": crossing_text(tb, names)}
     return out
 
 
@@ -476,19 +478,17 @@ def _crossing_label(tb: dict) -> str:
     """What a boundary IS, in the figure's own vocabulary: `from → to`.
 
     A bare `tb-37` is only a lookup key — the reader has to leave the figure to
-    learn what it separates. The endpoints are the same identifiers §1 prints,
-    so the caption stays checkable against the register while being readable on
-    its own. Falls back to the head of the boundary name (the part before the
+    learn what it separates. The endpoints show component names, as §1 does,
+    with the id kept beside the caption for the register lookup. Falls back to the head of the boundary name (the part before the
     enforcement-point colon) when an endpoint is missing, and to "" when neither
     is available — the caller then keeps the id alone rather than inventing a
     description.
     """
     if not isinstance(tb, dict):
         return ""
-    src = (tb.get("from") or "").strip()
-    dst = (tb.get("to") or "").strip()
-    if src and dst:
-        return f"{src} → {dst}"
+    crossing = tb["_crossing"] if "_crossing" in tb else crossing_text(tb, {})
+    if crossing:
+        return crossing
     head = (tb.get("name") or "").split(":")[0].strip()
     return head
 

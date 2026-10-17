@@ -105,8 +105,8 @@ def test_headless_banner_names_the_roles_as_sub_agent_dispatches() -> None:
 
 def test_headless_banner_places_models_after_depth() -> None:
     body = HEADLESS.read_text(encoding="utf-8")
-    depth_at = body.index('echo "  Depth      : ')
-    models_at = body.index('echo "  Models     : ')
+    depth_at = body.index('row "Depth      : "')
+    models_at = body.index('row "Models     : "')
     assert depth_at < models_at, "the Models line belongs below Depth"
 
 

@@ -1,0 +1,966 @@
+{
+  "checks_run": 84,
+  "findings": [
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "CRYPTO-001",
+      "cwe": [
+        "CWE-328"
+      ],
+      "evidence_snippet": "      40: \n>>    41: export const hash = (data: string) => crypto.createHash('md5').update(data).digest('hex')\n      42: export const hmac = (data: string) => crypto.createHmac('sha256', 'pa4qacea4VK9t9nGv7yZtwmj').update(data).digest('hex')",
+      "file": "lib/insecurity.ts",
+      "finding_type_id": "FT-172",
+      "line": 41,
+      "local_id": "SAF-001",
+      "object_ref": null,
+      "recommended_mitigation_title": "Use SHA-256+ for integrity and a password KDF (argon2id / bcrypt / scrypt) for credentials.",
+      "scenario": "MD5/SHA-1 are collision-broken; used for passwords they are trivially cracked, and for integrity of attacker-influenced data they are forgeable.",
+      "severity": "Medium",
+      "source_type": "typescript_source",
+      "title": "Broken hash primitive (MD5/SHA-1) — lib/insecurity.ts:41"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-007",
+      "cwe": [
+        "CWE-347"
+      ],
+      "evidence_snippet": "      52: export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)\n>>    53: export const denyAll = () => expressJwt({ secret: '' + Math.random() } as any)\n      54: export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })",
+      "file": "lib/insecurity.ts",
+      "finding_type_id": "FT-030",
+      "line": 53,
+      "local_id": "SAF-002",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add `algorithms: ['RS256']` (or matching) to the expressJwt() options object.",
+      "scenario": "Without an algorithm allowlist the token middleware that guards every authenticated route accepts tokens an attacker signs with a weaker or unintended algorithm, so a forged token passes as any user on every protected route.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "express-jwt middleware missing algorithms allowlist — lib/insecurity.ts:53"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "CRYPTO-002",
+      "cwe": [
+        "CWE-330"
+      ],
+      "evidence_snippet": "      52: export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)\n>>    53: export const denyAll = () => expressJwt({ secret: '' + Math.random() } as any)\n      54: export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })",
+      "file": "lib/insecurity.ts",
+      "finding_type_id": "FT-173",
+      "line": 53,
+      "local_id": "SAF-003",
+      "object_ref": null,
+      "recommended_mitigation_title": "Use crypto.randomBytes / crypto.randomUUID / webcrypto getRandomValues for any security value.",
+      "scenario": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Non-cryptographic RNG for a secret/token — lib/insecurity.ts:53"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-006",
+      "cwe": [
+        "CWE-345"
+      ],
+      "evidence_snippet": "      55: export const verify = (token: string) => token ? (jws.verify as ((token: string, secret: string) => boolean))(token, publicKey) : false\n>>    56: export const decode = (token: string) => { return jws.decode(token)?.payload }\n      57: ",
+      "file": "lib/insecurity.ts",
+      "finding_type_id": "FT-030",
+      "line": 56,
+      "local_id": "SAF-004",
+      "object_ref": null,
+      "recommended_mitigation_title": "Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` and gate authorization on the verified payload only.",
+      "scenario": "Decode-only flows let an attacker construct a token with any claims (admin, sub=victim, scope=*) — no key material required.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "JWT decode used without signature verification — lib/insecurity.ts:56"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-005",
+      "cwe": [
+        "CWE-347"
+      ],
+      "evidence_snippet": "     188:   if (token && authenticatedUsers.get(token) === undefined) {\n>>   189:     jwt.verify(token, publicKey, (err: Error | null, decoded: any) => {\n     190:       if (err === null && decoded?.data !== undefined) {",
+      "file": "lib/insecurity.ts",
+      "finding_type_id": "FT-030",
+      "line": 189,
+      "local_id": "SAF-005",
+      "object_ref": null,
+      "recommended_mitigation_title": "Always pass `algorithms: ['RS256']` (or the project's chosen alg) as the third argument's options object to jwt.verify.",
+      "scenario": "Without an explicit algorithm allowlist, attackers can forge tokens with alg:none (older lib versions) or use the public key as an HMAC secret to mint valid signatures.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "JWT verify call missing algorithms allowlist (algorithm confusion) — lib/insecurity.ts:189"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      10:   return async (req: Request, res: Response) => {\n>>    11:     const addresses = await AddressModel.findAll({ where: { UserId: req.body.UserId } })\n      12:     res.status(200).json({ status: 'success', data: addresses })",
+      "file": "routes/address.ts",
+      "finding_type_id": "FT-040",
+      "line": 11,
+      "local_id": "SAF-006",
+      "object_ref": "Address",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/address.ts:11"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      17:   return async (req: Request, res: Response) => {\n>>    18:     const address = await AddressModel.findOne({ where: { id: req.params.id, UserId: req.body.UserId } })\n      19:     if (address != null) {",
+      "file": "routes/address.ts",
+      "finding_type_id": "FT-040",
+      "line": 18,
+      "local_id": "SAF-007",
+      "object_ref": "Address",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/address.ts:18"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      28:   return async (req: Request, res: Response) => {\n>>    29:     const address = await AddressModel.destroy({ where: { id: req.params.id, UserId: req.body.UserId } })\n      30:     if (address) {",
+      "file": "routes/address.ts",
+      "finding_type_id": "FT-040",
+      "line": 29,
+      "local_id": "SAF-008",
+      "object_ref": "Address",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/address.ts:29"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-002",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      67:     try {\n>>    68:       const item = await BasketItemModel.findOne({ where: { id: req.params.id } })\n      69:       const user = security.authenticatedUsers.from(req)",
+      "file": "routes/basketItems.ts",
+      "finding_type_id": "FT-040",
+      "line": 68,
+      "local_id": "SAF-009",
+      "object_ref": "BasketItem",
+      "recommended_mitigation_title": "Add an owner column to the WHERE clause (UserId: req.user.id) or wrap the route in an ensureOwnership/requireRole middleware.",
+      "scenario": "Any authenticated user can substitute another user's resource ID in the URL and read or modify the target record because the query filter has no ownership clause. Admin-only routes are excluded via the counter-pattern allowlist.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "IDOR — resource lookup by URL parameter without ownership filter — routes/basketItems.ts:68"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "INJ-004",
+      "cwe": [
+        "CWE-22"
+      ],
+      "evidence_snippet": "     103:       if (req.body.layout) {\n>>   104:         const filePath: string = path.resolve(req.body.layout).toLowerCase()\n     105:         const isForbiddenFile: boolean = (filePath.includes('ftp') || filePath.includes('ctf.key') || filePath.includes('encryptionkeys'))",
+      "file": "routes/dataErasure.ts",
+      "finding_type_id": "FT-060",
+      "line": 104,
+      "local_id": "SAF-010",
+      "object_ref": null,
+      "recommended_mitigation_title": "Resolve the path, assert it stays within an allowed base directory (path.resolve + startsWith), and use path.basename on user input.",
+      "scenario": "A request-controlled path with `../` can read arbitrary files (/etc/passwd, source, secrets) or write outside the intended root.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Path traversal — filesystem access from request input — routes/dataErasure.ts:104"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      25:         try {\n>>    26:           memories = await MemoryModel.findAll({ where: { UserId: req.body.UserId } })\n      27:         } catch (error) {",
+      "file": "routes/dataExport.ts",
+      "finding_type_id": "FT-040",
+      "line": 26,
+      "local_id": "SAF-011",
+      "object_ref": "Memory",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/dataExport.ts:26"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-002",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      33:   return async (req: Request, res: Response, next: NextFunction) => {\n>>    34:     const method = await DeliveryModel.findOne({ where: { id: req.params.id } })\n      35:     if (method != null) {",
+      "file": "routes/delivery.ts",
+      "finding_type_id": "FT-040",
+      "line": 34,
+      "local_id": "SAF-012",
+      "object_ref": "Delivery",
+      "recommended_mitigation_title": "Add an owner column to the WHERE clause (UserId: req.user.id) or wrap the route in an ensureOwnership/requireRole middleware.",
+      "scenario": "Any authenticated user can substitute another user's resource ID in the URL and read or modify the target record because the query filter has no ownership clause. Admin-only routes are excluded via the counter-pattern allowlist.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "IDOR — resource lookup by URL parameter without ownership filter — routes/delivery.ts:34"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      24:       if (req.body.paymentMode === 'wallet') {\n>>    25:         const wallet = await WalletModel.findOne({ where: { UserId: req.body.UserId } })\n      26:         if ((wallet != null) && wallet.balance < 49) {",
+      "file": "routes/deluxe.ts",
+      "finding_type_id": "FT-040",
+      "line": 25,
+      "local_id": "SAF-013",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/deluxe.ts:25"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      29:         } else {\n>>    30:           await WalletModel.decrement({ balance: 49 }, { where: { UserId: req.body.UserId } })\n      31:         }",
+      "file": "routes/deluxe.ts",
+      "finding_type_id": "FT-040",
+      "line": 30,
+      "local_id": "SAF-014",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/deluxe.ts:30"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      34:       if (req.body.paymentMode === 'card') {\n>>    35:         const card = await CardModel.findOne({ where: { id: req.body.paymentId, UserId: req.body.UserId } })\n      36:         if ((card == null) || card.expYear < new Date().getFullYear() || (card.expYear === new Date().getFullYear() && card.expMonth - 1 < new Date().getMonth())) {",
+      "file": "routes/deluxe.ts",
+      "finding_type_id": "FT-040",
+      "line": 35,
+      "local_id": "SAF-015",
+      "object_ref": "Card",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/deluxe.ts:35"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "INJ-001",
+      "cwe": [
+        "CWE-89"
+      ],
+      "evidence_snippet": "      33:     verifyPreLoginChallenges(req) // vuln-code-snippet hide-line\n>>    34:     models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${security.hash(req.body.password || '')}' AND deletedAt IS NULL`, { model: UserModel, plain: true }) // vuln-code-snippet vuln-line loginAdminChallenge loginBenderChallenge loginJimChallenge\n      35:       .then((authenticatedUser) => { // vuln-code-snippet neutral-line loginAdminChallenge loginBenderChallenge loginJimChallenge",
+      "file": "routes/login.ts",
+      "finding_type_id": "FT-001",
+      "line": 34,
+      "local_id": "SAF-016",
+      "object_ref": null,
+      "recommended_mitigation_title": "Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never interpolate request data into the SQL string.",
+      "scenario": "Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or modifying arbitrary rows, bypassing authentication, or escalating to full database control.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "SQL injection — request data interpolated into a SQL string — routes/login.ts:34"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      14:       imagePath: 'assets/public/images/uploads/' + req.file?.filename,\n>>    15:       UserId: req.body.UserId\n      16:     }",
+      "file": "routes/memory.ts",
+      "finding_type_id": "FT-040",
+      "line": 15,
+      "local_id": "SAF-017",
+      "object_ref": null,
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/memory.ts:15"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "     147:             if (req.body.orderDetails && req.body.orderDetails.paymentId === 'wallet') {\n>>   148:               const wallet = await WalletModel.findOne({ where: { UserId: req.body.UserId } })\n     149:               if ((wallet != null) && wallet.balance >= totalPrice) {",
+      "file": "routes/order.ts",
+      "finding_type_id": "FT-040",
+      "line": 148,
+      "local_id": "SAF-018",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/order.ts:148"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "     149:               if ((wallet != null) && wallet.balance >= totalPrice) {\n>>   150:                 await WalletModel.decrement({ balance: totalPrice }, { where: { UserId: req.body.UserId } })\n     151:               } else {",
+      "file": "routes/order.ts",
+      "finding_type_id": "FT-040",
+      "line": 150,
+      "local_id": "SAF-019",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/order.ts:150"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "     156:             try {\n>>   157:               await WalletModel.increment({ balance: totalPoints }, { where: { UserId: req.body.UserId } })\n     158:             } catch (error: unknown) {",
+      "file": "routes/order.ts",
+      "finding_type_id": "FT-040",
+      "line": 157,
+      "local_id": "SAF-020",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/order.ts:157"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-002",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      35:     const eta = deliveryStatus ? '0' : '1'\n>>    36:     await ordersCollection.update({ _id: req.params.id }, { $set: { delivered: deliveryStatus, eta } })\n      37:     res.status(200).json({ status: 'success' })",
+      "file": "routes/orderHistory.ts",
+      "finding_type_id": "FT-040",
+      "line": 36,
+      "local_id": "SAF-021",
+      "object_ref": "orders",
+      "recommended_mitigation_title": "Add an owner column to the WHERE clause (UserId: req.user.id) or wrap the route in an ensureOwnership/requireRole middleware.",
+      "scenario": "Any authenticated user can substitute another user's resource ID in the URL and read or modify the target record because the query filter has no ownership clause. Admin-only routes are excluded via the counter-pattern allowlist.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "IDOR — resource lookup by URL parameter without ownership filter — routes/orderHistory.ts:36"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      20:     const displayableCards: displayCard[] = []\n>>    21:     const cards = await CardModel.findAll({ where: { UserId: req.body.UserId } })\n      22:     cards.forEach(card => {",
+      "file": "routes/payment.ts",
+      "finding_type_id": "FT-040",
+      "line": 21,
+      "local_id": "SAF-022",
+      "object_ref": "Card",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/payment.ts:21"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      40:   return async (req: Request, res: Response, next: NextFunction) => {\n>>    41:     const card = await CardModel.findOne({ where: { id: req.params.id, UserId: req.body.UserId } })\n      42:     const displayableCard: displayCard = {",
+      "file": "routes/payment.ts",
+      "finding_type_id": "FT-040",
+      "line": 41,
+      "local_id": "SAF-023",
+      "object_ref": "Card",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/payment.ts:41"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      69:   return async (req: Request, res: Response, next: NextFunction) => {\n>>    70:     const card = await CardModel.destroy({ where: { id: req.params.id, UserId: req.body.UserId } })\n      71:     if (card) {",
+      "file": "routes/payment.ts",
+      "finding_type_id": "FT-040",
+      "line": 70,
+      "local_id": "SAF-024",
+      "object_ref": "Card",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/payment.ts:70"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHN-001",
+      "cwe": [
+        "CWE-640"
+      ],
+      "evidence_snippet": "       9: import type { Memory as MemoryConfig } from '../lib/config.schema'\n>>    10: import { SecurityAnswerModel } from '../models/securityAnswer'\n      11: import * as challengeUtils from '../lib/challengeUtils'",
+      "file": "routes/resetPassword.ts",
+      "finding_type_id": "FT-031",
+      "line": 10,
+      "local_id": "SAF-025",
+      "object_ref": null,
+      "recommended_mitigation_title": "Replace security-question recovery with a CSPRNG reset token delivered through a verified out-of-band channel; expire it quickly and invalidate it after one use.",
+      "scenario": "An attacker who can research or guess the answer can satisfy the recovery check and take over the account without the original credential.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Password reset accepts a security-question answer — routes/resetPassword.ts:10"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "INJ-001",
+      "cwe": [
+        "CWE-89"
+      ],
+      "evidence_snippet": "      22:     criteria = (criteria.length <= 200) ? criteria : criteria.substring(0, 200)\n>>    23:     models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') AND deletedAt IS NULL) ORDER BY name`) // vuln-code-snippet vuln-line unionSqlInjectionChallenge dbSchemaChallenge\n      24:       .then(([products]: any) => {",
+      "file": "routes/search.ts",
+      "finding_type_id": "FT-001",
+      "line": 23,
+      "local_id": "SAF-026",
+      "object_ref": null,
+      "recommended_mitigation_title": "Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never interpolate request data into the SQL string.",
+      "scenario": "Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or modifying arbitrary rows, bypassing authentication, or escalating to full database control.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "SQL injection — request data interpolated into a SQL string — routes/search.ts:23"
+    },
+    {
+      "breach_vector": "n/a",
+      "check_id": "INJ-NODE-006",
+      "cwe": [
+        "CWE-943"
+      ],
+      "evidence_snippet": "      35: \n>>    36:     db.reviewsCollection.find({ $where: 'this.product == ' + id }).then((reviews: Review[]) => {\n      37:       const t1 = new Date().getTime()",
+      "evidence_tier": "insecure-practice",
+      "file": "routes/showProductReviews.ts",
+      "finding_type_id": "FT-002",
+      "line": 36,
+      "local_id": "SAF-027",
+      "object_ref": null,
+      "recommended_mitigation_title": "Use typed query predicates instead of $where",
+      "scenario": "Request input read at routes/showProductReviews.ts:31 reaches an executable expression at routes/showProductReviews.ts:36. Observed path conditions: const id = !utils.isChallengeEnabled(challenges.noSqlCommandChallenge) ? Number(req.params.id) : utils.trunc(req.params.id, 40). The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Input in executable NoSQL predicate — routes/showProductReviews.ts:36"
+    },
+    {
+      "breach_vector": "n/a",
+      "check_id": "INJ-NODE-006",
+      "cwe": [
+        "CWE-943"
+      ],
+      "evidence_snippet": "      17:     challengeUtils.solveIf(challenges.reflectedXssChallenge, () => { return utils.contains(id, '<iframe src=\"javascript:alert(`xss`)\">') })\n>>    18:     db.ordersCollection.find({ $where: `this.orderId === '${id}'` }).then((order: any) => {\n      19:       const result = utils.queryResultToJson(order)",
+      "evidence_tier": "insecure-practice",
+      "file": "routes/trackOrder.ts",
+      "finding_type_id": "FT-002",
+      "line": 18,
+      "local_id": "SAF-028",
+      "object_ref": null,
+      "recommended_mitigation_title": "Use typed query predicates instead of $where",
+      "scenario": "Request input read at routes/trackOrder.ts:15 reaches an executable expression at routes/trackOrder.ts:18. Observed path conditions: const id = !utils.isChallengeEnabled(challenges.reflectedXssChallenge) ? String(req.params.id).replace(/[^\\w-]+/g, '') : utils.trunc(req.params.id, 60). The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Input in executable NoSQL predicate — routes/trackOrder.ts:18"
+    },
+    {
+      "breach_vector": "n/a",
+      "check_id": "INJ-NODE-007",
+      "cwe": [
+        "CWE-94"
+      ],
+      "evidence_snippet": "      60:         }\n>>    61:         username = eval(code) // eslint-disable-line no-eval\n      62:       } catch (err) {",
+      "evidence_tier": "insecure-practice",
+      "file": "routes/userProfile.ts",
+      "finding_type_id": "FT-020",
+      "line": 61,
+      "local_id": "SAF-029",
+      "object_ref": null,
+      "recommended_mitigation_title": "Keep input as data; remove dynamic code or template-source compilation",
+      "scenario": "Persisted record read at routes/userProfile.ts:41 reaches an executable expression at routes/userProfile.ts:61. Observed path conditions: if (!user) { | if (username?.match(/#{(.*)}/) !== null && utils.isChallengeEnabled(challenges.usernameXssChallenge)) { | if (!code) {. The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Input passed to code execution — routes/userProfile.ts:61"
+    },
+    {
+      "breach_vector": "n/a",
+      "check_id": "INJ-NODE-008",
+      "cwe": [
+        "CWE-1336"
+      ],
+      "evidence_snippet": "      86:       const pug = (await import('pug')).default\n>>    87:       const fn = pug.compile(template)\n      88:       const CSP = `img-src 'self' ${user?.profileImage}; script-src 'self' 'unsafe-eval'`",
+      "evidence_tier": "insecure-practice",
+      "file": "routes/userProfile.ts",
+      "finding_type_id": "FT-022",
+      "line": 87,
+      "local_id": "SAF-030",
+      "object_ref": null,
+      "recommended_mitigation_title": "Keep input as data; remove dynamic code or template-source compilation",
+      "scenario": "Persisted record read at routes/userProfile.ts:41 reaches an executable expression at routes/userProfile.ts:87. Observed path conditions: if (username) {. The unsafe path is observed; attacker control, access prerequisites, and active configuration require verification.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Input compiled as template source — routes/userProfile.ts:87"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-006",
+      "cwe": [
+        "CWE-345"
+      ],
+      "evidence_snippet": "     113:   if (token) {\n>>   114:     const decoded = jws.decode(token) ? jwt.decode(token) : null\n     115: ",
+      "file": "routes/verify.ts",
+      "finding_type_id": "FT-030",
+      "line": 114,
+      "local_id": "SAF-031",
+      "object_ref": null,
+      "recommended_mitigation_title": "Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` and gate authorization on the verified payload only.",
+      "scenario": "Decode-only flows let an attacker construct a token with any claims (admin, sub=victim, scope=*) — no key material required.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "JWT decode used without signature verification — routes/verify.ts:114"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-006",
+      "cwe": [
+        "CWE-345"
+      ],
+      "evidence_snippet": "     113:   if (token) {\n>>   114:     const decoded = jws.decode(token) ? jwt.decode(token) : null\n     115: ",
+      "file": "routes/verify.ts",
+      "finding_type_id": "FT-030",
+      "line": 114,
+      "local_id": "SAF-032",
+      "object_ref": null,
+      "recommended_mitigation_title": "Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` and gate authorization on the verified payload only.",
+      "scenario": "Decode-only flows let an attacker construct a token with any claims (admin, sub=victim, scope=*) — no key material required.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "JWT decode used without signature verification — routes/verify.ts:114"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-005",
+      "cwe": [
+        "CWE-347"
+      ],
+      "evidence_snippet": "     119: \n>>   120:     jwt.verify(token, security.publicKey, (err: jwt.VerifyErrors | null) => {\n     121:       if (err === null) {",
+      "file": "routes/verify.ts",
+      "finding_type_id": "FT-030",
+      "line": 120,
+      "local_id": "SAF-033",
+      "object_ref": null,
+      "recommended_mitigation_title": "Always pass `algorithms: ['RS256']` (or the project's chosen alg) as the third argument's options object to jwt.verify.",
+      "scenario": "Without an explicit algorithm allowlist, attackers can forge tokens with alg:none (older lib versions) or use the public key as an HMAC secret to mint valid signatures.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "JWT verify call missing algorithms allowlist (algorithm confusion) — routes/verify.ts:120"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      11:   return async (req: Request, res: Response, next: NextFunction) => {\n>>    12:     const wallet = await WalletModel.findOne({ where: { UserId: req.body.UserId } })\n      13:     if (wallet != null) {",
+      "file": "routes/wallet.ts",
+      "finding_type_id": "FT-040",
+      "line": 12,
+      "local_id": "SAF-034",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/wallet.ts:12"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      23:     const cardId = req.body.paymentId\n>>    24:     const card = cardId ? await CardModel.findOne({ where: { id: cardId, UserId: req.body.UserId } }) : null\n      25:     if (card != null) {",
+      "file": "routes/wallet.ts",
+      "finding_type_id": "FT-040",
+      "line": 24,
+      "local_id": "SAF-035",
+      "object_ref": "Card",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/wallet.ts:24"
+    },
+    {
+      "breach_vector": "Internet User",
+      "check_id": "AUTHZ-001",
+      "cwe": [
+        "CWE-639"
+      ],
+      "evidence_snippet": "      26:       try {\n>>    27:         await WalletModel.increment({ balance: req.body.balance }, { where: { UserId: req.body.UserId } })\n      28:         res.status(200).json({ status: 'success', data: req.body.balance })",
+      "file": "routes/wallet.ts",
+      "finding_type_id": "FT-040",
+      "line": 27,
+      "local_id": "SAF-036",
+      "object_ref": "Wallet",
+      "recommended_mitigation_title": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause.",
+      "scenario": "A signed-in attacker puts another user's ID into the owner field of the request (req.body.UserId and the like); the query trusts it instead of the session identity, so the attacker reads or changes every other user's records — horizontal privilege escalation across all accounts.",
+      "severity": "Critical",
+      "source_type": "typescript_source",
+      "title": "Broken authorization — attacker-controlled owner ID in resource query — routes/wallet.ts:27"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     309:   app.post('/file-upload', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), checkUploadSize, checkFileType, handleZipFileUpload, handleXmlUpload, handleYamlUpload)\n>>   310:   app.post('/profile/image/file', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), utils.asyncHandler(profileImageFileUpload()))\n     311:   app.post('/profile/image/url', uploadToMemory.single('file'), utils.asyncHandler(profileImageUrlUpload()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 310,
+      "local_id": "SAF-037",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:310"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     310:   app.post('/profile/image/file', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), utils.asyncHandler(profileImageFileUpload()))\n>>   311:   app.post('/profile/image/url', uploadToMemory.single('file'), utils.asyncHandler(profileImageUrlUpload()))\n     312:   app.post('/rest/memories', uploadToDisk.single('image'), ensureFileIsPassed, security.appendUserId(), metrics.observeFileUploadMetricsMiddleware(), utils.asyncHandler(addMemory()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 311,
+      "local_id": "SAF-038",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:311"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     407:   /* User registration challenge verifications before finale takes over */\n>>   408:   app.post('/api/Users', (req: Request, res: Response, next: NextFunction) => {\n     409:     if (req.body.email !== undefined && req.body.password !== undefined && req.body.passwordRepeat !== undefined) {",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 408,
+      "local_id": "SAF-039",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:408"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     419:   })\n>>   420:   app.post('/api/Users', verify.registerAdminChallenge())\n     421:   app.post('/api/Users', verify.passwordRepeatChallenge()) // vuln-code-snippet hide-end",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 420,
+      "local_id": "SAF-040",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:420"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     420:   app.post('/api/Users', verify.registerAdminChallenge())\n>>   421:   app.post('/api/Users', verify.passwordRepeatChallenge()) // vuln-code-snippet hide-end\n     422:   app.post('/api/Users', verify.emptyUserRegistration())",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 421,
+      "local_id": "SAF-041",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:421"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     421:   app.post('/api/Users', verify.passwordRepeatChallenge()) // vuln-code-snippet hide-end\n>>   422:   app.post('/api/Users', verify.emptyUserRegistration())\n     423:   /* Unauthorized users are not allowed to access B2B API */",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 422,
+      "local_id": "SAF-042",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:422"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     437:   /* PaymentMethodRequests: Only allowed for authenticated users */\n>>   438:   app.post('/api/Cards', security.appendUserId())\n     439:   app.get('/api/Cards', security.appendUserId(), utils.asyncHandler(payment.getPaymentMethods()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 438,
+      "local_id": "SAF-043",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:438"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     440:   app.put('/api/Cards/:id', security.denyAll())\n>>   441:   app.delete('/api/Cards/:id', security.appendUserId(), utils.asyncHandler(payment.delPaymentMethodById()))\n     442:   app.get('/api/Cards/:id', security.appendUserId(), utils.asyncHandler(payment.getPaymentMethodById()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 441,
+      "local_id": "SAF-044",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:441"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     595:   /* Custom Restful API */\n>>   596:   app.post('/rest/user/login', login())\n     597:   app.get('/rest/user/change-password', utils.asyncHandler(changePassword()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 596,
+      "local_id": "SAF-045",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:596"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     597:   app.get('/rest/user/change-password', utils.asyncHandler(changePassword()))\n>>   598:   app.post('/rest/user/reset-password', utils.asyncHandler(resetPassword()))\n     599:   app.get('/rest/user/security-question', utils.asyncHandler(securityQuestion()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 598,
+      "local_id": "SAF-046",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:598"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     619:   app.get('/rest/saveLoginIp', utils.asyncHandler(saveLoginIp()))\n>>   620:   app.post('/rest/user/data-export', security.appendUserId(), utils.asyncHandler(verifyImageCaptcha()))\n     621:   app.post('/rest/user/data-export', security.appendUserId(), utils.asyncHandler(dataExport()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 620,
+      "local_id": "SAF-047",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:620"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     620:   app.post('/rest/user/data-export', security.appendUserId(), utils.asyncHandler(verifyImageCaptcha()))\n>>   621:   app.post('/rest/user/data-export', security.appendUserId(), utils.asyncHandler(dataExport()))\n     622:   app.get('/rest/languages', utils.asyncHandler(getLanguageList()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 621,
+      "local_id": "SAF-048",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:621"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     624:   app.get('/rest/order-history/orders', security.isAccounting(), utils.asyncHandler(allOrders()))\n>>   625:   app.put('/rest/order-history/:id/delivery-status', security.isAccounting(), utils.asyncHandler(toggleDeliveryStatus()))\n     626:   app.get('/rest/wallet/balance', security.appendUserId(), utils.asyncHandler(getWalletBalance()))",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 625,
+      "local_id": "SAF-049",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:625"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     626:   app.get('/rest/wallet/balance', security.appendUserId(), utils.asyncHandler(getWalletBalance()))\n>>   627:   app.put('/rest/wallet/balance', security.appendUserId(), utils.asyncHandler(addWalletBalance()))\n     628:   app.get('/rest/deluxe-membership', deluxeMembershipStatus())",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 627,
+      "local_id": "SAF-050",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:627"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     640:   /* Web3 API endpoints */\n>>   641:   app.post('/rest/web3/submitKey', utils.asyncHandler(checkKeys()))\n     642:   app.get('/rest/web3/nftUnlocked', nftUnlocked())",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 641,
+      "local_id": "SAF-051",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:641"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     647:   /* B2B Order API */\n>>   648:   app.post('/b2b/v2/orders', b2bOrder())\n     649: ",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 648,
+      "local_id": "SAF-052",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:648"
+    },
+    {
+      "breach_vector": "Internet Anon",
+      "check_id": "AUTHZ-008",
+      "cwe": [
+        "CWE-862"
+      ],
+      "evidence_snippet": "     666:   app.get('/profile', utils.asyncHandler(getUserProfile()))\n>>   667:   app.post('/profile', utils.asyncHandler(updateUserProfile()))\n     668: ",
+      "file": "server.ts",
+      "finding_type_id": "FT-042",
+      "line": 667,
+      "local_id": "SAF-053",
+      "object_ref": null,
+      "recommended_mitigation_title": "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only.",
+      "scenario": "The route registration carries no authentication marker, so an anonymous attacker may call this state-changing operation on a sensitive resource directly, unless a downstream check the scanner cannot see stops it.",
+      "severity": "High",
+      "source_type": "typescript_source",
+      "title": "Sensitive REST route registered without authentication middleware — server.ts:667"
+    }
+  ],
+  "generated_at": "2000-01-01T00:00:00Z",
+  "version": 1,
+  "violations": 53
+}

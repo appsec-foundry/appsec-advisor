@@ -260,7 +260,7 @@ def test_skill_toggle_unknown_skill_rejected(acme_profile):
 
 
 def test_skill_toggle_disabled_requires_reason(acme_profile):
-    acme_profile["skill_toggles"]["export-threat-model"] = {"enabled": False}
+    acme_profile["skill_toggles"]["export-security-assessment"] = {"enabled": False}
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any("reason" in e for e in errors), errors
 
@@ -568,11 +568,11 @@ def test_unreadable_skills_directory_skips_the_check(acme_profile, monkeypatch, 
 def test_a_skill_the_package_policy_removed_may_still_be_toggled(acme_profile, tmp_path, monkeypatch):
     """An organization excludes a skill from the package and keeps the toggle
     that documents why; the two must not contradict each other."""
-    (tmp_path / "skills" / "create-threat-model").mkdir(parents=True)
-    (tmp_path / "skills" / "create-threat-model" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    (tmp_path / "skills" / "appsec-analyzer").mkdir(parents=True)
+    (tmp_path / "skills" / "appsec-analyzer" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
     (tmp_path / ".claude-plugin").mkdir()
     (tmp_path / ".claude-plugin" / "package-surface.json").write_text(
-        json.dumps({"skills": {"included": ["create-threat-model"], "removed": ["publish-threat-model"]}}),
+        json.dumps({"skills": {"included": ["appsec-analyzer"], "removed": ["publish-threat-model"]}}),
         encoding="utf-8",
     )
     monkeypatch.setattr(vop, "PLUGIN_ROOT", tmp_path)

@@ -5,7 +5,7 @@
 #
 # This is a deterministic wrapper around scripts/run-headless.sh. It deliberately
 # runs the oracle only after the threat model has been generated, so the oracle
-# is not part of the repository context given to create-threat-model.
+# is not part of the repository context given to appsec-analyzer.
 #
 # Claude Code goal prompt for a real run:
 #
@@ -77,7 +77,7 @@ Options:
 Exit codes:
   0  pipeline and oracle verification passed
   1  pre-flight failed
-  2  create-threat-model pipeline failed
+  2  appsec-analyzer pipeline failed
   3  expected report artifacts are missing
   4  oracle verification failed
 HELP

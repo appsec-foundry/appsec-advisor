@@ -13,8 +13,9 @@ Layout (see docs/internal/analysis/plan-session-banner-redesign-2026-07-29.md):
 
 1. Who + help — plugin identity (or org ``banner.headline``) and ``help`` when packaged.
 2. Threat model — fixed label, severity-first facts, object-local command when
-   needed. Read from the nearest ``docs/security/`` between the working
-   directory and the repository root.
+   needed. Read from the repository's external assessment directory, or from
+   the nearest legacy ``docs/security/`` between the working directory and the
+   repository root.
 3. Secure coding baseline — id and scope when loaded, otherwise the problem and
    the install command on that same line. A calm state is left out where the
    aiscb installer's own startup hook already prints the baseline status.
@@ -78,6 +79,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from shared.artifact_names import ArtifactSetError, artifact_stem, model_path
+from shared.assessment_location import LocationError, application_directory
+
 # Commits since the model was generated, above which it is called out as stale.
 STALE_COMMITS = 20
 
@@ -89,14 +93,14 @@ GIT_TIMEOUT_SECONDS = 3
 # to the organization's own namespace across packaged .py files, and
 # check_namespace_leaks fails the build if one is missed. Keep the literals
 # whole — a namespace assembled at runtime would slip past both.
-REVIEW = "/appsec-advisor:review-threat-model"
-CREATE = "/appsec-advisor:create-threat-model"
+REVIEW = "/appsec-advisor:triage-security-assessment"
+CREATE = "/appsec-advisor:appsec-analyzer"
 STATUS = "/appsec-advisor:status"
 HELP = "/appsec-advisor:help"
 INSTALL_BASELINE = "/appsec-advisor:install-baseline"
 UPDATE_BASELINE = "/appsec-advisor:update-baseline"
-REBUILD = f"{CREATE} --full --rebuild"
-REFRESH = f"{CREATE} --full"
+REBUILD = f"{CREATE} --rebuild"
+REFRESH = CREATE
 
 # Fixed domain label. The baseline line is headed by the ``baseline`` block's
 # own ``name`` instead, so an organization's baseline appears under its name;
@@ -174,16 +178,33 @@ def _repository_root(path: Path) -> Path | None:
     return None
 
 
-def _model_location(cwd: Path) -> tuple[Path, Path]:
-    """Return the project directory and its ``docs/security`` for ``cwd``.
+def _holds_assessment(directory: Path) -> bool:
+    """Whether ``directory`` holds a model under either name, or a scan lock."""
+    try:
+        if artifact_stem(directory) is not None:
+            return True
+    except ArtifactSetError:
+        # Both naming sets: the line reads neither, but the directory is the assessment's.
+        return True
+    return (directory / ".appsec-lock").is_file()
 
-    The nearest directory from ``cwd`` up to the repository root that holds a
-    model or a scan lock wins, so a session started in a subdirectory reports
-    the repository's model and a monorepo package keeps its own. Without either,
-    the repository root (or ``cwd`` outside a repository) is returned, whose
-    missing model leaves the line out.
+
+def _model_location(cwd: Path) -> tuple[Path, Path]:
+    """Return the project directory and its assessment directory for ``cwd``.
+
+    The repository's external assessment directory wins when it holds a model
+    or a scan lock. Otherwise the nearest ``docs/security`` from ``cwd`` up to
+    the repository root that holds one is read, the legacy location a monorepo
+    package may still use. Without either, the external directory is returned,
+    whose missing model leaves the line out.
     """
     root = _repository_root(cwd)
+    try:
+        external = application_directory(root or cwd)
+    except (LocationError, OSError):
+        external = None
+    if external is not None and _holds_assessment(external):
+        return root or cwd, external
     candidates = [cwd]
     if root is not None:
         for parent in cwd.parents:
@@ -192,10 +213,10 @@ def _model_location(cwd: Path) -> tuple[Path, Path]:
             candidates.append(parent)
     for candidate in candidates:
         security = candidate / "docs" / "security"
-        if (security / "threat-model.yaml").is_file() or (security / ".appsec-lock").is_file():
+        if _holds_assessment(security):
             return candidate, security
     fallback = root or cwd
-    return fallback, fallback / "docs" / "security"
+    return fallback, external or fallback / "docs" / "security"
 
 
 def _has_skill(name: str) -> bool:
@@ -503,8 +524,8 @@ def _threat_model_line(repo: Path, output_dir: Path) -> str:
         return _join(LABEL_THREAT_MODEL, "scan in progress", _skill_command(STATUS))
 
     try:
-        lines = (output_dir / "threat-model.yaml").read_text(encoding="utf-8").splitlines()
-    except OSError:
+        lines = model_path(output_dir).read_text(encoding="utf-8").splitlines()
+    except (OSError, ArtifactSetError):
         return ""
 
     blocks = _blocks(lines)

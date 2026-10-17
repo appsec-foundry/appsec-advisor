@@ -1231,6 +1231,53 @@ class TestExtractRecoveryEvents:
         assert agg._extract_recovery_events(tmp_path) == []
 
 
+class TestDescriptiveAbuseCaseIssues:
+    def _write(self, tmp_path, steps, rejected=None):
+        matches = {"matches": [{"abuse_case_id": "REPO-AC-020", "kind": "descriptive"}]}
+        if rejected is not None:
+            matches["rejected_case_files"] = rejected
+        (tmp_path / ".abuse-case-matches.json").write_text(_json.dumps(matches), encoding="utf-8")
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps({"verdicts": [{"abuse_case_id": "REPO-AC-020", "step_verdicts": steps}]}), encoding="utf-8"
+        )
+
+    def test_reasoned_inconclusive_business_case_is_a_result_not_a_run_issue(self, tmp_path):
+        self._write(tmp_path, [{"verdict": "inconclusive", "state": "decided", "reason": "delegation policy unknown"}])
+        assert agg._extract_abuse_case_outcomes(tmp_path) == []
+
+    def test_unfinished_or_rejected_business_evidence_is_a_run_issue(self, tmp_path):
+        self._write(tmp_path, [{"verdict": "inconclusive", "state": "pending"}])
+        assert len(agg._extract_abuse_case_outcomes(tmp_path)) == 1
+        self._write(tmp_path, [{"verdict": "inconclusive", "state": "decided", "rejected_evidence": {"file": "x"}}])
+        assert len(agg._extract_abuse_case_outcomes(tmp_path)) == 1
+
+    def test_candidates_without_a_verdict_are_a_run_issue(self, tmp_path):
+        rows = [
+            {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"},
+            {"abuse_case_id": "REPO-AC-020", "structural_verdict": "candidate"},
+            {"abuse_case_id": "AC-T-002", "structural_verdict": "not_applicable"},
+        ]
+        (tmp_path / ".abuse-case-matches.json").write_text(_json.dumps({"matches": rows}), encoding="utf-8")
+        issues = agg._extract_unverified_abuse_candidates(tmp_path)
+        assert [i["category"] for i in issues] == ["abuse_case_not_verified"]
+        assert "AC-T-001, REPO-AC-020" in issues[0]["title"]
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps({"verdicts": [{"abuse_case_id": i, "step_verdicts": []} for i in ("AC-T-001", "REPO-AC-020")]}),
+            encoding="utf-8",
+        )
+        assert agg._extract_unverified_abuse_candidates(tmp_path) == []
+
+    def test_rejected_repository_case_file_is_surfaced_with_a_recommendation(self, tmp_path):
+        self._write(tmp_path, [], rejected=[{"path": ".appsec/abuse-cases/bad.yaml", "reason": "schema_version 7"}])
+        issues = agg._extract_rejected_abuse_case_files(tmp_path)
+        assert [i["category"] for i in issues] == ["abuse_case_file_rejected"]
+        assert issues[0]["evidence"]["path"] == ".appsec/abuse-cases/bad.yaml"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from runtime.recommend_fixes import RECOMMENDERS  # noqa: PLC0415
+
+        assert RECOMMENDERS["abuse_case_file_rejected"](issues[0], tmp_path)["category"] == "user_action"
+
+
 class TestExtractAbuseCaseOutcomes:
     def test_missing_file_returns_empty(self, tmp_path):
         assert agg._extract_abuse_case_outcomes(tmp_path) == []
@@ -1916,6 +1963,52 @@ def test_connected_or_absent_injections_produce_no_issue(tmp_path):
     assert agg._extract_unconnected_injected_components(out) == []
     (out / ".data-flows.json").write_text("not json", encoding="utf-8")
     assert agg._extract_unconnected_injected_components(out) == []
+
+
+def _architecture_run(tmp_path, components, flows, destinations=None) -> Path:
+    (tmp_path / ".components.json").write_text(json.dumps({"components": components}), encoding="utf-8")
+    (tmp_path / ".data-flows.json").write_text(json.dumps({"data_flows": flows}), encoding="utf-8")
+    if destinations is not None:
+        target = tmp_path / ".dispatch-context/architecture/egress.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({"destinations": destinations}), encoding="utf-8")
+    return tmp_path
+
+
+_API = {"id": "api", "name": "API", "paths": ["src/api/**"]}
+_WALLET = {"id": "wallet", "name": "Wallet", "paths": ["src/wallet/**"]}
+_PIPELINE = {"id": "pipeline", "name": "Pipeline", "paths": [".github/workflows/*"], "deployment_zones": ["ci"]}
+
+
+def test_a_runtime_component_without_flows_is_surfaced_but_a_build_component_is_not(tmp_path):
+    out = _architecture_run(tmp_path, [_API, _WALLET, _PIPELINE], [{"id": "df-001", "from": "external", "to": "api"}])
+
+    issues = agg._extract_components_without_flows(out)
+
+    assert [(i["category"], i["component_id"]) for i in issues] == [("component_without_flows", "wallet")]
+
+
+def test_an_egress_destination_without_a_flow_from_its_owner_is_surfaced(tmp_path):
+    destination = {
+        "kind": "fixed-host",
+        "host": "rpc.ledgerco.io",
+        "evidence": [{"file": "src/wallet/w.ts", "line": 3}],
+    }
+    flows = [{"id": "df-001", "from": "api", "to": "external"}]
+    out = _architecture_run(tmp_path, [_API, _WALLET], flows, [destination])
+
+    (issue,) = agg._extract_egress_without_flow(out)
+
+    assert issue["category"] == "egress_without_flow" and issue["component_id"] == "wallet"
+    assert "rpc.ledgerco.io" in issue["title"]
+
+
+def test_an_egress_destination_modelled_as_a_flow_produces_no_issue(tmp_path):
+    destination = {"kind": "user-controlled", "host": None, "evidence": [{"file": "src/api/u.ts", "line": 9}]}
+    flows = [{"id": "df-001", "from": "api", "to": "external"}]
+    assert agg._extract_egress_without_flow(_architecture_run(tmp_path, [_API], flows, [destination])) == []
+    (tmp_path / "none").mkdir()
+    assert agg._extract_egress_without_flow(_architecture_run(tmp_path / "none", [_API], flows)) == []
 
 
 def _cost_run(tmp_path, *, start: str, stop_at: str | None, usage: bool = True) -> Path:

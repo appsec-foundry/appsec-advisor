@@ -177,6 +177,41 @@ def test_context_dependent_cwe_needs_mechanism_evidence():
     assert mac.match_step(step, [idor])["matched_finding_id"] == "T-002"
 
 
+@pytest.mark.parametrize(
+    "file",
+    [".github/workflows/ci.yml", "docs/runbooks/deploy.md", "tests/fixtures/accounts.ts"],
+)
+def test_step_never_binds_a_finding_outside_the_runtime_surface(file):
+    """A privilege CWE on a CI, documentation, or test finding is not the
+    application step it names; the same CWE in runtime code still binds."""
+    step = _step(1, "CWE-(915|266|269)")
+    step["finding"] = {"cwe": "CWE-915"}
+    elsewhere = dict(_finding("T-045", "Workflow grants write permissions", file=file, line=1), cwe="CWE-915")
+    runtime = dict(_finding("T-070", "Account model persists any request field", file="api/accounts.py"), cwe="CWE-915")
+
+    assert not mac.match_step(step, [elsewhere])["matched"]
+    assert mac.match_step(step, [elsewhere, runtime])["matched_finding_id"] == "T-070"
+
+
+def test_a_lone_family_only_match_is_not_bound():
+    """A finding that shares only the declared step CWE's family is not the
+    step, even without a competitor; the step's own CWE or a mechanism phrase
+    still binds, and so does a family match in a file the chain runs through."""
+    step = _step(2, "CWE-(863|862|266|269)")
+    step["probe"]["sink_patterns"].append("req\\.user\\.role")
+    step["finding"] = {"cwe": "CWE-863"}
+    coupon = dict(_finding("T-046", "Tool call lacks a discount ceiling", file="routes/assistant.py"), cwe="CWE-862")
+    own_cwe = dict(_finding("T-020", "Admin route trusts the token", file="app/admin.go"), cwe="CWE-863")
+    mechanism = dict(
+        _finding("T-021", "Handler reads req.user.role from the token", file="app/admin.go"), cwe="CWE-862"
+    )
+
+    assert not mac.match_step(step, [coupon])["matched"]
+    assert mac.match_step(step, [coupon, own_cwe])["matched_finding_id"] == "T-020"
+    assert mac.match_step(step, [coupon, mechanism])["matched_finding_id"] == "T-021"
+    assert mac.match_step(step, [coupon], prefer_files=frozenset({"routes/assistant.py"}))["matched"]
+
+
 def test_context_dependent_jwt_cwe_needs_jwt_mechanism_evidence():
     """CWE-347 artifact provenance must not be treated as JWT verification."""
     unsigned_artifact = {
@@ -541,6 +576,14 @@ def test_missing_late_registration_verdict_preserves_recon_signal_state(tmp_path
     }
 
 
+@pytest.mark.parametrize("verdict", ["true", "false"])
+def test_late_registration_verdict_keeps_matching_ungated_without_recon_signals(tmp_path: Path, verdict: str):
+    # No recon sidecar means every signal is unknown; a registration verdict
+    # must not turn that into "every other required signal is absent".
+    (tmp_path / "threat-model.yaml").write_text(f"meta:\n  open_user_registration: {verdict}\n", encoding="utf-8")
+    assert mac._effective_registration_signal(None, tmp_path) is None
+
+
 def test_malformed_late_registration_meta_preserves_recon_signal_state(tmp_path: Path):
     (tmp_path / "threat-model.yaml").write_text("meta: malformed\n", encoding="utf-8")
 
@@ -837,6 +880,34 @@ def test_finalize_mixed_confirmed_blocked_is_partially_blocked():
     assert mac.finalize_verdict(cm, sv) == "partially_blocked"
 
 
+@pytest.mark.parametrize(
+    "verdicts", [("confirmed", "blocked"), ("blocked", "confirmed"), ("confirmed", "blocked", "confirmed")]
+)
+def test_finalize_business_chain_stopped_at_one_step_is_mitigated(verdicts):
+    cm = {"kind": "descriptive", "step_matches": [{"step": n, "required": True} for n in range(1, len(verdicts) + 1)]}
+    sv = [{"step": n, "verdict": v} for n, v in enumerate(verdicts, 1)]
+    assert mac.finalize_verdict(cm, sv) == "mitigated"
+    # A technical chain with the same steps stays partially blocked.
+    assert mac.finalize_verdict(_cm(cm["step_matches"]), sv) == "partially_blocked"
+
+
+@pytest.mark.parametrize("steps", [1, 2])
+def test_finalize_confirmed_business_step_ignores_the_insufficient_check_beside_it(steps):
+    """A confirmed business step says no control enforces its boundary; a check
+    the verifier lists beside it does not turn the case partially blocked."""
+    cm = {"kind": "descriptive", "step_matches": [{"step": n, "required": True} for n in range(1, steps + 1)]}
+    sv = [{"step": n, "verdict": "confirmed", "controls_found": ["role check only"]} for n in range(1, steps + 1)]
+    assert mac.finalize_verdict(cm, sv) == "fully_viable"
+    # A technical chain still treats a listed control as impeding it.
+    assert mac.finalize_verdict(_cm(cm["step_matches"]), sv) == "partially_blocked"
+
+
+def test_finalize_business_chain_with_an_open_step_stays_inconclusive():
+    cm = {"kind": "descriptive", "step_matches": [{"step": 1, "required": True}, {"step": 2, "required": True}]}
+    sv = [{"step": 1, "verdict": "blocked"}, {"step": 2, "verdict": "inconclusive"}]
+    assert mac.finalize_verdict(cm, sv) == "inconclusive"
+
+
 def test_finalize_missing_verdict_defaults_inconclusive():
     cm = _cm([{"step": 1, "required": True}])
     # no step_verdict provided → defaults to inconclusive
@@ -934,10 +1005,14 @@ def test_cmd_match_with_org_profile(tmp_path: Path, capsys):
 def test_cmd_match_resolver_errors_returns_1(tmp_path: Path, monkeypatch, capsys):
     (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": []}))
 
+    real = mac._rac()
+
     def fake_rac():
         class M:
-            def resolve_abuse_cases(self, *a, **k):
-                return [], ["boom-error"]
+            load_limits = staticmethod(real.load_limits)
+
+            def resolve_abuse_case_sources(self, *a, **k):
+                return [], ["boom-error"], []
 
         return M()
 
@@ -1044,7 +1119,7 @@ def test_cmd_finalize_unknown_case_uses_empty_step_matches(tmp_path: Path):
 def _shipped_case(case_id: str) -> dict:
     import yaml
 
-    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml").read_text(encoding="utf-8"))
+    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "technical.yaml").read_text(encoding="utf-8"))
     return next(case for case in library["abuse_cases"] if case["id"] == case_id)
 
 
@@ -1083,7 +1158,7 @@ def test_the_llm_signal_is_part_of_the_recon_contract():
 def _prompt_injection_control_patterns():
     import yaml
 
-    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml").read_text(encoding="utf-8"))
+    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "technical.yaml").read_text(encoding="utf-8"))
     case = next(row for row in library["abuse_cases"] if row["id"] == "AC-T-007")
     return case["chain"][0]["probe"]["control_patterns"]
 
@@ -1100,3 +1175,395 @@ def test_a_prompt_level_guardrail_is_not_a_control_for_prompt_injection():
     for real_control in ("Input is sanitized before assembly", "Instruction hierarchy separates the channels"):
         finding = _finding("T-002", "prompt injection sink", controls=real_control)
         assert mac.match_step(step, [finding])["controls_found"], real_control
+
+
+# ---------------------------------------------------------------------------
+# Descriptive (business) cases: preselection, limits, evidence admission
+# ---------------------------------------------------------------------------
+
+
+def _descriptive(cid="REPO-AC-020", patterns=("**/roles/**",), signals=None):
+    qualifier = {"path_patterns": list(patterns)} if patterns else {}
+    if signals:
+        qualifier["required_signals"] = list(signals)
+    return {
+        "id": cid,
+        "kind": "descriptive",
+        "title": "Delegated administrator grants themselves a role",
+        "actor": "Delegated administrator",
+        "initial_access": "authenticated_high_priv",
+        "goal": "Obtain a role outside the delegation.",
+        "boundary": "Roles the delegation permits.",
+        "steps": ["Assign a role to themselves.", "Choose a role outside the delegation."],
+        "expected_controls": ["The assignment checks the delegation."],
+        "scope_qualifier": qualifier,
+    }
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text(
+        "export async function assign(req, res) {\n"
+        "  const user = await Users.find(req.body.userId);\n"
+        "  user.roles.push(req.body.role);\n"
+        "  await user.save();\n"
+        "}\n"
+    )
+    (repo / "docs" / "roles").mkdir(parents=True)
+    (repo / "docs" / "roles" / "guide.md").write_text("roles guide\n")
+    return repo
+
+
+def test_descriptive_case_is_preselected_from_runtime_paths(tmp_path: Path):
+    repo = _repo(tmp_path)
+    finding = _finding("F-001", "role update", file="src/roles/assign.ts", line=3)
+    m = mac.match_case(_descriptive(), [finding], None, repo_root=repo)
+    assert m["structural_verdict"] == "candidate"
+    assert m["preselected_sources"] == ["src/roles/assign.ts"]
+    assert m["related_finding_ids"] == ["F-001"]
+    assert [s["label"] for s in m["step_matches"]] == _descriptive()["steps"]
+    assert not any(s["matched"] for s in m["step_matches"])
+
+
+@pytest.mark.parametrize("owned_extra", [[], ["src/other.ts"]])
+def test_component_owned_preselection_skips_files_no_component_lists(tmp_path: Path, owned_extra):
+    repo = _repo(tmp_path)
+    finding = _finding("F-001", "role update", file="src/roles/assign.ts", line=3)
+    unowned = mac.match_case(_descriptive(), [finding], None, repo_root=repo, owned=frozenset(owned_extra))
+    assert unowned["preselected_sources"] == [] and unowned["structural_verdict"] != "candidate"
+    owned = frozenset(["src/roles/assign.ts", *owned_extra])
+    m = mac.match_case(_descriptive(), [finding], None, repo_root=repo, owned=owned)
+    assert m["preselected_sources"] == ["src/roles/assign.ts"]
+    # Without the option every runtime file stays searchable, as in a single-repository run.
+    assert mac.match_case(_descriptive(), [finding], None, repo_root=repo)["preselected_sources"] == [
+        "src/roles/assign.ts"
+    ]
+
+
+def test_component_owned_files_come_from_the_literal_inventory(tmp_path: Path):
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"components": [{"id": "c", "paths": ["edge/app.js", 7]}, {"id": "d"}, "junk"]})
+    )
+    assert mac._component_owned_files(tmp_path) == frozenset({"edge/app.js"})
+    assert mac._component_owned_files(tmp_path / "missing") == frozenset()
+
+
+def test_descriptive_preselection_admits_only_executable_source(tmp_path: Path):
+    repo = _repo(tmp_path)
+    for name in ("roles.component.scss", "roles.component.html", "roles.md.bak", "roles.component.ts"):
+        (repo / "src" / "roles" / name).write_text("x\n")
+    m = mac.match_case(_descriptive(), [], None, repo_root=repo)
+    assert m["preselected_sources"] == ["src/roles/assign.ts", "src/roles/roles.component.ts"]
+
+
+def test_path_patterns_ignore_case_and_match_any_directory_or_file_name(tmp_path: Path):
+    repo = tmp_path / "repo"
+    files = (
+        "src/AdminController.java",
+        "src/admin/users/list.ts",
+        "app/Billing/Invoices/Export.cs",
+        "src/roles/nested/grant.ts",
+        "src/index.ts",
+    )
+    for rel in files:
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("code\n")
+    m = mac.match_case(_descriptive(patterns=("*admin*", "*EXPORT*")), [], None, repo_root=repo)
+    assert sorted(m["preselected_sources"]) == [
+        "app/Billing/Invoices/Export.cs",
+        "src/AdminController.java",
+        "src/admin/users/list.ts",
+    ]
+    # A pattern with "/" stays anchored to the end of the path.
+    m = mac.match_case(_descriptive(patterns=("roles/*",)), [], None, repo_root=repo)
+    assert m["structural_verdict"] == "not_applicable"
+    technical = _case([_step(1, "refund")])
+    technical["scope_qualifier"] = {"path_patterns": ["*ADMIN*"]}
+    assert mac.match_case(technical, [], signals=None, repo_root=repo)["applicable"] is True
+
+
+def test_descriptive_case_with_only_documentation_hits_is_not_applicable(tmp_path: Path):
+    repo = _repo(tmp_path)
+    m = mac.match_case(_descriptive(patterns=("docs/**",)), [], None, repo_root=repo)
+    assert m["structural_verdict"] == "not_applicable"
+    assert "no runtime source path matched" in m["reason"]
+
+
+def test_descriptive_case_respects_required_signals(tmp_path: Path):
+    repo = _repo(tmp_path)
+    case = _descriptive(signals=["has_role_concept"])
+    assert mac.match_case(case, [], {"has_auth_surface"}, repo_root=repo)["structural_verdict"] == "not_applicable"
+    assert mac.match_case(case, [], {"has_role_concept"}, repo_root=repo)["structural_verdict"] == "candidate"
+
+
+def _located_repo(tmp_path: Path) -> Path:
+    """Handlers whose file names carry no case vocabulary, so only routes or detectors can locate them."""
+    repo = tmp_path / "repo"
+    (repo / "app" / "handlers").mkdir(parents=True)
+    for name in ("grants.py", "billing.py"):
+        (repo / "app" / "handlers" / name).write_text("def handle(request):\n    return request.json\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_grants.py").write_text("def test_x():\n    pass\n")
+    return repo
+
+
+def _route(path: str, handler: str) -> dict:
+    return {"path": path, "handler_file": handler, "method": "POST"}
+
+
+def _locating(**qualifier) -> dict:
+    case = _descriptive(patterns=None)
+    case["scope_qualifier"] = qualifier
+    return case
+
+
+def test_a_route_pattern_preselects_the_handler_of_a_matching_route(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    routes = [
+        _route("/api/Members/:id/ROLES", "app/handlers/grants.py"),
+        _route("/api/invoices", "app/handlers/billing.py"),
+    ]
+    m = mac.match_case(_locating(route_patterns=["*/roles*"]), [], None, repo_root=repo, routes=routes)
+    assert m["structural_verdict"] == "candidate"
+    assert m["preselected_sources"] == ["app/handlers/grants.py"]
+
+
+def test_a_detector_rule_preselects_the_file_of_its_finding_and_relates_the_finding(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    flagged = _finding("F-004", "privileged field bound from request", file="app/handlers/billing.py", line=2)
+    flagged["source_check_id"] = "AUTHZ-003"
+    other = _finding("F-005", "unrelated", file="app/handlers/grants.py", line=2)
+    other["source_check_id"] = "INJ-001"
+    m = mac.match_case(_locating(detector_rules=["AUTHZ-003", "AUTHZ-008"]), [flagged, other], None, repo_root=repo)
+    assert m["preselected_sources"] == ["app/handlers/billing.py"]
+    assert m["related_finding_ids"] == ["F-004"]
+
+
+def test_locators_never_admit_files_outside_runtime_source(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    routes = [_route("/roles", "tests/test_grants.py"), _route("/roles", "../outside/grants.py")]
+    flagged = _finding("F-006", "test fixture", file="tests/test_grants.py", line=1)
+    flagged["source_check_id"] = "AUTHZ-003"
+    case = _locating(route_patterns=["/roles"], detector_rules=["AUTHZ-003"])
+    m = mac.match_case(case, [flagged], None, repo_root=repo, routes=routes)
+    assert m["structural_verdict"] == "not_applicable"
+    assert "no route matched" in m["reason"] and "AUTHZ-003" in m["reason"]
+
+
+def test_a_route_only_case_without_a_route_inventory_is_not_preselected(tmp_path: Path):
+    m = mac.match_case(_locating(route_patterns=["*role*"]), [], None, repo_root=_located_repo(tmp_path), routes=None)
+    assert m["structural_verdict"] == "not_applicable"
+    assert m["reason"] == "route inventory unavailable"
+
+
+def test_any_locator_suffices_while_required_signals_still_gate(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    routes = [_route("/admin/roles", "app/handlers/grants.py")]
+    case = _locating(
+        route_patterns=["*role*"], path_patterns=["**/permissions/**"], required_signals=["has_role_concept"]
+    )
+    assert (
+        mac.match_case(case, [], {"has_role_concept"}, repo_root=repo, routes=routes)["structural_verdict"]
+        == "candidate"
+    )
+    assert mac.match_case(case, [], {"has_auth_surface"}, repo_root=repo, routes=routes)["structural_verdict"] == (
+        "not_applicable"
+    )
+
+
+def test_cli_reads_routes_from_the_route_inventory(tmp_path: Path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps({"routes": [_route("/x/roles", "app/a.py"), {"path": 3}, "bad"]}), encoding="utf-8"
+    )
+    assert mac.load_routes(tmp_path) == [_route("/x/roles", "app/a.py")]
+    assert mac.load_routes(tmp_path / "missing") is None
+
+
+def _candidates(n: int) -> list[dict]:
+    return [
+        {
+            "abuse_case_id": f"REPO-AC-{100 + i}",
+            "kind": "descriptive",
+            "structural_verdict": "candidate",
+            "related_finding_ids": [],
+            "preselected_sources": ["a"] * i,
+        }
+        for i in range(n)
+    ]
+
+
+def test_descriptive_limits_follow_depth_and_record_omissions():
+    limits = {
+        "descriptive_candidates_standard": 2,
+        "descriptive_candidates_thorough": 4,
+        "descriptive_candidates_explicit": 1,
+        "descriptive_candidates_derived": 1,
+    }
+    for depth, expected in (("quick", 0), ("standard", 2), ("thorough", 4)):
+        matches = _candidates(5)
+        mac.apply_descriptive_limits(matches, set(), depth, limits)
+        kept = [m for m in matches if m["structural_verdict"] == "candidate"]
+        assert len(kept) == expected, depth
+        # Strongest preselection evidence wins.
+        assert {m["abuse_case_id"] for m in kept} == {f"REPO-AC-{100 + i}" for i in range(4, 4 - expected, -1)}
+        omitted = [m for m in matches if m["structural_verdict"] == "not_performed"]
+        assert len(omitted) == 5 - expected and all(m["reason"] for m in omitted)
+
+
+@pytest.mark.parametrize(("depth", "expected"), [("quick", 0), ("standard", 0), ("thorough", 2)])
+def test_derived_cases_run_only_at_thorough_within_their_own_limit(depth: str, expected: int):
+    """Model-derived cases neither take library slots nor run below thorough."""
+    limits = {
+        "descriptive_candidates_standard": 1,
+        "descriptive_candidates_thorough": 1,
+        "descriptive_candidates_explicit": 1,
+        "descriptive_candidates_derived": 2,
+    }
+    matches = _candidates(2) + [
+        {**m, "abuse_case_id": f"MODEL-AC-00{i}"} for i, m in enumerate(_candidates(3), start=1)
+    ]
+    derived = {m["abuse_case_id"] for m in matches if m["abuse_case_id"].startswith("MODEL-AC-")}
+    mac.apply_descriptive_limits(matches, set(), depth, limits, derived)
+    kept = [m["abuse_case_id"] for m in matches if m["structural_verdict"] == "candidate"]
+    assert len([cid for cid in kept if cid in derived]) == expected
+    assert len([cid for cid in kept if cid not in derived]) == (0 if depth == "quick" else 1)
+    assert all(m["reason"] for m in matches if m["structural_verdict"] == "not_performed")
+
+
+def test_explicit_request_runs_at_quick_depth_even_without_preselection():
+    limits = {
+        "descriptive_candidates_standard": 0,
+        "descriptive_candidates_thorough": 0,
+        "descriptive_candidates_explicit": 1,
+        "descriptive_candidates_derived": 1,
+    }
+    matches = _candidates(1)
+    matches[0]["structural_verdict"] = "not_applicable"
+    matches[0]["reason"] = "required signal(s) absent: has_role_concept"
+    second = dict(_candidates(1)[0], abuse_case_id="REPO-AC-200")
+    matches.append(second)
+    mac.apply_descriptive_limits(matches, {"REPO-AC-100", "REPO-AC-200"}, "quick", limits)
+    verdicts = {m["abuse_case_id"]: m["structural_verdict"] for m in matches}
+    assert sorted(verdicts.values()) == ["candidate", "not_performed"]
+    assert all(m["requested"] for m in matches)
+    assert "explicitly requested" in next(m["reason"] for m in matches if m["abuse_case_id"] == "REPO-AC-100")
+
+
+def test_probe_cases_are_untouched_by_descriptive_limits():
+    probe = {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"}
+    mac.apply_descriptive_limits(
+        [probe],
+        set(),
+        "quick",
+        {
+            "descriptive_candidates_standard": 0,
+            "descriptive_candidates_thorough": 0,
+            "descriptive_candidates_explicit": 0,
+            "descriptive_candidates_derived": 1,
+        },
+    )
+    assert probe == {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"}
+
+
+def _dstep(n, verdict, file="src/roles/assign.ts", line=3, excerpt="user.roles.push(req.body.role);"):
+    return {
+        "step": n,
+        "verdict": verdict,
+        "state": "decided",
+        "reason": "r",
+        "evidence": {"file": file, "line": line, "excerpt": excerpt},
+    }
+
+
+def test_descriptive_evidence_admission(tmp_path: Path):
+    repo = _repo(tmp_path)
+    verdict = {
+        "abuse_case_id": "REPO-AC-020",
+        "step_verdicts": [
+            _dstep(1, "confirmed"),
+            _dstep(2, "blocked", excerpt="checkDelegation(req.user, role)"),
+            _dstep(3, "confirmed"),
+        ],
+    }
+    mac.admit_descriptive_evidence(verdict, 2, repo)
+    steps = verdict["step_verdicts"]
+    assert [s["step"] for s in steps] == [1, 2]
+    assert steps[0]["verdict"] == "confirmed"
+    assert steps[1]["verdict"] == "inconclusive"
+    assert steps[1]["evidence"] is None and steps[1]["rejected_evidence"]["excerpt"].startswith("checkDelegation")
+    assert steps[1]["reason"].startswith("evidence not admitted (excerpt does not occur near src/roles/assign.ts:3)")
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"file": "docs/roles/guide.md", "line": 1, "excerpt": "roles guide"},
+        {"file": "../outside.ts", "line": 1, "excerpt": "x"},
+        {"file": "/etc/passwd", "line": 1, "excerpt": "root"},
+        {"file": "src/roles/assign.ts", "line": 0, "excerpt": "user"},
+        {"file": "src/roles/missing.ts", "line": 1, "excerpt": "x"},
+        None,
+    ],
+)
+def test_descriptive_evidence_outside_runtime_source_is_not_admitted(tmp_path: Path, evidence):
+    repo = _repo(tmp_path)
+    verdict = {"step_verdicts": [{"step": 1, "verdict": "refuted", "reason": "r", "evidence": evidence}]}
+    mac.admit_descriptive_evidence(verdict, 1, repo)
+    assert verdict["step_verdicts"][0]["verdict"] == "inconclusive"
+
+
+def test_cli_match_reports_rejected_repo_files_and_keeps_the_library(tmp_path: Path, capsys):
+    repo = _repo(tmp_path)
+    case_dir = repo / ".appsec" / "abuse-cases"
+    case_dir.mkdir(parents=True)
+    (case_dir / "broken.yaml").write_text("abuse_cases: [1]\n")
+    (case_dir / "business.yaml").write_text(yaml.safe_dump({"schema_version": 2, "abuse_cases": [_descriptive()]}))
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".threats-merged.json").write_text(json.dumps({"threats": []}))
+    assert mac.main(["match", "--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    doc = json.loads((out / ".abuse-case-matches.json").read_text())
+    assert [r["path"] for r in doc["rejected_case_files"]] == [".appsec/abuse-cases/broken.yaml"]
+    by_id = {m["abuse_case_id"]: m for m in doc["matches"]}
+    assert "AC-T-001" in by_id
+    assert by_id["REPO-AC-020"]["structural_verdict"] == "candidate"
+    assert "REJECTED: .appsec/abuse-cases/broken.yaml" in capsys.readouterr().err
+
+
+def test_cli_finalize_admits_descriptive_evidence_from_configured_repo(tmp_path: Path):
+    repo = _repo(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
+    match = mac.match_case(_descriptive(), [], None, repo_root=repo)
+    (out / ".abuse-case-matches.json").write_text(json.dumps({"matches": [match]}))
+    steps = [_dstep(1, "confirmed"), _dstep(2, "confirmed", excerpt="not in the file")]
+    (out / ".abuse-case-verdicts.json").write_text(
+        json.dumps({"verdicts": [{"abuse_case_id": "REPO-AC-020", "step_verdicts": steps}]})
+    )
+    assert mac.main(["finalize", "--output-dir", str(out)]) == 0
+    verdict = json.loads((out / ".abuse-case-verdicts.json").read_text())["verdicts"][0]
+    assert verdict["step_verdicts"][1]["verdict"] == "inconclusive"
+    assert verdict["chain_verdict"] == "inconclusive"
+
+
+def test_a_router_file_from_the_route_inventory_never_displaces_specific_files(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    (repo / "app" / "server.py").write_text("routes = []\n")
+    routes = [_route("/roles", "app/server.py")]
+    case = _locating(route_patterns=["/roles"], path_patterns=["**/grants.py"])
+    m = mac.match_case(case, [], None, repo_root=repo, max_descriptive_files=1, routes=routes)
+    assert m["preselected_sources"] == ["app/handlers/grants.py"]
+
+
+def test_a_business_case_without_a_locator_is_verified_only_on_request(tmp_path: Path):
+    # REQ-MOD-004: a business case is verified only when preselection finds code.
+    repo = _repo(tmp_path)
+    open_case = {"id": "REPO-AC-020", "kind": "descriptive", "title": "Self-approval", "check": "Check it."}
+    for case in (open_case, dict(open_case, scope_qualifier={"required_signals": ["has_role_concept"]})):
+        m = mac.match_case(case, [], {"has_role_concept"}, repo_root=repo)
+        assert m["structural_verdict"] == "not_applicable"
+        assert "declares no path, route, or detector locator" in m["reason"]
+    located = dict(open_case, scope_qualifier={"path_patterns": ["*role*"]})
+    assert mac.match_case(located, [], None, repo_root=repo)["structural_verdict"] == "candidate"

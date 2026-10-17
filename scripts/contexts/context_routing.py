@@ -359,7 +359,7 @@ def _render_artifact(pattern: str, component_id: str | None, candidate_id: str |
             raise ContextRoutingError(f"component-scoped context requires a valid component id for {pattern!r}")
         pattern = pattern.replace("{component_id}", component_id)
     if "{candidate_id}" in pattern:
-        if not candidate_id or not re.fullmatch(r"(?:AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}", candidate_id):
+        if not candidate_id or not re.fullmatch(r"(?:AC-T|AC-B|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}", candidate_id):
             raise ContextRoutingError(f"candidate-scoped context requires a valid candidate id for {pattern!r}")
         pattern = pattern.replace("{candidate_id}", candidate_id)
     return pattern
@@ -779,7 +779,7 @@ def action_already_issued(action: dict[str, Any], output_root: Path) -> bool:
     plan = _validate_plan_receipt(plan_path, receipt_path)
     run_id = action.get("dispatch_values", {}).get("run_id")
     mode = action.get("mode")
-    if not isinstance(run_id, str) or not run_id or mode not in {"full", "rebuild"}:
+    if not isinstance(run_id, str) or not run_id or mode not in {"full", "rebuild", "incremental"}:
         raise ContextRoutingError("context-v2 dispatch replay check requires a resolved run identity")
     expected_run_key = _sha256(_canonical_json_bytes({"mode": mode, "run_id": run_id}))
     if plan.get("runtime_generation") != "context-v2" or plan.get("run_key_sha256") != expected_run_key:
@@ -919,7 +919,7 @@ def resolve_action(
     output_root = output_root.resolve()
     run_id = action.get("dispatch_values", {}).get("run_id")
     mode = action.get("mode")
-    if not isinstance(run_id, str) or not run_id or mode not in {"full", "rebuild"}:
+    if not isinstance(run_id, str) or not run_id or mode not in {"full", "rebuild", "incremental"}:
         raise ContextRoutingError("context-v2 effective plan requires a resolved full/rebuild run identity")
     run_key_sha = _sha256(_canonical_json_bytes({"mode": mode, "run_id": run_id}))
     plan = _load_prior_plan(

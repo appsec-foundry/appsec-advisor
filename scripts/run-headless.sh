@@ -7,11 +7,13 @@
 #   ./scripts/run-headless.sh [options]
 #
 # Options:
-#   --repo <path>           Repository to analyze (default: current directory)
-#   --output <path>         Output directory (default: <repo>/docs/security)
+#   --repo <path|url>       Local repository or HTTPS/SSH Git URL (default: current directory)
+#                           Repeat to assess several checkouts as one system
+#   --output <path>         Output directory (default: the application's private
+#                           directory under the user data directory)
 #   --yaml                  (no-op) yaml is always written by default
-#   --no-yaml               Suppress threat-model.yaml
-#   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
+#   --no-yaml               Suppress security-assessment.yaml
+#   --sarif                 Also write security-assessment.sarif.json (SARIF v2.1.0)
 #   --threatdragon          Also write threat-model.threatdragon.json (ALPHA)
 #   --requirements [<src>]   Enable requirements check (optionally from an
 #                            http(s):// URL or a local file path)
@@ -67,17 +69,38 @@
 set -eu
 
 # ── Colors & helpers ────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Same rule as renderers/term_style.py: NO_COLOR disables, FORCE_COLOR enables,
+# TERM=dumb disables, otherwise colour only when the stream is a terminal — so
+# logs and CI output carry no escape sequences.
+color_on() {
+    [ -n "${NO_COLOR:-}" ] && return 1
+    [ -n "${FORCE_COLOR:-}" ] && [ "${FORCE_COLOR}" != "0" ] && return 0
+    [ "${TERM:-}" = "dumb" ] && return 1
+    [ -t "$1" ]
+}
+RED='' GREEN='' YELLOW='' CYAN='' DIM='' NC='' ERR_RED='' ERR_NC='' COLOR_FLAG='--color never'
+if color_on 1; then
+    case "${COLORTERM:-}" in
+        truecolor|24bit)
+            RED='\033[38;2;236;109;118m' GREEN='\033[38;2;143;209;158m'
+            YELLOW='\033[38;2;240;198;110m' CYAN='\033[38;2;124;196;228m'
+            DIM='\033[38;2;109;118;134m' ;;
+        *)  RED='\033[31m' GREEN='\033[32m' YELLOW='\033[33m' CYAN='\033[36m' DIM='\033[90m' ;;
+    esac
+    NC='\033[0m'
+    COLOR_FLAG='--color always'
+fi
+if color_on 2; then
+    ERR_RED='\033[31m' ERR_NC='\033[0m'
+fi
 
 info()  { printf "${CYAN}▶${NC} %s\n" "$*"; }
 ok()    { printf "${GREEN}✓${NC} %s\n" "$*"; }
 warn()  { printf "${YELLOW}⚠${NC} %s\n" "$*"; }
-err()   { printf "${RED}✗${NC} %s\n" "$*" >&2; }
+err()   { printf "${ERR_RED}✗${ERR_NC} %s\n" "$*" >&2; }
 die()   { err "$@"; exit 1; }
+# One "  Key : value" line of the start-up summary; the key is dimmed.
+row()   { _key="$1"; shift; printf "  ${DIM}%s${NC}%s\n" "$_key" "$*"; }
 
 usage() {
     cat <<'HELP'
@@ -86,46 +109,46 @@ Usage: run-headless.sh [options]
 Run the AppSec plugin non-interactively via Claude Code's headless mode.
 
 Options:
-  --repo <path>              Repository to analyze (default: current directory)
-  --output <path>            Output directory (default: <repo>/docs/security)
-  --yaml                     (no-op) yaml is always written by default
-  --no-yaml                  Suppress threat-model.yaml output
-  --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
-  --threatdragon             Also write threat-model.threatdragon.json
+  --repo <path|url>          Local repository or HTTPS/SSH Git URL (default: current directory)
+                             Repeat --repo to assess several repositories as one
+                             system; this requires --output outside every checkout
+                             and --hard-budget
+  --output <path>            Output directory (default: the application's private
+                             directory under the user data directory)
+  --migrate-legacy           Import a finished assessment from <repo>/docs/security
+                             first; its files there stay
+  --ignore-legacy            Start without that assessment; a run that finds one
+                             and has neither option stops
+  --sarif                    Also write security-assessment.sarif.json (SARIF v2.1.0)
+  --threatdragon             Also write security-assessment.threatdragon.json
                              (OWASP Threat Dragon v2 — ALPHA, opt-in only)
+  --pdf, --html              Also write security-assessment.pdf / .html
+  --pentest-tasks            Also write pentest-tasks.yaml
+  --slug [<value>]           Also write a copy set named security-assessment-<value>.*
+                             (1-64 of A-Z a-z 0-9 . _ -); bare --slug picks a
+                             random value
   --requirements [<src>]     Enable requirements check, optionally from an
                              http(s):// URL or a local file path
   --no-requirements          Skip requirements even when enabled in config
   --context <src>            Business context for this run: an http(s):// URL or
                              a file path. Optional; applies to this run only —
                              persist it by committing docs/security/business-context.md
-  --dry-run                  Unsupported by the compact runtime; exits before dispatch
-  --incremental              Unsupported by the compact runtime; exits before dispatch
-  --full                     Force full scan even when prior output exists
-  --rerender                 Re-render Stage 2 + re-run Stage 3 QA from the
-                             EXISTING Stage-1 fragments (no Stage 1, no no-op).
-                             For fragment/renderer/QA changes; not for code changes.
-  --resume                   Unsupported; use --rerender or a fresh --rebuild
-  --base <ref>               Reserved for incremental mode, which is unsupported
-  --pr-mode                  Unsupported because incremental mode is unavailable
-  --fail-on <level>          Non-zero exit on new threats >= critical|high|medium
-  --no-qa                    Skip Stage-3 QA reviewer (faster CI runs)
-  --restore-from <path>      Unsupported because incremental mode is unavailable
-  --max-duration <seconds>   Abort the run if it exceeds the given duration
-  --soft-budget <usd>        Steer the run to this cost. A run that cannot fit
-                             does not start; a run that overruns still finishes.
-  --hard-budget <usd>        Kill the session at this cost, losing the report
-                             (API billing only). Defaults to 1.25 x the soft
-                             budget when only --soft-budget is given.
-  --clean-cache              Delete cache & transient files in \$OUTPUT_DIR; keeps
-                             the threat model and audit logs. Exits without running.
-  --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
-                             unless --force / CI=true). Exits without running.
-  --force                    Skip the interactive confirmation for --clean-all.
-                             With --full or --rebuild it also discards a
-                             completed Stage 1 that the run would otherwise
-                             offer to render with --rerender.
-  --model <model>            Override the session model (default: claude-sonnet-4-6, economy)
+  --skip-context             Use no business context, stored or supplied
+  --resume                   Continue an interrupted assessment, reusing its
+                             accepted steps
+  --rebuild                  Start the assessment over and reset its history
+  --fail-on <level>          Exit 20 when new findings reach critical|high|medium
+  --max-duration <seconds>   Cumulative deadline of the run (default 14400)
+  --component-workers <N>    Analyze 1-4 components concurrently (default 3)
+  --hard-budget <usd>        Total model-cost limit; required unless the run is
+                             launched interactively
+  --soft-budget <usd>        Deprecated: a limit of 1.25 x this value
+  --model <model>            Run every model role on this model
+  --stride-model, --triage-model, --merger-model <model>
+                             Override one role's model
+  Refused (full assessments only): --incremental, --rerender, --dry-run, --base,
+                             --pr-mode, --restore-from, --clean-cache, --clean-all,
+                             --max-wall-time and a free-text focus
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
@@ -153,6 +176,10 @@ Environment:
   APPSEC_CLAUDE_EXECUTABLE   Claude CLI or wrapper executable (default: claude).
                               The value is one executable, not a shell command.
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
+  APPSEC_GIT_TOKEN           HTTPS Git token; never put credentials in --repo URLs.
+  APPSEC_GIT_USERNAME        Token username (default: git).
+  APPSEC_GIT_SSH_KEY_FILE    Existing SSH private key file; SSH_AUTH_SOCK is also supported.
+                             Git URLs require an explicit --output directory.
   CI=true                    Enables CI mode (skips stale-lock wait, bumps caches,
                              adjusts defaults for non-interactive runners)
 HELP
@@ -171,6 +198,23 @@ PLUGIN_DIR="${CLAUDE_PLUGIN_DIR:-"$(dirname "$SCRIPT_DIR")"}"
 if [ ! -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]; then
     die "Plugin not found at $PLUGIN_DIR — set CLAUDE_PLUGIN_DIR or run from the appsec-advisor repo root"
 fi
+
+# Provision URL selections before either the single- or multi-repository route.
+# The Python owner keeps the checkouts alive until the child exits and cleans
+# them on failure or interruption. Re-entry uses only local paths.
+_repo_value=0
+for _arg in "$@"; do
+    if [ "$_repo_value" = "1" ]; then
+        case "$_arg" in
+            /*|./*|../*) : ;;
+            *:*) exec python3 "$PLUGIN_DIR/scripts/runtime/remote_repositories.py" "$@" ;;
+        esac
+    fi
+    _repo_value=0
+    [ "$_arg" != "--repo" ] || _repo_value=1
+done
+# These variables belong only to checkout provisioning, never to model hosts.
+unset APPSEC_GIT_TOKEN APPSEC_GIT_USERNAME APPSEC_GIT_SSH_KEY_FILE
 
 # ── Read external context config ────────────────────────────────────
 CONFIG_FILE="$PLUGIN_DIR/config.json"
@@ -206,6 +250,34 @@ else
     BILLING_MODE="subscription"
 fi
 
+# ── Assessment ────────────────────────────────────────────────────
+# Every assessment runs through the controller, which runs every stage itself
+# through tool-less model exchanges, so no headless orchestrator session is
+# started. Two or more --repo selections assess the checkouts as one system;
+# without --repo the current directory is the repository. The arguments travel
+# as argv, so paths with spaces or shell metacharacters stay literal data.
+# A requirements audit is the standalone audit skill, not an assessment, and
+# stays on the session path below.
+REPO_COUNT=0
+REQUIREMENTS_AUDIT=""
+for _a in "$@"; do
+    case "$_a" in
+        --repo) REPO_COUNT=$((REPO_COUNT + 1)) ;;
+        --audit-requirements|--check-requirements) REQUIREMENTS_AUDIT="1" ;;
+    esac
+done
+if [ -z "$REQUIREMENTS_AUDIT" ]; then
+    if [ "$BILLING_MODE" = "subscription" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        AUTH_JSON=$("$CLAUDE_EXECUTABLE" auth status 2>/dev/null) || AUTH_JSON="{}"
+        if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
+            die "Not authenticated. Run 'claude auth login', set CLAUDE_CODE_OAUTH_TOKEN, or export ANTHROPIC_API_KEY."
+        fi
+    fi
+    [ "$REPO_COUNT" -eq 0 ] && set -- --repo "$PWD" "$@"
+    export APPSEC_CLAUDE_EXECUTABLE="$CLAUDE_EXECUTABLE"
+    exec python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" assess -- "$@"
+fi
+
 # ── Parse arguments ─────────────────────────────────────────────────
 REPO_PATH=""
 OUTPUT_PATH=""
@@ -220,7 +292,7 @@ REASONING_TIER=""
 EMIT_RAW_JSON=0
 VERBOSE=""
 QUIET=""
-SKILL="create-threat-model"
+SKILL="audit-security-requirements"
 CATEGORY_FILTER=""
 SAVE_REPORT=""
 ASSESSMENT_DEPTH=""
@@ -261,6 +333,9 @@ fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo)
+            # Several selections were handed to the combined assessment above;
+            # keeping only the last value would silently drop a selection.
+            [ -z "$REPO_PATH" ] || die "--repo may be given only once in a single-repository run"
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
@@ -420,24 +495,6 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# The single runtime has no safe compact implementation for these modes. Stop
-# before resolving or creating the output directory, trust preflight, or model
-# dispatch. Host-level --max-duration/--max-budget remain independent guards.
-if [ "$SKILL" = "create-threat-model" ]; then
-    [ "$RESUME_REQUESTED" = "1" ] && die "--resume is not supported by the compact runtime. Use --rerender for validated Stage-1 artifacts or --rebuild to start again."
-    [ "$INCREMENTAL_REQUESTED" = "1" ] && die "--incremental is not supported by the compact runtime. Use --full or --rebuild."
-    if [ "$DRY_RUN_REQUESTED" = "1" ] && [ -z "$CLEAN_MODE" ]; then
-        die "--dry-run is not supported by the compact runtime. No scan was started."
-    fi
-    case "$UNSUPPORTED_RUNTIME_OPTION" in
-        --max-wall-time)
-            die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use a host-level limit instead." ;;
-        ?*)
-            die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use --full, --rebuild, or --rerender." ;;
-    esac
-    [ "${APPSEC_LIVE_PHASE:-}" = "1" ] && die "APPSEC_LIVE_PHASE=1 is not supported by the compact runtime."
-fi
-
 # ── Pre-flight auth check ────────────────────────────────────────────
 if [ "$BILLING_MODE" = "subscription" ]; then
     if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
@@ -462,8 +519,8 @@ fi
 # ~30% fewer tokens; the reasoning core is already 4.6-cost-pinned) — the single
 # biggest saving on an unattended run. Opt out with --model <id>. In API billing
 # mode a model MUST be explicit anyway (billed per-token), so this also satisfies
-# that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5,
-# APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/threat-modeler.md).
+# that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5-5,
+# APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/security-assessment.md).
 if [ -z "$MODEL" ]; then
     MODEL="claude-sonnet-4-6"
     info "Economy default: session model '$MODEL' (use --model to override)"
@@ -487,7 +544,7 @@ fi
 if [ "$BILLING_MODE" = "api" ]; then
     # Warn if spending is uncapped — easy to run up unexpected charges.
     if [ -z "$MAX_BUDGET" ]; then
-        warn "API billing mode active with no budget cap — consider --soft-budget <usd>"
+        warn "API billing mode active with no budget cap — consider --hard-budget <usd>"
     fi
 else
     # Subscription mode: the host's cut is not available; drop it. Only say so
@@ -512,33 +569,10 @@ if [ -n "$OUTPUT_PATH" ]; then
         *) OUTPUT_PATH="$(pwd)/$OUTPUT_PATH" ;;
     esac
 else
-    OUTPUT_PATH="$REPO_PATH/docs/security"
-fi
-
-# Resolve the effective mode with the same read-only owner used by the skill.
-# This catches automatic incremental selection from an existing baseline before
-# the headless Claude process is started and before this wrapper creates output.
-if [ "$SKILL" = "create-threat-model" ] && [ -z "$CLEAN_MODE" ]; then
-    # The budget and the depth decide admission too, so they have to reach the
-    # same read-only owner. Without them the wrapper would admit a run the
-    # controller refuses one step later, after the output directory exists.
-    ADMISSION_BUDGET_ARGS=""
-    [ -n "$SOFT_BUDGET" ] && ADMISSION_BUDGET_ARGS="--soft-budget $SOFT_BUDGET"
-    [ -n "$ASSESSMENT_DEPTH" ] && ADMISSION_BUDGET_ARGS="$ADMISSION_BUDGET_ARGS --assessment-depth $ASSESSMENT_DEPTH"
-    set +e
-    if [ -n "$RUNTIME_MODE_ARGS" ]; then
-        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" \
-            route -- $RUNTIME_MODE_ARGS $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
-    else
-        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" \
-            route -- $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
-    fi
-    ADMISSION_EXIT=$?
-    set -e
-    if [ "$ADMISSION_EXIT" -ne 0 ]; then
-        printf '%s\n' "$ADMISSION_RESULT" >&2
-        exit "$ADMISSION_EXIT"
-    fi
+    # The audit report belongs to the application's private directory outside
+    # the checkout, like an assessment; never fall back to docs/security.
+    OUTPUT_PATH="$(python3 "$PLUGIN_DIR/scripts/shared/assessment_location.py" destination --repo "$REPO_PATH" --create)" \
+        || die "Cannot resolve the private output directory for $REPO_PATH"
 fi
 
 mkdir -p "$OUTPUT_PATH" 2>/dev/null || die "Cannot create output directory: $OUTPUT_PATH"
@@ -624,26 +658,7 @@ if [ -n "$RESTORE_FROM" ]; then
 fi
 
 # ── Build the skill command ─────────────────────────────────────────
-if [ "$SKILL" = "create-threat-model" ]; then
-    PROMPT="/appsec-advisor:create-threat-model"
-
-    # Append --repo / --output if specified
-    [ -n "$REPO_PATH" ]   && PROMPT="$PROMPT --repo $REPO_PATH"
-    [ -n "$OUTPUT_PATH" ] && PROMPT="$PROMPT --output $OUTPUT_PATH"
-
-    [ "$NO_QA" = "1" ]   && PROMPT="$PROMPT --no-qa"
-
-    # The wrapper's --verbose is the skill's --verbose too. The resolved config
-    # gates the run summary's detail on it (per-stage timings, agent roster,
-    # token/cost); consuming the flag for the console tails alone left the two
-    # views on different settings, and the detail unreachable outside an
-    # interactive invocation.
-    [ -n "$VERBOSE" ]    && PROMPT="$PROMPT $VERBOSE"
-
-    # Append remaining flags
-    PROMPT="$PROMPT$SKILL_FLAGS"
-
-elif [ "$SKILL" = "audit-security-requirements" ]; then
+if [ "$SKILL" = "audit-security-requirements" ]; then
     PROMPT="/appsec-advisor:audit-security-requirements"
 
     # Category filter comes first (positional arg in the skill)
@@ -651,6 +666,9 @@ elif [ "$SKILL" = "audit-security-requirements" ]; then
 
     # Save flags
     [ -n "$SAVE_REPORT" ] && PROMPT="$PROMPT $SAVE_REPORT"
+
+    # The skill writes its verdict and reports where this wrapper reads them.
+    PROMPT="$PROMPT --output \"$OUTPUT_PATH\""
 
     # Pass any extra flags
     PROMPT="$PROMPT$SKILL_FLAGS"
@@ -721,10 +739,16 @@ export APPSEC_RUN_ID="run-$(date +%s)-$$"
 
 # ── Print summary ───────────────────────────────────────────────────
 echo ""
-info "AppSec Plugin — Headless Mode"
-echo "  Skill      : $SKILL"
-echo "  Billing    : $BILLING_MODE"
-echo "  Depth      : ${ASSESSMENT_DEPTH:-standard}"
+if [ -n "$NC" ]; then
+    python3 "$SCRIPT_DIR/renderers/term_style.py" logo $COLOR_FLAG "headless" 2>/dev/null \
+        || info "AppSec Plugin — Headless Mode"
+    printf "  ${DIM}%s${NC}\n" "────────────────────────────────────────────────────────────────"
+else
+    info "AppSec Plugin — Headless Mode"
+fi
+row "Skill      : " "$SKILL"
+row "Billing    : " "$BILLING_MODE"
+row "Depth      : " "${ASSESSMENT_DEPTH:-standard}"
 # Every model the run will use, grouped by model with the roles it drives.
 # A bare "Model: <session>" line read as "the whole assessment runs on this",
 # which is wrong and misleading in the direction that costs money: the session
@@ -735,28 +759,29 @@ MODEL_LINEUP=""
     --session "$MODEL" \
     ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
     --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
-[ -n "$MODEL_LINEUP" ]     && echo "  Models     : $MODEL_LINEUP"
+[ -n "$MODEL_LINEUP" ]     && row "Models     : " "$MODEL_LINEUP"
 # The roles behind each model are sub-agent dispatches, and a role that carries
 # no pin of its own inherits the session tier — so a run without an override
 # lists the session model twice over and looks like it has fewer models than it
 # uses. Naming the end-of-run table here closes that loop: what is listed is
 # what gets billed, and a missing model there means missing spend, not a
 # sub-agent the accounting skipped.
-[ -n "$MODEL_LINEUP" ]     && echo "               each role is a sub-agent dispatch on that model; the end-of-run cost table bills exactly these"
-echo "  Context    : $CONTEXT_INFO"
-echo "  Plugin     : $PLUGIN_DIR"
-[ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
-[ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
-[ -n "$SKILL_FLAGS" ]      && echo "  Flags      :$SKILL_FLAGS"
-[ -n "$REQUIREMENTS_INFO" ] && echo "  Requirements: $REQUIREMENTS_INFO"
+[ -n "$MODEL_LINEUP" ]     && row "             " "each role is a sub-agent dispatch on that model; the end-of-run cost table bills exactly these"
+row "Context    : " "$CONTEXT_INFO"
+row "Plugin     : " "$PLUGIN_DIR"
+[ -n "$REPO_PATH" ]        && row "Repository : " "$REPO_PATH"
+[ -n "$OUTPUT_PATH" ]      && row "Output     : " "$OUTPUT_PATH"
+[ -n "$SKILL_FLAGS" ]      && row "Flags      :" "$SKILL_FLAGS"
+[ -n "$REQUIREMENTS_INFO" ] && row "Requirements: " "$REQUIREMENTS_INFO"
 # One-line intake summary (req + blueprint counts, source names) when the
 # requirements source is a readable local file. Fails soft for URLs / config.
 [ -n "$REQUIREMENTS_SRC" ] && [ -f "$REQUIREMENTS_SRC" ] && \
     python3 "$SCRIPT_DIR/runtime/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
-[ -n "$SOFT_BUDGET" ]      && echo "  Soft budget: \$$SOFT_BUDGET (steers; the run still finishes)"
-[ -n "$MAX_BUDGET" ]       && echo "  Hard cut   : \$$MAX_BUDGET (kills the session)"
-[ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
-[ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
+[ -n "$SOFT_BUDGET" ]      && row "Soft budget: " "\$$SOFT_BUDGET (steers; the run still finishes)"
+[ -n "$MAX_BUDGET" ]       && row "Hard cut   : " "\$$MAX_BUDGET (kills the session)"
+[ -n "$CATEGORY_FILTER" ]  && row "Category   : " "$CATEGORY_FILTER"
+[ -n "$VERBOSE" ]          && row "Verbose    : " "real-time hook event log on stderr"
+[ -n "$NC" ]               && printf "  ${DIM}%s${NC}\n" "────────────────────────────────────────────────────────────────"
 echo ""
 
 # ── Opus-orchestrator advisory ──────────────────────────────────────
@@ -793,7 +818,7 @@ cleanup_tails() {
 }
 
 cleanup_live_tool_markers() {
-    _cleanup_dir="${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}"
+    _cleanup_dir="${RESULT_DIR:-$OUTPUT_PATH}"
     OUTPUT_DIR="$_cleanup_dir" python3 "$PLUGIN_DIR/scripts/runtime/agent_logger.py" \
         --clear-active-tool-calls >/dev/null 2>&1 || true
 }
@@ -825,7 +850,7 @@ start_progress_monitor() {
 
 if [ -n "$VERBOSE" ]; then
     # Determine log directory for tail -f
-    RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    RESULT_DIR="$OUTPUT_PATH"
     mkdir -p "$RESULT_DIR" 2>/dev/null || true
     LOG_FILE="$RESULT_DIR/.hook-events.log"
     RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
@@ -872,7 +897,7 @@ elif [ -z "$QUIET" ]; then
     # Default: lightweight live progress (milestone events only) so the run
     # isn't a silent black box. Use --verbose for the full firehose, --quiet
     # for no live output at all.
-    RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    RESULT_DIR="$OUTPUT_PATH"
     mkdir -p "$RESULT_DIR" 2>/dev/null || true
     LOG_FILE="$RESULT_DIR/.hook-events.log"
     RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
@@ -893,7 +918,7 @@ echo ""
 # is unaffected. Redirecting a plain `>` keeps claude a direct child, so the
 # process-group signal handling below (kill -SIG -$CLAUDE_PID) still works; a
 # pipe would make $! the reader's PID and break escalation.
-RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+RESULT_DIR="$OUTPUT_PATH"
 mkdir -p "$RESULT_DIR" 2>/dev/null || true
 # Hooks are separate processes of the Claude child. Export the resolved run
 # directory before launching that child so Stop, Bash, and other non-Agent
@@ -912,8 +937,9 @@ RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
 #      the host session only, so it is a lower bound and must never be shown
 #      as if it were the run's cost.
 print_phase_costs() {
+    # Captured, so the script cannot see the terminal; pass the decision down.
     _phase_table=$(python3 "$SCRIPT_DIR/runtime/cost_running_total.py" "$RESULT_DIR" \
-        --format phases 2>/dev/null || true)
+        --format phases $COLOR_FLAG 2>/dev/null || true)
     [ -n "$_phase_table" ] || return 0
     echo ""
     printf '%s\n' "$_phase_table"
@@ -921,7 +947,7 @@ print_phase_costs() {
 
 print_usage_summary() {
     [ -n "$RESULT_CAPTURE" ] || return 0
-    if python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+    if python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" $COLOR_FLAG 2>/dev/null; then
         # The model table is exact and covers the whole run; the phase table
         # below it is the floor the live view accumulated, and answers the one
         # question the exact figure cannot — which phase spent it.
@@ -1030,35 +1056,8 @@ on_terminate() {
 # also walked into an abort. Reused by both the Ctrl-C abort path and the
 # non-zero-exit failure path so the hint is never only on one.
 print_recovery_hint() {
-    _rh_dir="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
-    if [ "$SKILL" != "create-threat-model" ]; then
-        warn "Check the intermediate files in $_rh_dir; this run cannot be continued."
-        return
-    fi
-    _rerun_cmd() {  # $1 = mode flag to append
-        _cmd="$0"
-        for _a in $ORIG_ARGS; do
-            case "$_a" in
-                --resume|--full|--rebuild|--rerender|--incremental|--force) ;;
-                *) _cmd="$_cmd $_a" ;;
-            esac
-        done
-        printf '%s %s\n' "$_cmd" "$1"
-    }
-    # Same three tokens the controller's own need-render guard reads, matched
-    # independently so their order in the checkpoint line stays irrelevant.
-    _rh_cp="$_rh_dir/.appsec-checkpoint"
-    if [ -f "$_rh_cp" ] \
-            && grep -q 'phase=10b' "$_rh_cp" \
-            && grep -q 'status=completed' "$_rh_cp" \
-            && grep -q 'need_render=true' "$_rh_cp"; then
-        warn "Stage 1 finished before the run stopped — render it instead of re-analyzing:"
-        printf '    %s\n' "$(_rerun_cmd --rerender)"
-        printf '    %s   (discards the validated Stage-1 artifacts)\n' "$(_rerun_cmd '--rebuild --force')"
-        return
-    fi
-    warn "This runtime does not resume incomplete analysis — start fresh:"
-    printf '    %s\n' "$(_rerun_cmd --rebuild)"
+    _rh_dir="$OUTPUT_PATH"
+    warn "Check the intermediate files in $_rh_dir; this run cannot be continued."
 }
 
 # Every mode, including --quiet, owns an EXIT backstop. Signal handlers may
@@ -1091,6 +1090,11 @@ except OSError:
     os.setpgrp()
 os.execvp(sys.argv[1], sys.argv[1:])
 '
+# The audit skill inspects its working directory and takes no --repo, so the
+# session starts in the selected repository. Every later path is absolute.
+if [ "$SKILL" = "audit-security-requirements" ]; then
+    cd "$REPO_PATH" || die "Repository path does not exist: $REPO_PATH"
+fi
 if [ -n "$RESULT_CAPTURE" ]; then
     python3 -c "$SESSION_LAUNCHER" "$@" < /dev/null > "$RESULT_CAPTURE" &
 else
@@ -1146,6 +1150,9 @@ if [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ]; then
         esac
     fi
 fi
+# The completion summary reaches an interactive reader as a hook systemMessage,
+# which headless output does not carry; print the run's record here instead.
+python3 "$SCRIPT_DIR/runtime/completion_relay.py" --output-dir "$OUTPUT_PATH" $COLOR_FLAG 2>/dev/null || true
 
 # If the run was interrupted by Ctrl-C, stop here instead of proceeding to
 # artifact parsing — the user asked to abort.
@@ -1156,7 +1163,7 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
     # and `runtime/appsec_status.py --live` reports an unknown phase until the
     # heartbeat ages out — the process that took the lock is already gone.
     python3 "$PLUGIN_DIR/scripts/runtime/terminate_run.py" \
-        --output-dir "${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}" \
+        --output-dir "${RESULT_DIR:-$OUTPUT_PATH}" \
         --outcome interrupt --reason "operator interrupt (exit $EXIT_CODE)" \
         --run-id "$APPSEC_RUN_ID" \
         --repo-root "${REPO_PATH:-.}" --depth "${ASSESSMENT_DEPTH:-standard}" \
@@ -1169,7 +1176,7 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
 fi
 
 # ── Parse duration and files from log ──────────────────────────────
-RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+RESULT_DIR="$OUTPUT_PATH"
 
 # ── Foreign output directory (the lock was refused) ────────────────
 # `acquire_lock.lock_held_by_live_other_run` is the rule a run that was refused
@@ -1196,128 +1203,16 @@ if [ -f "$LOG_FILE" ]; then
     ASSESSMENT_DURATION=$(grep "ASSESSMENT_SUMMARY" "$LOG_FILE" | tail -1 | sed -n 's/.*duration=\([^ ]*\).*/\1/p')
 fi
 
-# ── Deterministic compose backstop (headless completion) ───────────
-# The in-controller _compose_if_ready backstop (orchestrator/orchestration_controller.py
-# `next`) only fires from an LLM finalize turn (SKILL-full-runtime.md §6). A
-# hard process-kill removes that turn — e.g. CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS
-# terminating `claude -p` while the parallel-render agents' fragments are on
-# disk but threat-model.md was never composed — so nothing invokes it and the
-# run leaves threat-model.yaml + a full .fragments/ set with no report. Invoke
-# `next` here from the shell so the compose is guaranteed however the process
-# ended. Self-gating: it only composes when the render fragments are present,
-# and is a no-op when threat-model.md already exists. Runs regardless of
-# EXIT_CODE so a killed-but-complete run is still salvaged.
-if [ "$SKILL" = "create-threat-model" ] \
-   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
-   && [ ! -s "$RESULT_DIR/threat-model.md" ]; then
-    info "threat-model.md missing but yaml present — running deterministic compose backstop"
-    python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" \
-        next --output-dir "$RESULT_DIR" >/dev/null 2>&1 || true
-    [ -s "$RESULT_DIR/threat-model.md" ] && ok "compose backstop produced threat-model.md"
-fi
-
-# Artifact gate (fail-closed): a create-threat-model run MUST leave a
-# composed threat-model.md. `claude -p` can exit 0 after a *graceful* stop that
-# produced no report (a broken-Bash environment aborts every script, so the
-# agent diagnoses and stops cleanly), and a bg-ceiling process-kill can leave
-# threat-model.yaml + fragments but no composed report. The compose backstop
-# above salvages the latter when the fragments are complete; this gate fails
-# closed when threat-model.md is still absent — a run must never report success
-# with no deliverable report. Checking md alone (not md-OR-yaml) closes the old
-# fail-open path where yaml-without-md was reported as "completed successfully".
-if [ "$SKILL" = "create-threat-model" ]; then
-    if [ ! -s "$RESULT_DIR/threat-model.md" ]; then
-        err "No threat-model.md in $RESULT_DIR — treating as failure (fail-closed)."
-        [ "$EXIT_CODE" -eq 0 ] && EXIT_CODE=1
-    fi
-fi
-
-# ── SARIF canonical-name backstop ──────────────────────────────────
-# SARIF is deterministic from threat-model.yaml (scripts/exporters/export_sarif.py), but
-# the LLM finalization that invokes it can write the artefact under a
-# non-canonical name (observed 2026-06-18: threat-model.sarif, missing the
-# .json suffix) or skip it. Every downstream consumer — CI upload,
-# model/publish_threat_model.py, the e2e asserts — pins threat-model.sarif.json. When
-# --sarif was requested and the canonical file is absent, regenerate it from
-# the yaml so the artefact name can never depend on LLM behaviour.
-if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
-   && printf '%s' "$SKILL_FLAGS" | grep -q -- '--sarif' \
-   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
-   && [ ! -f "$RESULT_DIR/threat-model.sarif.json" ]; then
-    if python3 "$SCRIPT_DIR/exporters/export_sarif.py" \
-            --threat-model "$RESULT_DIR/threat-model.yaml" \
-            --output "$RESULT_DIR/threat-model.sarif.json" >/dev/null 2>&1; then
-        rm -f "$RESULT_DIR/threat-model.sarif"
-        info "SARIF backstop wrote $RESULT_DIR/threat-model.sarif.json from yaml"
-    fi
-fi
-
 # ── Threat Dragon canonical-name backstop ──────────────────────────
-# Same reasoning as the SARIF backstop above: the export is deterministic from
-# threat-model.yaml (scripts/exporters/export_threat_dragon.py), so the artefact must not
-# depend on whether the LLM finalization actually ran the substep.
-if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
-   && printf '%s' "$SKILL_FLAGS" | grep -q -- '--threatdragon' \
-   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
-   && [ ! -f "$RESULT_DIR/threat-model.threatdragon.json" ]; then
-    if python3 "$SCRIPT_DIR/exporters/export_threat_dragon.py" \
-            --threat-model "$RESULT_DIR/threat-model.yaml" \
-            --output "$RESULT_DIR/threat-model.threatdragon.json" >/dev/null 2>&1; then
-        info "Threat Dragon backstop wrote $RESULT_DIR/threat-model.threatdragon.json from yaml"
-    fi
-fi
 
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     ok "Assessment completed successfully."
     [ -n "$ASSESSMENT_DURATION" ] && ok "Duration: $ASSESSMENT_DURATION"
 
-    # List all written files with full paths
-    if [ "$SKILL" = "create-threat-model" ]; then
-        # Surface the Critical/High findings on the console (all modes).
-        python3 "$SCRIPT_DIR/runtime/run_summary.py" findings "$RESULT_DIR/threat-model.yaml" 2>/dev/null || true
-
-        echo ""
-        echo "  Output files:"
-        [ -f "$RESULT_DIR/threat-model.md" ]          && ok "  $RESULT_DIR/threat-model.md"
-        [ -f "$RESULT_DIR/threat-model.yaml" ]        && ok "  $RESULT_DIR/threat-model.yaml"
-        [ -f "$RESULT_DIR/threat-model.sarif.json" ]  && ok "  $RESULT_DIR/threat-model.sarif.json"
-        [ -f "$RESULT_DIR/threat-model.threatdragon.json" ] && ok "  $RESULT_DIR/threat-model.threatdragon.json"
-
-        echo "  Intermediate files:"
-        [ -f "$RESULT_DIR/.threat-modeling-context.md" ] && echo "    $RESULT_DIR/.threat-modeling-context.md"
-        [ -f "$RESULT_DIR/.recon-summary.md" ]           && echo "    $RESULT_DIR/.recon-summary.md"
-        [ -f "$RESULT_DIR/.dep-scan.json" ]              && echo "    $RESULT_DIR/.dep-scan.json"
-        for f in "$RESULT_DIR"/.stride-*.json; do
-            [ -f "$f" ] && echo "    $f"
-        done
-        echo "  Log files:"
-        [ -f "$RESULT_DIR/.agent-run.log" ]    && echo "    $RESULT_DIR/.agent-run.log"
-        [ -f "$RESULT_DIR/.hook-events.log" ]  && echo "    $RESULT_DIR/.hook-events.log"
-    fi
 else
     err "Assessment exited with code $EXIT_CODE"
     [ -n "$ASSESSMENT_DURATION" ] && echo "  Duration: $ASSESSMENT_DURATION"
-
-    # Surface diagnostics on the failure path. The rich Run Issues block is
-    # normally rendered by the LLM Completion turn, which never runs on an
-    # abort / bg-ceiling kill — so regenerate .run-issues.json from the logs
-    # and render it here deterministically. Delivery gap, not detection.
-    if [ "$SKILL" = "create-threat-model" ] && [ -f "$RESULT_DIR/.agent-run.log" ]; then
-        PLUGIN_DEV_FLAG=""
-        [ "${APPSEC_PLUGIN_DEV:-0}" = "1" ] && PLUGIN_DEV_FLAG="--plugin-dev"
-        # The terminator owns the aggregation on this path, and additionally
-        # releases the lock and closes the checkpoint the failed run left open.
-        # A controller abort already wrote its own verdict; that one stands.
-        python3 "$PLUGIN_DIR/scripts/runtime/terminate_run.py" \
-            --output-dir "$RESULT_DIR" --outcome failure \
-            --reason "wrapper exit $EXIT_CODE" --run-id "$APPSEC_RUN_ID" \
-            --repo-root "${REPO_PATH:-.}" \
-            --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
-        python3 "$PLUGIN_DIR/scripts/renderers/render_completion_summary.py" \
-            --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
-            $PLUGIN_DEV_FLAG 2>/dev/null || true
-    fi
 
     # Recovery hint — print a full, paste-ready fresh-run command without an
     # unsupported mode flag.
@@ -1339,58 +1234,6 @@ print_usage_summary
 if [ "$EXIT_CODE" -eq 0 ] && [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ] && [ -d "$RESULT_DIR" ]; then
     python3 "$PLUGIN_DIR/scripts/model/persist_run_baseline.py" \
         --output-dir "$RESULT_DIR" --cost-from-result "$RESULT_CAPTURE" --quiet 2>/dev/null || true
-fi
-
-# ── Exact-value secret redaction ───────────────────────────────────
-# Pattern-based masking (upstream + postscan below) only neutralises a secret
-# in the form it can match; an LLM author who copies a raw secret VALUE into
-# prose evades every pattern (2026-06-28 e2e leak). This deterministic pass
-# scans the repo SOURCE for secret values and exact-string-replaces them across
-# every artifact (md/yaml/sarif/html + .fragments + the JSON data pipeline),
-# prose included. Runs on every depth; --write-scan-json guarantees the
-# .qa-secret-scan.json gate artifact exists. Fails closed if a raw value somehow
-# survives redaction.
-if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
-    REDACT_SCRIPT="$PLUGIN_DIR/scripts/validators/redact_known_secrets.py"
-    if [ -f "$REDACT_SCRIPT" ]; then
-        if ! python3 "$REDACT_SCRIPT" --repo-root "${REPO_PATH:-.}" --output-dir "$OUTPUT_PATH" --write-scan-json; then
-            err "exact-value secret redaction left a residual raw secret — see stderr above"
-            EXIT_CODE=21
-        fi
-    fi
-fi
-
-# ── Post-scan unmasked-secret check ────────────────────────────────
-# Runs scripts/validators/postscan_secret_check.py over the rendered report and
-# headline intermediates. The rendered report + yaml are already masked
-# deterministically upstream, but the LLM-authored intermediates
-# (.recon-summary.md etc.) were only masked if the agent remembered to —
-# so `--mask` runs the deterministic mask_file twin over every candidate
-# first, neutralising any kept secret value (e.g. a `-----BEGIN PRIVATE
-# KEY-----` marker the agent left in a "masked" table cell). The scan then
-# verifies and only fails if masking could not neutralise something.
-# Always-on so the trusted-mode default also gets the protection.
-if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
-    POSTSCAN_SCRIPT="$PLUGIN_DIR/scripts/validators/postscan_secret_check.py"
-    if [ -f "$POSTSCAN_SCRIPT" ]; then
-        if ! python3 "$POSTSCAN_SCRIPT" --output-dir "$OUTPUT_PATH" --mask; then
-            err "post-scan secret check failed — see stderr above"
-            EXIT_CODE=21
-        fi
-    fi
-fi
-
-# ── Deterministic runtime-cleanup backstop ─────────────────────────
-# runtime/runtime_cleanup.py is supposed to run from the skill's Completion Summary,
-# but that is an LLM-compliance dependency that headless --full runs have been
-# observed to skip entirely (no RUNTIME_CLEANUP audit line, transient dirs left
-# behind). Run it here unconditionally on success so the audit line is always
-# emitted and the KEEP_RUNTIME_FILES opt-out is honoured deterministically.
-# Idempotent + non-fatal; with --keep-runtime-files it self-skips and preserves
-# every transient artifact (relied on by the E2E asserts).
-if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
-    python3 "$PLUGIN_DIR/scripts/runtime/runtime_cleanup.py" "$OUTPUT_PATH" \
-        --stage post-qa ${KEEP_RUNTIME_FILES_FLAG:-} 2>/dev/null || true
 fi
 
 # Seed the fail-on level from the active org profile when no --fail-on was

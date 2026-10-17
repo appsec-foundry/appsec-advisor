@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 model/threat_model_health.py — read-only three-check health probe for the threat
-model, used by ``/appsec-advisor:threat-model-health``.
+model, used by ``/appsec-advisor:security-assessment-health``.
 
 Three checks, in order:
 
   3. Active run         → ``check_state.classify()``  (lock + heartbeat + checkpoint)
   1. Freshness          → ``baseline_state check-changes`` + ``baseline_state dirty-set``
-                          (the SAME decision tree the create-threat-model skill
+                          (the SAME decision tree the appsec-analyzer skill
                           uses to fast-abort a run)
   2. Artifacts / debris → walk OUTPUT_DIR for transient files left behind by
                           a prior run; flag for ``/appsec-advisor:clean-run-state``
@@ -24,7 +24,7 @@ Priority: an active run (3) shadows everything else; a stale verdict (1)
 shadows debris (2); fresh + debris reports (2); fresh + clean reports (0).
 
 The freshness verdict is derived from the same Python machinery the
-create-threat-model skill uses for its pre-check, so the answers are
+appsec-analyzer skill uses for its pre-check, so the answers are
 guaranteed consistent — no separate "is the model up to date?" heuristic
 that drifts away from "would the next run actually do anything?".
 """
@@ -50,6 +50,7 @@ from pathlib import Path
 # import-time side effects.
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
+from shared.artifact_names import ArtifactSetError, model_path, report_path  # noqa: E402
 
 try:
     from runtime.check_state import classify as _classify_run
@@ -62,7 +63,7 @@ else:
 
 # ---------------------------------------------------------------------------
 # Freshness — wraps `baseline/baseline_state.py check-changes` + `dirty-set` so the
-# verdict is exactly what the create-threat-model skill would do.
+# verdict is exactly what the appsec-analyzer skill would do.
 # ---------------------------------------------------------------------------
 
 # Verdict mapping:
@@ -98,7 +99,7 @@ def _run_baseline(args: list[str]) -> tuple[int, dict]:
 
 
 def check_freshness(output_dir: Path, repo_root: Path) -> dict:
-    """Mirror the create-threat-model pre-check decision tree.
+    """Mirror the appsec-analyzer pre-check decision tree.
 
     Returns a dict with at minimum:
       verdict       : "FRESH" | "STALE" | "NO_MODEL" | "UNKNOWN"
@@ -107,20 +108,22 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
       dirty_set     : the parsed cmd_dirty_set payload (or None)
       recommend     : "noop" | "incremental" | "full" | "rebuild" | "none"
     """
-    yaml_path = output_dir / "threat-model.yaml"
-    md_path = output_dir / "threat-model.md"
+    try:
+        yaml_path, md_path = model_path(output_dir), report_path(output_dir)
+    except ArtifactSetError as exc:
+        return {"verdict": "UNKNOWN", "reason": str(exc), "check_changes": {}, "dirty_set": None, "recommend": "none"}
     if not yaml_path.is_file():
         if md_path.is_file():
             return {
                 "verdict": "NO_MODEL",
-                "reason": "legacy threat-model.md without yaml — bootstrap full run required",
+                "reason": "report without a model — a full run is required",
                 "check_changes": {},
                 "dirty_set": None,
                 "recommend": "full",
             }
         return {
             "verdict": "NO_MODEL",
-            "reason": "no threat-model.yaml in output dir",
+            "reason": "no assessment model in the output directory",
             "check_changes": {},
             "dirty_set": None,
             "recommend": "full",
@@ -449,9 +452,9 @@ def render_text(payload: dict) -> str:
     rec = fr.get("recommend", "none")
     rec_text = {
         "noop": "no run needed — threat model is up to date",
-        "incremental": "next /appsec-advisor:create-threat-model would run incremental",
-        "full": "run /appsec-advisor:create-threat-model --full",
-        "rebuild": "run /appsec-advisor:create-threat-model --rebuild",
+        "incremental": "next /appsec-advisor:appsec-analyzer would run incremental",
+        "full": "run /appsec-advisor:appsec-analyzer --full",
+        "rebuild": "run /appsec-advisor:appsec-analyzer --rebuild",
         "none": "—",
     }.get(rec, rec)
     buf.append(f"      Recommendation: {rec_text}")

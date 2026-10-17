@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 ENGINE = REPO_ROOT / "scripts" / "analyzers/architecture_coverage_checks.py"
@@ -68,14 +69,11 @@ def _compiled_rule(**overrides) -> acc.CompiledRule:
         "domain": "AuthN",
         "control": "Test Control",
         "output": "control_only",
-        "family": "hard",
         "precondition_patterns": [],
         "positive_patterns": [],
         "cooccurrence_patterns": [],
         "cooccurrence_window": 0,
         "exculpatory_patterns": [],
-        "route_inventory_required": False,
-        "requires_management_surface": False,
         "route_requires": {},
         "forbidden_route_signals": {},
         "inventory_pattern": {},
@@ -326,6 +324,27 @@ def test_cors_wildcard_with_credentials_anti_pattern(tmp_path: Path) -> None:
     cors = [c for c in out["anti_pattern_candidates"] if c["rule_id"] == "ARCH-CORS-001"][0]
     assert "weakness_id" not in cors
     assert cors["architectural_theme"] == "SecureDefaults"
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        ("server.ts", "app.use(cors({ origin: '*' }));\n"),
+        ("app.py", 'CORS(app, origin="*")\n'),
+    ],
+)
+def test_cors_wildcard_without_credentials_no_anti_pattern(tmp_path: Path, name: str, source: str) -> None:
+    (tmp_path / name).write_text(source)
+    out = _run_engine(tmp_path)
+    v = _verdict(out, "ARCH-CORS-001")
+    assert v["status"] != "anti_pattern"
+    assert "ARCH-CORS-001" not in [c["rule_id"] for c in out["anti_pattern_candidates"]]
+
+
+def test_cooccurrence_window_without_any_cooccurrence_hit_keeps_nothing() -> None:
+    hits = acc.PatternHits()
+    hits.positive.append(("app.ts", 3, "POS"))
+    assert acc._cooccurrence_satisfied(hits, 8) == []
 
 
 def test_cors_specific_origin_no_anti_pattern(tmp_path: Path) -> None:
@@ -882,12 +901,11 @@ def test_generic_hard_rule_precondition_exculpatory_and_anti_pattern_branches(tm
 
 
 def test_generic_hypothesis_rule_precondition_exculpatory_and_positive_branches(tmp_path: Path) -> None:
-    pre_rule = _compiled_rule(family="hypothesis", precondition_patterns=[acc.re.compile("PRE")])
+    pre_rule = _compiled_rule(precondition_patterns=[acc.re.compile("PRE")])
     assert acc._evaluate_hypothesis_rule(pre_rule, tmp_path, None)["skip_reason"] == "no precondition signal in repo"
 
     (tmp_path / "app.ts").write_text("PRE\nSAFE\n", encoding="utf-8")
     exculpatory_rule = _compiled_rule(
-        family="hypothesis",
         precondition_patterns=[acc.re.compile("PRE")],
         positive_patterns=[acc.re.compile("POS")],
         exculpatory_patterns=[acc.re.compile("SAFE")],

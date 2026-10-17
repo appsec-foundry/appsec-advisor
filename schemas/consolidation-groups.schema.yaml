@@ -38,7 +38,11 @@ properties:
             bucketing.
         require_shared_sink:
           type: boolean
-          description: Require an explicit shared control scope or the same evidence file and line.
+          description: Require an explicit shared control scope, else the same data object (object_ref), else the same evidence file and line.
+        title_qualifier_field:
+          type: string
+          minLength: 1
+          description: Threat field whose shared value is appended to the survivor title in parentheses.
         split_by:
           type: array
           items:

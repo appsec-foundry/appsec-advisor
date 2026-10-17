@@ -358,7 +358,9 @@ def test_component_exposure_without_finding_ref_does_not_elevate(tmp_path: Path)
     assert not any(flag["type"] == "severity_reconciliation" for flag in flags["flags"])
 
 
-def test_inferred_external_boundary_ref_is_rejected_before_ranking(tmp_path: Path) -> None:
+def test_inferred_external_boundary_ref_is_kept_but_never_elevates(tmp_path: Path) -> None:
+    """TB-14: the reference stays so the inferred boundary remains refutable,
+    and elevation still requires a confirmed boundary."""
     _write_yaml(
         tmp_path / "threat-model.yaml",
         _external_boundary_yaml(confidence="inferred"),
@@ -369,8 +371,9 @@ def test_inferred_external_boundary_ref_is_rejected_before_ranking(tmp_path: Pat
     assert res.returncode == 0, res.stderr
     finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
     assert finding["effective_severity"] == "Medium"
+    assert finding["boundary_refs"]
     flags = json.loads((tmp_path / ".triage-flags.json").read_text())
-    assert flags["ranking"]["reconciliation_summary"]["boundary_refs_rejected_before_ranking"] == 1
+    assert flags["ranking"]["reconciliation_summary"]["boundary_refs_rejected_before_ranking"] == 0
 
 
 def test_external_boundary_elevation_is_recomputed_and_stale_flag_removed(tmp_path: Path) -> None:
@@ -882,6 +885,24 @@ def test_verified_chain_annotates_finding_end_to_end(tmp_path: Path) -> None:
     assert entry["effective_severity"] == "Critical"
     assert entry["chain_role"] == "keystone"
     assert entry["verified_chain_ids"] == ["AC-T-001"]
+
+
+@pytest.mark.parametrize("outcome", ["F-1", "F-2"], ids=["same-finding-twice", "two-findings"])
+def test_a_finding_lists_each_verified_chain_once(tmp_path: Path, outcome: str) -> None:
+    """Two steps of one chain may bind the same finding; it is one membership."""
+    tcr = _tcr()
+    threats = [
+        {"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "High", "primary_cwe": "CWE-94"},
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id=outcome)
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
+
+    fnd = tcr.compute_ranking(tmp_path)["views"]["top_findings"]["findings_ranked"]
+    for fid in {"F-1", outcome}:
+        assert next(f for f in fnd if f["id"] == fid)["verified_chain_ids"] == ["AC-T-001"]
 
 
 def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> None:

@@ -130,7 +130,7 @@ def test_candidate_projection_rejects_oversized_pattern_list() -> None:
 
 
 def test_default_library_candidates_project_without_schema_or_chain_loss(tmp_path: Path) -> None:
-    library = yaml.safe_load((ROOT / "data/abuse-cases/default-library.yaml").read_text())
+    library = yaml.safe_load((ROOT / "data/abuse-cases/technical.yaml").read_text())
     matches = []
     for case in library["abuse_cases"]:
         matches.append(
@@ -176,3 +176,112 @@ def test_default_library_candidates_project_without_schema_or_chain_loss(tmp_pat
             routing._counts(path.read_bytes(), record_count=len(projected["candidate"])),  # noqa: SLF001
             profile,
         )
+
+
+def _descriptive_match(repo: Path) -> dict:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import model.match_abuse_cases as matcher  # noqa: PLC0415
+
+    case = {
+        "id": "REPO-AC-020",
+        "kind": "descriptive",
+        "title": "Delegated administrator grants themselves a role",
+        "actor": "Delegated administrator",
+        "initial_access": "authenticated_high_priv",
+        "goal": "Obtain a role outside the delegation.",
+        "boundary": "Roles the delegation permits.",
+        "steps": ["Assign a role to themselves.", "Choose a role outside the delegation."],
+        "expected_controls": ["The assignment checks the delegation."],
+        "exclusions": ["Administrators who may assign every role."],
+        "scope_qualifier": {"path_patterns": ["src/roles/*"]},
+    }
+    finding = {
+        "t_id": "F-007",
+        "title": "Role field accepted from body",
+        "cwe": "CWE-915",
+        "evidence": {"file": "src/roles/assign.ts", "line": 3},
+    }
+    return matcher.match_case(case, [finding], None, repo_root=repo)
+
+
+def test_descriptive_candidate_projects_prose_sources_and_finding_windows(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text("a\nb\nuser.roles.push(req.body.role)\nc\n")
+    payload = json.dumps({"matches": [_descriptive_match(repo)]}).encode()
+    value = contexts.project_candidate(payload, "REPO-AC-020", repo_root=repo)
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    value["limits"]["serialized_bytes"] = 1
+    Draft202012Validator(schema).validate(value)
+    candidate = value["candidate"]
+    assert candidate["kind"] == "descriptive"
+    assert [s["label"] for s in candidate["steps"]] == [
+        "Assign a role to themselves.",
+        "Choose a role outside the delegation.",
+    ]
+    assert candidate["preselected_sources"] == ["src/roles/assign.ts"]
+    window = candidate["related_findings"][0]["source_window"]
+    assert "user.roles.push" in window["content"]
+    assert value["limits"]["source_chars"] == len(window["content"])
+    assert "probe" not in json.dumps(candidate)
+
+
+def test_an_open_case_reaches_the_verifier_as_its_check(tmp_path: Path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import model.match_abuse_cases as matcher  # noqa: PLC0415
+
+    check = "Check whether a tenant administrator can change users of another tenant."
+    case = {"id": "REPO-AC-022", "kind": "descriptive", "title": "Tenant isolation", "check": check}
+    case["scope_qualifier"] = {"path_patterns": ["*tenant*"]}  # preselection needs a locator hit
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "tenants.ts").write_text("export function updateUser() {}\n")
+    match = matcher.match_case(case, [], None, repo_root=tmp_path)
+    assert match["structural_verdict"] == "candidate"
+    payload = json.dumps({"matches": [match]}).encode()
+    value = contexts.project_candidate(payload, "REPO-AC-022", repo_root=tmp_path)
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    value["limits"]["serialized_bytes"] = 1
+    Draft202012Validator(schema).validate(value)
+    candidate = value["candidate"]
+    assert candidate["steps"] == [{"step": 1, "label": check}]
+    assert (candidate["actor"], candidate["boundary"], candidate["expected_controls"]) == (None, None, [])
+
+
+def _abuse_candidate_limits() -> dict:
+    bindings = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text())
+    return bindings["limit_profiles"]["abuse_candidate"]
+
+
+def test_descriptive_candidate_fits_the_dispatch_limits(tmp_path: Path):
+    """The controller counts candidate fields against ``max_items``; a
+    descriptive candidate over it aborted every abuse case of a run."""
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text("a\nb\nuser.roles.push(req.body.role)\nc\n")
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps({"matches": [_descriptive_match(repo)]}))
+    path = contexts.write_candidate(tmp_path, "REPO-AC-020", repo_root=repo)
+    projected = json.loads(path.read_text())
+    routing._enforce_limits(  # noqa: SLF001
+        "abuse_cases.matches",
+        routing._counts(path.read_bytes(), record_count=len(projected["candidate"])),  # noqa: SLF001
+        _abuse_candidate_limits(),
+    )
+
+
+def test_every_candidate_shape_fits_the_item_limit():
+    """Adding a candidate field must not outgrow the dispatch item limit."""
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    widest = max(len(schema["$defs"][name]["properties"]) for name in ("probe_candidate", "descriptive_candidate"))
+    assert widest <= _abuse_candidate_limits()["max_items"]
+
+
+def test_descriptive_candidate_cannot_smuggle_probe_fields_past_the_schema(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text("x\n")
+    payload = json.dumps({"matches": [_descriptive_match(repo)]}).encode()
+    value = contexts.project_candidate(payload, "REPO-AC-020", repo_root=repo)
+    value["limits"]["serialized_bytes"] = 1
+    value["candidate"]["chain"] = []
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    assert list(Draft202012Validator(schema).iter_errors(value))

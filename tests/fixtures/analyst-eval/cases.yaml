@@ -1,0 +1,285 @@
+# Evaluation set of the threat analyst (scripts/validators/eval_analyst.py).
+#
+# Each case builds a small neutral repository: `base` files form the first
+# commit, `change` files are written on top as an uncommitted change (a review
+# case) or are absent (a design case). `expect` drives the deterministic score:
+#   weakness: the seeded weakness; a hit needs a finding or assumption that
+#             cites `file` and matches one `keywords` entry or the `cwe`.
+#   benign:   true when the change must produce no finding of medium or higher.
+#   themes:   design cases; each entry is a group of alternative keywords, and
+#             a group counts when any of them occurs in scenarios,
+#             recommendations, assumptions, or questions.
+schema_version: 1
+projects:
+  notes-js:
+    package.json: |
+      {"name": "notes-service", "version": "1.0.0", "main": "app.js"}
+    app.js: |
+      const express = require('express')
+      const csrf = require('./middleware/csrf')
+      const notes = require('./routes/notes')
+      const users = require('./routes/users')
+      const app = express()
+      app.use(express.json())
+      app.use(csrf())
+      app.use('/notes', notes)
+      app.use('/users', users)
+      module.exports = app
+    middleware/auth.js: |
+      module.exports.requireUser = (req, res, next) => (req.user ? next() : res.status(401).end())
+      module.exports.requireAdmin = (req, res, next) => (req.user && req.user.role === 'admin' ? next() : res.status(403).end())
+    middleware/csrf.js: |
+      module.exports = () => (req, res, next) => {
+        if (req.method !== 'GET' && req.get('x-csrf-token') !== req.session.csrf) return res.status(403).end()
+        next()
+      }
+    routes/notes.js: |
+      const router = require('express').Router()
+      const { requireUser } = require('../middleware/auth')
+      const db = require('../db')
+      router.get('/:id', requireUser, async (req, res) => {
+        const note = await db.notes.find(req.params.id)
+        if (!note || note.ownerId !== req.user.id) return res.status(404).end()
+        res.json(note)
+      })
+      module.exports = router
+    routes/users.js: |
+      const router = require('express').Router()
+      const { requireUser, requireAdmin } = require('../middleware/auth')
+      const db = require('../db')
+      const log = require('../log')
+      router.post('/login', async (req, res) => {
+        const user = await db.users.verify(req.body.name, req.body.password)
+        log.info(`login attempt for ${req.body.name}`)
+        res.json({ ok: Boolean(user) })
+      })
+      router.patch('/me', requireUser, async (req, res) => {
+        const { displayName } = req.body
+        res.json(await db.users.update(req.user.id, { displayName }))
+      })
+      router.delete('/:id', requireAdmin, async (req, res) => {
+        await db.users.remove(req.params.id)
+        res.status(204).end()
+      })
+      module.exports = router
+    db.js: |
+      module.exports = { notes: { find: async () => null }, users: { verify: async () => null, update: async () => ({}), remove: async () => {} } }
+    log.js: |
+      module.exports = { info: (msg) => process.stdout.write(msg + '\n') }
+
+cases:
+  - id: review-object-ownership-removed
+    project: notes-js
+    change:
+      routes/notes.js: |
+        const router = require('express').Router()
+        const { requireUser } = require('../middleware/auth')
+        const db = require('../db')
+        router.get('/:id', requireUser, async (req, res) => {
+          const note = await db.notes.find(req.params.id)
+          if (!note) return res.status(404).end()
+          res.json(note)
+        })
+        module.exports = router
+    question: Can a signed-in user read another user's notes?
+    expect:
+      weakness: {file: routes/notes.js, cwe: [639, 862, 285], keywords: [owner, another user, other user, idor, object-level]}
+
+  - id: review-url-fetch-added
+    project: notes-js
+    change:
+      routes/notes.js: |
+        const router = require('express').Router()
+        const { requireUser } = require('../middleware/auth')
+        const db = require('../db')
+        router.get('/preview', requireUser, async (req, res) => {
+          const page = await fetch(req.query.url)
+          res.send(await page.text())
+        })
+        router.get('/:id', requireUser, async (req, res) => {
+          const note = await db.notes.find(req.params.id)
+          if (!note || note.ownerId !== req.user.id) return res.status(404).end()
+          res.json(note)
+        })
+        module.exports = router
+    expect:
+      weakness: {file: routes/notes.js, cwe: [918], keywords: [ssrf, server-side request, internal, metadata]}
+
+  - id: review-mass-assignment
+    project: notes-js
+    change:
+      routes/users.js: |
+        const router = require('express').Router()
+        const { requireUser, requireAdmin } = require('../middleware/auth')
+        const db = require('../db')
+        const log = require('../log')
+        router.post('/login', async (req, res) => {
+          const user = await db.users.verify(req.body.name, req.body.password)
+          log.info(`login attempt for ${req.body.name}`)
+          res.json({ ok: Boolean(user) })
+        })
+        router.patch('/me', requireUser, async (req, res) => {
+          res.json(await db.users.update(req.user.id, req.body))
+        })
+        router.delete('/:id', requireAdmin, async (req, res) => {
+          await db.users.remove(req.params.id)
+          res.status(204).end()
+        })
+        module.exports = router
+    expect:
+      weakness: {file: routes/users.js, cwe: [915, 269], keywords: [mass assignment, role, arbitrary field, req.body]}
+
+  - id: review-password-logged
+    project: notes-js
+    change:
+      routes/users.js: |
+        const router = require('express').Router()
+        const { requireUser, requireAdmin } = require('../middleware/auth')
+        const db = require('../db')
+        const log = require('../log')
+        router.post('/login', async (req, res) => {
+          const user = await db.users.verify(req.body.name, req.body.password)
+          log.info(`login attempt for ${req.body.name} with ${req.body.password}`)
+          res.json({ ok: Boolean(user) })
+        })
+        router.patch('/me', requireUser, async (req, res) => {
+          const { displayName } = req.body
+          res.json(await db.users.update(req.user.id, { displayName }))
+        })
+        router.delete('/:id', requireAdmin, async (req, res) => {
+          await db.users.remove(req.params.id)
+          res.status(204).end()
+        })
+        module.exports = router
+    expect:
+      weakness: {file: routes/users.js, cwe: [532, 312], keywords: [password, log, credential]}
+
+  - id: review-csrf-removed
+    project: notes-js
+    change:
+      app.js: |
+        const express = require('express')
+        const notes = require('./routes/notes')
+        const users = require('./routes/users')
+        const app = express()
+        app.use(express.json())
+        app.use('/notes', notes)
+        app.use('/users', users)
+        module.exports = app
+    expect:
+      weakness: {file: app.js, cwe: [352], keywords: [csrf, cross-site request]}
+
+  - id: review-admin-check-dropped
+    project: notes-js
+    change:
+      routes/users.js: |
+        const router = require('express').Router()
+        const { requireUser } = require('../middleware/auth')
+        const db = require('../db')
+        const log = require('../log')
+        router.post('/login', async (req, res) => {
+          const user = await db.users.verify(req.body.name, req.body.password)
+          log.info(`login attempt for ${req.body.name}`)
+          res.json({ ok: Boolean(user) })
+        })
+        router.patch('/me', requireUser, async (req, res) => {
+          const { displayName } = req.body
+          res.json(await db.users.update(req.user.id, { displayName }))
+        })
+        router.delete('/:id', requireUser, async (req, res) => {
+          if (req.get('x-ui-role') !== 'admin') return res.status(403).end()
+          await db.users.remove(req.params.id)
+          res.status(204).end()
+        })
+        module.exports = router
+    question: Can a regular user delete accounts?
+    expect:
+      weakness: {file: routes/users.js, cwe: [862, 863, 285, 639, 807], keywords: [admin, header, privilege, client-controlled, spoof]}
+
+  - id: review-benign-rename
+    project: notes-js
+    change:
+      routes/notes.js: |
+        const router = require('express').Router()
+        const { requireUser } = require('../middleware/auth')
+        const db = require('../db')
+        router.get('/:id', requireUser, async (req, res) => {
+          const found = await db.notes.find(req.params.id)
+          if (!found || found.ownerId !== req.user.id) return res.status(404).end()
+          res.json(found)
+        })
+        module.exports = router
+    expect: {benign: true}
+
+  - id: review-benign-length-check
+    project: notes-js
+    change:
+      routes/users.js: |
+        const router = require('express').Router()
+        const { requireUser, requireAdmin } = require('../middleware/auth')
+        const db = require('../db')
+        const log = require('../log')
+        router.post('/login', async (req, res) => {
+          const user = await db.users.verify(req.body.name, req.body.password)
+          log.info(`login attempt for ${req.body.name}`)
+          res.json({ ok: Boolean(user) })
+        })
+        router.patch('/me', requireUser, async (req, res) => {
+          const { displayName } = req.body
+          if (typeof displayName !== 'string' || displayName.length > 80) return res.status(400).end()
+          res.json(await db.users.update(req.user.id, { displayName }))
+        })
+        router.delete('/:id', requireAdmin, async (req, res) => {
+          await db.users.remove(req.params.id)
+          res.status(204).end()
+        })
+        module.exports = router
+    expect: {benign: true}
+
+  - id: design-support-export
+    project: notes-js
+    question: Support staff should be able to export a customer's notes as CSV from an internal tool.
+    expect:
+      themes: [[assigned, scope, which customer], [csv injection, formula], [audit, log], [bulk, rate, volume]]
+
+  - id: design-avatar-upload
+    project: notes-js
+    question: Users can upload a profile picture that other users see next to their notes.
+    expect:
+      themes: [[content type, mime, file type, magic], [size, dimension], [svg, script, xss], [storage, path, filename]]
+
+  - id: design-password-reset
+    project: notes-js
+    question: Add a password reset flow that emails a link to the user.
+    expect:
+      themes: [[expire, expiry, single-use, one-time], [enumerat], [rate, brute], [session, invalidate]]
+
+  - id: design-payment-webhook
+    project: notes-js
+    question: Receive webhooks from a payment provider to unlock premium notes after payment.
+    expect:
+      themes: [[signature, hmac], [replay, timestamp, idempot], [amount, verify with provider, server-side], [secret]]
+
+  - id: design-tenant-api-keys
+    project: notes-js
+    question: Organizations get API keys so their scripts can read and write notes of their members.
+    expect:
+      themes: [[hash, store], [scope, permission, least privilege], [rotat, revoc], [tenant, organization boundary, cross-tenant]]
+
+  - id: design-ticket-assistant
+    project: notes-js
+    question: Add an LLM assistant that answers support agents' questions using customers' notes.
+    expect:
+      themes: [[prompt injection, injected], [tenant, customer, access control, authoriz], [leak, disclos, exfiltrat], [tool, action]]
+
+  - id: design-admin-impersonation
+    project: notes-js
+    question: Admins can impersonate a user to reproduce support problems.
+    expect:
+      themes: [[audit, log], [consent, notify], [time-box, expire, duration], [restrict, cannot change password, read-only, sensitive action]]
+
+  - id: design-share-links
+    project: notes-js
+    question: Users can create public links that let anyone with the link read a note.
+    expect:
+      themes: [[random, unguessable, entropy], [expire, revoc], [index, search engine, referrer], [rate, enumerat]]

@@ -26,7 +26,6 @@ def test_shipped_groups_resolve_to_existing_unique_test_files(group):
 def test_report_group_includes_section_presence_and_fragment_consumers():
     assert {
         "tests/test_section_condition_wiring.py",
-        "tests/test_section_integrity.py",
         "tests/test_fragment_invariant_parity.py",
         "tests/test_e2e_pipeline.py",
     } <= set(runner.select_tests("report"))
@@ -184,7 +183,7 @@ def test_wrapper_requires_a_name_after_group(fake_pytest_env):
 def test_every_test_has_an_explicit_group_or_manual_role():
     grouped = {path for group in runner.GROUPS for path in runner.select_tests(group)}
     discovered = {path.relative_to(runner.ROOT).as_posix() for path in (runner.ROOT / "tests").rglob("test_*.py")}
-    assert discovered == grouped | {"tests/test_full_run_e2e.py"}
+    assert discovered == grouped | set(runner.MANUAL_TESTS)
 
 
 def test_scanner_group_includes_architecture_producers_and_bridge():
@@ -216,7 +215,7 @@ def test_every_python_source_has_a_reviewed_route_or_full_suite_reason():
         for path in scripts.rglob("*.py")
         if not {"node_modules", "__pycache__"} & set(path.relative_to(scripts).parts)
     }
-    assert "scripts/orchestrator/stage2_state.py" in sources
+    assert "scripts/orchestrator/assessment_stage2.py" in sources
     assert sources <= runner.SOURCE_TESTS.keys() | runner.FULL_SUITE_SOURCES.keys()
     assert not runner.SOURCE_TESTS.keys() & runner.FULL_SUITE_SOURCES.keys()
     for path, reason in runner.FULL_SUITE_SOURCES.items():
@@ -424,6 +423,17 @@ def test_empty_diff_selects_no_tests(selection_repo):
     assert result.reasons == ("no changed paths; no tests selected",)
 
 
+def test_task_paths_normalize_relative_and_absolute_names(tmp_path):
+    names = ["./scripts/emitter.py", str(tmp_path / "scripts/emitter.py"), "docs/../tests/test_reader.py"]
+    assert runner.task_paths(names, tmp_path) == ["scripts/emitter.py", "tests/test_reader.py"]
+
+
+@pytest.mark.parametrize("name", ["../outside.py", "/elsewhere/scripts/emitter.py"])
+def test_task_paths_reject_names_outside_the_repository(tmp_path, name):
+    with pytest.raises(ValueError, match="outside the repository"):
+        runner.task_paths([name], tmp_path)
+
+
 def test_escaped_test_symlink_is_rejected(selection_repo, tmp_path):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
     outside.touch()
@@ -454,6 +464,50 @@ def test_make_changed_targets_share_runner_and_validate_inventory():
     assert 'scripts/run_tests.py --list --changed-against "dev"' in result.stdout
     assert 'scripts/run_tests.py --changed-against "dev" all -q' in result.stdout
     assert "scripts/run_tests.py --check-groups" in result.stdout
+
+
+def test_path_selection_ignores_unrelated_worktree_changes():
+    result = _cli("--list", "--path", "scripts/run_tests.py")
+    assert result.returncode == 0
+    selected = result.stdout.splitlines()
+    assert "tests/test_run_tests.py" in selected
+    assert "tests/" not in selected
+    assert set(selected) == set(runner.select_changed(["scripts/run_tests.py"]).paths)
+
+
+def test_path_selection_refuses_full_suite_fallback(fake_pytest_env):
+    result = _cli("--path", "unrouted/neutral-file.txt", env=fake_pytest_env)
+    assert result.returncode == 2
+    assert "full suite" in result.stderr
+    assert not result.stdout
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--path", "scripts/run_tests.py", "--changed-against", "HEAD"),
+        ("--path", "scripts/run_tests.py", "report"),
+        ("--path", "scripts/run_tests.py", "--check-groups"),
+    ],
+)
+def test_path_selection_rejects_conflicting_modes(fake_pytest_env, args):
+    result = _cli(*args, env=fake_pytest_env)
+    assert result.returncode == 2
+    assert not result.stdout
+
+
+def test_make_test_for_passes_each_file_and_requires_files():
+    result = subprocess.run(
+        ["make", "--dry-run", "test-for", "FILES=scripts/a.py tests/test_a.py"],
+        cwd=runner.ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert 'scripts/run_tests.py --path "scripts/a.py" --path "tests/test_a.py" all -q' in result.stdout
+    missing = subprocess.run(["make", "test-for"], cwd=runner.ROOT, capture_output=True, text=True, check=False)
+    assert missing.returncode != 0
+    assert "FILES" in missing.stdout + missing.stderr
 
 
 def test_explicit_pattern_retains_name_filter(fake_pytest_env):
@@ -737,7 +791,6 @@ def test_shipped_source_routes_include_reviewed_producers_and_consumers(source, 
         ("agents/appsec-recon-scanner.md", "agent_definitions"),
         ("agents/shared/ms-template.md", "agent_definitions"),
         ("agents/shared/prose-samples.md", "agent_definitions"),
-        ("agents/shared/qa-ms-checks.md", "agent_definitions"),
         ("data/context-routing-bindings.json", "context_routing"),
         ("data/context-routing-catalog.yaml", "context_routing"),
         ("data/required-permissions.yaml", "check_permissions"),
@@ -750,16 +803,13 @@ def test_shipped_source_routes_include_reviewed_producers_and_consumers(source, 
         ("scripts/shared/_severity_policy.py", "reference_format"),
         ("scripts/renderers/_business_relevance.py", "emit_verdict_to_model"),
         ("scripts/contexts/business_context_preview.py", "requirements_verification"),
-        ("README.md", "business_context_preview"),
+        ("README.md", "marketplace_manifest"),
         ("scripts/renderers/compose_threat_model.py", "threat_fixture"),
         ("scripts/runtime/runtime_cleanup.py", "threat_model_health"),
         ("scripts/renderers/summarize_threat_model.py", "render_completion_summary"),
         ("scripts/model/triage_compute_ranking.py", "build_threat_model_yaml"),
         ("scripts/validators/validate_fragment.py", "validate_fragment"),
-        ("skills/create-threat-model/SKILL-full-runtime.md", "lazy_phase_group_loading"),
-        ("skills/create-threat-model/SKILL-thin-stage1-v2.md", "context_prompt_budgets"),
-        ("skills/create-threat-model/SKILL.md", "skill_definitions"),
-        ("templates/fragments/mitigations.md.j2", "compose_threat_model"),
+        ("skills/appsec-analyzer/SKILL.md", "skill_definitions"),
         ("templates/fragments/verdict.md.j2", "compose_threat_model"),
         ("tests/fixtures/e2e/golden/threat-model.md", "e2e_pipeline"),
     ],
@@ -852,7 +902,6 @@ def test_modules_on_the_golden_fixture_replay_route_to_it():
                 "context_prompt_budgets",
                 "decision_register",
                 "lazy_phase_group_loading",
-                "orchestration_controller",
                 "run_tests",
             },
         ),
@@ -875,4 +924,5 @@ def test_required_selection_commands_stay_in_agent_and_maintainer_guidance():
         assert "make test-plan BASE=origin/dev" in document
         assert "make validate test-changed BASE=origin/dev" in document
         assert "make test-plan BASE=HEAD" in document
+        assert "make validate test-for FILES=" in document
         assert "scripts/run_tests.py" in document

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render a human-facing overview of an existing ``threat-model.yaml``.
 
-Powers ``/appsec-advisor:show-threat-model``. Read-only: it parses the
+Powers ``/appsec-advisor:show-security-assessment``. Read-only: it parses the
 committed semantic model and prints a compact at-a-glance summary —
 project + scan identity, the report's verdict, the "worst case if nothing
 changes" scenarios, severity breakdown, remediation backlog by priority +
@@ -41,8 +41,8 @@ Flags:
                          into the rendered Status line.
 
 Exit codes:
-    0  threat model present, summary rendered
-    1  no threat model found at <output-dir>/threat-model.yaml
+    0  assessment present, summary rendered
+    1  no assessment model found in <output-dir>
     2  error (unreadable / unparseable YAML)
 """
 
@@ -62,6 +62,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+from shared.artifact_names import MODEL, ArtifactSetError, model_path, report_path
 
 import renderers._severity_rollup as _severity_rollup
 
@@ -139,7 +141,7 @@ _PRIORITY_BANDS = ("P1", "P2", "P3")
 
 def _backlog_by_priority(mitigations: list) -> dict:
     """Remediation backlog sized by mitigation priority — the same P1→P2→P3 spine
-    the review-threat-model triage console uses, but severity-independent so it
+    the triage-security-assessment triage console uses, but severity-independent so it
     never contradicts the risk-based severity histogram above it."""
     counts = {p: 0 for p in _PRIORITY_BANDS}
     for m in mitigations:
@@ -153,7 +155,7 @@ def _backlog_by_priority(mitigations: list) -> dict:
 
 def _coverage(threats: list) -> dict:
     """How many findings the model proposes a mitigation for (keyed on
-    ``mitigation_ids`` — the same signal review-threat-model uses). Uncovered
+    ``mitigation_ids`` — the same signal triage-security-assessment uses). Uncovered
     findings have no proposed fix and most need a human decision."""
     with_m = sum(1 for t in threats if t.get("mitigation_ids"))
     return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
@@ -380,7 +382,7 @@ def build_summary(data: dict, output_dir: Path) -> dict:
             }
             for t in threats_sorted
         ],
-        "report": str(output_dir / "threat-model.md"),
+        "report": str(report_path(output_dir)),
     }
 
 
@@ -393,21 +395,21 @@ def build_summary(data: dict, output_dir: Path) -> dict:
 VERDICT_ICON = {"FRESH": "✓", "STALE": "⚠", "NO_MODEL": "✗", "UNKNOWN": "?"}
 RECOMMEND_TEXT = {
     "noop": "no re-scan needed — model is up to date",
-    "incremental": "next /appsec-advisor:create-threat-model runs incremental",
-    "full": "re-scan recommended: /appsec-advisor:create-threat-model --full",
-    "rebuild": "rebuild recommended: /appsec-advisor:create-threat-model --rebuild",
+    "incremental": "next /appsec-advisor:appsec-analyzer runs incremental",
+    "full": "re-scan recommended: /appsec-advisor:appsec-analyzer --full",
+    "rebuild": "rebuild recommended: /appsec-advisor:appsec-analyzer --rebuild",
     "none": "",
 }
 
 # This overview is the FIXED fact set. Any question needing an arbitrary subset
 # of the model (a specific finding, "does it cover X?", what to fix first) is
-# ask-threat-model's job. Skill routing between the two is description-based and
+# ask-security-assessment's job. Skill routing between the two is description-based and
 # will never be perfect, so the overview names the other lane itself — a
 # deterministic, zero-cost correction when the router lands here by mistake.
 _NEXT_STEP_LINES = [
     "Ask        a question about a specific finding, coverage, or what to fix first",
-    "           → /appsec-advisor:ask-threat-model",
-    "Act        on the findings → /appsec-advisor:review-threat-model",
+    "           → /appsec-advisor:ask-security-assessment",
+    "Act        on the findings → /appsec-advisor:triage-security-assessment",
 ]
 
 # Posture flag of the report's `### Verdict`, in the report's own colours.
@@ -436,6 +438,24 @@ def _wrap(text: str, indent: str = _INDENT, width: int = _WRAP_WIDTH) -> list[st
     return lines
 
 
+def verdict_headline(verdict: dict) -> str:
+    """The verdict's icon and posture label, e.g. ``🔴 critical security concerns``."""
+    sev = (verdict.get("severity") or "").strip().lower()
+    icon = _POSTURE_ICON.get(sev, "•")
+    label = _POSTURE_LABEL.get(sev, "")
+    return f"{icon} {label}" if label else icon
+
+
+def mitigation_line(total: int, backlog: dict) -> str:
+    """Mitigation count and its priority bands, e.g. ``87 · 4 fix first (P1) · 29 P2 · 54 P3``.
+
+    The bands count mitigations, not findings; naming the unit keeps them from
+    being read as a second finding tally next to the severity counts.
+    """
+    labels = {"P1": "fix first (P1)", "P2": "P2", "P3": "P3"}
+    return " · ".join([str(total), *(f"{backlog[p]} {labels[p]}" for p in ("P1", "P2", "P3") if backlog.get(p))])
+
+
 def _render_verdict_block(verdict: dict | None) -> list[str]:
     """The report's own conclusion, printed verbatim.
 
@@ -444,11 +464,7 @@ def _render_verdict_block(verdict: dict | None) -> list[str]:
     model carries no verdict (composed before the field existed)."""
     if not verdict:
         return []
-    sev = (verdict.get("severity") or "").strip().lower()
-    icon = _POSTURE_ICON.get(sev, "•")
-    label = _POSTURE_LABEL.get(sev, "")
-    head = f"Verdict    {icon} {label}" if label else f"Verdict    {icon}"
-    out = [head]
+    out = [f"Verdict    {verdict_headline(verdict)}"]
     out.extend(_wrap(verdict["opening"]))
     if verdict.get("closing"):
         out.append("")
@@ -480,7 +496,7 @@ def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str
     names one action list. No rank: nothing orders the verdict's bullets by
     severity (RA-14). There is no header row and each scenario starts with ✓ or
     •: the completion summary is relayed as Markdown, which strips leading
-    blanks and reads a leading `#` as a heading. review-threat-model's landing
+    blanks and reads a leading `#` as a heading. triage-security-assessment's landing
     lists finding-level worst cases with their fixes — a triage view on another
     basis — and keeps its own rows.
     """
@@ -567,7 +583,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
     name = proj["name"]
     if proj["version"]:
         name += f" ({proj['version']})"
-    buf.append(f"Threat Model — {name}")
+    buf.append(f"Security Assessment — {name}")
 
     # Scan identity line — only non-empty fields.
     bits = []
@@ -613,7 +629,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
             " — the headline folds practice sites into the weakness register"
         )
     if total_findings == 0 and totals["threats"] == 0:
-        buf.append("           no findings recorded — run /appsec-advisor:create-threat-model to (re)scan")
+        buf.append("           no findings recorded — run /appsec-advisor:appsec-analyzer to (re)scan")
         buf.append("")
         buf.append(f"Report     {summary['report']}")
         return "\n".join(buf) + "\n"
@@ -646,11 +662,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
                 buf.append(_threat_row(t))
             buf.append("")
 
-    buf.append(f"Mitigations {totals['mitigations']} defined · Controls {totals['controls']} in place")
-    backlog = summary.get("backlog") or {}
-    if sum(backlog.values()):
-        bands = " · ".join(f"{backlog[p]}× {p}" for p in ("P1", "P2", "P3") if backlog.get(p))
-        buf.append(f"Backlog    {bands}")
+    buf.append(f"Mitigations {mitigation_line(totals['mitigations'], summary.get('backlog') or {})}")
     cov = summary.get("coverage") or {}
     if totals["threats"]:
         buf.append(
@@ -666,6 +678,8 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         weak = posture.get("weak_domains") or []
         if weak:
             buf.append(f"Weakest    {' · '.join(weak[:4])}")
+    elif totals["controls"]:
+        buf.append(f"Controls   {totals['controls']} in place")
     buf.append(f"Report     {summary['report']}")
     return "\n".join(buf) + "\n"
 
@@ -704,6 +718,51 @@ def load_health_freshness(arg: str | None) -> dict | None:
     return fresh if isinstance(fresh, dict) else None
 
 
+def completion_rows(output_dir: Path) -> list[tuple[str, str]]:
+    """Verdict, finding and mitigation rows for a run's closing console summary.
+
+    The same summary and wording as this overview, so the console and
+    ``show-security-assessment`` cannot disagree. Empty when the model is missing or
+    unreadable: the closing lines then name only the delivered files.
+    """
+    summary = _completion_summary(output_dir)
+    if summary is None:
+        return []
+    counts = summary["severity_counts"]
+    rows = [("Verdict", verdict_headline(summary["verdict"]))] if summary.get("verdict") else []
+    rows.append(
+        ("Findings", " · ".join([str(sum(counts.values())), *(f"{sev} {n}" for sev, n in counts.items() if n)]))
+    )
+    # The overview's own note on why §8 can list more cards than the headline.
+    if summary["totals"]["threats"] != sum(counts.values()):
+        rows.append(("", f"§8 register lists {summary['totals']['threats']}; practice sites fold into weaknesses"))
+    if summary["totals"]["mitigations"]:
+        rows.append(("Mitigations", mitigation_line(summary["totals"]["mitigations"], summary["backlog"])))
+    return rows
+
+
+def completion_severity_counts(output_dir: Path) -> dict[str, int]:
+    """Findings per severity, counted as the closing Findings row counts them; empty without a model."""
+    summary = _completion_summary(output_dir)
+    return dict(summary["severity_counts"]) if summary else {}
+
+
+def _completion_summary(output_dir: Path) -> dict | None:
+    """This overview's summary of the model in ``output_dir``, or None when it is missing or unreadable."""
+    import yaml as _yaml
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    try:
+        data = _yaml.safe_load(model_path(Path(output_dir)).read_text(encoding="utf-8"))
+        if is_portable_model(data):
+            data = labelled_model(data)
+    except (OSError, ValueError, _yaml.YAMLError):  # ArtifactSetError is a ValueError
+        return None
+    if not isinstance(data, dict):
+        return None
+    return build_summary(data, Path(output_dir))
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="summarize_threat_model.py", description=__doc__)
     p.add_argument("--output-dir", required=True)
@@ -717,18 +776,22 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def _emit_no_model(output_dir: Path, as_json: bool) -> None:
     """Uniform 'no usable model' response — used for a missing file and for a
     present-but-empty one (an empty YAML is not a usable model). Points the user
-    at create-threat-model rather than showing an empty overview."""
+    at appsec-analyzer rather than showing an empty overview."""
     if as_json:
         print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
     else:
-        print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
-        print("Run /appsec-advisor:create-threat-model to generate one.")
+        print(f"No threat model found at {output_dir / MODEL}.")
+        print("Run /appsec-advisor:appsec-analyzer to generate one.")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     output_dir = Path(args.output_dir).resolve()
-    yaml_path = output_dir / "threat-model.yaml"
+    try:
+        yaml_path = model_path(output_dir)
+    except ArtifactSetError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     if not yaml_path.is_file():
         _emit_no_model(output_dir, args.json)
@@ -747,6 +810,15 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    if is_portable_model(data):
+        # Locations read `<repository label>:<file>`; none is resolved locally.
+        try:
+            data = labelled_model(data)
+        except ValueError as exc:
+            print(f"Error: {yaml_path} is not a valid multi-repository model: {exc}", file=sys.stderr)
+            return 2
 
     summary = build_summary(data, output_dir)
     freshness = load_health_freshness(args.health_json)

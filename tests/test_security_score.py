@@ -536,6 +536,8 @@ def test_https_repository_is_cloned_scanned_and_removed(monkeypatch, capsys, url
     checkouts = []
 
     def fake_clone(argv, **kwargs):
+        if "clone" not in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "")
         checkout = Path(argv[-1])
         checkout.mkdir()
         (checkout / "source.txt").write_text("scan me", encoding="utf-8")

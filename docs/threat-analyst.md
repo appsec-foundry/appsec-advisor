@@ -1,18 +1,19 @@
 # Threat Analyst
 
-The Threat Analyst analyzes a planned feature or a selected code change when you ask for it. It checks the applicable security requirements and possible attack paths, and it asks the team only for facts that the code and context do not answer. The Threat Analyst is experimental.
+The Threat Analyst analyzes a planned feature, a selected code change, or a concrete threat hypothesis in existing code when you ask for it. It checks the applicable security requirements and possible attack paths, and it asks the team only for facts that the code and context do not answer. The Threat Analyst is experimental.
 
 ```text
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
-/appsec-advisor:analyze-threats --worktree
+/appsec-advisor:analyze-threats --worktree --question "Can a tenant read another tenant's export?"
+/appsec-advisor:analyze-threats --explore How should we add password reset?
 ```
 
-Results are advisory. They separate evidence-backed findings from threat scenarios, protection assumptions, requirement observations, and open questions, and they state what the analysis covered. A result is never a security approval and never changes `threat-model.yaml`. For a full assessment use `/appsec-advisor:create-threat-model`; for requirement grading use `/appsec-advisor:verify-requirements`.
+Results are advisory. They separate evidence-backed findings from threat scenarios, protection assumptions, recommendations, requirement observations, and open questions, and they state what the analysis covered. A result is never a security approval and never changes the existing Security Assessment. For a full repository assessment of security architecture, controls, weaknesses, and risks, use [`/appsec-advisor:appsec-analyzer`](security-assessment.md); for requirement grading use `/appsec-advisor:verify-requirements`.
 
 The analysis runs only when you invoke `/appsec-advisor:analyze-threats` or when your team configures it in its own CI. Installing the plugin, configuring an organization profile, or selecting a question package never starts an analysis.
 
 > [!IMPORTANT]
-> The model session runs `claude -p` without tools, project configuration, or session persistence. In a test on Claude Code 2.1.289, the model did not follow instructions planted in a hostile repository. Whether Claude Code retains host-side session data for these calls is not yet verified. See the [test results](proposals/security-advisor-threat-analyst-wp1-results.md).
+> The model session runs `claude -p` without project configuration or session persistence, and without tools unless you pass [`--explore`](#let-the-analysis-explore-the-repository). It does not use the model of your conversation: it runs Sonnet unless you pass `--model opus`, which reasons more thoroughly and costs more per check. When your organization profile sets `policy.disable_opus`, `--model opus` is refused. In a test on Claude Code 2.1.289, the model did not follow instructions planted in a hostile repository. Whether Claude Code retains host-side session data for these calls is not yet verified. See the [test results](proposals/security-advisor-threat-analyst-wp1-results.md).
 
 ## Analyze a design or a change
 
@@ -22,9 +23,42 @@ Ask a design question without any code, or pass a longer description with `--des
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
 ```
 
-Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. For a feature branch, use its fetched target branch as `--base` and the feature tip as `--head`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call.
+A design analysis reads no repository source unless you add `--explore`. It reports threat scenarios, protection assumptions, recommendations, requirement observations, and questions, never code findings, and its result says whether repository source was read. Each recommendation names a control or design choice, why it helps, and what it costs. To test a design against existing code, use `--explore` for advice or a [hypothesis check](#check-a-concrete-threat-in-existing-code) for a verified conclusion.
 
-The analysis reads your requirements catalog, `docs/security/business-context.md`, and, when `scripts/appsec-analyst-cli` receives `--threat-model`, a structured `threat-model.yaml`. A missing optional source is reported and the analysis continues. A source marked as required that is missing or invalid ends the analysis as incomplete; a required catalog is never replaced by the packaged fallback. When your organization profile names a requirements catalog, the analysis needs a trusted local copy passed with `--requirements`; it does not download catalogs.
+Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. For a feature branch, use its fetched target branch as `--base` and the feature tip as `--head`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call. Add `--question <text>` to have the review answer a concrete question about the change first; it still reports other weaknesses the change introduces.
+
+Before the first model call, a review also reads files the changed files import through a relative path (JavaScript, TypeScript, and Python) and the files that earlier assessment findings cite for the components the change touches. These files come from the same snapshot, count against the file limits, and are listed under technical details with the reason they were added. Package imports and aliases are not followed; the model can still request such files.
+
+The analysis reads your requirements catalog, `docs/security/business-context.md`, and existing structured assessment data. An interactive session looks for `security-assessment.yaml` in the application's [assessment directory](security-assessment.md#where-results-are-stored), with support for an earlier `docs/security/threat-model.yaml` until import. Pass `--isolated` to analyze without assessment context, or `--threat-model <file>` to use another assessment file; the flag retains its technical name. In CI reviews, assessment context must be named explicitly with that flag. The analysis receives the assessment's components, findings with their controls and cited files, mitigations, actors, trust boundaries, and security controls; the components the selected files touch come first, and entries that do not fit the size limit are counted. Scenarios, findings, and recommendations name the existing findings they relate to by their `F-NNN` id. A missing optional source is reported and the analysis continues. A source marked as required that is missing or invalid ends the analysis as incomplete; a required catalog is never replaced by the packaged fallback. When your organization profile names a requirements catalog, the analysis needs a trusted local copy passed with `--requirements`; it does not download catalogs.
+
+## Let the analysis explore the repository
+
+By default, a design analysis reads no code and a review reads only the change and the files described above. Add `--explore` to a design question or a review when the answer depends on code you cannot name in advance:
+
+```text
+/appsec-advisor:analyze-threats --explore Support staff should export a customer's notes as CSV.
+/appsec-advisor:analyze-threats --worktree --explore --question "Can a regular user delete accounts?"
+```
+
+With `--explore`, the model session gets `Read`, `Grep`, and `Glob` on a copy of the tracked files at the analyzed revision. The copy follows the same rules as the snapshot: key and environment files, binaries, oversized files, symlinks, and submodules are left out, and detected secret values are replaced. The session has no tool that runs commands, writes files, or reaches the network. Every cited line must match the copy, or the result fails. A design analysis can then back or contradict a protection assumption with code; it still reports no findings. The result says that repository source was read, lists the cited files, and counts what the copy left out. The copy is deleted with the job's other temporary files.
+
+`--explore` is interactive only: CI and other non-interactive runs refuse it, and it does not apply to a hypothesis or abuse-case check, which read only their selected paths. Your organization can turn it off with `analyst.allow_exploration: false` in the [organization profile](org-profiles.md#on-demand-threat-analysis). Use it for your own repository and your team's changes. For a foreign repository, a fork merge request, or a result someone else relies on, use the default analysis or a hypothesis check. Exploration usually costs more per check because the session reads files before it answers.
+
+## Check a concrete threat in existing code
+
+Supply one hypothesis, a Git revision, and the files or directories to inspect:
+
+```text
+/appsec-advisor:analyze-threats --hypothesis "Can a user export another tenant's records?" --revision HEAD --path src/export --path src/auth
+```
+
+The CLI equivalent is `scripts/appsec-analyst-cli hypothesis --repo <repo> --hypothesis <text> --revision <commit> --path <path>`. Repeat `--path` for additional areas. Paths are literal repository-relative file or directory names, without wildcards. The analysis reads committed source at the selected revision; it excludes uncommitted edits. Include the relevant middleware, callers, and configuration in the selected paths. The model cannot expand those paths. A named path that is missing or excluded leaves the check incomplete; narrow or correct the scope and start a new check. A file excluded inside a selected directory does not stop the check: the report lists it in its coverage, and the conclusion does not cover it.
+
+To check a defined technical or business abuse case, pass its ID instead of a hypothesis: `/appsec-advisor:analyze-threats --abuse-case AC-T-003`. `/appsec-advisor:abuse-cases` lists the IDs. The hypothesis is built from the case, and the files come from the case's own patterns at the revision (default `HEAD`); add `--path` for more. A case that matches no file needs `--path`. The check uses the existing assessment as context when one is found: the case's previous outcome and the findings linked to it, or sharing a step's CWE in runtime code, are named in the hypothesis with their evidence status, recorded controls, and planned mitigation, and their files are checked first. The security controls the assessment identified in the checked files are added with their rating. These findings are leads, not proof. `--isolated` checks the code alone, and the hypothesis states which. Without an assessment, `--preview` notes that only the selected files are checked. For a technical abuse case with several steps and for a business abuse case that locates code through routes or scanner rules, it recommends running an assessment first to collect that context; the check itself still runs. The result stays in the analyst job and never changes the assessment.
+
+For an abuse case with an attack chain, the report also rates each step in a table: supported, not confirmed, or not settled, with the code it rests on. The report records the resolved commit, selected paths, and hypothesis. Its conclusion is `supported` (source evidence supports the threat), `not_confirmed` (not established in the inspected scope), or `unresolved` (required evidence or facts are missing). Supported and not-confirmed conclusions cite inspected code. A not-confirmed result never means disproved or safe. Findings describe the selected revision and make no claim about which change introduced them. The analyst does not execute exploits or application code.
+
+Required evidence requests that cannot be fulfilled, including when a limit is exhausted, leave any analysis incomplete. The report lists the requested paths and their disposition. A question marked as needing an answer must appear among the actual questions.
 
 ## Questions and feature files
 
@@ -38,6 +72,18 @@ The analysis always loads the core question package, adapted from the pinned ais
 
 Add a package for one analysis with `--package`, either a packaged reference such as `tmm/threat-modeling-manifesto@1.0.0` or the absolute path of your own package file. The [example package](../examples/analyst/payments-package.yaml) shows the format. Packages your organization requires always apply; you can add packages but not remove required ones.
 
+Write one independently assessable question per entry. Use `asks` to name the invariant and any condition that must apply, `purpose` to describe the abuse and consequence, `evidence` to identify expectation sources and implementation controls, and `negative_tests` to describe attacker actions a protected implementation refuses or neutralizes. Keep self-approval and changes to an approved recipient in separate entries. A conditional question does not establish that its policy applies; missing decisive facts remain unresolved or lead to a targeted question. Expected source locations and observed behavior belong to the analysis result, not the reusable package.
+
+`applies_when` contains investigation hints, not executable conditions. The existing version-1 vocabulary is interpreted within the selected mode:
+
+| Mode | Meaning of the signals |
+|---|---|
+| Design | Relevant planned operations and protection decisions in the supplied design. No diff is required. |
+| Change review | Operations and controls affected by the selected change, including admitted supporting context. |
+| Hypothesis check | Behavior relevant to the hypothesis within the selected revision and literal paths. No diff is required. |
+
+For example, `business_operation` identifies a process that manages amounts, quotas, state, or approvals; `changed_permission` directs attention to the permission decision relevant to that mode. `any_change` addresses the selected work in any mode. Signals do not prove applicability, authorize source reads, or waive required coverage. The current question limit still selects entries in authority order; each delivered question receives a coverage disposition, and omitted entries remain visible. Schema-valid existing packages keep their format and identities.
+
 The Threat Modeling Manifesto profile (`tmm/threat-modeling-manifesto@1.0.0`) is an attributed adaptation of the [Threat Modeling Manifesto](https://www.threatmodelingmanifesto.org/) under CC BY 4.0. When selected, the analysis reports methodology observations about scope, plausible failures, practical responses, adequacy of the investigation, missing perspectives, and what to revisit. The profile certifies no compliance and does not replace collaboration with the people who own the system. It applies only when you select it or your organization sets it as a default or requirement.
 
 Organizations set defaults and requirements in the `analyst` block of the [organization profile](org-profiles.md#on-demand-threat-analysis).
@@ -46,7 +92,7 @@ Organizations set defaults and requirements in the `analyst` block of the [organ
 
 Your team can run the same analysis on merge requests with `scripts/appsec-analyst-cli review --ci --repo <repo> --base <target-branch-sha> --head <feature-branch-sha>`. The plugin never installs this job. Start from the [GitHub Actions](../examples/analyst/github-actions.yml) or [GitLab CI](../examples/analyst/gitlab-ci.yml) example and pin every version they name.
 
-In CI, packages come only from trusted pipeline configuration through `--trusted-package`, and a package file must be pinned with `#sha256=` and live outside the checkout under review. A merge request therefore cannot choose the packages that assess it. The CLI never fetches history; fetch enough history for the merge base before you call it.
+In CI, packages come only from trusted pipeline configuration through `--trusted-package`, and a package file must be pinned with `#sha256=` and live outside the checkout under review. A merge request therefore cannot choose the packages that assess it. For the same reason, the examples read the threat model from the base commit and pass it with `--threat-model`; a model taken from the merge request's own checkout would let the change choose its context. Never run the job on `pull_request_target` or any trigger that gives secrets to code from a fork. The CLI never fetches history; fetch enough history for the merge base before you call it.
 
 | Exit code | Meaning |
 |---|---|
@@ -58,7 +104,7 @@ Exit code `1` is reserved for a future blocking gate. Upload the report on every
 
 ## Limits, state, and retention
 
-The plugin enforces the limits in [`data/analyst-limits.yaml`](../data/analyst-limits.yaml) in code, outside the model: wall-clock time, model calls, evidence rounds, question rounds, retries, files and bytes read, response size, packages, and questions. The values are provisional until measured. An exhausted limit ends the analysis as incomplete.
+The plugin enforces the limits in [`data/analyst-limits.yaml`](../data/analyst-limits.yaml) in code, outside the model: wall-clock time, model calls, evidence rounds, question rounds, retries, files and bytes read, files added as surrounding code, the size of the explore copy, response size, packages, and questions. The values are provisional until measured. An exhausted limit ends the analysis as incomplete.
 
 Each analysis gets a private job directory under `$XDG_STATE_HOME/appsec-advisor/analyst/` (default `~/.local/state/appsec-advisor/analyst/`), outside the repository and outside any assessment output. Captured source is deleted when the analysis ends; a job waiting for answers keeps it for `answer_hours` and is then closed as incomplete. Results are deleted after `result_days`. Each invocation closes abandoned jobs of the same repository. Stop a running job or close a waiting one with `scripts/appsec-analyst-cli cancel --repo <repo> --job <id>`; SIGTERM and Ctrl-C also stop the model session and record the cancellation. Assessment cleanup never touches these directories, and the analysis never touches assessment state, locks, or outputs.
 
@@ -66,4 +112,4 @@ Your parent Claude Code conversation and the model provider keep their own recor
 
 ## What the analysis cannot see
 
-The analysis reads only the files of the selected scope and surrounding files it requests from the same snapshot of the repository. Ignored files, symlinks, submodules, nested repositories, binaries, oversized files, and files with detected secrets are excluded and listed in the coverage section. Related repositories are not read. A narrow scope is not complete feature coverage; recommend a full assessment when the result says the context is insufficient.
+A change review or hypothesis check reads only the files of the selected scope and surrounding files it selects or requests from the same snapshot of the repository; a design analysis reads none. With `--explore`, the session reads the explore copy described above. Ignored files, symlinks, submodules, nested repositories, binaries, oversized files, and key or environment files such as `.env` or `*.pem` are excluded and listed in the coverage section. In any other file, a detected secret value is replaced by a marker before the analysis reads it, and the coverage section lists the file and the redacted lines. The rest of that file stays readable, so code that uses a hard-coded key can still be analyzed. Related repositories are not read. A narrow scope is not complete feature coverage; recommend a full assessment when the result says the context is insufficient.

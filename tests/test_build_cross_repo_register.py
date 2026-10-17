@@ -77,6 +77,19 @@ class TestSiblingDiscovery:
         assert sib_a["threat_model"]["status"] == "found"
         assert sib_a["interface_findings"] is None  # never deep-read for siblings
 
+    def test_a_siblings_external_assessment_is_found(self, tmp_path: Path, monkeypatch) -> None:
+        from shared.assessment_location import application_directory
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+        repo = _make_repo(tmp_path)
+        legacy = _make_sibling_with_tm(tmp_path, "sib-a") / "docs" / "security" / "threat-model.yaml"
+        external = application_directory(tmp_path / "workspace" / "sib-a")
+        external.mkdir(parents=True)
+        legacy.rename(external / "security-assessment.yaml")
+        reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
+        sib_a = next(e for e in reg["entries"] if e["name"] == "sib-a")
+        assert sib_a["threat_model"]["status"] == "found"
+
     def test_sibling_without_tm_is_missing(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _make_sibling_without_tm(tmp_path, "no-tm")

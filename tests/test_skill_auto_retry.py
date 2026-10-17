@@ -25,7 +25,6 @@ SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
         "model/merge_threats.py",
         "validators/triage_validate_ratings.py",
         "renderers/pregenerate_fragments.py",
-        "validators/check_inline_shortcut.py",
     ],
 )
 def test_recovery_script_exists(script_name):
@@ -39,7 +38,6 @@ def test_recovery_script_exists(script_name):
         "model/merge_threats.py",
         "validators/triage_validate_ratings.py",
         "renderers/pregenerate_fragments.py",
-        "validators/check_inline_shortcut.py",
     ],
 )
 def test_recovery_script_runnable(script_name):
@@ -59,46 +57,7 @@ def test_recovery_script_runnable(script_name):
 
 
 # ---------------------------------------------------------------------------
-# validators/check_inline_shortcut.py --write-repair-plan — schema for retry consumer
 # ---------------------------------------------------------------------------
-
-
-def _make_failing_state(tmp_path: Path) -> Path:
-    """Output dir with threat-model.md but no fragments, no merge, no triage."""
-    out = tmp_path / "docs" / "security"
-    out.mkdir(parents=True)
-    (out / "threat-model.md").write_text("# inline\n")
-    return out
-
-
-def test_repair_plan_is_valid_json(tmp_path):
-    out = _make_failing_state(tmp_path)
-    subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "validators/check_inline_shortcut.py"), str(out), "--write-repair-plan"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    plan_path = out / ".inline-shortcut-repair-plan.json"
-    assert plan_path.is_file()
-    plan = json.loads(plan_path.read_text())  # raises on malformed JSON
-    assert plan["status"] == "fail"
-    assert plan["kind"] == "inline_shortcut"
-
-
-def test_repair_plan_carries_indicators_and_missing_list(tmp_path):
-    out = _make_failing_state(tmp_path)
-    subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "validators/check_inline_shortcut.py"), str(out), "--write-repair-plan"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    plan = json.loads((out / ".inline-shortcut-repair-plan.json").read_text())
-    assert isinstance(plan.get("indicators"), list) and len(plan["indicators"]) >= 1
-    assert isinstance(plan.get("missing_fragments"), list)
-    # Schema version stable for the retry consumer
-    assert plan["schema_version"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -132,6 +132,19 @@ def model_anchor_ids(yaml_data: dict) -> set[str]:
     return anchors
 
 
+def _plain_question(text: object) -> str:
+    """One plain question from repository-authored text, or "" when the text is not one."""
+    flat = " ".join(str(text or "").split())
+    if not flat.endswith("?") or flat.count("?") != 1 or len(flat) > 200:
+        return ""
+    body = flat[:-1].strip()
+    if not body or _UNSAFE_NAME_CHARS_RE.search(body) or re.search(r"https?:|www\.", body, re.I):
+        return ""
+    if re.match(r"^[A-Z][\w -]{0,40}:\s", body) or re.search(r"\bshould\b|\bplanned\b", body, re.I):
+        return ""
+    return body + "?"
+
+
 def select_open_questions(
     yaml_data: dict,
     available_anchors: set[str],
@@ -430,6 +443,37 @@ def select_open_questions(
                     "confirm exploitation or raise a finding's rating."
                 ),
                 priority=-1,
+            )
+
+    # A business case the verifier left open names the facts only the team knows (AC-7).
+    # Its question is repository-authored text, so only a single plain question survives.
+    for case in analysis.get("cases", []) if analysis.get("status") == "completed" else []:
+        if (
+            case.get("source") != "descriptive"
+            or case.get("chain_verdict") != "inconclusive"
+            or not case.get("verification_complete")
+        ):
+            continue
+        bound = [
+            by_id[fid]
+            for fid in dict.fromkeys(
+                [*(case.get("matched_finding_ids") or []), *(s.get("finding_id") for s in case.get("steps") or [])]
+            )
+            if fid in by_id
+        ]
+        question = next(
+            (q for q in map(_plain_question, case.get("open_questions") or []) if q),
+            "",
+        )
+        if bound and question and not all(answered("business-case-intent", item["component"]) for item in bound):
+            add(
+                f"In {subject(bound)}, {question[0].lower()}{question[1:]}",
+                bound,
+                impact=(
+                    "The answer decides whether the business case's expected control applies here; "
+                    "it cannot confirm exploitation or raise a finding's rating."
+                ),
+                topic="business-case-intent",
             )
 
     weaknesses = [item for item in yaml_data.get("weaknesses") or [] if isinstance(item, dict)]

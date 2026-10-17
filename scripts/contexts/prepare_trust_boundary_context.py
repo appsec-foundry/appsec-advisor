@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from copy import deepcopy
 from functools import lru_cache
@@ -39,7 +40,7 @@ from model.reclassify_components import (
 from model.reserve_ids import ensure_counter_at_least, reserve
 from model.sanitize_perimeter_claims import sanitize_perimeter_prose
 from shared._atomic_io import atomic_write_json
-from shared._finding_state import is_discredited
+from shared._finding_state import evidence_established, is_discredited
 from validators.validate_fragment import fragment_invariant_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -56,12 +57,15 @@ KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin",
 # the far side (third-party/build). The values are therefore neither disjoint nor
 # parallel — an OAuth callback is `identity` AND a network crossing, so the
 # analyst has to guess an undocumented precedence. Internally we branch on two
-# orthogonal axes instead. `kind` stays the sole authored/wire value (analyst,
-# `.appsec/trust-boundaries.yaml`, legacy models, renderer, exports); the axes are
-# DERIVED from it in one deterministic place, so there is never a second
-# authority to keep in sync and no repo declaration has to be migrated.
+# orthogonal axes instead. `transition` is always DERIVED from `kind`, in one
+# deterministic place. `surface` defaults to the one `kind` implies; an analyst
+# may name it only where `kind` leaves it open — a privilege, identity, tenant,
+# data-origin or third-party change inside one process is `in-process`, which no
+# `kind` value can say. A surface that contradicts `kind` is rejected by the
+# candidate schema and re-derived here, so `kind` never silently wins over a
+# compatible axis and no repo declaration has to be migrated.
 SURFACES = {"network", "in-process", "build-pipeline"}
-TRANSITIONS = {"identity", "privilege", "tenant", "data-origin", "operator"}
+TRANSITIONS = {"identity", "privilege", "tenant", "data-origin", "operator", "data-access"}
 _KIND_AXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "network": ("network", ()),
     "process": ("in-process", ()),
@@ -104,6 +108,9 @@ _GENERIC_ENFORCEMENT_POINTS = {
 }
 NEUTRAL_LEGACY_ASSUMPTION = "Assumption not recorded in legacy model"
 MAX_BOUNDARY_ID = 999_999_999
+# Per-row list limits of the trust-boundary contract; every merge of rows fits them.
+_MAX_EVIDENCE = 5
+_MAX_COVERS = 24
 _ID_RE = re.compile(r"^tb-(\d+)$")
 _COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9-]+$")
 _CANONICAL_ENDPOINT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,127}$")
@@ -159,6 +166,22 @@ def _endpoint(value: Any) -> str | None:
 
 
 def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label: str) -> list[dict]:
+    from runtime.multi_repo_scope import AssessmentScope
+
+    if isinstance(repo_root, AssessmentScope):
+        from validators.validate_assessment_architecture import validate_source
+
+        if not isinstance(values, list) or len(values) > _MAX_EVIDENCE:
+            raise ValueError("Qualified boundary evidence exceeds its contract")
+        result = []
+        for raw in values:
+            if not isinstance(raw, dict):
+                raise ValueError("Qualified boundary evidence is malformed")
+            validate_source(repo_root, raw, path_key="file")
+            row = {key: raw[key] for key in ("file", "line", "repository_id", "sha256")}
+            if row not in result:
+                result.append(row)
+        return result
     result: list[dict] = []
     seen: set[tuple[str, int | None]] = set()
     root = repo_root.resolve()
@@ -200,7 +223,7 @@ def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label
         if line is not None:
             item["line"] = line
         result.append(item)
-        if len(result) == 5:
+        if len(result) == _MAX_EVIDENCE:
             break
     return result
 
@@ -425,6 +448,38 @@ def _legs_for_finding(threat: dict, allowed: Iterable[str]) -> set[str]:
     return set(_cwe_leg_map().get(match.group(0).upper(), frozenset())) & set(allowed)
 
 
+@lru_cache(maxsize=1)
+def _cwe_sink_classes() -> dict[str, str]:
+    """`{CWE-89: datastore-query, CWE-94: code-evaluation}` from the leg map file."""
+    doc = _read_yaml(_CWE_LEGS_PATH, {}) or {}
+    mapping: dict[str, str] = {}
+    for sink, cwes in (doc.get("sink_classes") or {}).items():
+        for cwe in cwes if isinstance(cwes, list) else []:
+            match = _CWE_RE.search(str(cwe or ""))
+            if match:
+                mapping[match.group(0).upper()] = str(sink)
+    return mapping
+
+
+def _sink_fits_target(threat: dict, boundary: dict, tiers: dict[str, str]) -> bool:
+    """Whether the finding's sink class can be the call into an internal target.
+
+    A boundary's evidence line can sit in a handler that does more than call the
+    target, so a cited line alone does not show that a finding there breaks the
+    crossing: an `eval` next to a query is not a broken query interface.
+    """
+    if boundary_crossing_type(boundary) != "internal":
+        return True
+    match = _CWE_RE.search(str(threat.get("cwe") or ""))
+    sink = _cwe_sink_classes().get(match.group(0).upper()) if match else None
+    tier = tiers.get(str(boundary.get("to") or ""))
+    if sink == "datastore-query":
+        return tier in (None, "data")
+    if sink == "code-evaluation":
+        return tier != "data"
+    return True
+
+
 def finding_leg_candidates(threat: dict, boundary: dict) -> list[str]:
     """Legs of `boundary` this finding's CWE could bear on, sorted.
 
@@ -574,21 +629,51 @@ def _boundary_endpoint_shape_valid(boundary: dict) -> bool:
     )
 
 
-def _axes_for_kind(kind: Any) -> tuple[str, list[str]]:
-    """Split a legacy ``kind`` into (surface, transition[]).
+def _surface_agrees(kind: Any, surface: Any) -> bool:
+    """True when an authored ``surface`` is one ``kind`` allows (mirrors the candidate schema)."""
+    if surface not in SURFACES or kind not in _KIND_AXES:
+        return False
+    default, transitions = _KIND_AXES[kind]
+    return surface == default or (bool(transitions) and kind != "build" and surface == "in-process")
+
+
+def _axes_for_kind(kind: Any, surface: Any = None) -> tuple[str, list[str]]:
+    """Split ``kind`` (plus an optional authored ``surface``) into (surface, transition[]).
 
     Total over ``KINDS`` and defaulting exactly like the ``kind`` normalization
-    itself (unknown -> network), so the derivation can never fail a row.
+    itself (unknown -> network), so the derivation can never fail a row. An
+    authored surface survives only when it agrees with ``kind``.
     """
-    surface, transitions = _KIND_AXES.get(kind if isinstance(kind, str) else "", ("network", ()))
-    return surface, list(transitions)
+    default, transitions = _KIND_AXES.get(kind if isinstance(kind, str) else "", ("network", ()))
+    return (surface if _surface_agrees(kind, surface) else default), list(transitions)
 
 
 def _apply_axes(rows: Iterable[dict]) -> None:
-    """(Re-)derive the orthogonal axes after every path that can set ``kind``."""
+    """(Re-)derive the orthogonal axes after every path that can set ``kind``.
+
+    A stored surface that still agrees with ``kind`` is kept: re-deriving it from
+    ``kind`` alone would turn an in-process privilege change back into a network
+    crossing.
+    """
     for row in rows:
         if isinstance(row, dict):
-            row["surface"], row["transition"] = _axes_for_kind(row.get("kind"))
+            row["surface"], row["transition"] = _axes_for_kind(row.get("kind"), row.get("surface"))
+
+
+def _apply_data_access(rows: Iterable[dict], components: dict[str, dict]) -> None:
+    """Add the ``data-access`` transition to every crossing into a data-tier store.
+
+    The store interprets queries and holds every user's records, so the crossing
+    is a trust boundary whether it runs in process or over the network (TB-13).
+    It is derived from the component tier, never from ``kind``, and must follow
+    every ``_apply_axes`` call because that call re-derives ``transition``.
+    """
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source, target = components.get(row.get("from")), components.get(row.get("to"))
+        if source and target and source.get("tier") != "data" and target.get("tier") == "data":
+            row["transition"] = [*(row.get("transition") or []), "data-access"]
 
 
 def _clean_enforcement_point(value: Any) -> str | None:
@@ -743,9 +828,12 @@ def _normalize_row(
             )
     if LEGACY_FIELDS.intersection(raw):
         _warn(f"{label}: discarded legacy fields {sorted(LEGACY_FIELDS.intersection(raw))}", warnings)
+    if raw.get("surface") is not None and not _surface_agrees(kind, raw.get("surface")):
+        _warn(f"{label}: discarded surface {raw.get('surface')!r} — it contradicts kind {kind!r}", warnings)
     row: dict[str, Any] = {
         "name": name,
         "kind": kind,
+        **({"surface": raw["surface"]} if _surface_agrees(kind, raw.get("surface")) else {}),
         "assumption": assumption,
         "evidence": evidence,
         "confidence": confidence,
@@ -777,7 +865,7 @@ def _normalize_row(
         row["confidence_basis"] = raw["confidence_basis"]
     covers = _covered_components(raw.get("covers_components"), components)
     if len(covers) > 1:
-        row["covers_components"] = covers[:24]
+        row["covers_components"] = covers[:_MAX_COVERS]
     if resolution_details:
         row["_resolution_details"] = resolution_details
     key = raw.get("declaration_key") or (raw.get("key") if source == "repo-declared" else None)
@@ -794,6 +882,10 @@ def _normalize_row(
         and isinstance(authored_id, str)
     ):
         row["_normalized_id"] = authored_id
+    # Provenance, not output: coverage maps each candidate to the canonical row
+    # it became, whatever consolidation later does to its endpoints or name.
+    if isinstance(raw.get("candidate_key"), str):
+        row["_candidate_keys"] = [raw["candidate_key"]]
     return row
 
 
@@ -837,14 +929,35 @@ def _load_declarations(
 
 
 def _merge_evidence(left: list[dict], right: list[dict]) -> list[dict]:
+    """Union of two rows' validated evidence, the surviving row's own first, within the evidence contract.
+
+    Each row already fits the contract on its own, so folding one crossing into
+    another must not abort the run; the cut drops only the folded row's surplus.
+    """
     out: list[dict] = []
     seen: set[tuple] = set()
     for item in [*left, *right]:
-        key = (item.get("file"), item.get("line"))
+        key = (item.get("repository_id"), item.get("file"), item.get("line"))
         if key not in seen:
             seen.add(key)
             out.append(item)
-    return out[:5]
+    return out[:_MAX_EVIDENCE]
+
+
+def _absorb_provenance(survivor: dict, absorbed: dict) -> None:
+    """A row that absorbs another also stands for the candidates the absorbed row came from."""
+    keys = [*(survivor.get("_candidate_keys") or []), *(absorbed.get("_candidate_keys") or [])]
+    if keys:
+        survivor["_candidate_keys"] = list(dict.fromkeys(keys))
+
+
+def _candidate_boundary_ids(rows: list[dict]) -> dict[str, list[str]]:
+    """Remove the provenance marker and return each candidate key's canonical boundary IDs."""
+    mapping: dict[str, set[str]] = {}
+    for row in rows:
+        for key in row.pop("_candidate_keys", None) or []:
+            mapping.setdefault(key, set()).add(row["id"])
+    return {key: sorted(ids, key=_numeric_id) for key, ids in mapping.items()}
 
 
 def _merge_declarations(
@@ -919,6 +1032,7 @@ def _merge_declarations(
         target["kind"] = declaration["kind"]
         target["assumption"] = declaration["assumption"]
         target["evidence"] = _merge_evidence(target["evidence"], declaration["evidence"])
+        _absorb_provenance(target, declaration)
         target["sources"] = list(dict.fromkeys([*target["sources"], "repo-declared"]))
         target["declaration_key"] = key
         # Declaration prose/evidence cannot self-confirm. Existing independently
@@ -1106,6 +1220,19 @@ def _contained_in(inner: dict, outer: dict) -> bool:
     return all(any(_rc_glob_to_regex(g).search(_glob_probe(p)) for g in outer_globs) for p in inner_paths)
 
 
+def _separate_workloads(left: dict, right: dict) -> bool:
+    """Deployment evidence that two components cannot share one process.
+
+    `workload_zones` is derived from the deployment inventory, never authored.
+    Two components whose workloads sit on disjoint platform networks run in
+    different workloads. Shared or missing zones prove nothing either way, so
+    this only ever vetoes a same-process or same-perimeter conclusion.
+    """
+    left_zones = {z for z in left.get("workload_zones") or [] if isinstance(z, str)}
+    right_zones = {z for z in right.get("workload_zones") or [] if isinstance(z, str)}
+    return bool(left_zones and right_zones and not left_zones & right_zones)
+
+
 def _point_key(row: dict) -> str | None:
     point = row.get("enforcement_point")
     return point.strip().casefold() if isinstance(point, str) and point.strip() else None
@@ -1140,9 +1267,16 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
     out: list[dict] = []
     seen: dict[tuple, dict] = {}
     for row in rows:
-        key = (row.get("from"), row.get("to"), row.get("kind"), (row.get("name") or "").strip().casefold())
+        key = (
+            row.get("from"),
+            row.get("to"),
+            row.get("kind"),
+            row.get("surface"),
+            (row.get("name") or "").strip().casefold(),
+        )
         if key in seen:
             seen[key]["evidence"] = _merge_evidence(seen[key].get("evidence") or [], row.get("evidence") or [])
+            _absorb_provenance(seen[key], row)
             warnings.append(f"consolidated duplicate boundary {row.get('name')!r}")
             continue
         seen[key] = row
@@ -1164,11 +1298,21 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
             )
             row["from"] = target
 
-    ingress = [r for r in out if r.get("from") == "external" and r.get("to") in components]
+    # A build crossing enters through its own supply channel, not a shared port
+    # and process, so shared code is no reason to fold it.
+    ingress = [r for r in out if r.get("from") == "external" and r.get("to") in components and r.get("kind") != "build"]
     folded: list[dict] = []
     for index, row in enumerate(ingress):
         for other_index, other in enumerate(ingress):
-            if other is row or other in folded or row.get("kind") != other.get("kind"):
+            if (
+                other is row
+                or other in folded
+                or (row.get("kind"), row.get("surface")) != (other.get("kind"), other.get("surface"))
+            ):
+                continue
+            # Path containment only says one tree holds the other's source; two
+            # workloads on disjoint deployment networks are two perimeters.
+            if _separate_workloads(components[row["to"]], components[other["to"]]):
                 continue
             # Shared code is one perimeter, not one control: a row that names no
             # enforcement point must not inherit the survivor's, nor lend its
@@ -1186,6 +1330,7 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
                 continue
             if _contained_in(components[row["to"]], components[other["to"]]):
                 other["evidence"] = _merge_evidence(other.get("evidence") or [], row.get("evidence") or [])
+                _absorb_provenance(other, row)
                 # The folded-in component keeps a claim on the surviving row, so a
                 # finding it owns can still reference the perimeter it sits behind.
                 other["covers_components"] = sorted(
@@ -1195,7 +1340,7 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
                         other["to"],
                         row["to"],
                     }
-                )
+                )[:_MAX_COVERS]
                 warnings.append(
                     f"folded ingress boundary {row.get('name')!r} into {other.get('name')!r} — "
                     f"{row['to']} is served by the same code as {other['to']}, so both name one perimeter"
@@ -1213,7 +1358,9 @@ def normalize(
     output_dir: Path,
     raw_sidecar: dict | None = None,
     destination: Path | None = None,
+    provenance: dict[str, list[str]] | None = None,
 ) -> tuple[dict, list[str]]:
+    """Canonicalize boundary rows; `provenance` receives each candidate key's boundary IDs."""
     repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
     raw = raw_sidecar if raw_sidecar is not None else _read_json(sidecar, None)
     if not isinstance(raw, dict) or not isinstance(raw.get("trust_boundaries"), list):
@@ -1243,12 +1390,16 @@ def normalize(
     merged = _merge_declarations(detected, declarations, prior_rows, warnings)
     # After declaration merging, which is the last thing that can change `kind`.
     _apply_axes(merged)
+    _apply_data_access(merged, components)
     # Before IDs exist, so consolidating costs no ID churn downstream.
     merged = _consolidate(merged, components, warnings)
     _assign_ids(merged, prior_rows, output_dir, warnings)
     if len({row["id"] for row in merged}) != len(merged):
         raise ValueError("normalization produced duplicate trust-boundary IDs")
     merged.sort(key=lambda row: _numeric_id(row["id"]))
+    candidate_ids = _candidate_boundary_ids(merged)
+    if provenance is not None:
+        provenance.update(candidate_ids)
     _write_diagnostics(output_dir, merged)
     result = {"schema_version": 2, "trust_boundaries": merged}
     schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
@@ -1256,6 +1407,135 @@ def normalize(
     atomic_write_json(destination or sidecar, result, sort_keys=False)
     _write_declaration_fingerprint(output_dir, fingerprint)
     return result, warnings
+
+
+def _normalize_assessment_boundaries(
+    scope, components: dict, candidates: list[dict], *, output_dir: Path, declarations: list[dict] | None = None
+) -> tuple[dict, list[str], dict]:
+    """Reuse canonical boundary normalization with qualified frozen sources.
+
+    The controller validates candidate coverage before calling this function.
+    Declarations are separately captured, qualified data; they cannot confirm
+    a boundary or supply a filesystem root.
+    """
+    from shared.assessment_sources import source_key
+    from validators.validate_assessment_architecture import validate_components
+
+    from contexts.multi_repo_analysis import contract
+
+    if Path(output_dir) != scope.output:
+        raise ValueError("Boundary normalization requires the admitted output directory")
+    scope.verify_unchanged()
+    validate_components(scope, components)
+    cards = {
+        row["id"]: {**row, "paths": [source_key(path) for path in row["paths"]]} for row in components["components"]
+    }
+    dropped: dict[str, str] = {}
+    consolidated, aliases, notes = _consolidate_candidates(
+        candidates, components=cards, repo_root=scope, dropped=dropped
+    )
+    warnings = list(notes)
+    detected = [
+        row
+        for raw in consolidated
+        if (
+            row := _normalize_row(
+                raw, repo_root=scope, components=cards, legacy_input=False, warnings=warnings, source="detected"
+            )
+        )
+    ]
+    declared = [
+        row
+        for raw in declarations or []
+        if (
+            row := _normalize_row(
+                raw, repo_root=scope, components=cards, legacy_input=False, warnings=warnings, source="repo-declared"
+            )
+        )
+    ]
+    merged = _merge_declarations(detected, declared, [], warnings)
+    _apply_axes(merged)
+    _apply_data_access(merged, cards)
+    merged = _consolidate(merged, cards, warnings)
+    # A combined assessment is always fresh and has no prior model, so its
+    # boundary IDs come from a private counter. A resumed run with unchanged
+    # input then allocates the same IDs instead of continuing a shared one.
+    with tempfile.TemporaryDirectory(prefix="appsec-boundary-ids-") as counters:
+        _assign_ids(merged, [], Path(counters), warnings)
+    merged.sort(key=lambda row: _numeric_id(row["id"]))
+    candidate_ids = _candidate_boundary_ids(merged)
+    document = {
+        "schema_version": 3,
+        "source_scope_sha256": components["source_scope_sha256"],
+        "trust_boundaries": merged,
+    }
+    jsonschema.Draft202012Validator(contract("fragments/trust-boundaries-v3.schema.json")).validate(document)
+    # Diagnostics remain explicit without giving provisional candidates public
+    # IDs or treating a discarded client-side crossing as a trust boundary.
+    warnings.extend(f"{key}: {reason}" for key, reason in sorted(dropped.items()))
+    scope.verify_unchanged()
+    return (
+        document,
+        warnings,
+        {
+            "candidates": consolidated,
+            "aliases": aliases,
+            "dropped": dropped,
+            "candidate_ids": candidate_ids,
+        },
+    )
+
+
+def normalize_assessment_boundaries(
+    scope, components: dict, candidates: list[dict], *, output_dir: Path, declarations: list[dict] | None = None
+) -> tuple[dict, list[str]]:
+    document, warnings, _audit = _normalize_assessment_boundaries(
+        scope, components, candidates, output_dir=output_dir, declarations=declarations
+    )
+    return document, warnings
+
+
+def promote_assessment_boundaries(scope, components, assessment, candidate_doc, *, output_dir, declarations=None):
+    """Promote scoped candidates and retain the existing signal coverage audit."""
+    from model.finalize_component_inventory import component_inventory_fingerprint
+
+    from contexts.multi_repo_analysis import _comparison, contract
+
+    input_schema = contract("trust-boundary-assessment-input-v2.schema.json")
+    candidate_schema = contract("fragments/trust-boundary-candidates-v2.schema.json")
+    jsonschema.Draft202012Validator(input_schema).validate(assessment)
+    jsonschema.Draft202012Validator(candidate_schema).validate(candidate_doc)
+    for field in ("source_scope_sha256", "component_inventory_fingerprint", "assessment_input_fingerprint"):
+        if candidate_doc[field] != assessment[field]:
+            raise ValueError("Boundary candidates do not match their qualified crossing input")
+    if assessment["source_scope_sha256"] != scope.inventory()["scope_sha256"]:
+        raise ValueError("Boundary crossing input belongs to another assessment")
+    if assessment["component_inventory_fingerprint"] != component_inventory_fingerprint(components["components"]):
+        raise ValueError("Boundary crossing input refers to a stale component inventory")
+    fingerprint_body = {k: v for k, v in assessment.items() if k != "assessment_input_fingerprint"}
+    actual = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(fingerprint_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+    )
+    if actual != assessment["assessment_input_fingerprint"]:
+        raise ValueError("Boundary crossing input changed after admission")
+    errors = fragment_invariant_errors(
+        "trust-boundary-candidates", _comparison(candidate_doc), context=_comparison(assessment)
+    )
+    if errors:
+        raise ValueError("Boundary candidates violate crossing coverage")
+    canonical, warnings, audit = _normalize_assessment_boundaries(
+        scope, components, candidate_doc["candidates"], output_dir=output_dir, declarations=declarations
+    )
+    coverage = _coverage_document(
+        assessment, candidate_doc, audit["candidates"], audit["aliases"], audit["dropped"], audit["candidate_ids"]
+    )
+    coverage.update(schema_version=2, source_scope_sha256=assessment["source_scope_sha256"])
+    jsonschema.Draft202012Validator(contract("trust-boundary-coverage-v2.schema.json")).validate(coverage)
+    scope.verify_unchanged()
+    return canonical, coverage, warnings
 
 
 def _component_map(output_dir: Path) -> dict[str, dict]:
@@ -1402,6 +1682,8 @@ def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) ->
         return "primary", reasons
     if "data-origin" in transitions:
         reasons.append("data-origin transition")
+    if "data-access" in transitions:
+        reasons.append("data-access transition")
     if component.get("handles_sensitive_data"):
         reasons.append("crossing into sensitive-data component")
     if reasons:
@@ -1683,6 +1965,17 @@ def prepare_contexts(
     return audit
 
 
+def _finding_locations(finding: dict) -> set[tuple[str, int | None]]:
+    """The `(file, line)` locations a finding's own evidence and instances cite."""
+    locations: set[tuple[str, int | None]] = set()
+    primary = finding.get("evidence")
+    primary_rows = primary if isinstance(primary, list) else [primary]
+    for item in [*primary_rows, *(finding.get("instances") or [])]:
+        if isinstance(item, dict) and item.get("file"):
+            locations.add((str(item["file"]), item.get("line")))
+    return locations
+
+
 def validate_finding_boundary_refs(
     finding: dict,
     *,
@@ -1702,12 +1995,7 @@ def validate_finding_boundary_refs(
     boundary_by_id = {
         row.get("id"): row for row in boundaries if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
-    evidence: set[tuple[str, int | None]] = set()
-    primary = finding.get("evidence")
-    primary_rows = primary if isinstance(primary, list) else [primary]
-    for item in [*primary_rows, *(finding.get("instances") or [])]:
-        if isinstance(item, dict) and item.get("file"):
-            evidence.add((str(item["file"]), item.get("line")))
+    evidence = _finding_locations(finding)
     cleaned: list[dict] = []
     diagnostics: list[str] = []
     seen: set[tuple[str, str]] = set()
@@ -1724,8 +2012,10 @@ def validate_finding_boundary_refs(
             reason = f"removed duplicate reference {boundary_id!r}"
         elif boundary is None:
             reason = f"removed unknown boundary reference {boundary_id!r}"
-        elif boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
-            reason = f"removed non-confirmed/non-resolved boundary reference {boundary_id!r}"
+        # Confidence is not gated (TB-14): an inferred boundary must stay
+        # refutable, and a reference never raises its confidence.
+        elif boundary.get("resolution_status") != "resolved":
+            reason = f"removed non-resolved boundary reference {boundary_id!r}"
         elif (
             not boundary_endpoints_valid(boundary, known_component_ids)
             if known_component_ids is not None
@@ -1817,6 +2107,115 @@ def revalidate_boundary_refs(
     return diagnostics
 
 
+def associate_boundary_refs(
+    threats: Iterable[dict],
+    *,
+    boundaries: Iterable[dict],
+    known_component_ids: set[str] | None,
+    components: Iterable[dict] = (),
+) -> list[dict]:
+    """Link an unlinked finding to the one boundary whose cited interface it is.
+
+    Narrow by design. A link is added only when all of these hold:
+
+    * the finding's evidence is established (an unverified finding never refutes);
+    * one of its own `file:line` locations is a location a confirmed, resolved
+      boundary cites — the boundary's evidence names that line as its interface,
+      which is what a CWE or component adjacency alone can never show;
+    * its component is adjacent to that boundary;
+    * its CWE bears on exactly one condition (leg) of that boundary; and
+    * on an internal crossing, its sink class fits the target's registered tier
+      in `components` (see `sink_classes` in the leg map).
+
+    When more than one boundary or leg qualifies, nothing is linked and the
+    finding is returned as a traceability gap, so absence of a link never reads
+    as a working control. The result passes through the shared reference
+    validator, so this path cannot publish what an analyst could not.
+    """
+    boundaries = [row for row in boundaries if isinstance(row, dict)]
+    tiers = {
+        row["id"]: str(row["tier"])
+        for row in components
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("tier")
+    }
+    sites: dict[tuple[str, int], list[dict]] = {}
+    for boundary in boundaries:
+        if not isinstance(boundary.get("id"), str) or boundary.get("resolution_status") != "resolved":
+            continue
+        for entry in boundary.get("evidence") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("file"), str) and isinstance(entry.get("line"), int):
+                sites.setdefault((entry["file"], entry["line"]), []).append(boundary)
+    gaps: list[dict] = []
+    for threat in threats:
+        if not isinstance(threat, dict) or threat.get("boundary_refs") or not evidence_established(threat):
+            continue
+        origin = str(threat.get("component") or threat.get("component_id") or "")
+        matches: dict[str, tuple[dict, list[dict]]] = {}
+        for file, line in sorted(loc for loc in _finding_locations(threat) if isinstance(loc[1], int)):
+            for boundary in sites.get((file, line), []):
+                if origin not in {boundary.get("from"), boundary.get("to"), *(boundary.get("covers_components") or [])}:
+                    continue
+                matches.setdefault(boundary["id"], (boundary, []))[1].append({"file": file, "line": line})
+        if not matches:
+            continue
+        label = str(threat.get("t_id") or threat.get("id") or "<anon>")
+        # The crossing type's vocabulary, not only the declared legs: an internal
+        # row declares none by default, yet "SQL injection breaks data
+        # interpretation" is fixed by the crossing type. The validator keeps the
+        # leg label only where the row declares it.
+        resolved = [
+            (boundary, locations, sorted(legs))
+            for boundary, locations in matches.values()
+            if len(legs := _legs_for_finding(threat, boundary_leg_vocabulary(boundary))) == 1
+        ]
+        fitting = [entry for entry in resolved if _sink_fits_target(threat, entry[0], tiers)]
+        if len(matches) > 1 or len(fitting) != 1:
+            gaps.append(
+                {
+                    "finding_id": label,
+                    "origin_component_id": origin,
+                    "candidate_boundary_ids": sorted(matches, key=_numeric_id),
+                    "reason": (
+                        "evidence is cited by more than one adjacent boundary"
+                        if len(matches) > 1
+                        else "the finding's CWE does not bear on exactly one condition of the boundary"
+                        if len(resolved) != 1
+                        else "the finding's weakness class does not match the boundary's target"
+                    ),
+                }
+            )
+            continue
+        boundary, locations, [leg] = fitting[0]
+        cwe = _CWE_RE.search(str(threat.get("cwe") or ""))
+        rationale = (
+            "The finding's evidence line is the interface this boundary cites; "
+            f"{cwe.group(0).upper() if cwe else 'the finding'} breaks its {leg} condition."
+        )
+        candidate = {
+            **threat,
+            "boundary_refs": [
+                {
+                    "boundary_id": boundary["id"],
+                    "origin_component_id": origin,
+                    "rationale": rationale[:240],
+                    "leg": leg,
+                    "evidence_locations": locations[:3],
+                }
+            ],
+        }
+        refs, _notes = validate_finding_boundary_refs(
+            candidate,
+            boundaries=boundaries,
+            origin_component_id=origin,
+            candidate_ids=None,
+            require_candidate=False,
+            known_component_ids=known_component_ids,
+        )
+        if refs:
+            threat["boundary_refs"] = refs
+    return gaps
+
+
 # --------------------------------------------------------------------------- #
 # Deterministic consolidation (juice-shop 2026-07-30)
 #
@@ -1858,21 +2257,19 @@ def _paths_contained(inner: list[str], outer: list[str]) -> bool:
     )
 
 
-def _same_deployable(a_paths: list[str], b_paths: list[str]) -> bool:
-    return _paths_contained(a_paths, b_paths) or _paths_contained(b_paths, a_paths)
-
-
 def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
     """The outermost component whose paths contain ``component_id``'s.
 
-    Same primitive as `_same_deployable`, walked transitively: `auth-service`
+    Path containment walked transitively: `auth-service`
     (`routes/login.ts`, `lib/insecurity.ts`) sits inside `backend-api`
-    (`routes/**`, `lib/**`), so both name one process and one perimeter.
+    (`routes/**`, `lib/**`), so both name one perimeter. A container whose
+    workloads sit on disjoint deployment networks (`_separate_workloads`) is not
+    walked into: its source tree holds the nested component, its deployment does not.
 
-    Deliberately NOT derived from `deployment_zones` (see `_paths_contained`) and
-    not from Dockerfile/compose: neither exists as structured per-component data,
-    and a compose file describes a deployment variant rather than the tree under
-    assessment. A component that is contained by nobody is its own deployable.
+    Deliberately NOT derived from `deployment_zones` (see `_paths_contained`), and
+    deployment workloads only veto a step, never add one: a compose file
+    describes a deployment variant rather than the tree under assessment. A
+    component that is contained by nobody is its own deployable.
     """
     if component_id not in components:
         return component_id
@@ -1885,6 +2282,7 @@ def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
             cid
             for cid, row in components.items()
             if cid != current
+            and not _separate_workloads(components[current], row)
             and _paths_contained(own, [p for p in (row.get("paths") or []) if isinstance(p, str) and p])
             # Mutual containment is not nesting; leaving it to the id tie-break
             # below would make the root depend on iteration order.
@@ -1898,6 +2296,14 @@ def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
 
 def _evidence_line(repo_root: Path, entry: dict) -> str:
     """The single source line an evidence entry points at ("" when unreadable)."""
+    from runtime.multi_repo_scope import AssessmentScope, ScopeError
+
+    if isinstance(repo_root, AssessmentScope):
+        try:
+            piece = repo_root.read(entry["repository_id"], entry["file"], entry["line"], entry["line"])
+            return piece["lines"][0] + "\n" if piece["sha256"] == entry["sha256"] else ""
+        except (KeyError, ScopeError):
+            return ""
     file_name = entry.get("file")
     line_no = entry.get("line")
     if not isinstance(file_name, str) or not isinstance(line_no, int) or line_no < 1:
@@ -1950,6 +2356,26 @@ def _retarget_name(name: Any, old_endpoint: str, new_endpoint: str) -> Any:
     return name
 
 
+def _deployable_scope(component_id: Any, components: dict[str, dict]) -> Any:
+    """The deployable root, shared by components whose paths are identical.
+
+    `_deployable_root` treats mutual containment as no nesting, so two
+    components over the same paths are each their own root. They are still one
+    deployable; the smallest id names it so the key is order-independent.
+    """
+    root = _deployable_root(component_id, components)
+    own = [p for p in ((components.get(root) or {}).get("paths") or []) if isinstance(p, str) and p]
+    if not own:
+        return root
+    same = [
+        cid
+        for cid, row in components.items()
+        if _paths_contained(own, paths := [p for p in (row.get("paths") or []) if isinstance(p, str) and p])
+        and _paths_contained(paths, own)
+    ]
+    return min([root, *same])
+
+
 def _grouping_endpoint(candidate: dict, crossing_class: str, components: dict[str, dict]) -> Any:
     """The inner endpoint a crossing is grouped by (deployable for ingress)."""
     target = candidate.get("to")
@@ -1973,7 +2399,7 @@ def _consolidate_candidates(
 ) -> tuple[list[dict], dict[str, str], list[str]]:
     """Normalize and merge candidates before they become canonical boundaries.
 
-    Four deterministic passes, all conservative:
+    Three deterministic passes, all conservative:
 
     1. **Direction** — a candidate modelled ``X → external`` whose own evidence
        lands on a route registration is an ingress crossing; flip it.
@@ -1985,15 +2411,10 @@ def _consolidate_candidates(
        protects nothing and is removed — reported through ``dropped``, never
        silently. Both rules require a positive ``tier: client``; a missing or
        unknown tier is left alone.
-    3. **Same deployable** — endpoints that ship in one process are an internal
-       enforcement interface, so force ``kind: process``. They are NOT discarded:
-       the injection / mass-assignment / encryption-at-rest findings anchor here,
-       and dropping the row to `same-trust` would leave them nowhere to attach.
-       `same-trust` stays reserved for signals with no interface behind them.
-    4. **Merge** — candidates sharing one `enforcement_point` within the same
+    3. **Merge** — candidates sharing one `enforcement_point` within the same
        crossing class are one boundary; those naming none fall back to the
        crossing itself, with ingress compared per deployable rather than per
-       component label. A merge spanning components records them in
+       component label, and build crossings also by their covered signals. A merge spanning components records them in
        `covers_components` so nothing loses its anchor. Over-merging destroys
        information silently, whereas under-merging stays visible in the
        catalogue and is fixable next run — so every widening here is bounded by
@@ -2035,8 +2456,7 @@ def _consolidate_candidates(
         # from a forged one, and nothing the SPA "enforces" survives a modified
         # client. Run after the direction correction so a mis-modelled
         # `client → external` that is really inbound is judged in its corrected
-        # form, and before the same-deployable rule, which must not claim that a
-        # browser shares a process with the server that ships it.
+        # form.
         source, target = candidate.get("from"), candidate.get("to")
         if target in components and _is_client_tier(target, components):
             point = candidate.get("enforcement_point")
@@ -2086,20 +2506,25 @@ def _consolidate_candidates(
             # shows the same word for both.
             candidate["confidence_basis"] = "route-evidence"
             notes.append(f"{key}: confidence inferred -> confirmed — cited evidence line registers an inbound route")
+        # Deployment evidence outranks a same-process claim: two workloads on
+        # disjoint platform networks cannot share an in-process call. The
+        # crossing is kept as a network crossing at reduced confidence.
         source, target = candidate.get("from"), candidate.get("to")
-        if source in components and target in components:
-            if (
-                _same_deployable(
-                    components[source].get("paths") or [],
-                    components[target].get("paths") or [],
-                )
-                and candidate.get("kind") != "process"
-            ):
-                notes.append(
-                    f"{key}: reclassified {candidate.get('kind')!r} -> 'process' — "
-                    f"{source} and {target} ship in one deployable"
-                )
-                candidate["kind"] = "process"
+        if (
+            candidate.get("kind") == "process"
+            and source in components
+            and target in components
+            and _separate_workloads(components[source], components[target])
+        ):
+            candidate["kind"] = "network"
+            candidate.pop("surface", None)
+            if candidate.get("confidence") == "confirmed":
+                candidate["confidence"] = "inferred"
+                candidate.pop("confidence_basis", None)
+            notes.append(
+                f"{key}: reclassified 'process' -> 'network' — {source} and {target} run in workloads "
+                "on disjoint deployment networks"
+            )
 
     working = [candidate for candidate in working if candidate["candidate_key"] not in dropped]
 
@@ -2129,15 +2554,35 @@ def _consolidate_candidates(
     for candidate in working:
         point = candidate.get("enforcement_point")
         crossing_class = _crossing_class(candidate)
+        surface, transitions = _axes_for_kind(candidate.get("kind"), candidate.get("surface"))
+        axes = (surface, tuple(transitions))
         if isinstance(point, str) and point.strip():
-            key = ("point", point.casefold(), crossing_class)
+            protected = candidate.get("from") if crossing_class == "egress" else candidate.get("to")
+            owners = tuple(sorted((components.get(protected) or {}).get("repository_ids") or []))
+            # One control can guard crossings that change different things; the
+            # survivor keeps only its own axes, so merging across them would
+            # erase a trust transition. Ingress also keys on the deployable: one
+            # middleware guarding two separately deployed targets is two
+            # crossings, and the survivor would keep only one target's
+            # assumption (TB-12 bounds every widening by path containment).
+            scope = _deployable_scope(candidate.get("to"), components) if crossing_class == "ingress" else None
+            key = ("point", point.casefold(), crossing_class, owners, axes, scope)
         else:
+            # Build signals are scoped per supply channel (registry, base image,
+            # piped installer, push destination), so each covered signal set is
+            # its own stated reason. Merging across them would keep one channel's
+            # assumption over every channel's evidence.
+            channels = (
+                tuple(sorted(candidate.get("covered_signal_ids") or [])) if candidate.get("kind") == "build" else ()
+            )
             key = (
                 "crossing",
                 candidate.get("from"),
                 _grouping_endpoint(candidate, crossing_class, components),
                 crossing_class,
                 candidate.get("kind"),
+                axes,
+                channels,
             )
         groups.setdefault(key, []).append(candidate)
 
@@ -2145,7 +2590,11 @@ def _consolidate_candidates(
     merged: list[dict] = []
     alias: dict[str, str] = {}
     for members in groups.values():
-        survivor = members[0]
+        # The member that names the deployable itself survives, so the merged
+        # row keeps the perimeter's own name and assumption, not a nested one's.
+        root = _grouping_endpoint(members[0], _crossing_class(members[0]), components)
+        survivor = next((m for m in members if m.get("to") == root), members[0])
+        members = [survivor, *(m for m in members if m is not survivor)]
         alias[survivor["candidate_key"]] = survivor["candidate_key"]
         for other in members[1:]:
             alias[other["candidate_key"]] = survivor["candidate_key"]
@@ -2153,11 +2602,18 @@ def _consolidate_candidates(
                 combined = list(survivor.get(field) or []) + list(other.get(field) or [])
                 survivor[field] = sorted(dict.fromkeys(combined))
             seen_evidence = {
-                (e.get("file"), e.get("line")) for e in survivor.get("evidence") or [] if isinstance(e, dict)
+                (e.get("repository_id"), e.get("file"), e.get("line"))
+                for e in survivor.get("evidence") or []
+                if isinstance(e, dict)
             }
             for entry in other.get("evidence") or []:
-                marker = (entry.get("file"), entry.get("line")) if isinstance(entry, dict) else None
-                if marker and marker not in seen_evidence:
+                marker = (
+                    (entry.get("repository_id"), entry.get("file"), entry.get("line"))
+                    if isinstance(entry, dict)
+                    else None
+                )
+                # Same evidence contract and survivor-first order as _merge_evidence.
+                if marker and marker not in seen_evidence and len(survivor.get("evidence") or []) < _MAX_EVIDENCE:
                     seen_evidence.add(marker)
                     survivor.setdefault("evidence", []).append(deepcopy(entry))
             if _CONFIDENCE_RANK.get(other.get("confidence"), 0) > _CONFIDENCE_RANK.get(survivor.get("confidence"), 0):
@@ -2268,132 +2724,18 @@ def _looks_inbound(repo_root: Path, candidate: dict) -> bool:
     return False
 
 
-def promote_candidates(
-    *,
-    repo_root: Path,
-    output_dir: Path,
-    candidates_path: Path,
-    assessment_input_path: Path,
-    prior_model: Path | None,
-) -> tuple[dict, dict]:
-    """Validate candidate coverage and promote candidates into the catalog.
+def _coverage_document(assessment, candidate_doc, candidates, candidate_alias, dropped_candidates, candidate_ids):
+    """Reconcile dispositions with the canonical boundaries each candidate became.
 
-    The LLM-authored file is never consumed by downstream stages. Public IDs,
-    endpoint resolution, declaration merging, sources, and status remain owned
-    by ``normalize``.
+    `candidate_ids` comes from the provenance normalization carries through
+    every merge, fold and re-anchoring, so a candidate is never matched again
+    by fields that normalization may have changed.
     """
-    candidate_doc = _read_json(candidates_path, None)
-    assessment = _read_json(assessment_input_path, None)
-    if not isinstance(candidate_doc, dict) or not isinstance(assessment, dict):
-        raise ValueError("candidate or assessment-input artifact is missing/malformed")
-    for document, schema_path in (
-        (candidate_doc, CANDIDATES_SCHEMA),
-        (assessment, ASSESSMENT_INPUT_SCHEMA),
-    ):
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        jsonschema.Draft202012Validator(schema).validate(document)
-
-    for field in ("component_inventory_fingerprint", "assessment_input_fingerprint"):
-        if candidate_doc[field] != assessment[field]:
-            raise ValueError(f"candidate {field} does not match immutable assessment input")
-
-    component_ids = {row["id"] for row in assessment["components"]}
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
     signal_by_id = {row["id"]: row for row in assessment["signals"]}
-    if len(signal_by_id) != len(assessment["signals"]):
-        raise ValueError("assessment input contains duplicate signal IDs")
-    candidates = candidate_doc["candidates"]
-    candidate_by_key = {row["candidate_key"]: row for row in candidates}
-    dispositions = candidate_doc["dispositions"]
-    disposition_by_signal = {row["signal_id"]: row for row in dispositions}
     mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
-
-    # The relational rules live in validate_fragment, so the authoring agent's
-    # mandated self-check enforces exactly what this gate enforces — see the
-    # docstring there for why they may not live here. Raising the first error
-    # preserves the wording callers and tests match on.
-    invariant_errors = fragment_invariant_errors("trust-boundary-candidates", candidate_doc, context=assessment)
-    if invariant_errors:
-        raise ValueError(invariant_errors[0])
-
-    dropped_candidates: dict[str, str] = {}
-    candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
-        candidates,
-        components={row["id"]: row for row in assessment["components"]},
-        repo_root=repo_root,
-        dropped=dropped_candidates,
-    )
-    candidate_by_key = {row["candidate_key"]: row for row in candidates}
-    for note in consolidation_notes:
-        print(f"trust-boundary-consolidation: {note}", file=sys.stderr)
-
-    provisional_rows = []
-    for candidate in candidates:
-        row = {
-            key: deepcopy(candidate[key])
-            for key in ("name", "from", "to", "kind", "assumption", "evidence", "confidence")
-        }
-        # Carried, not dropped: without these the finished model cannot show why
-        # two crossings became one row, and the next run cannot reproduce the
-        # decision from `threat-model.yaml`.
-        for optional in ("enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
-            if candidate.get(optional):
-                row[optional] = deepcopy(candidate[optional])
-        row["evidence"] = _canonical_evidence(
-            repo_root,
-            row["evidence"],
-            [],
-            candidate["candidate_key"],
-        )
-        if row["confidence"] == "confirmed" and not row["evidence"]:
-            raise ValueError(
-                f"{candidate['candidate_key']} claims confirmed confidence without valid repository evidence"
-            )
-        provisional_rows.append(row)
-    provisional = {"schema_version": 2, "trust_boundaries": provisional_rows}
-    sidecar = output_dir / ".trust-boundaries.json"
-    canonical, _warnings = normalize(
-        repo_root=repo_root,
-        sidecar=sidecar,
-        prior_model=prior_model,
-        output_dir=output_dir,
-        raw_sidecar=provisional,
-        destination=sidecar,
-    )
-
-    canonical_rows = canonical["trust_boundaries"]
-    candidate_to_ids: dict[str, list[str]] = {}
-    for key, candidate in candidate_by_key.items():
-        exact = [
-            row["id"]
-            for row in canonical_rows
-            if row.get("from") == candidate["from"]
-            and row.get("to") == candidate["to"]
-            and str(row.get("name", "")).casefold() == candidate["name"].casefold()
-        ]
-        if not exact:
-            # `kind` joins the fallback: two crossings can share endpoints and
-            # still ask different questions (the B2B `vm.createContext` sandbox
-            # and the HTTPS perimeter are both `external -> backend-api`), so a
-            # candidate whose name changed upstream must not claim both.
-            exact = [
-                row["id"]
-                for row in canonical_rows
-                if row.get("from") == candidate["from"]
-                and row.get("to") == candidate["to"]
-                and row.get("kind") == candidate.get("kind")
-            ]
-        if not exact:
-            # normalize()'s _consolidate() may have folded the candidate's target
-            # component into a parent boundary (covers_components lists the absorbed
-            # sub-components).  Match on the folded-in component so a sub-component
-            # candidate (e.g. external → realtime-channel folded into
-            # external → backend-api) still resolves to a canonical boundary.
-            exact = [
-                row["id"]
-                for row in canonical_rows
-                if row.get("from") == candidate["from"] and candidate.get("to") in (row.get("covers_components") or [])
-            ]
-        candidate_to_ids[key] = sorted(set(exact), key=_numeric_id)
+    disposition_by_signal = {row["signal_id"]: row for row in candidate_doc["dispositions"]}
+    candidate_to_ids = {key: list(candidate_ids.get(key, [])) for key in candidate_by_key}
     # Dispositions still reference the pre-merge keys; point every alias at the
     # survivor so signal promotion resolves after consolidation.
     for original, survivor in candidate_alias.items():
@@ -2478,6 +2820,106 @@ def promote_candidates(
         "signals": coverage_rows,
         "issues": issues,
     }
+    return coverage
+
+
+def promote_candidates(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    candidates_path: Path,
+    assessment_input_path: Path,
+    prior_model: Path | None,
+) -> tuple[dict, dict]:
+    """Validate candidate coverage and promote candidates into the catalog.
+
+    The LLM-authored file is never consumed by downstream stages. Public IDs,
+    endpoint resolution, declaration merging, sources, and status remain owned
+    by ``normalize``.
+    """
+    candidate_doc = _read_json(candidates_path, None)
+    assessment = _read_json(assessment_input_path, None)
+    if not isinstance(candidate_doc, dict) or not isinstance(assessment, dict):
+        raise ValueError("candidate or assessment-input artifact is missing/malformed")
+    for document, schema_path in (
+        (candidate_doc, CANDIDATES_SCHEMA),
+        (assessment, ASSESSMENT_INPUT_SCHEMA),
+    ):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(document)
+
+    for field in ("component_inventory_fingerprint", "assessment_input_fingerprint"):
+        if candidate_doc[field] != assessment[field]:
+            raise ValueError(f"candidate {field} does not match immutable assessment input")
+
+    component_ids = {row["id"] for row in assessment["components"]}
+    signal_by_id = {row["id"]: row for row in assessment["signals"]}
+    if len(signal_by_id) != len(assessment["signals"]):
+        raise ValueError("assessment input contains duplicate signal IDs")
+    candidates = candidate_doc["candidates"]
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    dispositions = candidate_doc["dispositions"]
+    disposition_by_signal = {row["signal_id"]: row for row in dispositions}
+    mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
+
+    # The relational rules live in validate_fragment, so the authoring agent's
+    # mandated self-check enforces exactly what this gate enforces — see the
+    # docstring there for why they may not live here. Raising the first error
+    # preserves the wording callers and tests match on.
+    invariant_errors = fragment_invariant_errors("trust-boundary-candidates", candidate_doc, context=assessment)
+    if invariant_errors:
+        raise ValueError(invariant_errors[0])
+
+    dropped_candidates: dict[str, str] = {}
+    candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
+        candidates,
+        components={row["id"]: row for row in assessment["components"]},
+        repo_root=repo_root,
+        dropped=dropped_candidates,
+    )
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    for note in consolidation_notes:
+        print(f"trust-boundary-consolidation: {note}", file=sys.stderr)
+
+    provisional_rows = []
+    for candidate in candidates:
+        row = {
+            key: deepcopy(candidate[key])
+            for key in ("candidate_key", "name", "from", "to", "kind", "assumption", "evidence", "confidence")
+        }
+        # Carried, not dropped: without these the finished model cannot show why
+        # two crossings became one row, and the next run cannot reproduce the
+        # decision from `threat-model.yaml`.
+        for optional in ("surface", "enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
+            if candidate.get(optional):
+                row[optional] = deepcopy(candidate[optional])
+        row["evidence"] = _canonical_evidence(
+            repo_root,
+            row["evidence"],
+            [],
+            candidate["candidate_key"],
+        )
+        if row["confidence"] == "confirmed" and not row["evidence"]:
+            raise ValueError(
+                f"{candidate['candidate_key']} claims confirmed confidence without valid repository evidence"
+            )
+        provisional_rows.append(row)
+    provisional = {"schema_version": 2, "trust_boundaries": provisional_rows}
+    sidecar = output_dir / ".trust-boundaries.json"
+    candidate_ids: dict[str, list[str]] = {}
+    canonical, _warnings = normalize(
+        repo_root=repo_root,
+        sidecar=sidecar,
+        prior_model=prior_model,
+        output_dir=output_dir,
+        raw_sidecar=provisional,
+        destination=sidecar,
+        provenance=candidate_ids,
+    )
+
+    coverage = _coverage_document(
+        assessment, candidate_doc, candidates, candidate_alias, dropped_candidates, candidate_ids
+    )
     schema = json.loads(COVERAGE_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(coverage)
     atomic_write_json(output_dir / ".trust-boundary-coverage.json", coverage, sort_keys=False)

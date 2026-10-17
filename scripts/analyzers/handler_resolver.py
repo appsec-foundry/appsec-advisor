@@ -10,19 +10,30 @@ its definition and classifies the resolved code:
 - ``verified``    a credential is read, checked against a verifier or session
                   store, and a rejecting branch follows within a few lines;
 - ``decode_only`` a token is decoded without signature verification;
-- ``none``        every element resolved, none reads a credential, and the
-                  application object is created in the registration file, so no
-                  unseen global middleware can authenticate the route;
+- ``none``        every element resolved, none reads a credential (or only as a
+                  pass-through loader, below), and the application object is
+                  created in the registration file, so no unseen global
+                  middleware can authenticate the route;
 - ``unresolved``  anything else: an element that cannot be followed (unknown
                   package, dynamic dispatch, a conditional guard, a missing
                   definition), a credential read without a check, or a router
                   whose mounting context lies in another file.
 
+A JavaScript middleware that reads or decodes a credential but can never stop
+the request is a pass-through loader (an identity cache, a challenge or audit
+hook) and authenticates nothing: it calls only an argument-less ``next()``,
+writes no response, throws nothing, and verifies only through a callback, so a
+failed verification cannot reject. Any response call, ``throw``, ``next(arg)``
+or synchronous verify keeps the element unresolved, because the request may
+end there.
+
 Resolution covers JavaScript/TypeScript call registrations (same-file
 definitions, ES imports and ``require`` of repository modules, factory calls,
 objects created by a package call, one level of same-file helpers) and
 decorated Python handlers including FastAPI ``Depends(...)``/``Security(...)``
-targets; NestJS handlers report ``verified``/``decode_only`` only, because
+targets. A call of a known authentication middleware package
+(``_AUTHENTICATING_PACKAGES``) counts as ``verified`` when its inline options
+keep rejection on; NestJS handlers report ``verified``/``decode_only`` only, because
 class and global guards stay invisible. Other stacks return no signal. Comments
 never count, only a function's own body counts, and test files are never used
 as definitions. ``analyzers/route_inventory.py`` records the signal and
@@ -40,7 +51,7 @@ if not __package__:
 
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from shared._path_guard import is_safe_to_read
@@ -58,8 +69,8 @@ _REJECT_WINDOW = 8
 
 # Middleware packages that never read a credential: body parsing, uploads,
 # compression, CORS, security headers, logging, metrics, rate limiting,
-# localisation, static files, robots and error pages. Any other package is
-# unresolved, because it may authenticate.
+# localisation, static files, robots and error pages. Any other package that
+# _AUTHENTICATING_PACKAGES does not list is unresolved, because it may authenticate.
 _NON_CREDENTIAL_PACKAGES = frozenset(
     {
         "body-parser",
@@ -88,6 +99,36 @@ _NON_CREDENTIAL_PACKAGES = frozenset(
         "serve-static",
     }
 )
+
+
+@dataclass(frozen=True)
+class _PackageGuard:
+    """A call of an authentication middleware package that rejects requests without a valid credential.
+
+    ``evidence`` is the repository line that calls the package, set once the
+    call's options are seen to keep rejection on; until then the guard only
+    names the package's scheme and the option that would turn rejection off.
+    """
+
+    scheme: str
+    members: frozenset[str] | None
+    disabled: re.Pattern | None
+    evidence: tuple[str, int] | None = None
+
+
+# Middleware packages whose call rejects a request without a valid credential
+# by default: (scheme, exported members that do so or None for any, option that
+# turns rejection off). Session loaders such as express-session and strategy
+# frameworks such as passport are absent: they do not reject on their own.
+_AUTHENTICATING_PACKAGES = {
+    "express-jwt": _PackageGuard("bearer", None, re.compile(r"\bcredentialsRequired\s*:\s*false\b")),
+    "koa-jwt": _PackageGuard("bearer", None, re.compile(r"\bpassthrough\s*:\s*true\b")),
+    "express-oauth2-jwt-bearer": _PackageGuard(
+        "bearer", frozenset({"auth"}), re.compile(r"\bauthRequired\s*:\s*false\b")
+    ),
+    "express-basic-auth": _PackageGuard("other", None, None),
+}
+_JS_INLINE_OPTIONS_RE = re.compile(r"[\s(]*\{.*\}[\s)]*(?:as\s+[\w$.<>]+\s*)?", re.DOTALL)
 _JS_APP_FACTORY_RE = re.compile(
     r"=\s*(?:express|fastify|restify\.createServer)\s*\(|=\s*new\s+Koa\s*\(|Hapi\.server\s*\("
 )
@@ -106,6 +147,10 @@ _JS_CREDENTIAL_RE = re.compile(
     r"|\b[\w$]*(?:jwt|Jwt|JWT|[tT]oken)[\w$]*\s*\(\s*req(?:uest)?\b"
     r"|\breq(?:uest)?\s*\??\.\s*(?:user|session|auth)\b"
     r"|\bisAuthenticated\s*\("
+    # A token field read from the body or query (`req.body.tmpToken`,
+    # `const { tmpToken } = req.body`). CSRF and captcha tokens are not credentials.
+    r"|\breq(?:uest)?\s*\??\.\s*(?:body|query)\s*\??\.\s*(?![\w$]*(?i:csrf|xsrf|captcha))[\w$]*[tT]oken\b"
+    r"|\{[^{}]*\b(?![\w$]*(?i:csrf|xsrf|captcha))[\w$]*[tT]oken\b[^{}]*\}\s*=\s*req(?:uest)?\s*\??\.\s*(?:body|query)\b"
 )
 _JS_VERIFY_RE = re.compile(
     r"(?:\.|\b)verify(?:Token|Jwt|JWT|IdToken|Signature|Session|Credentials)?\s*\("
@@ -122,6 +167,13 @@ _JS_REJECT_RE = re.compile(
     r"|\bthrow\s+new\s+\w*(?:Unauthori[sz]ed|Forbidden|Auth\w*)\w*|\bUnauthori[sz]ed\w*\s*\("
     r"|\.redirect\(\s*['\"`][^'\"`]*login"
 )
+# What lets a middleware end or reject the request; its absence makes a credential read pass-through.
+_JS_REQUEST_END_RE = re.compile(
+    r"\b(?:res|response|reply|ctx)\s*\.\s*(?:status|sendStatus|send|json|end|redirect|render|sendFile|code|body)\b"
+    r"|\bthrow\b|\bnext\s*\(\s*[^)\s]"
+)
+_JS_BARE_NEXT_RE = re.compile(r"\bnext\s*\(\s*\)")
+_JS_CALLBACK_RE = re.compile(r"=>|\bfunction\b")
 _JS_IMPORT_RE = re.compile(
     r"\bimport\s+(?:type\s+)?(?:(?P<default>[\w$]+)\s*,?\s*)?"
     r"(?:\{(?P<named>[^}]*)\}|\*\s+as\s+(?P<ns>[\w$]+))?\s*from\s*['\"](?P<src>[^'\"]+)['\"]"
@@ -131,6 +183,9 @@ _JS_REQUIRE_RE = re.compile(
     r"require\(\s*['\"](?P<src>[^'\"]+)['\"]\s*\)"
 )
 _JS_CALLEE_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(")
+_JS_REQUEST_CALL_RE = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(\s*req(?:uest)?\s*[,)]"
+)
 _JS_PATH_RE = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
 _JS_FUNCTION_START_RE = re.compile(r"^(?:async\s+)?(?:function\b|\(|[\w$]+\s*=>)")
 _JS_STRING_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`(?:[^`\\]|\\.)*`")
@@ -275,6 +330,66 @@ def _returned_package_call(code: str, imports: dict[str, tuple[str, str]]) -> st
     return m.group(1) if m and root in imports and not imports[root][0].startswith(".") else None
 
 
+def _rejecting_call(code: str, callee: str, guard: _PackageGuard) -> bool:
+    """`code` calls `callee` with inline options that keep the package's rejection on.
+
+    Options passed by name could hold the disabling option unseen, so only an
+    inline object literal counts.
+    """
+    m = re.search(rf"(?<![\w$]){re.escape(callee)}\s*\(", code)
+    if not m:
+        return False
+    args = code[m.end() : _matching(code, m.end() - 1) - 1]
+    return bool(_JS_INLINE_OPTIONS_RE.fullmatch(args)) and not (guard.disabled and guard.disabled.search(args))
+
+
+def direct_imports(path: str, text: str, exists) -> list[str]:
+    """Repository files `path` imports directly, resolved against a file set (MR-19).
+
+    `exists(candidate)` tells whether a repository-relative file is admitted.
+    JavaScript/TypeScript relative ``import``/``require`` and Python relative
+    or root-anchored ``from … import`` resolve; packages and unresolved
+    specifiers are dropped. The importing file never names itself.
+    """
+    import posixpath
+
+    found: list[str] = []
+    folder = posixpath.dirname(path)
+    if path.endswith(_JS_EXTS):
+        stripped = _strip_js_comments(text)
+        sources = [m.group("src") for m in _JS_IMPORT_RE.finditer(stripped)]
+        sources += [m.group("src") for m in _JS_REQUIRE_RE.finditer(stripped)]
+        for src in sources:
+            if not src.startswith("."):
+                continue
+            base = posixpath.normpath(posixpath.join(folder, src))
+            candidates = [base, *(base + ext for ext in _JS_EXTS), *(f"{base}/index{ext}" for ext in _JS_EXTS)]
+            hit = next((c for c in candidates if exists(c)), None)
+            if hit and hit != path and hit not in found:
+                found.append(hit)
+    elif path.endswith(".py"):
+        for m in _PY_IMPORT_RE.finditer(text):
+            module = m.group("mod")
+            dots = len(module) - len(module.lstrip("."))
+            parts = [p for p in module.lstrip(".").split(".") if p]
+            if dots:
+                base = folder
+                for _ in range(dots - 1):
+                    base = posixpath.dirname(base)
+                roots = [base]
+            else:
+                roots = ["", "src"]
+            for root in roots:
+                stem = posixpath.join(root, *parts) if parts else root
+                hit = next(
+                    (c for c in (stem + ".py", posixpath.join(stem, "__init__.py")) if parts and exists(c)), None
+                )
+                if hit and hit != path and hit not in found:
+                    found.append(hit)
+                    break
+    return found
+
+
 def _scheme(text: str) -> str:
     if re.search(r"(?i)cookies", text):
         return "cookie"
@@ -353,14 +468,19 @@ class HandlerResolver:
         text = self._text(rel)
         if text is None:
             return None
+        anonymous = ""
         if name == "default":
             m = re.search(r"^[ \t]*export\s+default\s+(?:async\s+)?(?:function\s*\*?\s*)?([\w$]+)", text, re.MULTILINE)
-            return self._js_definition(rel, m.group(1)) if m and m.group(1) != "function" else None
+            if m and m.group(1) != "function" and not _is_arrow(text, m.start(1)):
+                return self._js_definition(rel, m.group(1))
+            # `export default () => handler` and `export default function (req, res) {…}`
+            # define the export in place; the bodies below read them like a const initializer.
+            anonymous = r"|^[ \t]*export\s+default(?P<anon>)(?=\s+(?:async\s+)?(?:function\s*\*?\s*\(|\(|[\w$]+\s*=>))"
         n = re.escape(name)
         m = re.search(
             rf"^[ \t]*(?:export\s+)?(?:async\s+)?function\s*\*?\s*{n}\s*(?P<params>\()"
             rf"|^[ \t]*(?:export\s+)?(?:const|let|var)\s+{n}\s*(?::[^=\n]+)?=(?P<init>)"
-            rf"|^[ \t]*(?:module\.)?exports\.{n}\s*=(?P<exp>)",
+            rf"|^[ \t]*(?:module\.)?exports\.{n}\s*=(?P<exp>)" + anonymous,
             text,
             re.MULTILINE,
         )
@@ -392,7 +512,18 @@ class HandlerResolver:
                 brace = text.find("{", _matching(text, text.find("(", body_start)))
                 return line, text[m.start() : _matching(text, brace)], None
             end = text.find("\n", body_start)
-            return line, text[m.start() : len(text) if end < 0 else end], None
+            # A factory that returns a named function (`() => loadMembers`) leads to it.
+            # Only a name defined or imported here is followed; _resolve_js bounds the depth.
+            returned = re.match(r"([\w$]+)\s*;?\s*$", text[body_start : len(text) if end < 0 else end])
+            follow = returned and (
+                returned.group(1) in self._js_imports(rel)
+                or re.search(
+                    rf"^[ \t]*(?:export\s+)?(?:(?:async\s+)?function\s*\*?|const|let|var)\s+{re.escape(returned.group(1))}\b",
+                    text,
+                    re.MULTILINE,
+                )
+            )
+            return line, text[m.start() : len(text) if end < 0 else end], returned.group(1) if follow else None
         if re.match(r"(?:async\s+)?function\b", rest):
             params = text.find("(", start)
             brace = text.find("{", _matching(text, params))
@@ -405,21 +536,25 @@ class HandlerResolver:
             re.sub(r"\s+", "", callee.group(1)) if callee else None,
         )
 
-    def _resolve_js(self, rel: str, dotted: str, depth: int = 0) -> list[Body] | str | None:
-        """Code behind a callee path; 'external' for a non-credential package; None when unresolved."""
+    def _resolve_js(self, rel: str, dotted: str, depth: int = 0) -> list[Body] | str | _PackageGuard | None:
+        """Code behind a callee path; 'external' for a non-credential package; a guard for an
+        authentication package; None when unresolved."""
         if depth > 4:
             return None
         parts = [p.strip() for p in dotted.split(".")]
         imported = self._js_imports(rel).get(parts[0])
         if imported:
             src, exported = imported
+            member = exported if exported != "*" else (parts[1] if len(parts) > 1 else "default")
             if not src.startswith("."):
                 package = "/".join(src.split("/")[:2]) if src.startswith("@") else src.split("/")[0]
-                return "external" if package in _NON_CREDENTIAL_PACKAGES else None
+                if package in _NON_CREDENTIAL_PACKAGES:
+                    return "external"
+                guard = _AUTHENTICATING_PACKAGES.get(package)
+                return guard if guard and (guard.members is None or member in guard.members) else None
             module = self._module(rel, src)
             if module is None:
                 return None
-            member = exported if exported != "*" else (parts[1] if len(parts) > 1 else "default")
             return self._resolve_js(module, member, depth + 1)
         definition = self._js_definition(rel, parts[0])
         if definition is None:
@@ -430,16 +565,20 @@ class HandlerResolver:
         if not initializer:
             return [(rel, line, code)]
         resolved = self._resolve_js(rel, initializer, depth + 1)
-        if resolved is None:
-            return None
+        if isinstance(resolved, _PackageGuard) and resolved.evidence is None:
+            # A definition calling the package (`() => jwtGuard({...})`) is the guard's evidence.
+            return replace(resolved, evidence=(rel, line)) if _rejecting_call(code, initializer, resolved) else None
+        if resolved is None or isinstance(resolved, _PackageGuard):
+            return resolved
         return [(rel, line, code), *([] if resolved == "external" else resolved)]
 
-    def _js_element(self, rel: str, line: int, expr: str, depth: int = 0) -> tuple[bool, list[Body]]:
-        """(resolved, code) of one middleware or handler expression.
+    def _js_element(self, rel: str, line: int, expr: str, depth: int = 0) -> tuple[bool, list[Body] | _PackageGuard]:
+        """(resolved, code or authentication guard) of one middleware or handler expression.
 
         Only the outer callee counts. Its arguments are followed only when it
         resolves to repository code (a wrapper such as `asyncHandler(handler())`);
-        a package middleware's arguments are configuration.
+        a package middleware's arguments are configuration. A guard passed into
+        a wrapper stays unresolved, since the wrapper decides whether it runs.
         """
         expr = expr.strip()
         bare = _JS_STRING_RE.sub("''", expr)
@@ -455,6 +594,13 @@ class HandlerResolver:
         resolved = self._resolve_js(rel, callee)
         if resolved is None:
             return False, []
+        if isinstance(resolved, _PackageGuard):
+            if resolved.evidence is None:
+                # The registration calls the package itself.
+                if not (outer and _rejecting_call(expr, callee, resolved)):
+                    return False, []
+                resolved = replace(resolved, evidence=(rel, line))
+            return True, resolved
         if resolved == "external":
             return True, []
         code = list(resolved)
@@ -468,19 +614,56 @@ class HandlerResolver:
                     continue
                 if literal or _JS_CALLEE_RE.match(arg) or _JS_PATH_RE.match(arg):
                     ok, inner = self._js_element(rel, line, arg, depth + 1)
-                    if not ok:
+                    if not ok or isinstance(inner, _PackageGuard):
                         return False, []
                     code.extend(inner)
         return True, code
 
     def _js_helpers(self, rel: str, body: str) -> list[Body]:
-        """Same-file functions a body calls, one level deep."""
+        """Repository functions a body calls, one level deep: same-file functions, and
+        imported members the body hands the request to (`auth.users.from(req)`), whose
+        credential reads and rejections count for the caller."""
         out = []
         for name in sorted({m.group(1) for m in _JS_CALLEE_RE.finditer(body) if "." not in m.group(1)}):
             definition = self._js_definition(rel, name)
             if definition and definition[1] not in body:
                 out.append((rel, definition[0], definition[1]))
+        for name in sorted({re.sub(r"\s+", "", m.group(1)) for m in _JS_REQUEST_CALL_RE.finditer(body)}):
+            if "." not in name and self._js_definition(rel, name):
+                continue
+            resolved = self._resolve_js(rel, name)
+            if not isinstance(resolved, list):
+                continue
+            # `ns.users.from(req)` resolves to the object `users`; only its `from` method runs.
+            member = self._object_member(resolved[-1], name.split(".")[-1]) if resolved else None
+            resolved = [*resolved[:-1], member] if member else resolved
+            out.extend(code for code in resolved if code not in out and code[2] not in body)
         return out
+
+    def _object_member(self, definition: Body, member: str) -> Body | None:
+        """The method `member` of an object literal whose definition starts at `definition`."""
+        rel, line, _code = definition
+        text = self._text(rel)
+        if text is None:
+            return None
+        start = _line_offset(text, line)
+        head = re.match(r"[^\n=]*=\s*\{", text[start:])
+        if not head:
+            return None
+        opening = start + head.end() - 1
+        literal = text[opening : _matching(text, opening)]
+        m = re.search(
+            rf"(?:^|[\s,{{])(?:async\s+)?{re.escape(member)}\s*(?P<params>\()"
+            rf"|(?:^|[\s,{{]){re.escape(member)}\s*:\s*(?:async\s+)?(?:function\s*)?(?P<fparams>\()",
+            literal,
+        )
+        if not m:
+            return None
+        params = m.start("params") if m.group("params") is not None else m.start("fparams")
+        brace = literal.find("{", _matching(literal, params))
+        if brace < 0:
+            return None
+        return rel, _line_of(text, opening + m.start()), literal[m.start() : _matching(literal, brace)]
 
     def _js_registration(self, route: dict) -> tuple[str, int, str, re.Match, list[str]] | None:
         """(file, line, text, registration call, its arguments) of a call-registered route."""
@@ -489,7 +672,9 @@ class HandlerResolver:
         if text is None or not isinstance(line, int):
             return None
         call = re.compile(
-            r"\b(?P<obj>[\w$]+)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|any|route)\s*\(", re.IGNORECASE
+            # `use` covers the terminal mounts route_inventory lists as routes.
+            r"\b(?P<obj>[\w$]+)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|any|route|use)\s*\(",
+            re.IGNORECASE,
         ).search(text, _line_offset(text, line))
         if not call or _line_of(text, call.start()) != line:
             return None
@@ -623,6 +808,8 @@ class HandlerResolver:
         within ``_REJECT_WINDOW`` lines, or after a later test of the verify
         result; ``decode_only`` when a token is decoded without verification;
         ``unresolved`` when a credential is read but neither is shown; else ``none``.
+        A JS pass-through loader (module docstring) is ``none`` instead of
+        ``decode_only`` or ``unresolved``.
         """
         credential, verify, decode, reject = (
             (_PY_CREDENTIAL_RE, _PY_VERIFY_RE, _PY_DECODE_RE, _PY_REJECT_RE)
@@ -650,11 +837,28 @@ class HandlerResolver:
                         return HandlerSignal("verified", _scheme(row), [{"file": rel, "line": line + index}])
                 if decode.search(row) and not verify.search(row):
                     decoded = decoded or {"file": rel, "line": line + index}
+        if (reads or decoded) and not python and self._passes_through(expanded):
+            return HandlerSignal("none", "none")
         if decoded:
             return HandlerSignal("decode_only", "none", [decoded])
         if reads:
             return HandlerSignal("unresolved", evidence=[reads])
         return HandlerSignal("none", "none")
+
+    @staticmethod
+    def _passes_through(bodies: list[Body]) -> bool:
+        """Whether a chain link always hands the request on and cannot reject it."""
+        if not any(_JS_BARE_NEXT_RE.search(body) for _rel, _line, body in bodies):
+            return False
+        for _rel, _line, body in bodies:
+            if _JS_REQUEST_END_RE.search(body):
+                return False
+            # A synchronous verify can throw and so reject; only a callback form cannot.
+            for match in _JS_VERIFY_RE.finditer(body):
+                opening = match.end() - 1
+                if body[opening] != "(" or not _JS_CALLBACK_RE.search(body[opening : _matching(body, opening)]):
+                    return False
+        return True
 
     def _chain(self, route: dict):
         framework = route.get("framework")
@@ -675,8 +879,15 @@ class HandlerResolver:
             return HandlerSignal("unresolved")
         mounted, handler, complete = found
         chain = [*mounted, *handler]
-        results = [self._classify(code, python) if ok else HandlerSignal("unresolved") for ok, code in chain]
-        bodies = [body for _ok, code in [*handler, *mounted] for body in code]
+        results = [
+            HandlerSignal("unresolved")
+            if not ok
+            else HandlerSignal("verified", code.scheme, [{"file": code.evidence[0], "line": code.evidence[1]}])
+            if isinstance(code, _PackageGuard)
+            else self._classify(code, python)
+            for ok, code in chain
+        ]
+        bodies = [body for _ok, code in [*handler, *mounted] if isinstance(code, list) for body in code]
         verified = next((r for r in results if r.signal == "verified"), None)
         if verified:
             return HandlerSignal("verified", verified.scheme, verified.evidence, bodies)
@@ -693,7 +904,7 @@ class HandlerResolver:
         found = self._chain(route)
         if not found or not found[1] or not all(ok for ok, _code in found[1]):
             return None
-        return "\n".join(body for _ok, code in found[1] for _rel, _line, body in code) or None
+        return "\n".join(body for _ok, code in found[1] if isinstance(code, list) for _rel, _line, body in code) or None
 
     def handler_module(self, route: dict) -> str | None:
         """Repository file that defines the route's own handler, or None when unresolved.
@@ -710,3 +921,41 @@ class HandlerResolver:
         if not found or not found[1] or not found[1][0][0] or not found[1][0][1]:
             return None
         return found[1][0][1][0][0]
+
+    def middleware_definitions(self, route: dict) -> list[tuple[str, int, int]]:
+        """(file, first line, last line) of each repository middleware a call-registered route runs.
+
+        Every registration argument before the handler, then the middlewares
+        mounted on a path prefix of the route, resolved to their repository
+        definitions; an authentication package guard yields the line that
+        configures it. Middlewares mounted without a path run on every route
+        and say nothing about this one. A guard such as an identity-overwriting
+        middleware decides an access claim about the handler, yet lies in
+        neither the handler's nor the registration's file.
+        """
+        if route.get("framework") not in _CALL_FRAMEWORKS:
+            return []
+        found = self._js_registration(route)
+        if found is None:
+            return []
+        rel, line, text, call, args = found
+        obj, path = call.group("obj"), (route.get("path") or "").rstrip("/") or "/"
+        elements = [self._js_element(rel, line, arg) for arg in args[1:-1]]
+        for use in re.finditer(rf"\b{re.escape(obj)}\s*\.\s*use\s*\(", text[: call.start()]):
+            mounted = _split_args(text[use.end() : _matching(text, use.end() - 1) - 1])
+            if not mounted or mounted[0][:1] not in "'\"`[":
+                continue
+            prefixes = re.findall(r"['\"`](/[^'\"`]*)['\"`]", mounted[0])
+            if any(path == p.rstrip("/*") or path.startswith(p.rstrip("/*") + "/") for p in prefixes):
+                elements.extend(self._js_element(rel, _line_of(text, use.start()), m) for m in mounted[1:])
+        spans = []
+        for ok, code in elements:
+            if not ok:
+                continue
+            if isinstance(code, _PackageGuard):
+                if code.evidence is not None:
+                    spans.append((code.evidence[0], code.evidence[1], code.evidence[1]))
+            elif code:
+                rel, line, body = code[0]
+                spans.append((rel, line, line + body.count("\n")))
+        return list(dict.fromkeys(spans))

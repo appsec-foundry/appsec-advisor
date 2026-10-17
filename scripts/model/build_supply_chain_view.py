@@ -41,6 +41,7 @@ from typing import Any
 
 import yaml
 from renderers._severity_rollup import SEVERITY_ORDER, display_id, register_severity
+from shared._boundary_interface import is_internal_interface
 
 from model.build_plane import build_component_ids, is_ci_definition
 
@@ -52,7 +53,7 @@ SCHEMA_VERSION = 1
 BUILD_TIME = "build-time"
 GITHUB = "GitHub Actions"
 
-INPUT_KINDS = ("package", "github_action", "base_image", "remote_script")
+INPUT_KINDS = ("package", "github_action", "base_image", "remote_script", "ci_include")
 ECOSYSTEM_LABELS = {
     "npm": "npm registry",
     "pip": "PyPI",
@@ -111,8 +112,12 @@ INPUT_ENTRY = {
     "github_action": "ci-input",
     "base_image": "ci-input",
     "remote_script": "ci-input",
+    "ci_include": "ci-input",
 }
 MAX_SOURCES = 5
+# Internal: every (file, line) of an element's fact rows, beyond the capped display sources.
+# Boundary mapping reads it; build_view removes it before the view leaves this module.
+EVIDENCE_KEYS = "_evidence_keys"
 
 
 @cache
@@ -137,6 +142,10 @@ def _source(row: dict) -> dict:
     return out
 
 
+def _evidence_keys(rows) -> set[tuple[str, int]]:
+    return {(str(row["file"]), row["line"]) for row in rows if row.get("file") and isinstance(row.get("line"), int)}
+
+
 def _sources(rows) -> list[dict]:
     seen, out = set(), []
     for row in rows:
@@ -151,6 +160,13 @@ def _sources(rows) -> list[dict]:
 def _ci_system_of(path: str, systems: list[str]) -> str | None:
     owners = [name for name in systems if CI_FILES.get(name) and CI_FILES[name] in path]
     return owners[0] if len(owners) == 1 else None
+
+
+def _ci_element(path: str, elements: dict[str, dict]) -> str | None:
+    """The drawn CI element whose definition file is ``path``."""
+    system = _ci_system_of(path, list(CI_FILES))
+    element = f"ci:{_slug(system)}" if system else None
+    return element if element in elements else None
 
 
 def _actor_slugs(model: dict) -> dict[str, str]:
@@ -172,6 +188,10 @@ def fingerprint(model: dict, facts: dict | None, inventory: dict | None) -> str:
         {
             "threats": threats,
             "components": sorted(build_component_ids(model.get("components") or [])),
+            "boundaries": sorted(
+                (str(b.get("id")), str(b.get("confidence")), json.dumps(b.get("evidence"), sort_keys=True))
+                for b in _build_boundaries(model)
+            ),
             "facts": facts,
             "inventory": (inventory or {}).get("ci"),
             "dependencies": (inventory or {}).get("dependencies"),
@@ -190,8 +210,9 @@ def has_build_evidence(facts: dict | None, inventory: dict | None, build_time_sc
 def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]:
     elements: dict[str, dict] = {}
     systems = [str(row.get("system")) for row in inventory.get("ci") or [] if row.get("system")]
-    if facts.get("workflows") and GITHUB not in systems:
-        systems.insert(0, GITHUB)
+    workflows = facts.get("workflows") or []
+    covered = list(dict.fromkeys(s for row in workflows if (s := _ci_system_of(row["file"], list(CI_FILES)))))
+    systems = [s for s in covered if s not in systems] + systems
     ci_files = sorted({row["file"] for row in facts.get("workflows") or []}) or [
         str(row.get("source")) for row in inventory.get("ci") or [] if row.get("source")
     ]
@@ -219,6 +240,7 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             "label": ECOSYSTEM_LABELS.get(ecosystem, ecosystem),
             "detail": detail,
             "sources": _sources(rows),
+            EVIDENCE_KEYS: _evidence_keys(rows),
         }
     if dependencies.get("manifests") and ecosystems:
         elements["input:package:" + ecosystems[0]]["manifest_detail"] = (
@@ -229,11 +251,12 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
         ("github_action", "GitHub Actions"),
         ("base_image", "Base images"),
         ("remote_script", "Remote installers"),
+        ("ci_include", "CI includes"),
     ):
         rows = [row for row in inputs if row["kind"] == kind]
         if not rows:
             continue
-        strong = {"github_action": "commit-sha", "base_image": "digest"}.get(kind)
+        strong = {"github_action": "commit-sha", "base_image": "digest", "ci_include": "commit-sha"}.get(kind)
         if strong:
             weak = sum(row["pinning"] != strong for row in rows)
             detail = f"{len(rows)} reference{'s' if len(rows) != 1 else ''} · {weak} not {'SHA' if strong == 'commit-sha' else 'digest'}-pinned"
@@ -246,12 +269,15 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             "label": label,
             "detail": detail,
             "sources": _sources(rows),
+            EVIDENCE_KEYS: _evidence_keys(rows),
         }
     inventory_rows = {str(row.get("system")): row for row in inventory.get("ci") or []}
     for system in systems:
         row = inventory_rows.get(system) or {}
-        full = system == GITHUB and bool(facts.get("workflows"))
-        workflow_count = len(facts.get("workflows") or []) if system == GITHUB else 0
+        full = system in covered
+        workflow_count = (
+            sum(_ci_system_of(w["file"], list(CI_FILES)) == GITHUB for w in workflows) if system == GITHUB else 0
+        )
         elements[f"ci:{_slug(system)}"] = {
             "id": f"ci:{_slug(system)}",
             "column": "build",
@@ -277,6 +303,7 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
         element_id = _artifact_id(output)
         if element_id in elements:
             elements[element_id]["sources"] = _sources(elements[element_id]["sources"] + [output])
+            elements[element_id][EVIDENCE_KEYS] |= _evidence_keys([output])
             continue
         if output["kind"] == "container_image":
             destination = output.get("destination") or {}
@@ -294,9 +321,11 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             "label": label,
             "detail": detail,
             "sources": _sources([output]),
+            EVIDENCE_KEYS: _evidence_keys([output]),
         }
     for system, row in inventory_rows.items():
-        if system == GITHUB and facts.get("workflows"):
+        # Facts that evidence an artifact of this system replace what the inventory says it publishes.
+        if any(_ci_system_of(o["file"], list(CI_FILES)) == system for o in facts.get("outputs") or []):
             continue
         for target in row.get("publishes") or []:
             if str(target).lower().startswith("kubernetes"):
@@ -336,6 +365,95 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
     return elements, systems
 
 
+_BOUNDARY_ID_RE = re.compile(r"^tb-\d+$")
+
+
+def _build_boundaries(model: dict) -> list[dict]:
+    """Resolved catalogue boundaries that are about the build: a build-pipeline
+    crossing, or one with a build-plane endpoint. Internal interfaces are not
+    trust boundaries and never map."""
+    build_ids = build_component_ids(model.get("components") or [])
+    return [
+        row
+        for row in model.get("trust_boundaries") or []
+        if isinstance(row, dict)
+        and _BOUNDARY_ID_RE.fullmatch(str(row.get("id") or ""))
+        and row.get("resolution_status") == "resolved"
+        and not is_internal_interface(row)
+        and (
+            row.get("surface") == "build-pipeline"
+            or row.get("kind") == "build"
+            or bool({row.get("from"), row.get("to")} & build_ids)
+        )
+    ]
+
+
+def _cites(source: dict, file: str) -> bool:
+    """An element source names this file, or the directory that holds it."""
+    path = str(source.get("file") or "").rstrip("/")
+    return bool(path) and (file == path or file.startswith(path + "/"))
+
+
+def _evidences(element: dict, entry: dict) -> bool:
+    """The boundary evidence location belongs to this element.
+
+    A CI system owns its workflow definition, so any location inside it counts.
+    Every other element owns only its fact rows: one step of a workflow
+    evidences that step's input or artifact, never every element the same file
+    mentions.
+    """
+    file = entry["file"].removeprefix("./")
+    if element["kind"] == "ci":
+        return any(_cites(source, file) for source in element.get("sources") or [])
+    line = entry.get("line")
+    return isinstance(line, int) and (file, line) in element.get(EVIDENCE_KEYS, set())
+
+
+def _map_boundaries(model: dict, elements: dict[str, dict]) -> None:
+    """Attach each build boundary to the elements whose own evidence holds its evidence.
+
+    The mapping is evidence, not column membership: a boundary whose evidence
+    sits in one CI system's definition marks that system, and an input or
+    artifact only when the boundary cites the exact line of one of its fact
+    rows. The aggregate repository row and the running system are never
+    mapped; a boundary nothing cites stays in the report catalogue. Each row
+    says whether the crossing enters the build or leaves it, which decides the
+    column border Figure 1b draws it on.
+    """
+    build_ids = build_component_ids(model.get("components") or [])
+    for boundary in _build_boundaries(model):
+        source, target = boundary.get("from"), boundary.get("to")
+        leaves = target == "external" or (source in build_ids and target not in build_ids)
+        crossing = "egress" if leaves else "ingress"
+        for element in elements.values():
+            if element["kind"] in {"repository", "execution"}:
+                continue
+            cited = next(
+                (
+                    entry
+                    for entry in boundary.get("evidence") or []
+                    if isinstance(entry, dict) and isinstance(entry.get("file"), str) and _evidences(element, entry)
+                ),
+                None,
+            )
+            rows = element.setdefault("boundaries", [])
+            if cited is None or len(rows) >= MAX_SOURCES:
+                continue
+            rows.append(
+                {
+                    "id": boundary["id"],
+                    "confidence": boundary.get("confidence")
+                    if boundary.get("confidence") in {"confirmed", "inferred"}
+                    else "unknown",
+                    "crossing": crossing,
+                    "evidence": _source(cited),
+                }
+            )
+    for element in elements.values():
+        if not element.get("boundaries"):
+            element.pop("boundaries", None)
+
+
 def _short_ci_path(path: str) -> str:
     return ".github/workflows" if path.startswith(".github/workflows/") or ".github/workflows/" in path else path
 
@@ -370,17 +488,18 @@ def _used_in_ci(row: dict, outputs: list[dict]) -> list[dict]:
 def _edges(elements: dict[str, dict], facts: dict) -> list[dict]:
     edges: list[dict] = []
     outputs = facts.get("outputs") or []
-    github = f"ci:{_slug(GITHUB)}"
     for element in elements.values():
         if element["column"] != "sources" or element["kind"] == "repository":
             continue
-        rows = _rows_of(element, facts)
-        evidence = [ev for row in rows for ev in _used_in_ci(row, outputs)]
-        if evidence and github in elements:
+        by_ci: dict[str, list[dict]] = {}
+        for evidence in (ev for row in _rows_of(element, facts) for ev in _used_in_ci(row, outputs)):
+            if ci := _ci_element(evidence["file"], elements):
+                by_ci.setdefault(ci, []).append(evidence)
+        for ci, evidence in by_ci.items():
             edges.append(
                 {
                     "from": element["id"],
-                    "to": github,
+                    "to": ci,
                     "status": "evidenced",
                     "label": "fetched",
                     "sources": _sources(evidence),
@@ -391,9 +510,9 @@ def _edges(elements: dict[str, dict], facts: dict) -> list[dict]:
             {"from": "repository", "to": ci["id"], "status": "evidenced", "label": "checkout", "sources": ci["sources"]}
         )
     for output in outputs:
-        if output.get("job") and github in elements:
+        if output.get("job") and (ci := _ci_element(output["file"], elements)):
             edge = {
-                "from": github,
+                "from": ci,
                 "to": _artifact_id(output),
                 "status": "evidenced",
                 "label": "push" if output.get("pushed") or output["kind"] == "package" else "build",
@@ -487,7 +606,7 @@ def _element_for_kind(kind, ecosystem, locations, elements, systems) -> str | No
             return target
         packages = [e for e in elements if e.startswith("input:package:")]
         return packages[0] if len(packages) == 1 else None
-    if kind in ("github_action", "base_image", "remote_script"):
+    if kind in ("github_action", "base_image", "remote_script", "ci_include"):
         return f"input:{kind}" if f"input:{kind}" in elements else None
     if kind == "ci":
         for path, _line in locations:
@@ -523,17 +642,22 @@ def _path(entry: dict, elements: dict, facts: dict) -> list[dict]:
         # whichever element displays the finding.
         target = element["id"] if element["kind"] == "ci" else github
         return [{"from": "repository", "to": target}] if target in elements else []
-    if element["column"] != "sources" or element["kind"] == "repository" or github not in elements:
+    if element["column"] != "sources" or element["kind"] == "repository":
         return []
     rows = [entry["row"]] if entry.get("row") else _rows_of(element, facts)
     best: list[dict] = []
     for row in sorted(rows, key=lambda r: (r["file"], r["line"])):
-        if not _used_in_ci(row, outputs):
+        used = _used_in_ci(row, outputs)
+        ci = _ci_element(used[0]["file"], elements) if used else None
+        if not ci:
             continue
-        steps = [{"from": element["id"], "to": github, "via": _source(row)}]
-        produced = sorted(_consumers(row, outputs), key=lambda o: (not o.get("pushed"), o["file"], o["line"]))
+        steps = [{"from": element["id"], "to": ci, "via": _source(row)}]
+        produced = sorted(
+            (o for o in _consumers(row, outputs) if _ci_element(o["file"], elements) == ci),
+            key=lambda o: (not o.get("pushed"), o["file"], o["line"]),
+        )
         if produced:
-            steps.append({"from": github, "to": _artifact_id(produced[0]), "via": _source(produced[0])})
+            steps.append({"from": ci, "to": _artifact_id(produced[0]), "via": _source(produced[0])})
         if len(steps) > len(best):
             best = steps
     return best
@@ -548,6 +672,9 @@ def build_view(
     if not has_build_evidence(facts, inventory, build_time_scenario_findings):
         return None
     elements, systems = _elements(facts, inventory)
+    _map_boundaries(model, elements)
+    for element in elements.values():
+        element.pop(EVIDENCE_KEYS, None)
     edges = _edges(elements, facts)
     build_ids = build_component_ids(model.get("components") or [])
     slugs = _actor_slugs(model)

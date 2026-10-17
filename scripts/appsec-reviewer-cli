@@ -21,6 +21,9 @@
 #   --fail-on <must|partial> Exit non-zero if an in-scope requirement at/above the
 #                           floor FAILs (or also PARTIALs). Omit = advisory (exit 0).
 #   --priority-floor <p>    MUST (default) | SHOULD | MAY — lowest priority that gates.
+#   --trust-mode <mode>     untrusted (default) | trusted. Untrusted refuses a repository
+#                           that carries its own Claude Code settings, hooks, or
+#                           instructions, which would load before the review runs.
 #
 # Auth: uses ANTHROPIC_API_KEY if set, otherwise Claude Code subscription auth.
 set -euo pipefail
@@ -44,6 +47,7 @@ OUTPUT="security-review.md"
 REQUIREMENTS=""
 FAIL_ON=""
 PRIORITY_FLOOR="MUST"
+TRUST_MODE="untrusted"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,27 +56,44 @@ while [ $# -gt 0 ]; do
     --requirements)   REQUIREMENTS="${2:-}"; shift 2 ;;
     --fail-on)        FAIL_ON="${2:-}"; shift 2 ;;
     --priority-floor) PRIORITY_FLOOR="${2:-}"; shift 2 ;;
-    -h|--help)        sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --trust-mode)     TRUST_MODE="${2:-}"; shift 2 ;;
+    -h|--help)        sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)                die "unknown argument '$1'. See --help." ;;
   esac
 done
 
 [ -n "$DIFF_REF" ] || die "--diff <ref> is required."
 case "${FAIL_ON:-}" in ""|must|partial) : ;; *) die "--fail-on must be 'must' or 'partial'." ;; esac
+case "$TRUST_MODE" in untrusted|trusted) : ;; *) die "--trust-mode must be 'untrusted' or 'trusted'." ;; esac
 
-OUTPUT_DIR="${PWD}/docs/security"
-mkdir -p "$OUTPUT_DIR"
+# Repository-owned Claude Code settings, hooks, and instructions load before the
+# review runs and could steer it (REQ-TRU-001); refuse them unless the caller
+# vouches for the repository.
+if [ "$TRUST_MODE" = "untrusted" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/preflight_untrusted.py" --repo-root "$PWD" --strict \
+    --format text --output - >/dev/null || \
+    die "the repository carries its own Claude Code configuration (listed above). Move it out of the checkout, or pass --trust-mode trusted only for a repository you control."
+fi
+
+# The verdict and run state live in the application's private directory outside
+# the checkout, so a verdict the change carries is never read as this review's.
+OUTPUT_DIR="$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" destination --repo "$PWD" --create)" || \
+  die "cannot resolve the private output directory (see the error above)."
 VERDICT="$OUTPUT_DIR/.requirements-verification.json"
+# A verdict left by an earlier review is not this review's result.
+rm -f "$VERDICT"
 
 # Build the skill invocation. Advisory in the skill (the gate decision is made
 # below by requirements/requirements_gate.py so the CLI owns the exit code deterministically).
-SKILL_ARGS="--base $DIFF_REF --priority-floor $PRIORITY_FLOOR"
+# --output keeps the skill writing the verdict where this wrapper reads it.
+SKILL_ARGS="--base $DIFF_REF --priority-floor $PRIORITY_FLOOR --output \"$OUTPUT_DIR\""
 [ -n "$REQUIREMENTS" ] && SKILL_ARGS="$SKILL_ARGS --requirements $REQUIREMENTS"
 
 command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it: https://claude.ai/download"
 
 echo "appsec-reviewer-cli: reviewing changes since '$DIFF_REF'…" >&2
 claude -p "/appsec-advisor:verify-requirements $SKILL_ARGS" \
+  --allowedTools "Read,Write,Glob,Grep,Bash,Agent" \
   --permission-mode bypassPermissions >&2 || true
 
 [ -f "$VERDICT" ] || die "no verdict produced ($VERDICT) — the review did not complete."

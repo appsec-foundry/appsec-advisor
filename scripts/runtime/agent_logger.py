@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-appsec-advisor hook logger — writes to docs/security/.hook-events.log
-in the current working directory (the analyzed repo).
+appsec-advisor hook logger — writes to .hook-events.log in the run's output
+directory: OUTPUT_DIR, or the assessment directory of the analyzed checkout
+when that directory exists. Without one it writes nothing.
 
-This is SEPARATE from docs/security/.agent-run.log which is written
+This is SEPARATE from the output directory's .agent-run.log, which is written
 by the agents themselves via bash echo commands. Keeping them apart
 avoids confusing chronological interleaving.
 
@@ -30,8 +31,8 @@ Events logged:
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
   ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
-  SUMMARY_NOT_RELAYED — the outermost Stop returned the turn once because the closing
-                  message dropped completion-summary lines (see runtime/completion_relay.py)
+  SUMMARY_SHOWN — a hook showed the completion summary as a systemMessage
+                  (see runtime/completion_relay.py)
 
 Performance-diagnostic note (added 2026-05-23): FILE_READ / GREP_RUN / GLOB_RUN /
 BASH_OK were added to close the visibility gap — previously only ~15% of tool calls
@@ -79,6 +80,8 @@ import runtime.agent_lifecycle as agent_lifecycle
 import runtime.hook_payload as hook_payload
 from runtime.event_log import format_line
 
+#: ``completion_relay.RECORD``, spelled out so the per-Bash-call check imports nothing.
+_SUMMARY_RECORD = ".completion-summary.json"
 # ---------------------------------------------------------------------------
 # Config loading — single cached read of config.json
 # ---------------------------------------------------------------------------
@@ -196,60 +199,21 @@ def _clear_run_markers() -> None:
             pass
 
 
-def _existing_output_root(start: str) -> str | None:
-    """Nearest ancestor of ``start`` that is a checkout AND holds ``docs/security``.
-
-    Both signals are required because each alone picks the wrong directory.
-
-    ``.git`` alone walks to the filesystem root, so an unrelated or stray
-    checkout above captures every hook that fires outside a project — an empty
-    ``/tmp/.git``, which is a real thing to find on a shared box, is enough to
-    send events to ``/tmp/docs/security``. Writing outside the tree the run
-    belongs to is worse than the nesting this is here to fix.
-
-    ``docs/security`` alone is captured by the very stray directory this fixes.
-    A hook firing from ``<repo>/docs`` finds ``<repo>/docs/docs/security`` left
-    by an earlier run one candidate before it reaches the real one, so the bug
-    keeps its own artifact alive.
-
-    Together neither misfires: the stray nested directory sits under no
-    checkout of its own, and a checkout with no ``docs/security`` is not an
-    output root. Returns None on a first run, where nothing has been created
-    yet and the caller's cwd default is correct.
-    """
-    try:
-        path = Path(start).resolve()
-    except OSError:
-        return None
-    for candidate in (path, *path.parents):
-        try:
-            # ``.git`` is a FILE in a worktree or submodule checkout, so this
-            # has to be ``exists``, not ``is_dir``.
-            if (candidate / ".git").exists() and (candidate / "docs" / "security").is_dir():
-                return str(candidate)
-        except OSError:
-            return None
-    return None
-
-
 def _output_dir() -> str:
     """Resolve the appsec output directory.
 
     Preference order:
       1. OUTPUT_DIR environment variable (set by the skill dispatch).
       2. cwd itself when it already ends in docs/security — a hook firing from
-         a session whose cwd is already inside the output dir.
-      3. ``<nearest enclosing checkout that has one>/docs/security``.
-      4. cwd + /docs/security, for a first run with nothing to find yet.
+         a session whose cwd is already inside a legacy output dir.
+      3. The assessment directory of the checkout that contains the cwd
+         (decision AS-1), which may not exist yet.
 
-    Step 3 exists because a run's output directory does not move with the cwd,
-    and appending to the cwd made every subdirectory its own destination. Case
-    2 only ever caught the one cwd that was already the full output path; a
-    hook firing one level up, from ``<repo>/docs``, wrote a stray
-    ``<repo>/docs/docs/security``, and one from ``<repo>/routes`` a
-    ``<repo>/routes/docs/security``. Those writes succeed and go unread — the
-    run that owns the events looks in its own directory — so budget state and
-    hook events silently split across trees.
+    Without a checkout the result is empty. It never falls back to a
+    directory inside the checkout: an earlier fallback created
+    ``<cwd>/docs/security`` on every tool call in every repository, and
+    appending to the cwd made each subdirectory its own destination. ``main``
+    writes nothing unless the resolved directory already exists.
     """
     env = os.environ.get("OUTPUT_DIR")
     if env:
@@ -258,10 +222,13 @@ def _output_dir() -> str:
     norm = cwd.replace("\\", "/").rstrip("/")
     if norm.endswith("/docs/security") or norm == "docs/security":
         return cwd
-    root = _existing_output_root(cwd)
-    if root:
-        return os.path.join(root, "docs", "security")
-    return os.path.join(cwd, "docs", "security")
+    try:
+        from shared.assessment_location import locate_from
+
+        located = locate_from(Path(cwd))
+    except Exception:  # noqa: BLE001 — a hook must never fail on the lookup
+        located = None
+    return str(located) if located is not None else ""
 
 
 def _trace_path() -> str:
@@ -593,7 +560,6 @@ _AGENT_SHORT_NAMES = {
     "appsec-recon-scanner": "recon-scanner",
     "appsec-dep-scanner": "dep-scanner",
     "appsec-stride-analyzer-v2": "stride-analyzer-v2",
-    "appsec-qa-reviewer": "qa-reviewer",
 }
 
 
@@ -1771,9 +1737,12 @@ def _write_assessment_summary(sid: str) -> None:
     yaml_path = ""
     output_dir = _output_dir()
     if output_dir:
-        candidate = os.path.join(output_dir, "threat-model.yaml")
-        if os.path.exists(candidate):
-            yaml_path = candidate
+        # One naming set per directory: the published name, or the legacy one.
+        for name in ("security-assessment.yaml", "threat-model.yaml"):
+            candidate = os.path.join(output_dir, name)
+            if os.path.exists(candidate):
+                yaml_path = candidate
+                break
     if not yaml_path and threat_model_path:
         candidate = threat_model_path.replace("threat-model.md", "threat-model.yaml")
         if os.path.exists(candidate):
@@ -2361,6 +2330,7 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
         "appsec-advisor:appsec-triage-validator",
         "appsec-advisor:appsec-post-stride-synthesizer",
         "appsec-advisor:appsec-abuse-case-verifier",
+        "appsec-advisor:appsec-abuse-case-deriver",
     }
     if subtype not in context_v2_agents:
         return None
@@ -2375,31 +2345,6 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
         params = _agent_params(prompt)
         if params.get("ANALYSIS_DEPTH") not in {"full", "light"} or not params.get("MAX_TURNS"):
             return "Context-v2 STRIDE dispatch requires a valid current component context plan."
-    return None
-
-
-def _context_v2_receipt_reason(event: hook_payload.HookEvent) -> str | None:
-    """Re-hash the dispatch's admitted inputs as the Agent call spawns (TOCTOU guard).
-
-    Deny only on a proven change. A hook that cannot run the check leaves the
-    verification record unwritten, and the next boundary refuses without it.
-    """
-    if not event.is_agent_call:
-        return None
-    action_id = _extract_param(str(event.tool_input.get("prompt") or ""), "ACTION_ID")
-    output_root = Path(_output_dir())
-    if not action_id or not (output_root / ".pending-dispatch.json").is_file():
-        return None
-    try:
-        import orchestrator.orchestration_controller as controller
-    except Exception:
-        return None
-    try:
-        controller.verify_spawn_receipts(output_root, action_id)
-    except (controller.ControllerError, controller.CallError) as exc:
-        return f"Receipt verification failed for {action_id}: {exc}"
-    except Exception:
-        return None
     return None
 
 
@@ -2532,14 +2477,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # env THIS process reads. Each hook call is a fresh process, so the mutation
     # cannot leak across runs; only set when unset; non-Agent tools have no
     # `prompt` field, so `_extract_param` returns '' and this is a no-op.
-    if not os.environ.get("OUTPUT_DIR"):
-        _od = _extract_param(
-            (data.get("tool_input", {}) or {}).get("prompt", "") or "",
-            "OUTPUT_DIR",
-            max_len=512,
-        )
-        if _od:
-            os.environ["OUTPUT_DIR"] = _od
+    _recover_output_dir(data)
 
     # Parsed only after the OUTPUT_DIR recovery above: a payload note has to
     # land in the run's own log, not in the plugin-root fallback.
@@ -2561,7 +2499,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # is still enforced where the evidence exists: orchestrator/check_stride_dispatch.py
     # fails the run on an inline-shortcut bypass and reports a serial wave as
     # DEGRADED.
-    identity_reason = _context_v2_agent_identity_reason(event) or _context_v2_receipt_reason(event)
+    identity_reason = _context_v2_agent_identity_reason(event)
     if identity_reason is not None:
         _emit_pretool_denial(identity_reason)
         return
@@ -3408,7 +3346,8 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     run_still_owned = _run_lock_is_ours(sid)
     if event_name == "Stop" and not run_still_owned:
         clear_terminal_active_tool_calls(session_transcript=transcript)
-        relay_decision = _review_summary_relay(event, sid)
+        # A summary the PostToolUse did not show is shown here instead.
+        relay_decision = _summary_notice(event, sid)
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -3433,27 +3372,21 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     return None
 
 
-def _review_summary_relay(event: hook_payload.HookEvent, sid: str) -> dict | None:
-    """Return the Stop decision that sends a rewritten completion summary back once.
+def _summary_notice(event: hook_payload.HookEvent, sid: str) -> dict | None:
+    """Return the hook output that shows the run's completion summary, once.
 
-    The outermost Stop is the first point that sees the message the reader
-    gets; ``completion_relay`` owns the rule and the record the summary script
-    left.
+    ``completion_relay`` owns the record the summary script left and decides
+    which event may take it.
     """
     try:
-        import runtime.completion_relay as completion_relay  # noqa: PLC0415 — off the per-tool-call path
+        import runtime.completion_relay as completion_relay  # noqa: PLC0415 — off the module import path
 
-        message = event.last_assistant_message or completion_relay.final_message(event.session_transcript)
-        earlier = completion_relay.turn_texts(event.session_transcript) if event.session_transcript else []
-        missing = completion_relay.review_final_message(
-            _output_dir(), sid, message, retry=event.stop_hook_active, earlier=earlier
-        )
+        notice = completion_relay.hook_notice(_output_dir(), sid, event.agent_id)
     except Exception:
         return None  # never crash a hook
-    if not missing:
-        return None
-    _write("WARN ", "SUMMARY_NOT_RELAYED", f"missing_lines={len(missing)}  first={missing[0][:120]}", sid)
-    return {"decision": "block", "reason": completion_relay.RETRY_INSTRUCTION}
+    if notice:
+        _write("INFO ", "SUMMARY_SHOWN", f"event={event.name}", sid)
+    return notice
 
 
 _USAGE_TOKEN_KEYS = (
@@ -3870,6 +3803,18 @@ def handle_subagent_start(data: dict, sid: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _recover_output_dir(data: dict) -> None:
+    """Set OUTPUT_DIR from an Agent dispatch prompt's ``OUTPUT_DIR=<abs>`` when the env lacks it."""
+    if not os.environ.get("OUTPUT_DIR"):
+        _od = _extract_param(
+            (data.get("tool_input", {}) or {}).get("prompt", "") or "",
+            "OUTPUT_DIR",
+            max_len=512,
+        )
+        if _od:
+            os.environ["OUTPUT_DIR"] = _od
+
+
 def main() -> None:
     if sys.argv[1:] == ["--clear-active-tool-calls"]:
         clear_terminal_active_tool_calls()
@@ -3883,6 +3828,24 @@ def main() -> None:
             pass
         return
 
+    # Only an existing output directory receives events. Without one the
+    # handlers, including the write guards, still run, but against a scratch
+    # directory removed afterwards: a session that runs no assessment leaves no
+    # trace in the checkout or the data directory.
+    if data.get("hook_event_name") == "PreToolUse":
+        _recover_output_dir(data)
+    output_dir = _output_dir()
+    if output_dir and os.path.isdir(output_dir):
+        _handle(data)
+        return
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="appsec-hook-") as scratch:
+        os.environ["OUTPUT_DIR"] = scratch
+        _handle(data)
+
+
+def _handle(data: dict) -> None:
     sid = data.get("session_id", "")
     event_name = data.get("hook_event_name", "")
 
@@ -3905,6 +3868,11 @@ def main() -> None:
 
     # PostToolUse (default)
     handle_post_tool_use(data, sid)
+    if data.get("tool_name") == "Bash" and os.path.exists(os.path.join(_output_dir(), _SUMMARY_RECORD)):
+        # The Bash call that printed the completion summary shows it to the reader.
+        notice = _summary_notice(_hook_event(data, "PostToolUse", sid), sid)
+        if notice:
+            sys.stdout.write(json.dumps(notice))
 
 
 if __name__ == "__main__":

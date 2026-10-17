@@ -1,6 +1,6 @@
 # Advanced configuration
 
-Most users do not need to edit plugin configuration. The default configuration supports an interactive threat-model run after the permissions setup in the main README.
+Most users do not need to edit plugin configuration. The default configuration supports an interactive security assessment after the permissions setup in the main README.
 
 The root [`config.json`](../config.json) controls four independent runtime concerns: external business context, prices used for local cost calculation, event-log behavior, and the pointer to a packaged organization profile. The `banner` block (session-start message, see [Organization Profiles](org-profiles.md#session-banner)) and the `baseline` block (bundled secure-coding baseline, managed by the `install-baseline` and `update-baseline` skills) also live in this file and normally need no manual edits. Requirements catalogs have their own configuration and are documented in the [Requirements Audit reference](security-requirements-audit-skill.md).
 
@@ -12,7 +12,7 @@ The root [`config.json`](../config.json) controls four independent runtime conce
 | `config.local.json` | Git-ignored local values for external context, pricing, or logging | Selected as a complete file by the context resolver, event logger, and cost verifier when present. It is not merged with `config.json`. |
 | `skills/audit-security-requirements/config.json` | Default requirements-catalog source | Separate from the root runtime configuration. |
 
-Files inside the repository you scan are not plugin configuration and are not listed here. Business context, known threats, and trust-boundary declarations live in the target repository and are documented under [Repo-local context](threat-modeler.md#repo-local-context).
+Files inside the repository you scan are not plugin configuration and are not listed here. Business context, known threats, and trust-boundary declarations live in the target repository and are documented under [Repo-local context](security-assessment.md#repo-local-context).
 
 `config.local.json` is deliberately limited in scope. It can supply `external_context`, `pricing`, and `logging` to the consumers listed above. Organization-profile resolution, packaging, security steering, and static status summaries continue to read the committed `config.json`.
 
@@ -91,9 +91,9 @@ This block must be in `config.json`; it is not read from `config.local.json`. Re
 For a single run, command-line flags and environment variables can select or disable a profile without changing the committed configuration:
 
 ```text
-/appsec-advisor:create-threat-model --org-profile /path/to/org-profile.yaml
-/appsec-advisor:create-threat-model --preset release-review
-/appsec-advisor:create-threat-model --no-org-profile
+/appsec-advisor:appsec-analyzer --org-profile /path/to/org-profile.yaml
+/appsec-advisor:appsec-analyzer --preset release-review
+/appsec-advisor:appsec-analyzer --no-org-profile
 ```
 
 See [Organization Profiles](org-profiles.md) for profile structure, presets, validation, and the complete precedence rules. See [Internal Plugin Packaging](internal-plugin-packaging.md) for producing an organization-specific plugin.

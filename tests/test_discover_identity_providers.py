@@ -6,10 +6,8 @@ from pathlib import Path
 
 import analyzers.discover_identity_providers as discovery
 import jsonschema
-import orchestrator.orchestration_controller as controller
 import pytest
 import renderers.figure1_dfd as figure1_dfd
-from contexts.build_trust_boundary_assessment_input import _semantic_flow_validation
 from validators.validate_fragment import repository_path_errors
 
 
@@ -91,6 +89,63 @@ def test_client_integrations_are_generic_and_evidenced(tmp_path, rel, source, ro
     schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
     jsonschema.validate(result, schema)
     assert discovery.reconcile(tmp_path, _components(), result) == result
+
+
+@pytest.mark.parametrize(
+    ("source", "scheme", "host"),
+    [
+        (
+            "window.location.href = 'https://login.example.invalid/oauth2/authorize?response_type=code'",
+            "oauth2",
+            "login.example.invalid",
+        ),
+        (
+            "const endpoint = 'https://identity.example.invalid/oauth2/authorize?scope=openid&response_type=code';\nwindow.location.href = endpoint;",
+            "oidc",
+            "identity.example.invalid",
+        ),
+        ("document.location =\n 'https://staff.example.invalid/saml/login';", "saml", "staff.example.invalid"),
+        (
+            "location.href = 'https://accounts.example.invalid/oauth/authorize?response_type=token'",
+            "oauth2",
+            "accounts.example.invalid",
+        ),
+    ],
+)
+def test_browser_location_assignments_reach_the_provider_and_figure(tmp_path, source, scheme, host):
+    _write(tmp_path, "src/signin.ts", source)
+    result = discovery.reconcile(tmp_path, _components(), _flows())
+    [flow] = result["data_flows"]
+    [provider] = result["external_entities"]
+    assert flow["from"] == "client" and flow["to_entity"] == provider["id"]
+    assert provider["kind"] == "identity-provider" and host in provider["name"]
+    assert flow["authentication"]["scheme"] == scheme
+    assert repository_path_errors("data-flows", result, tmp_path) == []
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+    assert discovery.reconcile(tmp_path, _components(), result) == result
+    svg, state = figure1_dfd._build({**result, "components": _components()}, [], [])
+    assert host in svg
+    assert any(edge["src"] == "client" and edge["dst"] == provider["id"] for edge in state["edges"])
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "// window.location.href = 'https://id.example/oauth2/authorize'",
+        "const sample = \"window.location.href = 'https://id.example/oauth2/authorize'\";",
+        "const unused = 'https://id.example/oauth2/authorize'; window.location.href = dynamicUrl;",
+        "const endpoint = 'https://id.example/oauth2/authorize'; endpoint = localUrl; window.location.href = endpoint;",
+        "window.location.href === 'https://id.example/oauth2/authorize'",
+        "settings.location.href = 'https://id.example/oauth2/authorize'",
+        "window.location.href = 'https://id.example/oauth/token'",
+        "window.location.href = 'https://user:password@id.example/oauth2/authorize'",
+        "window.location.href = `https://${host}/oauth2/authorize`",
+    ],
+)
+def test_non_redirects_do_not_create_identity_providers(tmp_path, source):
+    _write(tmp_path, "src/signin.ts", source)
+    assert discovery.reconcile(tmp_path, _components(), _flows()) == _flows()
 
 
 @pytest.mark.parametrize(
@@ -454,47 +509,6 @@ def test_query_credentials_are_not_copied_to_model(tmp_path):
     _write(tmp_path, "src/auth.ts", 'fetch("https://id.example/oauth/token?client_secret=must-not-leak");')
     result = discovery.reconcile(tmp_path, _components(), _flows())
     assert "must-not-leak" not in json.dumps(result)
-
-
-def test_controller_handoff_reaches_boundary_input_and_svg(tmp_path):
-    repo, out = tmp_path / "repo", tmp_path / "out"
-    _write(
-        repo, "src/login.ts", 'const endpoint="https://id.example/oauth2/authorize";\nwindow.location.assign(endpoint);'
-    )
-    out.mkdir()
-    components = _components()
-    receipt = {"component_inventory_fingerprint": "sha256:" + "a" * 64, "component_ids": ["client"]}
-    (out / ".components.json").write_text(json.dumps({"components": components}))
-    (out / ".component-inventory-finalization.json").write_text(json.dumps(receipt))
-    (out / ".data-flows.json").write_text(json.dumps(_flows()))
-    controller._bind_finalized_component_fingerprint(out, repo)
-    doc = json.loads((out / ".data-flows.json").read_text())
-    _semantic_flow_validation(doc, receipt)
-    model = {**doc, "components": components}
-    svg, state = figure1_dfd._build(model, [], [])
-    assert "id.example" in svg
-    entity = doc["external_entities"][0]["id"]
-    assert state["nodes"][entity]["col"] == 0
-    assert any(edge["src"] == "client" and edge["dst"] == entity for edge in state["edges"])
-    assert not any(edge["src"] == "identity-server" for edge in state["edges"])
-
-
-def test_controller_does_not_publish_invalid_enrichment(tmp_path, monkeypatch):
-    out = tmp_path / "out"
-    out.mkdir()
-    for name, value in [
-        (".components.json", {"components": _components()}),
-        (".component-inventory-finalization.json", {"component_inventory_fingerprint": "sha256:" + "a" * 64}),
-        (".data-flows.json", _flows()),
-    ]:
-        (out / name).write_text(json.dumps(value))
-    previous = (out / ".data-flows.json").read_bytes()
-    invalid = copy.deepcopy(_flows())
-    invalid["external_entities"] = [{"id": "ext-invalid"}]
-    monkeypatch.setattr(discovery, "reconcile", lambda *_: invalid)
-    with pytest.raises(controller.ControllerError, match="schema validation"):
-        controller._bind_finalized_component_fingerprint(out, tmp_path)
-    assert (out / ".data-flows.json").read_bytes() == previous
 
 
 # ---------------------------------------------------------------------------

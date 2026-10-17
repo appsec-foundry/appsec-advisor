@@ -1,0 +1,574 @@
+{
+  "schema_version": 1,
+  "abuse_cases": [
+    {
+      "id": "AC-T-005",
+      "title": "Authentication Bypass via Exposed Secret Material",
+      "source": "mandatory",
+      "actor_label": "Internet Attacker \u2014 unauthenticated external attacker",
+      "goal": "Forge trusted tokens / credentials and impersonate any user.",
+      "prerequisite": "Signing material or other secrets are reachable (committed to a public repo, served by an unauthenticated route, or in an exposed directory).",
+      "combined_risk": "Critical",
+      "chain_verdict": "fully_viable",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-020",
+          "finding_title": "Hardcoded JWT private signing key in source",
+          "finding_loc": "insecurity.ts:21",
+          "finding_sev": "High",
+          "evidence": "lib/insecurity.ts:21",
+          "outcome": "A private key, signing secret, or credential file is committed to the source repository or served without authentication.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "lib/insecurity.ts",
+            "line": 21
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "RS256 private signing key is hardcoded as a string literal in source code; no vault/KMS/env loading control present."
+        },
+        {
+          "step": 2,
+          "fid": "F-018",
+          "finding_title": "Insecure JWT Verification",
+          "finding_loc": "insecurity.ts:53",
+          "finding_sev": "High",
+          "evidence": "lib/insecurity.ts:53",
+          "outcome": "The exposed key/secret is the same one the server trusts, so a token signed with it (or the leaked credential) is accepted as authentic.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "lib/insecurity.ts",
+            "line": 53
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "authorize() signs tokens with the hardcoded privateKey and the verification path trusts the matching public key; a token forged with the leaked key would be accepted. No key rotation or binding control found."
+        }
+      ],
+      "matched_finding_ids": [
+        "F-020",
+        "F-018"
+      ],
+      "combined_risk_rationale": "Exposed signing material collapses the entire authentication boundary: any attacker who reads the key can mint a valid token for any identity or role, with no credential ever required.",
+      "blocking_mitigations": [
+        {
+          "id": "M-040",
+          "title": "Load JWT private key from secret store",
+          "priority": "P2",
+          "addresses": [
+            "F-020"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-038",
+          "title": "Enforce JWT signature and algorithm verification (F-018)",
+          "priority": "P2",
+          "addresses": [
+            "F-018"
+          ],
+          "breaks_at_step": 2
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-B-001",
+      "title": "User reads or changes data of another user or tenant",
+      "source": "descriptive",
+      "actor_label": "attacker",
+      "goal": "",
+      "prerequisite": "",
+      "combined_risk": "High",
+      "chain_verdict": "fully_viable",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-003",
+          "finding_title": "Systemic IDOR Missing Ownership Checks",
+          "finding_loc": "basket.ts:19",
+          "finding_sev": "High",
+          "evidence": "routes/basket.ts:19",
+          "outcome": "Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "routes/basket.ts",
+            "line": 19
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "GET /rest/basket/:id is registered with no authorization middleware. retrieveBasket looks up the basket by the URL id alone. The comparison with the caller's basket id (user.bid) appears only inside challengeUtils.solveIf, which flags a sol"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-003"
+      ],
+      "combined_risk_rationale": "",
+      "blocking_mitigations": [
+        {
+          "id": "M-030",
+          "title": "Check basket ownership before returning it",
+          "priority": "P2",
+          "addresses": [
+            "F-003"
+          ],
+          "breaks_at_step": 1
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-T-007",
+      "title": "Privileged Action via Prompt Injection into a Tool-Calling Model",
+      "source": "mandatory",
+      "actor_label": "Internet Attacker \u2014 unauthenticated external attacker",
+      "goal": "Make the model invoke a privileged tool or return data the attacker is not entitled to, using the application's own authority.",
+      "prerequisite": "Attacker can place text into a conversation, document, or record that the application later sends to a language model.",
+      "combined_risk": "High",
+      "chain_verdict": "fully_viable",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-055",
+          "finding_title": "Client-supplied chat messages passed to model unvalidated",
+          "finding_loc": "chat.ts:191",
+          "finding_sev": "Medium",
+          "evidence": "routes/chat.ts:191",
+          "outcome": "The handler builds the prompt by interpolating request or stored text into the same string as the system instructions, so attacker text is read as instruction.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "routes/chat.ts",
+            "line": 191
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "The client-supplied req.body.messages array is passed unfiltered to streamText, so an attacker controls the conversation turns (including any role) the model reads as instruction. No sanitising, delimiting or filtering control appears in th"
+        },
+        {
+          "step": 2,
+          "fid": "F-042",
+          "finding_title": "Chatbot coupon tool lacks server-side discount limit",
+          "finding_loc": "chat.ts:184",
+          "finding_sev": "High",
+          "evidence": "routes/chat.ts:184",
+          "outcome": "Tools exposed to the model run with the application's authority; a manipulated model turn therefore performs actions the caller could not.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "routes/chat.ts",
+            "line": 184
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "The generateCoupon tool runs with application authority. The discount limit of 10 appears only in the tool description, and execute has no server-side check on the value or the caller, so a manipulated model turn gets an arbitrary-discount "
+        }
+      ],
+      "matched_finding_ids": [
+        "F-055",
+        "F-042"
+      ],
+      "combined_risk_rationale": "Text an attacker can place anywhere the application later feeds to the model becomes instruction, and the tools behind that model run with the application's authority rather than the caller's \u2014 so a comment or a stored record reaches actions the attacker was never entitled to.",
+      "blocking_mitigations": [
+        {
+          "id": "M-070",
+          "title": "Validate chat messages schema and allow user role only",
+          "priority": "P3",
+          "addresses": [
+            "F-055"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-057",
+          "title": "Enforce correct server-side authorization",
+          "priority": "P2",
+          "addresses": [
+            "F-042"
+          ],
+          "breaks_at_step": 2
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-B-003",
+      "title": "User takes over another account",
+      "source": "descriptive",
+      "actor_label": "attacker",
+      "goal": "",
+      "prerequisite": "",
+      "combined_risk": "Medium",
+      "chain_verdict": "fully_viable",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-050",
+          "finding_title": "Unthrottled security-answer password reset",
+          "finding_loc": "resetPassword.ts:41",
+          "finding_sev": "Medium",
+          "evidence": "routes/resetPassword.ts:44",
+          "outcome": "Check whether anyone other than the verified owner can change an account's credentials or recovery data, such as email, phone number, or reset tokens.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "routes/resetPassword.ts",
+            "line": 44
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "POST /rest/user/reset-password lets an unauthenticated caller change any account's password with only the email and a security-question answer. This is a weak, guessable knowledge factor, not verified-owner re-authentication. The route has "
+        }
+      ],
+      "matched_finding_ids": [
+        "F-050"
+      ],
+      "combined_risk_rationale": "",
+      "blocking_mitigations": [
+        {
+          "id": "M-065",
+          "title": "Rate limit and token-gate password reset",
+          "priority": "P3",
+          "addresses": [
+            "F-050"
+          ],
+          "breaks_at_step": 1
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-T-002",
+      "title": "Bulk Data Exfiltration via Broken Object Authorization",
+      "source": "mandatory",
+      "actor_label": "Internet Attacker \u2014 authenticated low-privilege user",
+      "goal": "Enumerate and exfiltrate other users' records, then escalate own permissions via unguarded mass assignment.",
+      "prerequisite": "Attacker holds a valid, non-privileged user account.",
+      "combined_risk": "High",
+      "chain_verdict": "inconclusive",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-003",
+          "finding_title": "Systemic IDOR Missing Ownership Checks",
+          "finding_loc": "basket.ts:19",
+          "finding_sev": "High",
+          "evidence": "routes/basket.ts:19",
+          "outcome": "Attacker enumerates and retrieves records for arbitrary object IDs; no ownership comparison is performed.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "routes/basket.ts",
+            "line": 19
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "retrieveBasket looks up the basket by attacker-supplied req.params.id and returns it. No ownership comparison gates the response. The user.bid comparison only feeds challengeUtils.solveIf."
+        },
+        {
+          "step": 2,
+          "fid": "F-043",
+          "finding_title": "Role accepted from user registration body",
+          "finding_loc": "verify.ts:53",
+          "finding_sev": "High",
+          "evidence": "routes/verify.ts:53",
+          "outcome": "Update endpoint persists an unfiltered `role` (or equivalent) field supplied in the request body.",
+          "status_icon": "?",
+          "verdict": "inconclusive",
+          "evidence_ref": {
+            "file": "routes/verify.ts",
+            "line": 53
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "The matched line only reads req.body.role inside a challenge-detection middleware and then calls next(). It does not persist anything. The persisting create or update handler is not in the supplied source, so mass assignment cannot be decid"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-003",
+        "F-043"
+      ],
+      "combined_risk_rationale": "The ownership gap exposes every record, and the mass-assignment gap lets the same low-privilege actor self-elevate \u2014 together they turn a single compromised account into full tenant data access and role escalation.",
+      "blocking_mitigations": [
+        {
+          "id": "M-030",
+          "title": "Check basket ownership before returning it",
+          "priority": "P2",
+          "addresses": [
+            "F-003"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-010",
+          "title": "Manual review: verify Role accepted from user registration body at verify.ts:53",
+          "priority": "P3",
+          "addresses": [
+            "F-043"
+          ],
+          "breaks_at_step": 2
+        },
+        {
+          "id": "M-058",
+          "title": "Allowlist client-controlled fields",
+          "priority": "P2",
+          "addresses": [
+            "F-043"
+          ],
+          "breaks_at_step": 2
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-T-004",
+      "title": "Privilege Escalation via Mass-Assignment on Registration",
+      "source": "mandatory",
+      "actor_label": "Internet Attacker \u2014 unauthenticated external attacker",
+      "goal": "Obtain an administrator account without any existing privilege.",
+      "prerequisite": "Self-registration is open (one unauthenticated POST).",
+      "combined_risk": "High",
+      "chain_verdict": "inconclusive",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-043",
+          "finding_title": "Role accepted from user registration body",
+          "finding_loc": "verify.ts:53",
+          "finding_sev": "High",
+          "evidence": "routes/verify.ts:53",
+          "outcome": "The account-creation handler persists the request body wholesale, so a client-supplied `role` (or `isAdmin`) field is written verbatim.",
+          "status_icon": "?",
+          "verdict": "inconclusive",
+          "evidence_ref": {
+            "file": "routes/verify.ts",
+            "line": 53
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "The matched code in routes/verify.ts is only a challenge-detection middleware that reads req.body.role and calls next(). It does not persist the body. The actual registration/user-creation handler that would bind the role field is not in th"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-043"
+      ],
+      "combined_risk_rationale": "A single unauthenticated request mints an admin account when the registration handler trusts a client-supplied role field \u2014 the most direct full-compromise path in role-based apps with open sign-up.",
+      "blocking_mitigations": [
+        {
+          "id": "M-010",
+          "title": "Manual review: verify Role accepted from user registration body at verify.ts:53",
+          "priority": "P3",
+          "addresses": [
+            "F-043"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-058",
+          "title": "Allowlist client-controlled fields",
+          "priority": "P2",
+          "addresses": [
+            "F-043"
+          ],
+          "breaks_at_step": 1
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-T-001",
+      "title": "Account Takeover via XSS + Token Hijacking",
+      "source": "mandatory",
+      "actor_label": "Internet Attacker \u2014 unauthenticated external attacker",
+      "goal": "Obtain persistent authenticated access as an arbitrary user without valid credentials.",
+      "prerequisite": "Attacker can get markup rendered in a victim's session, through stored content (e.g. feedback, comments, profile fields) or a crafted link.",
+      "combined_risk": "High",
+      "chain_verdict": "inconclusive",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-001",
+          "finding_title": "XSS via Trusted HTML Sanitizer Bypass",
+          "finding_loc": "about.component.ts:119",
+          "finding_sev": "High",
+          "evidence": "frontend/src/app/about/about.component.ts:119",
+          "outcome": "Attacker JavaScript executes in the victim's browser session.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "frontend/src/app/about/about.component.ts",
+            "line": 119
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "Feedback comment is interpolated into HTML and passed to bypassSecurityTrustHtml with no sanitizer, so stored attacker markup renders as trusted HTML."
+        },
+        {
+          "step": 2,
+          "fid": "F-110",
+          "finding_title": "Session token stored in web-accessible client storage",
+          "finding_loc": "basket.service.ts:64",
+          "finding_sev": "High",
+          "evidence": "frontend/src/app/Services/basket.service.ts:64",
+          "outcome": "Token exfiltrated from local/session storage via the Step 1 payload.",
+          "status_icon": "\u26a0",
+          "verdict": "confirmed",
+          "evidence_ref": {
+            "file": "frontend/src/app/Services/basket.service.ts",
+            "line": 64
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "Session token is read from localStorage, which injected script can read. No HttpOnly cookie control is visible."
+        },
+        {
+          "step": 3,
+          "fid": "",
+          "finding_title": "",
+          "finding_loc": "",
+          "finding_sev": "",
+          "evidence": "",
+          "outcome": "Exfiltrated token accepted for a new session; absence of token binding / PKCE removes the last server-side revocation opportunity.",
+          "status_icon": "?",
+          "verdict": "inconclusive",
+          "evidence_ref": null,
+          "controls_found": [],
+          "unverified": false,
+          "reason": "The line shows an implicit-flow Google login (response_type=token, no PKCE). That is a different flow from replaying the stolen session token. Server-side acceptance or binding of a replayed token is not visible in the client code."
+        }
+      ],
+      "matched_finding_ids": [
+        "F-001",
+        "F-110"
+      ],
+      "combined_risk_rationale": "Individually the XSS sink and the web-readable token storage rate below Critical, but chained they form a repeatable credential-theft path: a single stored payload causes indefinite session compromise for every user who views the affected page.",
+      "blocking_mitigations": [
+        {
+          "id": "M-028",
+          "title": "Remove sanitizer bypass for feedback comments",
+          "priority": "P2",
+          "addresses": [
+            "F-001"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-102",
+          "title": "Store session tokens in HttpOnly cookies",
+          "priority": "P2",
+          "addresses": [
+            "F-110"
+          ],
+          "breaks_at_step": 2
+        }
+      ],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-B-004",
+      "title": "User bypasses a required approval",
+      "source": "descriptive",
+      "actor_label": "attacker",
+      "goal": "",
+      "prerequisite": "",
+      "combined_risk": null,
+      "chain_verdict": "inconclusive",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "",
+          "finding_title": "",
+          "finding_loc": "",
+          "finding_sev": "",
+          "evidence": "",
+          "outcome": "Check whether a user can approve their own request where an independent approval is required, or change content after approval and keep the earlier approval.",
+          "status_icon": "?",
+          "verdict": "inconclusive",
+          "evidence_ref": null,
+          "controls_found": [],
+          "unverified": false,
+          "reason": "evidence not admitted (no evidence): The preselected review code (create, update, like, show) has no approval workflow, approver role or approved state, so the case does not apply as described. Likes are not approvals. Review edits have"
+        }
+      ],
+      "matched_finding_ids": [],
+      "combined_risk_rationale": "",
+      "blocking_mitigations": [],
+      "open_questions": [
+        "Does the process require separation between requester and approver?"
+      ],
+      "derived_definition": null,
+      "requested": false
+    },
+    {
+      "id": "AC-T-006",
+      "title": "Remote Code Execution via Server-Side Injection",
+      "source": "mandatory",
+      "actor_label": "Internet Attacker \u2014 unauthenticated external attacker",
+      "goal": "Execute arbitrary code in the application process.",
+      "prerequisite": "An input reaches a server-side interpreter / template / eval.",
+      "combined_risk": "High",
+      "chain_verdict": "inconclusive",
+      "unverified_steps": [],
+      "rows": [
+        {
+          "step": 1,
+          "fid": "",
+          "finding_title": "",
+          "finding_loc": "",
+          "finding_sev": "",
+          "evidence": "lib/xml.ts:12",
+          "outcome": "Attacker-controlled input is passed to `eval`, a server-side template engine, an unsafe sandbox, or an unsafe deserializer.",
+          "status_icon": "\u2717",
+          "verdict": "refuted",
+          "evidence_ref": {
+            "file": "lib/xml.ts",
+            "line": 12
+          },
+          "controls_found": [],
+          "unverified": false,
+          "reason": "The new Function() body is a fixed string ('return import(specifier)') and dynamicImport is only called with literals ('libxml2-wasm', 'libxml2-wasm/lib/nodejs.mjs'). The vm.runInContext script is also a constant. The attacker-controlled `d"
+        }
+      ],
+      "matched_finding_ids": [],
+      "combined_risk_rationale": "A single injection into a server-side interpreter yields code execution in the application process \u2014 the highest-impact outcome, granting full filesystem and network access from one unauthenticated request.",
+      "blocking_mitigations": [],
+      "open_questions": [],
+      "derived_definition": null,
+      "requested": false
+    }
+  ],
+  "catalog_evaluated": [
+    {
+      "id": "AC-T-003",
+      "title": "Privilege Escalation to Admin via JWT Algorithm Confusion",
+      "source": "mandatory",
+      "reason": "no finding matched the required chain step(s) for this scenario"
+    }
+  ]
+}

@@ -1,19 +1,21 @@
-{#- ## Critical Attack Tree — unnumbered section, conditional (critical_count >= 2).
-    Inputs: blocks = one-element [{src}] (full `graph LR` tree, composer-built);
-    findings[] = composer-derived leaf pointer [{id,title,anchor}].
-    The LLM-authored intro/key_takeaway/mitigation_breakpoints/stages fields are
-    intentionally NOT rendered — a fixed one-line explanation above the tree and
-    a one-line findings pointer below it carry the whole section.
-    Dual anchor: legacy #critical-attack-chain preserved for external deep-links (AGENTS.md §5). -#}
+{#- ## Critical Findings by Root Cause — unnumbered section, conditional (critical_count >= 2).
+    Inputs (composer-built): blocks = one-element [{src}] Mermaid graph;
+    summary = opening sentence; fixes[] = {weakness, anchor, recommendation, findings[]};
+    unlinked[] = Critical F-ids without a linked weakness.
+    Legacy anchors #critical-attack-chain and #critical-attack-tree stay for external deep-links. -#}
 <a id="critical-attack-chain"></a>
 <a id="critical-attack-tree"></a>
-## Critical Attack Tree
+<a id="critical-findings-by-root-cause"></a>
+## Critical Findings by Root Cause
 
-The root is the worst-case attacker goal; below it, each capability branch groups the Critical findings that achieve it. Branches feed the goal by OR — any single path suffices.
+{{ summary }}
 
 ```mermaid
 {{ blocks[0].src }}
 ```
-{% if findings %}
-**Findings** (full detail in [§8 Findings Register](#8-findings-register)): {% for f in findings %}[{{ f.id }}]({{ f.anchor }}){% if not loop.last %} · {% endif %}{% endfor %}
-{% endif %}
+{% if fixes %}
+**Structural fixes** (full detail in [§7 Weakness Register](#7-weakness-register)):
+
+{% for f in fixes %}- **[{{ f.weakness }}]({{ f.anchor }})** — {{ f.recommendation }} _(closes {{ f.findings | join(", ") }})_
+{% endfor %}{% if unlinked %}- **No root cause linked** — {{ unlinked | join(", ") }}: see the [§8 Findings Register](#8-findings-register)
+{% endif %}{% endif %}

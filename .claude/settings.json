@@ -14,7 +14,7 @@
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/spec_guard.py",
               "--protected-path",
-              "${CLAUDE_PROJECT_DIR}/specs/requirements.md"
+              "${CLAUDE_PROJECT_DIR}/requirements.md"
             ],
             "timeout": 10
           }
@@ -36,7 +36,7 @@
   },
   "permissions": {
     "ask": [
-      "Edit(specs/requirements.md)"
+      "Edit(requirements.md)"
     ],
     "deny": [
       "Edit(.claude/settings.json)",

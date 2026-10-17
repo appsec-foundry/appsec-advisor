@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -189,8 +190,8 @@ def _prepare_source(dest: Path) -> Path:
     # Skip — rather than error — when it is absent so a fresh checkout / CI stays
     # green. This is the sole `_LAST_RUN` consumer, so it gates every freeze/replay
     # test (directly or via the `frozen` fixture) without touching the unit tests.
-    if not (_LAST_RUN / "threat-model.yaml").is_file():
-        pytest.skip("_last-run fixture absent (git-ignored; regenerate via `make e2e-full`)")
+    if not (_LAST_RUN / "threat-model.yaml").is_file() or not (_LAST_RUN / ".fragments/ms-verdict.json").is_file():
+        pytest.skip("_last-run fixture absent or incomplete (git-ignored; regenerate via `make e2e-full`)")
     shutil.copytree(_LAST_RUN, dest)
     cfg_path = dest / ".skill-config.json"
     cfg = json.loads(cfg_path.read_text())
@@ -365,3 +366,16 @@ def test_replay_scanner_skipped_when_pinned_repo_missing(frozen, tmp_path):
 def test_resolve_stages_explicit_list(frozen):
     assert tf._resolve_stages("yaml,md", frozen) == ["yaml", "md"]
     assert "scanner" in tf._resolve_stages("all", frozen)  # meta has scanners
+
+
+def test_the_pin_records_the_commit_but_not_where_the_checkout_lives(tmp_path):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (repo / "app.js").write_text("1\n")
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
+    pin = tf._pin_repo(repo)
+    assert pin["commit_sha"] != "unknown" and pin["dirty"] is False
+    assert str(tmp_path) not in json.dumps(pin)

@@ -46,7 +46,7 @@ contract_version: 5   # v5 adds the unnumbered Systemic Weaknesses chapter
 
 document:
   # Rendered as `# {{ title }}` at the top of the file.
-  title_template: "Threat Model — {{ project.name }}"
+  title_template: "Security Assessment Report — {{ project.name }}"
 
   # Sections are rendered in this order. Each id must appear in the
   # `sections:` map below. `condition` is evaluated against a small
@@ -59,16 +59,11 @@ document:
     - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
-    # Item 3 (2026-05-28): activate the previously dormant Critical
-    # Attack Tree fragment producer. The unnumbered `## Critical Attack
-    # Tree` section sits between the Management Summary and §1 and
-    # carries one `graph TD` goal-decomposition Mermaid tree for the
-    # Critical findings. Producer = Phase 11 substep 4 (LLM-authored
-    # fragment `.fragments/ms-critical-attack-tree.json`). The renderer
-    # path (`_render_critical_attack_tree`), schema, and template all
-    # exist; this entry wires them into the document order. The section
-    # is gated on `critical_count >= 2` so a single-Critical assessment
-    # does not render a degenerate one-node tree.
+    # The unnumbered `## Critical Findings by Root Cause` section sits
+    # between the Management Summary and §1. It links each Critical
+    # finding to the weakness records that explain it; the producer is
+    # renderers/pregenerate_fragments.py (`ms-critical-attack-tree.json`).
+    # The section is gated on `critical_count >= 2`.
     - { id: critical_attack_tree, condition: "has_multi_critical" }
     - system_overview
     - { id: identified_actors, condition: "has_resolved_actors" }
@@ -139,7 +134,7 @@ document:
   # ---------------------------------------------------------------------------
   document_sets:
     full:
-      title_template: "Threat Model - {{ project.name }}"
+      title_template: "Security Assessment Report - {{ project.name }}"
       output_file: "threat-model.md"
       order:
         - infobox
@@ -147,7 +142,7 @@ document:
         - { id: quick_mode_notice, condition: "is_quick_depth" }
         - toc
         - management_summary
-        # Item 3 — activated dormant Critical Attack Tree fragment producer.
+        # Critical Findings by Root Cause — see the main `order:` block.
         - { id: critical_attack_tree, condition: "has_multi_critical" }
         - system_overview
         - { id: identified_actors, condition: "has_resolved_actors" }
@@ -344,17 +339,18 @@ sections:
     fragment_type: computed                         # renderer composes from sub-sections below
     required_subsections:
       - verdict
+      # mitigations renders "Remediation Priorities": root causes with the
+      # measures to do first (replaced Top Weaknesses + Top Mitigations).
+      - mitigations
       # security_posture_at_a_glance renders the merged "Security Posture &
       # Top Threats" section (heatmap + Top Threats table). The former
       # top_findings / architecture_assessment / top_threats children are all
       # folded into it.
       - security_posture_at_a_glance
-      - mitigations
       - operational_strengths
     # Rendered order and blocks: specs/changes/report-anatomy/report-anatomy.md
     # → Management Summary.
     optional_subsections:
-      - { id: top_weaknesses,              condition: "has_weakness_register" }
       - { id: open_questions_for_team,      condition: "has_open_questions" }
       # architectural_anti_patterns and systemic_posture no longer render as
       # Management Summary blocks (retired 2026-07-14). They stay listed so
@@ -380,18 +376,9 @@ sections:
       - "^Overall Security Rating$"
       - "^⚠ Worst Case Scenarios$"
 
-  # Deterministic executive view of the highest-ranked weakness-register
-  # entries. The special Management Summary composer renders it only when the
-  # canonical model contains weaknesses.
-  top_weaknesses:
-    heading: "### Top Weaknesses"
-    heading_numbered: false
-    fragment_type: computed
-    conditional: "has_weakness_register"
-
   # Deterministic questions selected from threat-model.yaml by the same module
-  # that supplies the completion summary. It follows Top Weaknesses and is
-  # absent when no team decision remains.
+  # that supplies the completion summary. It follows Remediation Priorities and
+  # is absent when no team decision remains.
   open_questions_for_team:
     heading: "### Open Questions for the Team"
     heading_numbered: false
@@ -409,20 +396,19 @@ sections:
     fragment_type: computed
     conditional: "has_weakness_register"
 
-  # -- Critical Attack Tree (post-MS, unnumbered) --------------------------
-  # Item 3 (2026-05-28): activated dormant section. The renderer
-  # function `_render_critical_attack_tree`, schema, and Jinja template
-  # all existed before — only the wiring was missing.
+  # -- Critical Findings by Root Cause (post-MS, unnumbered) ---------------
+  # The template also keeps the earlier anchors `critical-attack-tree` and
+  # `critical-attack-chain` for external deep-links.
   critical_attack_tree:
-    heading: "## Critical Attack Tree"
+    heading: "## Critical Findings by Root Cause"
     heading_numbered: false
-    anchor: "critical-attack-tree"
+    anchor: "critical-findings-by-root-cause"
     fragment_type: data
     fragment: "ms-critical-attack-tree.json"
     schema:   "critical-attack-tree.schema.json"
     template: "critical-attack-tree.md.j2"
-    # Skipped when there are 0 or 1 Critical findings — a single-node
-    # decomposition tree adds noise without insight. The condition
+    # Skipped when there are 0 or 1 Critical findings — one finding has
+    # nothing to group. The condition
     # grammar only supports bare names, so the >=2 check is computed
     # in renderers/compose_threat_model.py and exposed as `has_multi_critical`.
     conditional: "has_multi_critical"
@@ -613,34 +599,23 @@ sections:
   # membership, impacts) with the deterministic threat/mitigation/component
   # data. Every cell except the one-line class description is derived.
 
+  # Remediation Priorities — what the team fixes first. One row per mitigation,
+  # grouped under the top root causes; the root-cause cell spans its group's
+  # rows (raw HTML for `rowspan`) and carries the weakness's structural fix as
+  # the lasting fix. Every Critical-fixing mitigation is listed; one without a
+  # root cause lands in a trailing "No root cause linked" group. Selection and
+  # caps live in compose `_render_mitigations`; overflow is counted in the
+  # footer and listed in §10 Mitigation Register.
   mitigations:
-    heading: "### Top Mitigations"
+    heading: "### Remediation Priorities"
     heading_numbered: false
-    fragment_type: computed                         # derived from threat-model.yaml mitigations[]
+    fragment_type: computed                         # derived from threat-model.yaml weaknesses[] + mitigations[]
     table:
-      # Post-2026-05-29 — Top Mitigations is a single ranked table with a
-      # dedicated `Component` column (printed once per component group, blank
-      # on continuation rows). The earlier in-table divider-row form jammed
-      # the component label into the `#`/ID column with empty trailing cells
-      # and rendered as displaced; the column form keeps proper alignment and
-      # matches the sibling Top Findings table.
       columns:
-        - { key: rank,       header: "#",          render: plain_text,        required: true }
-        - { key: component,  header: "Component",   render: plain_text,        required: false }
-        - { key: mitigation, header: "Mitigation", render: mitigation_id,     required: true }
-        - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
-        - { key: effort,     header: "Effort",     render: effort_badge,      required: true, enum: [Low, Medium, High] }
-      rows:
-        # 2026-05-29 — Top Mitigations selection is Critical-floor + LLM
-        # curation (see _render_mitigations). `max` is the SOFT upper clamp
-        # for the curated leader-board: every mitigation that fixes a Critical
-        # finding is always shown (the floor can exceed `max` if there are
-        # more Critical-fixing mitigations than the cap), and the Stage-2
-        # renderer curates the most important additional P1/P2 entries up to
-        # this bound via `.fragments/ms-top-mitigations.json`. Overflow falls
-        # through to §10 Mitigation Register (the full P1–P4 catalogue).
-        min: 3
-        max: 10
+        - { key: root_cause, header: "Root cause → lasting fix", render: weakness_id,   required: true }
+        - { key: do_first,   header: "Do first",                 render: mitigation_id, required: true }
+        - { key: resolves,   header: "Resolves",                 render: finding_list,  required: true }
+        - { key: effort,     header: "Effort",                   render: effort_badge,  required: true, enum: [Low, Medium, High] }
 
   operational_strengths:
     heading: "### Operational Strengths"
@@ -695,6 +670,9 @@ sections:
     heading: "### Trust Boundaries"
     heading_numbered: false
     fragment_type: computed
+    # Compact crossing / required condition / findings-or-question catalogue.
+    # Detailed provenance remains in canonical YAML; control sections do not
+    # duplicate inferred dependencies from CWE adjacency.
     # Canonical human catalogue folded under §1. The deterministic renderer
     # caps it at 20 rows and points overflow to YAML/query output. A boundary a
     # finding references is always rendered, so every `#tb-N` link on a finding
@@ -870,7 +848,7 @@ sections:
     #
     # The retired §3.1 "Attack Chain Overview" cross-finding view (graph LR
     # kill-chains) has been removed — the cross-finding/strategic picture now
-    # lives solely in the `## Critical Attack Tree` section above §1, so the
+    # lives solely in the `## Critical Findings by Root Cause` section above §1, so the
     # plugin no longer narrates attack paths in two competing places.
     #
     # No specific sub-section is mandated by title here; the per-Critical

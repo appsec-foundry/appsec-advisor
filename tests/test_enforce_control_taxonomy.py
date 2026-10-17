@@ -580,6 +580,11 @@ class TestCLIErrorPaths:
             "Browser and Cross-Origin Controls",
         ),
         ({"control": "Bespoke thing", "domain": "Misc"}, "Misc"),
+        (
+            {"control": "Segment isolation", "domain": "Network Segmentation"},
+            "Operations Runtime and Supply Chain Controls",
+        ),
+        ({"control": "Host baseline", "domain": "Infrastructure"}, "Operations Runtime and Supply Chain Controls"),
     ],
 )
 def test_a_domain_outside_section_6_takes_its_rule_or_catalog_section(control, expected):

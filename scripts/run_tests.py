@@ -1,4 +1,4 @@
-"""Run reviewed maintainer test groups and conservative Git-based selections.
+"""Run reviewed maintainer test groups and conservative change-based selections.
 
 Exact membership detects additions and renames. Source routes name measured
 producer and consumer modules directly; requirement bindings retain their exact
@@ -52,6 +52,7 @@ GROUPS = {
     "report": _tests("""
         actor_attribution
         actor_presentation
+        component_labels
         annotate_architecture
         annotate_sequences
         build_plane
@@ -97,7 +98,6 @@ GROUPS = {
         pentest_tasks
         pregenerate_fragments
         pregenerate_fragments_coverage
-        publish_threat_model
         qa_checks
         qa_checks_cov_band1
         qa_checks_cov_band2
@@ -107,18 +107,15 @@ GROUPS = {
         reference_format
         render_abuse_cases
         render_changelog_audit
-        render_editorial_receipt
         render_integrity
         render_pentest_tasks
         render_properties
-        render_qa_receipt
         render_requirements_banner
         render_review_report
         render_threat_model
         run_invariants
         sarif_validation
         section_condition_wiring
-        section_integrity
         slug
         summarize_threat_model
         threat_fixture
@@ -133,7 +130,9 @@ GROUPS = {
         authnz_report
         authz_confirm
         backfill_scanner_remediation
+        capability_signals
         check_target_specificity
+        client_api_flows
         config_iac_checks
         config_iac_scanner
         config_scanner_wireup
@@ -141,13 +140,12 @@ GROUPS = {
         crypto_path_xxe_checks
         database_privilege_separation
         detect_open_registration
+        egress_clients
         handler_resolver
         iac_resource_checks
         lib_manifest
         manifest_readers
         mass_assignment_scanner
-        normalize_config_scan
-        postscan_secret_check
         recon_patterns
         repo_profile
         repo_scan
@@ -171,7 +169,6 @@ GROUPS = {
         context_prompt_budgets
         context_routing
         dispatch_prompt_cache_order
-        help_file
         help_reference
         lazy_phase_group_loading
         phase_group_prompts
@@ -183,21 +180,52 @@ GROUPS = {
     "runtime": _tests("""
         acquire_lock_heartbeat
         active_tool_calls
-        actor_discovery_cache
         agent_lifecycle
         agent_logger
         agent_logger_branches
         agent_logger_checkpoint_abort
         analyst_catalog
         analyst_cli
+        assessment_console
         analyst_controller
         analyst_host
+        assessment_context
+        assessment_declarations
+        assessment_host
+        assessment_jobs
+        assessment_posture
+        assessment_review
+        assessment_scanner_findings
+        assessment_sources
+        assessment_stage2
+        assessment_state
+        multi_repo_analysis
+        multi_repo_builder
+        multi_repo_figures
+        multi_repo_exports
+        multi_repo_boundaries
+        multi_repo_controller
+        multi_repo_assessment
+        single_repo_controller
+        controller_fixture
+        controller_e2e
+        multi_repo_config
+        multi_repo_discovery
+        multi_repo_scope
+        serving_units
+        portable_model_readers
+        reconcile_multi_repo_architecture
+        review_multi_repo_connections
+        validate_assessment_architecture
         analyst_isolation
         analyst_questions
         analyst_skill
         analyst_state
         build_analyst_context
         build_analyst_snapshot
+        select_analyst_context
+        eval_analyst
+        appsec_reviewer_cli
         render_analyst_report
         resolve_analyst_catalog
         agent_logger_cov
@@ -211,7 +239,6 @@ GROUPS = {
         check_state
         check_state_coverage
         check_state_hung_aborted
-        check_stride_dispatch
         ci_dispatch_workflows
         completion_contract
         completion_relay
@@ -222,23 +249,21 @@ GROUPS = {
         dispatch_manifest
         dispatch_model_and_diagnostics
         dispatch_prompt_cache_order
-        dispatch_values_stage
         event_log
         gate_preconditions
         headless_usage
+        remote_repositories
         hook_payload
         hook_payload_contract
         hooks_schema
         lens_coverage
         live_canary
+        live_run_holder
         log_agent_end
         log_event
         log_shape_contract
         measure_run
         orchestration_controller
-        recon_dispatch_contract
-        record_component_durations
-        record_stage_stats
         refusal_aware_stride
         render_completion_summary
         render_completion_summary_config
@@ -262,37 +287,26 @@ GROUPS = {
         schema_canonicalize
         session_banner
         skill_auto_retry
-        skill_watchdog
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
-        stage2_state
-        stage3_runtime_contract
-        stall_notice
         stamp_threat_model
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        stride_progress
         stride_quick_profile
-        stride_serial_dispatch_detection
-        telemetry_consistency
+        term_style
         terminate_run
         thin_runtime_regressions_2026_07_20
         validate_analyst
-        validate_dispatch_manifest
         verify_run_costs
-        wait_abuse_progress
         wait_agent_calls
-        wait_stride_progress
         watch_run
         write_stride_progress
     """),
     "incremental": _tests("""
         analysis_version_upgrade
         build_threat_model_yaml
-        incremental_two_run_e2e
         persist_run_baseline
-        validate_cache
     """),
     "e2e": _tests("""
         e2e_pipeline
@@ -304,23 +318,14 @@ GROUPS = {
         calibrate_architect_review
         apply_content_repair
         apply_content_repair_coverage
-        apply_editorial_plan
-        apply_finding_refs_repair
         apply_prose_fixes
         apply_prose_fixes_coverage
-        apply_repair_plan
-        build_editorial_context
-        check_editorial_diff
-        check_inline_shortcut
-        check_inline_shortcut_coverage
-        editorial_gate
         eval_threat_model
         evidence_verification_schema
         ground_truth_recall
         guard_evidence_verification
         inline_code_formatter
         mermaid_validator
-        pre_render_repair_scope
         qa_arch_coverage
         qa_arch_coverage_coverage
         qa_checks
@@ -335,7 +340,6 @@ GROUPS = {
         repair_self_verification
         review_threat_model
         validate_evidence_lines
-        validate_finding_refs
         validate_mitigation_quality
         validate_ms_compactness
     """),
@@ -349,6 +353,7 @@ GROUPS = {
         critical_findings_sync
         cvss_eligibility
         decision_register
+        derive_abuse_cases
         detect_impl_strategy
         emit_auth_coverage
         emit_clean_finding_titles
@@ -374,6 +379,7 @@ GROUPS = {
         promote_verified_abuse_cases
         reconcile_privileged_roles
         reconcile_role_access
+        register_titles
         sanitize_perimeter_claims
         security_relevance_filter
         security_score
@@ -390,16 +396,12 @@ GROUPS = {
     """),
     "config": _tests("""
         detect_public_repo
-        detect_session_model
-        estimate_duration
         haiku_routing_per_depth
         load_business_context
-        load_org_context
         model_lineup
         model_release_pricing
         org_profile_schema
         phase_budgets
-        project_run_cost
         reasoning_model_resolution
         resolve_config
         resolve_config_org_profile
@@ -453,6 +455,7 @@ GROUPS = {
         business_impact_scope
         business_use_case
         abuse_case_gate
+        abuse_case_hypothesis
         abuse_case_verdicts
         abuse_cases_schema
         build_abuse_case_contexts
@@ -463,6 +466,7 @@ GROUPS = {
         build_stride_evidence_bundles
         build_threat_modeling_context
         build_trust_boundary_assessment_input
+        business_abuse_cases
         canonicalize_component_id
         classify_component
         context_prompt_budgets
@@ -481,7 +485,6 @@ GROUPS = {
         resolve_actors
         slice_actors
         slice_cross_repo_for_component
-        slice_taxonomy
         stage1_context_edge_inventory
         topology_workloads
         validate_recon_summary
@@ -489,13 +492,16 @@ GROUPS = {
         verify_abuse_cases
     """),
     "trust": _tests("""
+        artifact_names
+        assessment_location
         ensure_output_gitignore
+        legacy_import
         path_guard
         plugin_read_gate
         plugin_write_gate
-        postscan_secret_check
         preflight_untrusted
         redact_known_secrets
+        remote_url
         run_path_guard
         url_guard
     """),
@@ -541,6 +547,7 @@ GROUPS = {
 
 MANUAL_TESTS = {
     "tests/test_full_run_e2e.py": "Assertions on live-run artifacts; only enabled by the manual E2E driver.",
+    "tests/test_host_isolation_live.py": "Calls the real claude host and spends money; enabled by APPSEC_LIVE_HOST=1.",
 }
 
 # These sources retain the full suite until their behavior has measured coverage.
@@ -574,6 +581,159 @@ _AGENT_FILE_TESTS = (
 _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
 
 SOURCE_TESTS = {
+    "scripts/runtime/remote_repositories.py": _tests("remote_repositories"),
+    ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
+    "specs/README.md": _tests("requirements_verification"),
+    "specs/changes/root-requirements-catalog/proposal.md": _tests("requirements_verification"),
+    "scripts/orchestrator/assessment_context.py": _tests("assessment_context check_target_specificity"),
+    "scripts/orchestrator/assessment_workspace.py": _tests(
+        "multi_repo_assessment single_repo_controller assessment_context assessment_review assessment_posture check_target_specificity"
+    ),
+    "scripts/orchestrator/assessment_stage2.py": _tests("assessment_stage2 check_target_specificity"),
+    "scripts/orchestrator/assessment_review.py": _tests("assessment_review check_target_specificity"),
+    "scripts/orchestrator/assessment_declarations.py": _tests(
+        "assessment_declarations assessment_posture multi_repo_boundaries check_target_specificity"
+    ),
+    "scripts/model/assessment_scanner_findings.py": _tests(
+        "assessment_scanner_findings assessment_posture multi_repo_controller check_target_specificity"
+    ),
+    "scripts/model/assessment_posture.py": _tests(
+        "assessment_posture assessment_declarations check_target_specificity"
+    ),
+    "schemas/trust-boundary-coverage-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "scripts/runtime/assessment_state.py": _tests(
+        "assessment_state legacy_import multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
+    ),
+    "schemas/multi-repo-state.schema.json": _tests(
+        "assessment_state multi_repo_controller schemas check_target_specificity"
+    ),
+    "tests/e2e/fake_claude.py": _tests("controller_e2e"),
+    "scripts/runtime/assessment_jobs.py": _tests(
+        "assessment_jobs multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
+    ),
+    "schemas/assessment-job-receipt.schema.json": _tests(
+        "assessment_jobs multi_repo_controller schemas check_target_specificity"
+    ),
+    "scripts/shared/assessment_sources.py": _tests(
+        "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_figures multi_repo_exports portable_model_readers threat_fixture"
+    ),
+    "schemas/threat-model.output-v2.schema.yaml": _tests(
+        "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_figures multi_repo_exports"
+    ),
+    "scripts/contexts/multi_repo_analysis.py": _tests(
+        "multi_repo_analysis serving_units multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports threat_fixture"
+    ),
+    "schemas/multi-repo-architecture.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-stride.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-controls.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-evidence-review.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/threats-merged-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/fragments/trust-boundary-candidates-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_fragment_registry fragment_registry check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/fragments/trust-boundaries-v3.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_fragment_registry fragment_registry check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/trust-boundary-assessment-input-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "scripts/contexts/review_multi_repo_connections.py": _tests("""
+        review_multi_repo_connections check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "scripts/validators/validate_assessment_architecture.py": _tests(
+        """
+        threat_fixture
+        validate_assessment_architecture review_multi_repo_connections
+        check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+        multi_repo_builder
+        multi_repo_exports
+        multi_repo_assessment
+    """
+    ),
+    "schemas/multi-repo-connection-review.schema.json": _tests("""
+        review_multi_repo_connections schemas check_target_specificity
+    """),
+    "schemas/component-inventory-finalization-v2.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections schemas check_target_specificity
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "schemas/fragments/components-v2.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections schemas schema_integrity
+        check_fragment_registry fragment_registry check_target_specificity
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "schemas/fragments/data-flows-v2.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections schemas schema_integrity
+        check_fragment_registry fragment_registry check_target_specificity
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "scripts/analyzers/serving_units.py": _tests("""
+        serving_units multi_repo_controller
+    """),
+    "schemas/architecture-serving-units.schema.json": _tests("""
+        serving_units schemas
+    """),
+    "scripts/runtime/multi_repo_discovery.py": _tests("""
+        review_multi_repo_connections serving_units assessment_jobs controller_e2e
+        multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "scripts/runtime/assessment_host.py": _tests("""
+        review_multi_repo_connections
+        assessment_host multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "scripts/runtime/multi_repo_scope.py": _tests(
+        """
+        threat_fixture
+        validate_assessment_architecture review_multi_repo_connections
+        multi_repo_scope assessment_host multi_repo_discovery reconcile_multi_repo_architecture
+        check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "schemas/multi-repo-scope.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
+        multi_repo_scope multi_repo_discovery reconcile_multi_repo_architecture schemas check_target_specificity
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "scripts/contexts/reconcile_multi_repo_architecture.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
+        reconcile_multi_repo_architecture multi_repo_discovery
+        check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "schemas/multi-repo-discovery.schema.json": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
+        reconcile_multi_repo_architecture multi_repo_discovery schemas check_target_specificity
+    """),
+    "schemas/multi-repo-connections.schema.json": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
+        reconcile_multi_repo_architecture multi_repo_discovery schemas check_target_specificity
+    """),
+    "specs/changes/headless-multi-repository/proposal.md": _tests("requirements_verification"),
     "agents/appsec-authnz-analyzer.md": _tests(
         f"{_AGENT_FILE_TESTS} agent_logger authnz_report authnz_review_skill fragment_invariant_parity"
     ),
@@ -585,6 +745,15 @@ SOURCE_TESTS = {
         f"{_SKILL_FILE_TESTS} authnz_review_skill lazy_phase_group_loading skill_definitions"
     ),
     "skills/authnz-review/HELP.txt": _tests(f"{_SKILL_FILE_TESTS} skill_definitions"),
+    "skills/abuse-cases/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} resolve_abuse_cases skill_definitions"),
+    "skills/ask-security-assessment/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
+    "skills/help/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} help_reference skill_definitions"),
+    "skills/appsec-analyzer/SKILL.md": _tests(
+        f"{_SKILL_FILE_TESTS} assessment_console single_repo_controller skill_definitions"
+    ),
+    "skills/appsec-analyzer/business-context.md": _tests(
+        f"{_SKILL_FILE_TESTS} single_repo_controller skill_definitions"
+    ),
     "data/supply-chain-controls.yaml": _tests("""
         emit_sca_practice
         scanner_review_regressions
@@ -611,13 +780,6 @@ SOURCE_TESTS = {
         merge_threats
         orchestration_controller
         supply_chain_facts
-        validate_intermediate
-    """),
-    "agents/appsec-config-scanner.md": _tests("""
-        agent_definitions
-        completion_contract
-        config_scanner_wireup
-        telemetry_consistency
         validate_intermediate
     """),
     "schemas/source-auth-findings.schema.yaml": _tests("""
@@ -679,21 +841,9 @@ SOURCE_TESTS = {
         prompt_token_bounds
         stride_outputs
     """),
-    "skills/create-threat-model/SKILL-thin-stage4.md": _tests("""
-        integration
-        requirements_verification
-        wait_agent_calls
-        editorial_gate
-        lazy_phase_group_loading
-        runtime_doc_cli_contract
-        check_target_specificity
-        context_prompt_budgets
-        prompt_token_bounds
-    """),
     "scripts/analyzers/architect_review_runtime.py": _tests("""
         run_invariants
         actor_presentation
-        incremental_two_run_e2e
         runtime_doc_cli_contract
         threat_fixture
         render_completion_summary
@@ -716,18 +866,36 @@ SOURCE_TESTS = {
         schemas
     """),
     "schemas/analyst-request.schema.json": _tests("""
+        analyst_cli
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        resolve_analyst_catalog
         analyst_isolation
         analyst_state
         build_analyst_snapshot
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-snapshot.schema.json": _tests("""
+        analyst_cli
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        resolve_analyst_catalog
         analyst_isolation
         analyst_state
         build_analyst_snapshot
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-state.schema.json": _tests("""
         analyst_isolation
@@ -748,7 +916,6 @@ SOURCE_TESTS = {
         orchestration_controller
         actor_presentation
         build_threat_model_yaml
-        incremental_two_run_e2e
         runtime_doc_cli_contract
         threat_fixture
         architect_review
@@ -839,14 +1006,15 @@ SOURCE_TESTS = {
         schemas
         requirements_verification
     """),
-    "scripts/shared/_severity_policy.py": _tests("""
+    "scripts/shared/_severity_policy.py": _tests(
+        """
         actor_attribution
         actor_presentation
         build_threat_model_yaml
+        business_abuse_cases
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
-        incremental_two_run_e2e
         match_abuse_cases
         merge_threats
         new_schemas
@@ -867,8 +1035,12 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/model/build_plane.py": _tests("""
+        multi_repo_figures
         build_plane
         build_supply_chain_view
         figure1_dfd
@@ -954,8 +1126,11 @@ SOURCE_TESTS = {
         authnz_report
     """),
     "scripts/model/match_abuse_cases.py": _tests("""
+        abuse_case_hypothesis
         abuse_case_verdicts
+        build_abuse_case_contexts
         build_threat_model_yaml
+        business_abuse_cases
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -994,6 +1169,55 @@ SOURCE_TESTS = {
         requirements_verification
         stride_outputs
     """),
+    "agents/appsec-trust-boundary-analyst.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        agent_logger
+        check_target_specificity
+        context_prompt_budgets
+        dispatch_manifest
+        prompt_token_bounds
+        requirements_verification
+    """),
+    "data/cwe-boundary-legs.yaml": _tests("""
+        build_threat_model_yaml
+        check_target_specificity
+        merge_threats
+        prepare_trust_boundary_context
+    """),
+    "schemas/fragments/trust-boundaries.schema.json": _tests("""
+        build_threat_model_yaml
+        check_fragment_registry
+        check_target_specificity
+        fragment_registry
+        multi_repo_analysis
+        multi_repo_boundaries
+        prepare_trust_boundary_context
+        schema_integrity
+        schemas
+        validate_fragment
+    """),
+    "scripts/run-headless.sh": _tests("""
+        remote_repositories
+        acceptance_invocation
+        controller_e2e
+        agent_logger
+        budget_watchdog
+        check_target_specificity
+        ci_dispatch_workflows
+        e2e_cross_repo_fixture_script
+        e2e_fixture_script
+        e2e_spring_fixture_script
+        full_run_e2e_driver
+        headless_usage
+        hook_payload_contract
+        model_lineup
+        package_internal_plugin
+        render_completion_summary
+        render_progress
+        run_headless_completion
+        run_ownership
+    """),
     "agents/appsec-secarch-renderer.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
@@ -1027,7 +1251,6 @@ SOURCE_TESTS = {
         context_routing
         gate_preconditions
         orchestration_controller
-        record_stage_stats
         requirements_verification
         run_path_guard
         stride_outputs
@@ -1075,7 +1298,8 @@ SOURCE_TESTS = {
         schema_integrity
         schemas
     """),
-    "schemas/stride.schema.yaml": _tests("""
+    "schemas/stride.schema.yaml": _tests(
+        """
         agent_definitions
         check_target_specificity
         intermediate_json
@@ -1094,8 +1318,12 @@ SOURCE_TESTS = {
         architect_review_runtime
         calibrate_architect_review
         refusal_aware_stride
-    """),
-    "schemas/threat-model.output.schema.yaml": _tests("""
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "schemas/threat-model.output.schema.yaml": _tests(
+        """
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
@@ -1105,7 +1333,6 @@ SOURCE_TESTS = {
         emit_verdict_to_model
         enrichment_pass
         figure1_security
-        incremental_two_run_e2e
         load_related_repos
         merge_threats
         new_schemas
@@ -1125,8 +1352,12 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-    """),
-    "schemas/threats-merged.schema.yaml": _tests("""
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "schemas/threats-merged.schema.yaml": _tests(
+        """
         actor_attribution
         arch_coverage_bridge
         build_post_stride_contexts
@@ -1146,7 +1377,10 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/contexts/build_post_stride_contexts.py": _tests("""
         build_post_stride_contexts
         check_target_specificity
@@ -1157,9 +1391,9 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/schema_canonicalize.py": _tests("""
+        validate_assessment_architecture
         stride_attempt_writer
         topology_workloads
-        check_stride_dispatch
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -1173,7 +1407,6 @@ SOURCE_TESTS = {
         refusal_aware_stride
     """),
     "scripts/orchestrator/stride_dispatch_waves.py": _tests("""
-        check_stride_dispatch
         check_target_specificity
         gate_preconditions
         lens_coverage
@@ -1188,21 +1421,19 @@ SOURCE_TESTS = {
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        stride_serial_dispatch_detection
-        wait_stride_progress
         actor_presentation
         architect_review_runtime
         auto_emitter_pass
         build_threat_model_yaml
         detect_public_repo
         emit_general_mitigation_titles
-        incremental_two_run_e2e
         render_completion_summary_config
         runtime_doc_cli_contract
         threat_fixture
         write_stride_progress
     """),
-    "scripts/validators/validate_intermediate.py": _tests("""
+    "scripts/validators/validate_intermediate.py": _tests(
+        """
         config_iac_scanner
         actor_attribution
         actor_presentation
@@ -1213,7 +1444,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         build_threat_modeling_context
         build_trust_boundary_assessment_input
-        check_stride_dispatch
         check_target_specificity
         config_scanner_wireup
         credential_lifecycle_checks
@@ -1223,7 +1453,6 @@ SOURCE_TESTS = {
         figure1_dfd
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         intermediate_json
         lens_coverage
         match_abuse_cases
@@ -1254,18 +1483,19 @@ SOURCE_TESTS = {
         threats_merged_schema
         triage_compute_ranking
         validate_intermediate
-        wait_stride_progress
         architect_review
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
         refusal_aware_stride
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "AGENTS.md": _tests("""
         context_prompt_budgets
         decision_register
         lazy_phase_group_loading
-        orchestration_controller
         requirements_verification
         run_tests
     """),
@@ -1275,10 +1505,7 @@ SOURCE_TESTS = {
     """),
     "CHANGELOG.md": _tests("requirements_verification"),
     "README.md": _tests("""
-        build_threat_model_yaml
-        business_context_preview
         marketplace_manifest
-        orchestration_controller
         requirements_verification
     """),
     "agents/shared/finding-title-contract.md": _tests("""
@@ -1320,9 +1547,12 @@ SOURCE_TESTS = {
         dispatch_prompt_cache_order
         requirements_verification
     """),
-    "docs/org-profiles.md": _tests("requirements_verification"),
-    "docs/threat-modeler.md": _tests("requirements_verification"),
-    "specs/requirements.md": _tests("""
+    "docs/org-profiles.md": _tests("""
+        business_abuse_cases
+        requirements_verification
+    """),
+    "docs/security-assessment.md": _tests("requirements_verification"),
+    "requirements.md": _tests("""
         check_specs
         requirements_hook
         requirements_verification
@@ -1371,7 +1601,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         check_target_specificity
         config_iac_checks
-        incremental_two_run_e2e
         merge_threats
         threat_fixture
     """),
@@ -1414,6 +1643,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reconcile_role_access.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         figure1_security
         validate_fragment
         check_target_specificity
@@ -1498,6 +1728,7 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
+        multi_repo_exports
     """),
     "scripts/exporters/export_html.py": _tests("""
         check_target_specificity
@@ -1533,8 +1764,10 @@ SOURCE_TESTS = {
         run_path_guard
         runtime_doc_cli_contract
         stride_outputs
+        multi_repo_exports
     """),
-    "scripts/renderers/figure1_dfd.py": _tests("""
+    "scripts/renderers/figure1_dfd.py": _tests(
+        """
         actor_presentation
         build_plane
         figure1b_compose
@@ -1569,7 +1802,9 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
-    """),
+        multi_repo_figures
+    """
+    ),
     "scripts/renderers/figure2_svg.py": _tests("""
         actor_presentation
         analysis_version_upgrade
@@ -1591,7 +1826,9 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/model/finalize_component_inventory.py": _tests("""
+    "scripts/model/finalize_component_inventory.py": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections serving_units
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -1602,7 +1839,10 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         topology_workloads
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/renderers/inline_code_formatter.py": _tests("""
         analysis_version_upgrade
         apply_prose_fixes
@@ -1640,6 +1880,8 @@ SOURCE_TESTS = {
         run_path_guard
         run_tests
         stride_outputs
+        finding_state
+        shared_paths
     """),
     "scripts/audit_test_routes.py": _tests("""
         audit_test_routes
@@ -1648,6 +1890,13 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+    """),
+    "scripts/renderers/component_labels.py": _tests("""
+        threat_fixture
+        component_labels
+        compose_threat_model
+        figure1_svg
+        pregenerate_fragments
     """),
     "scripts/renderers/walkthrough_renderer.py": _tests("""
         report_anatomy
@@ -1693,9 +1942,12 @@ SOURCE_TESTS = {
         supply_chain_facts
         validate_evidence_lines
         validate_intermediate
+        assessment_posture
+        assessment_scanner_findings
     """),
     "scripts/analyzers/supply_chain_facts.py": _tests("""
         build_supply_chain_view
+        build_trust_boundary_assessment_input
         check_target_specificity
         config_iac_scanner
         config_scanner_wireup
@@ -1738,6 +1990,7 @@ SOURCE_TESTS = {
         runtime_cleanup
         stride_outputs
         threat_fixture
+        assessment_posture
     """),
     "scripts/renderers/figure_deployment.py": _tests("""
         analysis_version_upgrade
@@ -1787,7 +2040,6 @@ SOURCE_TESTS = {
         figure1b_compose
         figure_details
         figure_theme
-        publish_threat_model
         qa_checks
         threat_fixture
     """),
@@ -1836,6 +2088,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/analyzers/mass_assignment_scanner.py": _tests("""
+        assessment_scanner_findings
         check_target_specificity
         gate_preconditions
         mass_assignment_scanner
@@ -1864,6 +2117,15 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
+    "scripts/analyzers/capability_signals.py": _tests("""
+        capability_signals
+        multi_repo_assessment
+    """),
+    "scripts/analyzers/client_api_flows.py": _tests("""
+        client_api_flows
+        controller_fixture
+        multi_repo_assessment
+    """),
     "scripts/analyzers/flow_route_auth.py": _tests("""
         architect_review_runtime
         check_target_specificity
@@ -1881,9 +2143,10 @@ SOURCE_TESTS = {
         threat_fixture
         actor_presentation
         build_threat_model_yaml
-        incremental_two_run_e2e
     """),
     "scripts/analyzers/source_auth_scanner.py": _tests("""
+        assessment_scanner_findings
+        validate_assessment_architecture
         authz_confirm
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
@@ -2054,10 +2317,37 @@ SOURCE_TESTS = {
         run_issues_pipeline
         run_path_guard
         runtime_doc_cli_contract
-        skill_watchdog
         stride_outputs
         terminate_run
         verify_run_costs
+    """),
+    "scripts/renderers/term_style.py": _tests("""
+        aggregate_run_issues
+        architect_review_runtime
+        check_target_specificity
+        completion_relay
+        controller_e2e
+        cost_running_total
+        finding_state
+        gate_preconditions
+        headless_usage
+        measure_run
+        model_release_pricing
+        multi_repo_assessment
+        p1_renderer_correctness
+        persist_run_baseline
+        render_completion_summary
+        render_completion_summary_config
+        render_completion_summary_verdict
+        render_integrity
+        render_progress
+        report_plugin_issue
+        requirements_verification
+        run_headless_completion
+        shared_paths
+        stride_outputs
+        team_questions
+        term_style
     """),
     "scripts/renderers/render_progress.py": _tests("""
         check_target_specificity
@@ -2151,14 +2441,14 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/model/build_threat_model_yaml.py": _tests("""
+    "scripts/model/build_threat_model_yaml.py": _tests(
+        """
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
         config_iac_checks
         dispatch_manifest
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         prepare_trust_boundary_context
@@ -2176,8 +2466,16 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-    """),
+        multi_repo_builder
+        multi_repo_exports
+        assessment_context
+    """
+    ),
     "scripts/orchestrator/orchestration_controller.py": _tests("""
+        multi_repo_controller
+        multi_repo_assessment
+        single_repo_controller
+        controller_fixture
         script_layout
         business_impact_scope
         architect_review_runtime
@@ -2190,7 +2488,6 @@ SOURCE_TESTS = {
         discover_identity_providers
         dispatch_manifest
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         embedded_store_access
         flow_route_auth
         fragment_invariant_parity
@@ -2212,16 +2509,7 @@ SOURCE_TESTS = {
         source_auth_scanner
         stage1_coverage_recovery_2026_07_20
         stride_outputs
-        telemetry_consistency
         thin_runtime_regressions_2026_07_20
-    """),
-    "scripts/orchestrator/stage2_state.py": _tests("""
-        requirements_verification
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        stage2_state
-        stride_outputs
     """),
     "scripts/renderers/_business_relevance.py": _tests("""
         analysis_version_upgrade
@@ -2280,7 +2568,6 @@ SOURCE_TESTS = {
         hook_payload_contract
         match_abuse_cases
         orchestration_controller
-        recon_dispatch_contract
         requirements_verification
         stage1_context_edge_inventory
         stride_outputs
@@ -2301,6 +2588,7 @@ SOURCE_TESTS = {
         topology_workloads
     """),
     "schemas/architecture-topology-context.schema.json": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         build_architecture_analysis_context
         check_target_specificity
         orchestration_controller
@@ -2309,7 +2597,9 @@ SOURCE_TESTS = {
         stride_outputs
         topology_workloads
     """),
-    "schemas/fragments/components.schema.json": _tests("""
+    "schemas/fragments/components.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
         agent_definitions
         build_threat_model_yaml
         build_trust_boundary_assessment_input
@@ -2323,7 +2613,10 @@ SOURCE_TESTS = {
         threat_fixture
         topology_workloads
         validate_fragment
-    """),
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
     "agents/shared/ms-template.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
@@ -2346,13 +2639,6 @@ SOURCE_TESTS = {
         requirements_verification
         stride_outputs
     """),
-    "agents/shared/qa-ms-checks.md": _tests("""
-        agent_definitions
-        agent_doc_shell_snippets
-        check_target_specificity
-        requirements_verification
-        stride_outputs
-    """),
     "data/threat-category-taxonomy.yaml": _tests("""
         agent_definitions
         check_target_specificity
@@ -2365,7 +2651,6 @@ SOURCE_TESTS = {
         requirements_verification
         review_threat_model
         schemas
-        slice_taxonomy
         taxonomy_coverage
         validate_intermediate
     """),
@@ -2379,7 +2664,6 @@ SOURCE_TESTS = {
         orchestration_controller
         requirements_verification
         schemas
-        slice_taxonomy
     """),
     "data/context-routing-bindings.json": _tests("""
         build_abuse_case_contexts
@@ -2540,10 +2824,10 @@ SOURCE_TESTS = {
         figure1b_svg
     """),
     "scripts/renderers/compose_threat_model.py": _tests("""
+        multi_repo_assessment
         report_anatomy
         figure1b_compose
         script_layout
-        incremental_two_run_e2e
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -2609,6 +2893,7 @@ SOURCE_TESTS = {
         threat_model_health
     """),
     "scripts/renderers/summarize_threat_model.py": _tests("""
+        portable_model_readers
         check_target_specificity
         gate_preconditions
         render_completion_summary
@@ -2627,7 +2912,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         check_target_specificity
         gate_preconditions
-        incremental_two_run_e2e
         orchestration_controller
         requirements_verification
         run_path_guard
@@ -2638,6 +2922,7 @@ SOURCE_TESTS = {
         triage_validate_ratings
     """),
     "scripts/validators/validate_fragment.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         script_layout
         architect_review_runtime
         actor_presentation
@@ -2655,7 +2940,6 @@ SOURCE_TESTS = {
         fragment_invariant_parity
         fragment_registry
         gate_preconditions
-        incremental_two_run_e2e
         new_schemas
         orchestration_controller
         pregenerate_fragments
@@ -2675,62 +2959,6 @@ SOURCE_TESTS = {
         validate_intermediate
         validate_ms_compactness
         topology_workloads
-    """),
-    "skills/create-threat-model/SKILL-full-runtime.md": _tests("""
-        check_target_specificity
-        context_prompt_budgets
-        dispatch_values_stage
-        integration
-        lazy_phase_group_loading
-        orchestration_controller
-        qa_depth_profile
-        reasoning_model_resolution
-        requirements_resolution
-        requirements_verification
-        runtime_cleanup
-        runtime_doc_cli_contract
-    """),
-    "skills/create-threat-model/SKILL-thin-stage1-v2.md": _tests("""
-        agent_definitions
-        check_target_specificity
-        config_scanner_wireup
-        context_prompt_budgets
-        dispatch_prompt_cache_order
-        integration
-        orchestration_controller
-        recon_dispatch_contract
-        requirements_verification
-        runtime_doc_cli_contract
-        stride_serial_dispatch_detection
-        thin_runtime_regressions_2026_07_20
-        wait_agent_calls
-    """),
-    "skills/create-threat-model/SKILL.md": _tests("""
-        check_target_specificity
-        context_prompt_budgets
-        help_file
-        integration
-        lazy_phase_group_loading
-        package_internal_plugin
-        reasoning_model_resolution
-        requirements_verification
-        runtime_cleanup
-        runtime_doc_cli_contract
-        skill_definitions
-    """),
-    "templates/fragments/mitigations.md.j2": _tests("""
-        analysis_version_upgrade
-        compose_threat_model
-        compose_threat_model_cov2
-        e2e_pipeline
-        enforcement_mutations
-        p1_renderer_correctness
-        reference_format
-        render_integrity
-        render_properties
-        requirements_mapping
-        requirements_verification
-        threat_fixture
     """),
     "templates/fragments/verdict.md.j2": _tests("""
         analysis_version_upgrade
@@ -2764,6 +2992,8 @@ SOURCE_TESTS = {
         weakness_signals
     """),
     "scripts/shared/_atomic_io.py": _tests("""
+        assessment_state multi_repo_controller
+        validate_assessment_architecture review_multi_repo_connections
         topology_workloads
         architect_review_runtime
         actor_attribution
@@ -2773,7 +3003,6 @@ SOURCE_TESTS = {
         analysis_version_upgrade
         annotate_architecture
         annotate_sequences
-        apply_editorial_plan
         apply_prose_fixes_coverage
         atomic_io
         auto_emitter_pass
@@ -2781,13 +3010,11 @@ SOURCE_TESTS = {
         baseline_state_coverage
         build_abuse_case_contexts
         build_architecture_analysis_context
-        build_editorial_context
         build_post_stride_contexts
         build_stride_evidence_bundles
         build_threat_model_yaml
         build_threat_modeling_context
         build_trust_boundary_assessment_input
-        check_editorial_diff
         check_target_specificity
         completion_relay
         compose_threat_model
@@ -2800,7 +3027,6 @@ SOURCE_TESTS = {
         discover_identity_providers
         dispatch_manifest
         e2e_pipeline
-        editorial_gate
         embedded_store_access
         emit_verdict_to_model
         enforce_yaml_invariants
@@ -2812,11 +3038,9 @@ SOURCE_TESTS = {
         flow_route_auth
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         load_business_context
         merge_threats
         mermaid_validator
-        normalize_config_scan
         orchestration_controller
         p1_renderer_correctness
         prepare_trust_boundary_context
@@ -2829,7 +3053,6 @@ SOURCE_TESTS = {
         reference_format
         render_abuse_cases
         render_completion_summary
-        render_editorial_receipt
         render_integrity
         render_properties
         repo_scan
@@ -2839,14 +3062,12 @@ SOURCE_TESTS = {
         resolve_actors
         run_headless_completion
         run_path_guard
-        section_integrity
         security_score
         severity_policy
         stride_outputs
         terminate_run
         threat_fixture
         triage_validate_ratings
-        validate_dispatch_manifest
         validate_fragment
         validate_ms_compactness
         validate_recon_summary
@@ -2868,9 +3089,11 @@ SOURCE_TESTS = {
     """),
     "scripts/shared/_boundary_interface.py": _tests("""
         boundary_interface
+        build_supply_chain_view
         compose_threat_model
         figure1_dfd
         figure1_detail
+        figure1b_svg
         pregenerate_fragments
         threat_fixture
     """),
@@ -2898,7 +3121,6 @@ SOURCE_TESTS = {
         figure_details
         fragment_authoring_fidelity
         gate_preconditions
-        incremental_two_run_e2e
         ms_input_digest
         orchestration_controller
         p1_renderer_correctness
@@ -2926,6 +3148,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
         figure1b_compose
+        multi_repo_exports
     """),
     "scripts/shared/_critical_findings_sync.py": _tests("""
         agent_config_checks
@@ -2963,7 +3186,6 @@ SOURCE_TESTS = {
     """),
     "scripts/shared/_manifest_readers.py": _tests("""
         build_threat_model_yaml
-        incremental_two_run_e2e
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -3012,15 +3234,12 @@ SOURCE_TESTS = {
         validate_ms_compactness
     """),
     "scripts/shared/_path_guard.py": _tests("""
-        section_integrity
         architect_review_runtime
         actor_presentation
         aggregate_run_issues
-        apply_editorial_plan
         arch_coverage_bridge
         architecture_coverage_checks
         auto_emitter_pass
-        build_editorial_context
         build_threat_model_yaml
         check_target_specificity
         credential_lifecycle_checks
@@ -3029,13 +3248,11 @@ SOURCE_TESTS = {
         detect_open_registration
         detect_public_repo
         dispatch_manifest
-        editorial_gate
         emit_sca_practice
         enrichment_pass
         flow_route_auth
         gate_preconditions
         handler_resolver
-        incremental_two_run_e2e
         log_agent_end
         mass_assignment_scanner
         orchestration_controller
@@ -3054,7 +3271,6 @@ SOURCE_TESTS = {
         scanner_review_regressions
         security_score
         skill_auto_retry
-        skill_watchdog
         source_auth_scanner
         stride_outputs
         supply_chain_config
@@ -3069,6 +3285,7 @@ SOURCE_TESTS = {
         finding_intake
         merge_threats
         promote_verified_abuse_cases
+        assessment_scanner_findings
     """),
     "scripts/shared/_finding_locator.py": _tests("""
         compose_threat_model
@@ -3080,7 +3297,23 @@ SOURCE_TESTS = {
         render_abuse_cases
         threat_fixture
     """),
-    "scripts/shared/_finding_state.py": _tests("""
+    "scripts/shared/_register_titles.py": _tests("""
+        compose_threat_model
+        emit_config_scan_mitigations
+        emit_finding_fix_mitigations
+        emit_general_mitigation_titles
+        emit_review_mitigations
+        qa_checks
+        register_titles
+        threat_fixture
+    """),
+    "scripts/shared/_fragment_ownership.py": _tests("""
+        orchestration_controller
+        qa_checks
+        runtime_helper_batch
+    """),
+    "scripts/shared/_finding_state.py": _tests(
+        """
         architect_review
         build_architect_context
         build_posture_verdict
@@ -3099,8 +3332,12 @@ SOURCE_TESTS = {
         validate_evidence_lines
         weakness_signals
         figure1b_compose
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/shared/_paths.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         aggregate_run_issues
         arch_coverage_bridge
         architecture_coverage_checks
@@ -3188,7 +3425,6 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         build_threat_modeling_context
         build_trust_boundary_assessment_input
-        check_stride_dispatch
         check_target_specificity
         compose_threat_model
         compose_threat_model_cov2
@@ -3202,7 +3438,6 @@ SOURCE_TESTS = {
         detect_public_repo
         discover_identity_providers
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         e2e_pipeline
         embedded_store_access
         emit_review_mitigations
@@ -3212,7 +3447,6 @@ SOURCE_TESTS = {
         flow_route_auth
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         intermediate_json
         lens_coverage
         log_shape_contract
@@ -3253,22 +3487,20 @@ SOURCE_TESTS = {
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        stride_serial_dispatch_detection
         team_questions
-        telemetry_consistency
         threat_fixture
         threats_merged_schema
         triage_compute_ranking
         triage_validate_ratings
         validate_evidence_lines
         validate_intermediate
-        wait_stride_progress
         weakness_signals
         architect_review
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
         refusal_aware_stride
+        multi_repo_exports
     """),
     "scripts/shared/_slug.py": _tests("""
         analysis_version_upgrade
@@ -3350,6 +3582,27 @@ SOURCE_TESTS = {
         threat_fixture
         threat_model_fields
         threat_model_fields_evidence
+        multi_repo_exports
+    """),
+    "scripts/shared/artifact_names.py": _tests("""
+        artifact_names
+        assessment_location
+        query_threat_model
+        summarize_threat_model
+        threat_fixture
+    """),
+    "scripts/shared/assessment_location.py": _tests("""
+        assessment_location
+    """),
+    "scripts/runtime/legacy_import.py": _tests("""
+        legacy_import
+        single_repo_controller
+    """),
+    "scripts/shared/_remote_url.py": _tests("""
+        build_threat_model_yaml
+        multi_repo_assessment
+        remote_url
+        threat_fixture
     """),
     "scripts/shared/_url_guard.py": _tests("""
         appsec_status
@@ -3386,6 +3639,8 @@ SOURCE_TESTS = {
     """),
     "scripts/runtime/acquire_lock.py": _tests("""
         acquire_lock_heartbeat
+        assessment_state
+        multi_repo_controller
         active_tool_calls
         agent_lifecycle
         agent_logger
@@ -3407,14 +3662,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         terminate_run
-    """),
-    "scripts/contexts/actor_discovery_cache.py": _tests("""
-        actor_discovery_cache
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
     """),
     "scripts/runtime/agent_config_checks.py": _tests("""
         iac_resource_checks
@@ -3458,13 +3705,9 @@ SOURCE_TESTS = {
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        telemetry_consistency
         terminate_run
-        wait_abuse_progress
         wait_agent_calls
-        wait_stride_progress
         write_stride_progress
-        check_stride_dispatch
         stage1_coverage_recovery_2026_07_20
     """),
     "scripts/runtime/agent_logger.py": _tests("""
@@ -3530,34 +3773,8 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/repairs/apply_editorial_plan.py": _tests("""
-        apply_editorial_plan
-        build_editorial_context
-        check_target_specificity
-        enrichment_pass
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
-    "scripts/repairs/apply_finding_refs_repair.py": _tests("""
-        apply_finding_refs_repair
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_finding_refs
-    """),
-    "scripts/repairs/apply_repair_plan.py": _tests("""
-        apply_repair_plan
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/runtime/appsec_status.py": _tests("""
+        portable_model_readers
         appsec_status
         appsec_status_live
         check_target_specificity
@@ -3589,6 +3806,7 @@ SOURCE_TESTS = {
         scanner_review_regressions
         security_score
         stride_outputs
+        assessment_posture
     """),
     "scripts/validators/assert_completeness.py": _tests("""
         assert_completeness
@@ -3600,6 +3818,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/authz_confirm.py": _tests("""
+        assessment_scanner_findings
         authnz_report
         authz_confirm
         check_target_specificity
@@ -3671,6 +3890,7 @@ SOURCE_TESTS = {
         version_status
     """),
     "scripts/baseline/baseline_state.py": _tests("""
+        portable_model_readers
         analysis_version_upgrade
         baseline_content_unchanged
         baseline_state_coverage
@@ -3681,14 +3901,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
-        stride_outputs
-    """),
-    "scripts/orchestrator/batch_checkpoint.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
         stride_outputs
     """),
     "scripts/runtime/budget_watchdog.py": _tests("""
@@ -3710,7 +3922,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_attempt_writer
         stride_outputs
-        telemetry_consistency
         terminate_run
         verify_abuse_cases
         refusal_aware_stride
@@ -3725,6 +3936,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/contexts/build_architecture_analysis_context.py": _tests("""
+        aggregate_run_issues
+        validate_assessment_architecture review_multi_repo_connections
         build_trust_boundary_assessment_input
         finalize_component_inventory
         fragment_invariant_parity
@@ -3748,16 +3961,6 @@ SOURCE_TESTS = {
         single_repo_no_cross_repo_regression
         stride_outputs
     """),
-    "scripts/contexts/build_editorial_context.py": _tests("""
-        apply_editorial_plan
-        build_editorial_context
-        check_target_specificity
-        editorial_gate
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/model/build_posture_verdict.py": _tests("""
         actor_presentation
         build_posture_verdict
@@ -3777,6 +3980,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/orchestrator/build_stride_dispatch_manifest.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         topology_workloads
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
@@ -3802,7 +4006,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-        validate_dispatch_manifest
         validate_intermediate
     """),
     "scripts/contexts/build_threat_modeling_context.py": _tests("""
@@ -3816,7 +4019,8 @@ SOURCE_TESTS = {
         stride_outputs
         validate_intermediate
     """),
-    "scripts/contexts/build_trust_boundary_assessment_input.py": _tests("""
+    "scripts/contexts/build_trust_boundary_assessment_input.py": _tests(
+        """
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -3825,8 +4029,15 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-    """),
-    "schemas/trust-boundary-assessment-input.schema.json": _tests("""
+        multi_repo_boundaries
+        multi_repo_builder
+        multi_repo_controller
+        multi_repo_exports
+        assessment_declarations
+    """
+    ),
+    "schemas/trust-boundary-assessment-input.schema.json": _tests(
+        """
         figure1_security
         fragment_invariant_parity
         orchestration_controller
@@ -3838,7 +4049,10 @@ SOURCE_TESTS = {
         requirements_verification
         schemas
         stride_outputs
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/repairs/build_verify_diff.py": _tests("""
         build_verify_diff
         check_target_specificity
@@ -3864,19 +4078,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/validators/check_editorial_diff.py": _tests("""
-        apply_editorial_plan
-        build_editorial_context
-        check_editorial_diff
-        check_target_specificity
-        editorial_gate
-        enrichment_pass
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-    """),
     "scripts/validators/check_fragment_registry.py": _tests("""
         check_fragment_registry
         check_target_specificity
@@ -3884,18 +4085,6 @@ SOURCE_TESTS = {
         gate_preconditions
         requirements_verification
         run_path_guard
-        stride_outputs
-    """),
-    "scripts/validators/check_inline_shortcut.py": _tests("""
-        check_inline_shortcut
-        check_inline_shortcut_coverage
-        check_target_specificity
-        gate_preconditions
-        pregenerate_fragments
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        skill_auto_retry
         stride_outputs
     """),
     "scripts/check_permissions.py": _tests("""
@@ -3970,16 +4159,6 @@ SOURCE_TESTS = {
         stride_outputs
         threat_model_health
     """),
-    "scripts/orchestrator/check_stride_dispatch.py": _tests("""
-        check_stride_dispatch
-        check_target_specificity
-        gate_preconditions
-        log_shape_contract
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        stride_serial_dispatch_detection
-    """),
     "scripts/check_target_specificity.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -4029,7 +4208,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-        telemetry_consistency
         refusal_aware_stride
     """),
     "scripts/runtime/context_window_report.py": _tests("""
@@ -4050,7 +4228,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_headless_completion
         run_path_guard
-        skill_watchdog
         stride_outputs
     """),
     "scripts/runtime/cutoff_cause.py": _tests("""
@@ -4076,6 +4253,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        assessment_posture
     """),
     "scripts/analyzers/detect_impl_strategy.py": _tests("""
         check_target_specificity
@@ -4134,15 +4312,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/analyzers/detect_session_model.py": _tests("""
-        check_target_specificity
-        detect_session_model
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/runtime/diagnostic_bundle.py": _tests("""
         script_layout
         check_target_specificity
@@ -4155,6 +4324,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/discover_identity_providers.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -4168,16 +4338,9 @@ SOURCE_TESTS = {
         stride_outputs
         validate_fragment
     """),
-    "scripts/validators/editorial_gate.py": _tests("""
-        check_target_specificity
-        editorial_gate
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-    """),
     "scripts/analyzers/embedded_store_access.py": _tests("""
+        multi_repo_assessment
+        multi_repo_controller
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -4209,7 +4372,6 @@ SOURCE_TESTS = {
         detect_public_repo
         emit_clean_finding_titles
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         promote_verified_abuse_cases
@@ -4243,6 +4405,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        assessment_posture
     """),
     "scripts/model/emit_finding_fix_mitigations.py": _tests("""
         architect_review
@@ -4276,6 +4439,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        assessment_posture
     """),
     "scripts/model/emit_meta_findings.py": _tests("""
         auto_emitter_pass
@@ -4319,6 +4483,7 @@ SOURCE_TESTS = {
         run_path_guard
         scanner_review_regressions
         stride_outputs
+        assessment_posture
     """),
     "scripts/model/emit_severity_rationale.py": _tests("""
         auto_emitter_pass
@@ -4388,10 +4553,8 @@ SOURCE_TESTS = {
     """),
     "scripts/model/enrichment_pass.py": _tests("""
         agent_config_checks
-        apply_editorial_plan
         assert_completeness
         auto_emitter_pass
-        check_editorial_diff
         check_target_specificity
         detect_public_repo
         emit_general_mitigation_titles
@@ -4419,21 +4582,8 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/runtime/estimate_duration.py": _tests("""
-        check_target_specificity
-        dispatch_model_and_diagnostics
-        dispatch_values_stage
-        estimate_duration
-        gate_preconditions
-        orchestration_controller
-        persist_run_baseline
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        skill_watchdog
-        stride_outputs
-    """),
     "scripts/validators/eval_threat_model.py": _tests("""
+        portable_model_readers
         check_target_specificity
         eval_threat_model
         gate_preconditions
@@ -4480,9 +4630,6 @@ SOURCE_TESTS = {
         model_release_pricing
         orchestration_controller
         reconcile_role_access
-        record_stage_stats
-        render_editorial_receipt
-        render_qa_receipt
         report_plugin_issue
         requirements_verification
         run_diagnostics_recovery_2026_07_20
@@ -4492,12 +4639,9 @@ SOURCE_TESTS = {
         security_steering
         security_steering_units
         skill_auto_retry
-        skill_watchdog
-        stall_notice
         stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
-        telemetry_consistency
         terminate_run
         verify_run_costs
         write_stride_progress
@@ -4548,6 +4692,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/figure1_security.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -4568,7 +4713,6 @@ SOURCE_TESTS = {
         flow_route_auth
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         new_schemas
         orchestration_controller
         p1_renderer_correctness
@@ -4682,14 +4826,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/contexts/load_org_context.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        load_org_context
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/contexts/load_related_repos.py": _tests("""
         build_threat_modeling_context
         check_target_specificity
@@ -4730,7 +4866,10 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/model/merge_threats.py": _tests("""
+    "scripts/model/merge_threats.py": _tests(
+        """
+        assessment_scanner_findings
+        multi_repo_controller
         run_invariants
         actor_attribution
         agent_config_checks
@@ -4743,7 +4882,6 @@ SOURCE_TESTS = {
         crypto_path_xxe_checks
         detect_impl_strategy
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         promote_verified_abuse_cases
@@ -4761,28 +4899,21 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-        check_stride_dispatch
         refusal_aware_stride
         run_diagnostics_recovery_2026_07_20
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
-        wait_stride_progress
         write_stride_progress
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/runtime/model_lineup.py": _tests("""
         check_target_specificity
         gate_preconditions
         model_lineup
         requirements_verification
         run_headless_completion
-        run_path_guard
-        stride_outputs
-    """),
-    "scripts/model/normalize_config_scan.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        normalize_config_scan
-        requirements_verification
         run_path_guard
         stride_outputs
     """),
@@ -4871,7 +5002,6 @@ SOURCE_TESTS = {
         context_routing
         discover_identity_providers
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         embedded_store_access
         flow_route_auth
         fragment_invariant_parity
@@ -4898,19 +5028,10 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_07_20
         stride_outputs
         team_questions
-        telemetry_consistency
         terminate_run
         threat_model_health
         watch_run
         runtime_cleanup
-    """),
-    "scripts/runtime/phase_elapsed.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
-        stride_outputs
     """),
     "scripts/runtime/plugin_meta.py": _tests("""
         analysis_version_upgrade
@@ -4947,14 +5068,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/validators/postscan_secret_check.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        postscan_secret_check
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/validators/preflight_untrusted.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -4980,7 +5093,6 @@ SOURCE_TESTS = {
         figure1_svg
         fragment_invariant_parity
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
         orchestration_controller
         prepare_trust_boundary_context
@@ -5003,18 +5115,6 @@ SOURCE_TESTS = {
         gate_preconditions
         requirements_verification
         run_path_guard
-        section_integrity
-        stride_outputs
-    """),
-    "scripts/runtime/project_run_cost.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        persist_run_baseline
-        project_run_cost
-        requirements_verification
-        run_headless_completion
-        run_path_guard
         stride_outputs
     """),
     "scripts/model/promote_verified_abuse_cases.py": _tests("""
@@ -5023,16 +5123,6 @@ SOURCE_TESTS = {
         promote_verified_abuse_cases
         requirements_verification
         run_path_guard
-        stride_outputs
-    """),
-    "scripts/model/publish_threat_model.py": _tests("""
-        check_target_specificity
-        ensure_output_gitignore
-        gate_preconditions
-        publish_threat_model
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
         stride_outputs
     """),
     "scripts/validators/qa_arch_coverage.py": _tests("""
@@ -5048,8 +5138,6 @@ SOURCE_TESTS = {
         actor_presentation
         analysis_version_upgrade
         check_fragment_registry
-        check_inline_shortcut
-        check_inline_shortcut_coverage
         check_target_specificity
         compose_threat_model
         compose_threat_model_cov2
@@ -5082,16 +5170,8 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/validators/qa_release_gate.py": _tests("""
-        check_target_specificity
-        editorial_gate
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
-        stride_outputs
-    """),
     "scripts/model/query_threat_model.py": _tests("""
+        portable_model_readers
         check_target_specificity
         gate_preconditions
         query_threat_model
@@ -5101,6 +5181,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reclassify_components.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections serving_units
         run_invariants
         topology_workloads
         architect_review_runtime
@@ -5132,8 +5213,15 @@ SOURCE_TESTS = {
         threat_fixture
         validate_fragment
         validate_intermediate
+        assessment_scanner_findings
+    """),
+    "scripts/analyzers/egress_clients.py": _tests("""
+        egress_clients
+        build_architecture_analysis_context
+        orchestration_controller
     """),
     "scripts/analyzers/recon_patterns.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -5147,27 +5235,6 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         validate_fragment
-    """),
-    "scripts/runtime/record_component_durations.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        log_shape_contract
-        record_component_durations
-        requirements_verification
-        run_path_guard
-        runtime_helper_batch
-        stride_outputs
-    """),
-    "scripts/runtime/record_stage_stats.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        model_release_pricing
-        record_stage_stats
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-        thin_runtime_regressions_2026_07_20
     """),
     "scripts/validators/redact_known_secrets.py": _tests("""
         check_target_specificity
@@ -5201,16 +5268,8 @@ SOURCE_TESTS = {
         threat_fixture
         runtime_cleanup
     """),
-    "scripts/renderers/render_editorial_receipt.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        render_completion_summary_config
-        render_editorial_receipt
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/renderers/render_pentest_tasks.py": _tests("""
+        portable_model_readers
         render_completion_summary
         authnz_review_skill
         check_target_specificity
@@ -5219,15 +5278,6 @@ SOURCE_TESTS = {
         gate_preconditions
         pentest_tasks
         render_pentest_tasks
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-    """),
-    "scripts/renderers/render_qa_receipt.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        render_qa_receipt
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
@@ -5267,6 +5317,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/repo_profile.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         topology_workloads
         build_trust_boundary_assessment_input
         check_target_specificity
@@ -5280,6 +5331,8 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
+    "scripts/runtime/assessment_console.py": _tests("assessment_console"),
+    "scripts/runtime/live_run_holder.py": _tests("live_run_holder"),
     "scripts/runtime/report_plugin_issue.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5352,7 +5405,6 @@ SOURCE_TESTS = {
         figure_details
         fragment_authoring_fidelity
         gate_preconditions
-        incremental_two_run_e2e
         ms_input_digest
         p1_renderer_correctness
         p3_behavior_tuning
@@ -5388,7 +5440,15 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
+    "scripts/model/abuse_case_hypothesis.py": _tests("""
+        portable_model_readers
+        abuse_case_hypothesis
+        analyst_cli
+    """),
     "scripts/model/resolve_abuse_cases.py": _tests("""
+        abuse_case_hypothesis
+        build_abuse_case_contexts
+        business_abuse_cases
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -5408,8 +5468,11 @@ SOURCE_TESTS = {
         resolve_actors
         run_path_guard
         stride_outputs
+        assessment_posture
     """),
     "scripts/runtime/resolve_config.py": _tests("""
+        portable_model_readers
+        multi_repo_config multi_repo_controller
         architect_review_runtime
         agent_config_checks
         agent_logger_cov
@@ -5419,7 +5482,6 @@ SOURCE_TESTS = {
         finalize_component_inventory
         gate_preconditions
         haiku_routing_per_depth
-        help_file
         model_lineup
         orchestration_controller
         p3_behavior_tuning
@@ -5470,6 +5532,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/validators/review_threat_model.py": _tests("""
+        portable_model_readers
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5479,6 +5542,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/route_inventory.py": _tests("""
+        assessment_scanner_findings
         actor_attribution
         arch_coverage_bridge
         architecture_coverage_checks
@@ -5486,6 +5550,7 @@ SOURCE_TESTS = {
         flow_route_auth
         gate_preconditions
         handler_resolver
+        multi_repo_boundaries
         orchestration_controller
         repo_scan
         requirements_verification
@@ -5496,6 +5561,7 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
         threat_fixture
+        assessment_posture
     """),
     "scripts/runtime/run_summary.py": _tests("""
         check_target_specificity
@@ -5543,6 +5609,18 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/scan_excludes.py": _tests("""
+        multi_repo_scope multi_repo_assessment assessment_host multi_repo_discovery
+        reconcile_multi_repo_architecture finding_state shared_paths multi_repo_builder
+        multi_repo_figures multi_repo_exports
+        abuse_case_hypothesis abuse_case_verdicts actor_attribution agent_config_checks analyst_cli
+        assessment_context assessment_declarations assessment_jobs assessment_posture assessment_review
+        assessment_scanner_findings assessment_sources assessment_stage2 assessment_state authnz_review_skill
+        build_architecture_analysis_context build_threat_model_yaml build_trust_boundary_assessment_input
+        business_abuse_cases compose_threat_model_cov2 config_iac_scanner config_scanner_wireup
+        derive_abuse_cases egress_clients emit_sca_practice emit_threat_vektors enrichment_pass iac_resource_checks
+        multi_repo_analysis multi_repo_boundaries multi_repo_controller portable_model_readers supply_chain_facts
+        validate_evidence_lines
+        validate_assessment_architecture review_multi_repo_connections
         arch_coverage_bridge
         architecture_coverage_checks
         baseline_content_unchanged
@@ -5578,7 +5656,13 @@ SOURCE_TESTS = {
     "scripts/validators/run_invariants.py": _tests("""
         run_invariants
     """),
-    "scripts/validators/secret_scan.py": _tests("""
+    "scripts/validators/secret_scan.py": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
+        multi_repo_discovery
+        multi_repo_scope
+        assessment_host
+        reconcile_multi_repo_architecture
         actor_presentation
         analysis_version_upgrade
         architect_review_runtime
@@ -5598,12 +5682,9 @@ SOURCE_TESTS = {
         enforcement_mutations
         enrichment_pass
         gate_preconditions
-        incremental_two_run_e2e
         load_business_context
         orchestration_controller
         p1_renderer_correctness
-        postscan_secret_check
-        publish_threat_model
         qa_checks_cov_band1
         qa_checks_cov_band2
         qa_checks_cov_band4
@@ -5619,16 +5700,10 @@ SOURCE_TESTS = {
         secret_scan
         stride_outputs
         threat_fixture
-    """),
-    "scripts/validators/section_integrity.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        section_integrity
-        stride_outputs
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/analyzers/security_relevance_filter.py": _tests("""
         baseline_content_unchanged
         baseline_state_coverage
@@ -5665,15 +5740,6 @@ SOURCE_TESTS = {
         skill_policy_gate
         stride_outputs
     """),
-    "scripts/runtime/skill_watchdog.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        skill_watchdog
-        stride_outputs
-    """),
     "scripts/contexts/slice_actors.py": _tests("""
         check_target_specificity
         dispatch_manifest
@@ -5692,15 +5758,6 @@ SOURCE_TESTS = {
         slice_cross_repo_for_component
         stride_outputs
     """),
-    "scripts/contexts/slice_taxonomy.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        slice_taxonomy
-        stride_outputs
-    """),
     "scripts/smoke_test_package.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5710,28 +5767,12 @@ SOURCE_TESTS = {
         smoke_test_package
         stride_outputs
     """),
-    "scripts/repairs/snapshot_preserved_sections.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
-    """),
     "scripts/spec_guard.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
         run_path_guard
         spec_guard
-        stride_outputs
-    """),
-    "scripts/runtime/stall_notice.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stall_notice
         stride_outputs
     """),
     "scripts/model/stamp_threat_model.py": _tests("""
@@ -5753,35 +5794,20 @@ SOURCE_TESTS = {
         baseline_content_unchanged
         baseline_state_coverage
         build_threat_model_yaml
-        check_stride_dispatch
         check_target_specificity
         e2e_pipeline
         gate_preconditions
-        incremental_two_run_e2e
         merge_threats
-        record_component_durations
         requirements_verification
         run_path_guard
         runtime_helper_batch
         severity_policy
-        skill_watchdog
         stride_outputs
-        stride_progress
-        stride_serial_dispatch_detection
         threat_fixture
         write_stride_progress
         actor_presentation
         architect_review_runtime
         refusal_aware_stride
-    """),
-    "scripts/runtime/stride_progress.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        stride_progress
-        write_stride_progress
     """),
     "scripts/baseline/sync_baseline.py": _tests("""
         check_target_specificity
@@ -5791,16 +5817,6 @@ SOURCE_TESTS = {
         stride_outputs
         sync_baseline
         update_baseline
-    """),
-    "scripts/runtime/telemetry_consistency.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        refusal_aware_stride
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        telemetry_consistency
     """),
     "scripts/runtime/terminate_run.py": _tests("""
         check_target_specificity
@@ -5849,15 +5865,6 @@ SOURCE_TESTS = {
         stride_outputs
         update_baseline
     """),
-    "scripts/validators/validate_cache.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_cache
-    """),
     "scripts/validators/validate_config.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5877,11 +5884,16 @@ SOURCE_TESTS = {
         requirements_verification
     """),
     "scripts/contexts/build_analyst_snapshot.py": _tests("""
+        abuse_case_hypothesis
         analyst_controller
         analyst_isolation
         build_analyst_snapshot
         check_target_specificity
         requirements_verification
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/contexts/resolve_analyst_catalog.py": _tests("""
         analyst_catalog
@@ -5891,8 +5903,23 @@ SOURCE_TESTS = {
         resolve_analyst_catalog
     """),
     "scripts/contexts/build_analyst_context.py": _tests("""
+        portable_model_readers
         analyst_controller
         build_analyst_context
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/validators/eval_analyst.py": _tests("""
+        eval_analyst
+        check_target_specificity
+        requirements_verification
+    """),
+    "tests/fixtures/analyst-eval/cases.yaml": _tests("""
+        eval_analyst
+    """),
+    "scripts/contexts/select_analyst_context.py": _tests("""
+        analyst_controller
+        select_analyst_context
         check_target_specificity
         requirements_verification
     """),
@@ -5903,11 +5930,19 @@ SOURCE_TESTS = {
         requirements_verification
     """),
     "scripts/runtime/analyst_host.py": _tests("""
+        multi_repo_discovery
+        assessment_host
+        controller_e2e
         analyst_controller
         analyst_host
         analyst_skill
         check_target_specificity
         requirements_verification
+        analyst_cli
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/orchestrator/analyst_controller.py": _tests("""
         analyst_cli
@@ -5916,29 +5951,53 @@ SOURCE_TESTS = {
         analyst_skill
         check_target_specificity
         requirements_verification
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/renderers/render_analyst_report.py": _tests("""
         analyst_controller
         check_target_specificity
         render_analyst_report
         requirements_verification
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
+    """),
+    "scripts/appsec-reviewer-cli": _tests("""
+        appsec_reviewer_cli
+        package_internal_plugin
     """),
     "scripts/appsec-analyst-cli": _tests("""
+        abuse_case_hypothesis
         analyst_cli
         analyst_skill
+        requirements_verification
     """),
     "skills/analyze-threats/SKILL.md": _tests("""
         analyst_skill
         org_profile_schema
         skill_definitions
+        check_target_specificity
+        lazy_phase_group_loading
+        package_internal_plugin
+        requirements_verification
+        runtime_doc_cli_contract
     """),
     "skills/analyze-threats/HELP.txt": _tests("""
         analyst_skill
         skill_definitions
+        check_target_specificity
+        requirements_verification
     """),
     "skills/analyze-threats/references/analysis-contract.md": _tests("""
         analyst_controller
         analyst_host
+        check_target_specificity
+        lazy_phase_group_loading
+        requirements_verification
     """),
     "schemas/analyst-catalog.schema.json": _tests("""
         analyst_catalog
@@ -5951,6 +6010,63 @@ SOURCE_TESTS = {
         analyst_controller
         resolve_analyst_catalog
         schemas
+    """),
+    "agents/appsec-abuse-case-deriver.md": _tests("""
+        agent_definitions
+        orchestration_controller
+        stage1_context_edge_inventory
+    """),
+    "scripts/model/derive_abuse_cases.py": _tests("""
+        derive_abuse_cases
+        orchestration_controller
+    """),
+    "schemas/abuse-case-deriver-context.schema.json": _tests("""
+        context_routing
+        derive_abuse_cases
+        orchestration_controller
+    """),
+    "schemas/abuse-case-deriver-output.schema.json": _tests("""
+        orchestration_controller
+    """),
+    "agents/appsec-abuse-case-verifier.md": _tests("""
+        active_tool_calls
+        agent_definitions
+        aggregate_run_issues
+        budget_watchdog
+        completion_contract
+        orchestration_controller
+        stage1_context_edge_inventory
+        thin_runtime_regressions_2026_07_20
+    """),
+    "schemas/abuse-case-verifier-context.schema.json": _tests("""
+        build_abuse_case_contexts
+        business_abuse_cases
+        orchestration_controller
+        schemas
+    """),
+    "schemas/abuse-cases.schema.yaml": _tests("""
+        abuse_cases_schema
+        build_abuse_case_contexts
+        business_abuse_cases
+        match_abuse_cases
+        org_profile_schema
+        render_abuse_cases
+        resolve_abuse_cases
+        schemas
+    """),
+    "schemas/abuse-case-limits.schema.json": _tests("""
+        build_abuse_case_contexts
+        match_abuse_cases
+        resolve_abuse_cases
+        schemas
+    """),
+    "data/abuse-case-limits.yaml": _tests("""
+        build_abuse_case_contexts
+        match_abuse_cases
+        resolve_abuse_cases
+    """),
+    "data/abuse-cases/business.yaml": _tests("""
+        business_abuse_cases
     """),
     "schemas/analyst-limits.schema.json": _tests("""
         analyst_catalog
@@ -5974,6 +6090,8 @@ SOURCE_TESTS = {
         render_analyst_report
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-result.schema.json": _tests("""
         analyst_controller
@@ -5983,6 +6101,8 @@ SOURCE_TESTS = {
         render_analyst_report
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-feature.schema.json": _tests("""
         analyst_controller
@@ -6037,15 +6157,11 @@ SOURCE_TESTS = {
         requirements_verification
         resolve_analyst_catalog
         validate_analyst
-    """),
-    "scripts/validators/validate_dispatch_manifest.py": _tests("""
-        check_target_specificity
-        dispatch_manifest
+        analyst_cli
+        finding_state
         gate_preconditions
-        requirements_verification
-        run_path_guard
+        shared_paths
         stride_outputs
-        validate_dispatch_manifest
     """),
     "scripts/validators/validate_evidence_lines.py": _tests("""
         auto_emitter_pass
@@ -6059,14 +6175,6 @@ SOURCE_TESTS = {
         stride_outputs
         validate_evidence_lines
         architect_review_runtime
-    """),
-    "scripts/validators/validate_finding_refs.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_finding_refs
     """),
     "scripts/validators/validate_mitigation_quality.py": _tests("""
         agent_config_checks
@@ -6119,7 +6227,6 @@ SOURCE_TESTS = {
         context_routing
         discover_identity_providers
         dispatch_model_and_diagnostics
-        dispatch_values_stage
         embedded_store_access
         flow_route_auth
         fragment_invariant_parity
@@ -6137,7 +6244,6 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stage1_coverage_recovery_2026_07_20
         stride_outputs
-        telemetry_consistency
         validate_threat_modeling_context
         runtime_cleanup
     """),
@@ -6149,21 +6255,8 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         verify_abuse_cases
-        wait_abuse_progress
-    """),
-    "scripts/orchestrator/wait_abuse_progress.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        refusal_aware_stride
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-        thin_runtime_regressions_2026_07_20
-        wait_abuse_progress
     """),
     "scripts/orchestrator/wait_agent_calls.py": _tests("""
-        wait_abuse_progress
         agent_lifecycle
         check_target_specificity
         gate_preconditions
@@ -6176,17 +6269,6 @@ SOURCE_TESTS = {
         wait_agent_calls
         refusal_aware_stride
         stride_dispatch_waves
-    """),
-    "scripts/orchestrator/wait_stride_progress.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        refusal_aware_stride
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
-        stride_outputs
-        thin_runtime_regressions_2026_07_20
-        wait_stride_progress
     """),
     "scripts/runtime/watch_run.py": _tests("""
         check_target_specificity
@@ -6265,6 +6347,7 @@ SOURCE_TESTS = {
 # and every test module that names the document's file name.
 SOURCE_PREFIX_TESTS = {
     "docs/": _tests("requirements_verification"),
+    "specs/changes/check-threat-hypotheses/": _tests("check_specs requirements_hook requirements_verification"),
     "specs/changes/report-anatomy/": _tests("report_anatomy"),
     "tests/fixtures/report-anatomy/": _tests("report_anatomy"),
 }
@@ -6393,6 +6476,18 @@ def requirement_tests(paths: list[str], root: Path = ROOT) -> list[str]:
     return sorted(selected)
 
 
+def task_paths(paths: list[str], root: Path = ROOT) -> list[str]:
+    """Normalize explicitly named task files to repository-relative POSIX paths."""
+    normalized = set()
+    for path in paths:
+        absolute = Path(os.path.abspath(root / path))
+        try:
+            normalized.add(absolute.relative_to(root).as_posix())
+        except ValueError:
+            raise ValueError(f"path outside the repository: {path!r}") from None
+    return sorted(normalized)
+
+
 @dataclass(frozen=True)
 class Selection:
     paths: tuple[str, ...]
@@ -6459,12 +6554,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--changed-against", metavar="REF", help="select from the merge base plus all local changes; no fetch"
     )
+    parser.add_argument(
+        "--path",
+        action="append",
+        metavar="PATH",
+        help="select from the named task files only; refuses a full-suite fallback",
+    )
     parser.add_argument("group", nargs="?", default="all", choices=["all", *GROUPS])
     parser.add_argument("pytest_args", nargs=argparse.REMAINDER, help="arguments forwarded to pytest")
     args = parser.parse_args(argv)
-    if args.changed_against and args.group != "all":
-        parser.error("--changed-against cannot be combined with a named group")
-    if args.check_groups and (args.changed_against or args.list or args.group != "all" or args.pytest_args):
+    if args.changed_against and args.path:
+        parser.error("--changed-against cannot be combined with --path")
+    if (args.changed_against or args.path) and args.group != "all":
+        parser.error("--changed-against and --path cannot be combined with a named group")
+    if args.check_groups and (
+        args.changed_against or args.path or args.list or args.group != "all" or args.pytest_args
+    ):
         parser.error("--check-groups must be used alone")
     try:
         if args.check_groups:
@@ -6478,6 +6583,15 @@ def main(argv: list[str] | None = None) -> int:
             selection = select_changed(changed_paths(args.changed_against))
             paths = list(selection.paths)
             print("\n".join(selection.reasons), file=sys.stderr)
+        elif args.path:
+            selection = select_changed(task_paths(args.path))
+            print("\n".join(selection.reasons), file=sys.stderr)
+            if selection.paths == ("tests/",):
+                print(
+                    "The named files need the full suite; run `make check` only with a stated reason.", file=sys.stderr
+                )
+                return 2
+            paths = list(selection.paths)
         else:
             paths = select_tests(args.group)
     except (ValueError, OSError) as error:

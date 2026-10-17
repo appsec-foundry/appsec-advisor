@@ -1,5 +1,5 @@
 """Tests for scripts/validators/eval_threat_model.py — the deterministic halves of the
-eval-threat-model dev skill (prepare signals + aggregate find->verify merge).
+eval-security-assessment dev skill (prepare signals + aggregate find->verify merge).
 
 The LLM JUDGE/VERIFY pass is not unit-testable; here we pin everything around it:
 the brief/signal computation, the refute-by-default merge, scoring, and exit codes.

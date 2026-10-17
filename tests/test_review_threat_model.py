@@ -1,5 +1,5 @@
 """Tests for scripts/validators/review_threat_model.py — the deterministic half of the
-``/appsec-advisor:review-threat-model`` consumer skill.
+``/appsec-advisor:triage-security-assessment`` consumer skill.
 
 Covers:
   * reconcile joins model + sidecar by finding key, ranks by severity.
@@ -989,8 +989,8 @@ def test_screen_landing_folds_in_freshness_verdict(tmp_path):
     )
     land = s["landing"]
     assert "  **Status**     ⚠ STALE — 12 security-relevant files changed" in land
-    # worded exactly as the show-threat-model Status line (shared vocabulary)
-    assert "re-scan recommended: /appsec-advisor:create-threat-model --full" in land
+    # worded exactly as the show-security-assessment Status line (shared vocabulary)
+    assert "re-scan recommended: /appsec-advisor:appsec-analyzer --full" in land
     # the freshness of the whole screen ranks above the backlog it qualifies
     assert land.index("**Status**") < land.index("**Backlog**")
 

@@ -7,7 +7,7 @@ and whether those sit in one root or many. No agents, no LLM, no network, and
 nothing written into the target repository.
 
 This is not a security check. It says nothing about findings, severity or risk
-— ``analyzers/security_score.py`` and ``/appsec-advisor:create-threat-model`` do that.
+— ``analyzers/security_score.py`` and ``/appsec-advisor:appsec-analyzer`` do that.
 
 Determinism
 -----------

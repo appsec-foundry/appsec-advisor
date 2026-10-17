@@ -34,13 +34,16 @@ SOURCE FLAGS
   --no-org-profile         ignore packaged/env-pointed org profiles.
 
 OUTPUT FLAGS
+  Reports go to the application's private directory outside the repository
+  (<data dir>/appsec-advisor/assessments/<repo-name>-<hash8>), or to --output.
   --md                     save the rendered report as
-                           docs/security/appsec-requirements-report.md
-  --pdf                    save a PDF (docs/security/appsec-requirements-report.pdf);
+                           appsec-requirements-report.md
+  --pdf                    save a PDF (appsec-requirements-report.pdf);
                            also writes the Markdown it is converted from
   --json                   copy the structured verdict to
-                           docs/security/appsec-requirements-report.json
+                           appsec-requirements-report.json
   --save                   --md, --pdf and --json
+  --output <dir>           write reports and run-state files to <dir> instead
   --quiet                  suppress the banner + findings; print only a one-line
                            status and the saved file path(s). Use with a save flag.
 
@@ -57,7 +60,7 @@ DEFAULT BEHAVIOUR
   grades the catalog, and prints the open requirements — no files written.
   --md/--pdf additionally write the human report. --json or --gate additionally
   build a deterministic structured verdict
-  (docs/security/.requirements-audit.json, schema-validated, counts recomputed)
+  (.requirements-audit.json in the output directory, schema-validated, counts recomputed)
   and run the gate. A fresh cache (< 30 days) is reused without a network
   round-trip; a stale cache triggers a refresh that falls back to the cache.
 

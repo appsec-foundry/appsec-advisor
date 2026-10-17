@@ -62,17 +62,17 @@ hooks:
     command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
 
 skill_toggles:
-  create-threat-model: true
+  appsec-analyzer: true
   audit-security-requirements: true
-  export-threat-model: true
-  publish-threat-model:
+  export-security-assessment: true
+  authnz-review:
     enabled: false
-    reason: "Publishing is restricted to the AppSec release job."
+    reason: "AuthN/AuthZ reviews are restricted to the AppSec release job."
   check-permissions: true
   clean-run-state: true
   fix-run-issues: true
   status: true
-  threat-model-health: true
+  security-assessment-health: true
 
 presets:
   ci-fast:

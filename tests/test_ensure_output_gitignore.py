@@ -1,9 +1,7 @@
 """Secure-by-default .gitignore for the assessment output directory.
 
-publish-threat-model calls itself "the deliberate counterpart to the
-secure-by-default .gitignore", and the narrow redaction allowlist in
-redact_known_secrets depends on intermediates never being published. Nothing
-established that default, so a first assessment left artifacts such as
+The narrow redaction allowlist in redact_known_secrets depends on
+intermediates never being published. Nothing established that default, so a first assessment left artifacts such as
 .recon-summary.md — which can carry a credential in cleartext — fully
 committable.
 """
@@ -19,7 +17,6 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from model.publish_threat_model import patch_gitignore  # noqa: E402
 from runtime.ensure_output_gitignore import ensure  # noqa: E402
 
 DELIVERABLES = ("threat-model.md", "threat-model.yaml")
@@ -53,6 +50,14 @@ def test_fresh_repo_ignores_the_output_directory(tmp_path):
     assert ensure(out) is not None
     for name in INTERMEDIATES:
         assert _ignored(repo, f"docs/security/{name}"), name
+
+
+@pytest.mark.parametrize("parts", [("docs", "security"), ("reports", "appsec", "latest")])
+def test_an_output_directory_that_does_not_exist_yet_is_ignored(tmp_path, parts):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert ensure(tmp_path.joinpath(*parts))
+    assert "/".join(parts) + "/**" in (tmp_path / ".gitignore").read_text().splitlines()
+    assert not tmp_path.joinpath(*parts).exists()
 
 
 def test_is_idempotent(tmp_path):
@@ -94,50 +99,12 @@ def test_unrelated_rules_are_preserved(tmp_path):
 
 def test_uses_the_form_that_keeps_negations_working(tmp_path):
     """git cannot re-include a file whose parent directory is excluded, so the
-    plain "docs/security/" form would disable every negation publish writes."""
+    plain "docs/security/" form would disable an earlier publication's negations."""
     repo, out = _repo(tmp_path)
     ensure(out)
     lines = [ln.strip() for ln in (repo / ".gitignore").read_text().splitlines()]
     assert "docs/security/**" in lines
     assert "docs/security/" not in lines
-
-
-def test_publish_can_lift_deliverables_out_of_the_default(tmp_path):
-    """End-to-end: assessment ignores everything, publish makes exactly the
-    named deliverables visible, intermediates stay ignored."""
-    repo, out = _repo(tmp_path)
-    ensure(out)
-    assert _ignored(repo, "docs/security/threat-model.md")
-
-    patch_gitignore(repo / ".gitignore", out, [out / name for name in DELIVERABLES])
-
-    for name in DELIVERABLES:
-        assert not _ignored(repo, f"docs/security/{name}"), f"{name} should be publishable"
-    for name in INTERMEDIATES:
-        assert _ignored(repo, f"docs/security/{name}"), f"{name} must stay ignored"
-
-    subprocess.run(["git", "-C", str(repo), "add", "docs/security/"], check=True)
-    staged = subprocess.run(
-        ["git", "-C", str(repo), "diff", "--cached", "--name-only"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split()
-    assert sorted(staged) == sorted(f"docs/security/{n}" for n in DELIVERABLES)
-
-
-@pytest.mark.parametrize("name", DELIVERABLES)
-def test_publish_negations_carry_no_trailing_comment(tmp_path, name):
-    """git only honours "#" as a comment at the start of a line. A trailing
-    "  # published <date>" became part of the pattern, so the negation matched
-    nothing and publishing silently did nothing."""
-    repo, out = _repo(tmp_path)
-    ensure(out)
-    patch_gitignore(repo / ".gitignore", out, [out / name])
-    for line in (repo / ".gitignore").read_text().splitlines():
-        stripped = line.strip()
-        if stripped.startswith("!") or (stripped and not stripped.startswith("#")):
-            assert "#" not in stripped, f"pattern carries an inline comment: {line!r}"
 
 
 LEGACY_PARTIAL = """\
@@ -166,21 +133,3 @@ def test_partial_rules_for_other_directories_are_ignored(tmp_path):
     repo, out = _repo(tmp_path, "docs/other/**\nbuild/\n")
     assert ensure(out) is not None
     assert _ignored(repo, "docs/security/.recon-summary.md")
-
-
-def test_publish_honours_a_custom_output_directory(tmp_path):
-    """patch_gitignore hardcoded "docs/security", so a run with --output wrote
-    negations for a path that did not exist while the real output directory
-    stayed ignored — leaving no way to publish at all."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    out = tmp_path / "reports" / "appsec"
-    out.mkdir(parents=True)
-    (out / "threat-model.md").write_text("deliverable")
-    (out / ".recon-summary.md").write_text("raw credential")
-
-    ensure(out)
-    patch_gitignore(tmp_path / ".gitignore", out, [out / "threat-model.md"])
-
-    assert not _ignored(tmp_path, "reports/appsec/threat-model.md")
-    assert _ignored(tmp_path, "reports/appsec/.recon-summary.md")
-    assert "docs/security" not in (tmp_path / ".gitignore").read_text()

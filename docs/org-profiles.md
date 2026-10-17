@@ -143,9 +143,9 @@ llm_context:
       max_bytes: 50000
       applies_to_components: [identity-api]
 skill_toggles:
-  publish-threat-model:
+  authnz-review:
     enabled: false
-    reason: "Publishing is restricted to the AppSec release job."
+    reason: "AuthN/AuthZ reviews are restricted to the AppSec release job."
 presets:
   ci-standard:
     base_mode: standard
@@ -515,9 +515,9 @@ Skills can be disabled with a reason. The policy is enforced by the `skill-polic
 
 A disabled skill is refused with the organization's reason:
 
-- **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
+- **User skills** (e.g. `export-security-assessment`, `authnz-review`): blocked with the reason printed. Exit code 30.
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
-- **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
+- **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `security-assessment-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
 Toggles accept any skill included in the build, including organization-added skills. They also accept skills removed by package policy, so you can retain the reason for removal. Unknown names are rejected.
 
@@ -547,7 +547,10 @@ analyst:
       sha256: <sha256 of the file>
   default_packages:
     - ref: tmm/threat-modeling-manifesto@1.0.0
+  allow_exploration: false
 ```
+
+`allow_exploration: false` refuses [`--explore`](threat-analyst.md#let-the-analysis-explore-the-repository), which lets an interactive analysis read a redacted copy of the tracked files. Without the key, developers may use it. `policy.disable_opus` also applies to the analysis: `--model opus` is refused.
 
 `required_packages` apply to every invoked analysis; a developer cannot remove them. `default_packages` apply unless a developer adds more. Name a packaged package by `ref`, or ship your own package as a `file` under the profile directory pinned by its `sha256`. A file outside the profile directory, a missing file, or an unpinned file fails profile validation, and an invalid active profile rejects the analysis instead of running it without its required packages.
 
@@ -590,7 +593,7 @@ Org Profile
   Preset           ci-standard (base: standard)
   Requirements     Acme AppSec Requirements
   Org context      organization, sso, platform
-  Disabled skills  publish-threat-model
+  Disabled skills  authnz-review
 ```
 
 Before the first run resolves the profile, the status is `configured (not yet resolved)`; without a
@@ -602,10 +605,10 @@ skill and one the package policy removed are both visible with the reason your p
 ```
 Skills (24 installed · 1 disabled by org profile · 1 removed by package policy)
 ------------------------------------------------------------------------------
-  create-threat-model   enabled
-  export-threat-model   disabled — Release job only.
-  acme-release-check    enabled  [organization]
-  publish-threat-model  removed by package policy
+  appsec-analyzer             enabled
+  export-security-assessment  disabled — Release job only.
+  acme-release-check          enabled  [organization]
+  authnz-review               removed by package policy
 ```
 
 ## Examples
@@ -645,14 +648,14 @@ Override requirements for one run:
 
 The plugin loads cases in this order:
 
-1. **Plugin standard library**: `data/abuse-cases/default-library.yaml` (the `AC-T-NNN` mandatory set), unless an org profile sets `abuse_cases.inherit_defaults: false`.
+1. **Plugin standard library**: the technical abuse cases in `data/abuse-cases/technical.yaml` and the generic business abuse cases in `data/abuse-cases/business.yaml`, unless an org profile sets `abuse_cases.inherit_defaults: false`. Disable single cases with `abuse_cases.disable`.
 2. **Org profile**: `abuse_cases.add` is a glob (relative to the org-profile directory) of extra case files; `abuse_cases.disable` removes ids. Use the `ORG-AC-NNN` ID prefix.
-3. **Repository**: any `*.yaml` under `<repo>/.appsec/abuse-cases/` in the target repository is loaded automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
+3. **Repository**: any `*.yaml` or `*.yml` file directly under `<repo>/docs/security/abuse-cases/` in the target repository is loaded automatically, beside `business-context.md` and `requirements.yaml`. The legacy location `<repo>/.appsec/abuse-cases/` is still read after it; a legacy file that reuses an ID from the new location is rejected. Use the `REPO-AC-NNN` ID prefix. IDs must be unique, and the `MODEL-AC` prefix is reserved for cases the model derives. A file that is invalid, larger than 128 KiB, a symbolic link, or reuses a loaded ID is rejected on its own: every other case still runs, and the report and run issues name the file and the reason.
 4. **One scan**: `--abuse-case-file <repo-relative-path>` adds a YAML file below the target repository. Repeat `--only-abuse-case <ID>` to run selected cases only. Either flag runs abuse-case verification at any depth, and an unreadable file or an unknown id is reported rather than silently skipped.
 
 Copy and adapt `examples/abuse-cases.yaml`; its comments describe each field and accepted value.
 
-Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
+Example repo-local case (`<repo>/docs/security/abuse-cases/payments.yaml`):
 
 ```yaml
 schema_version: 1
@@ -695,6 +698,33 @@ release_gate:
   fail_on: [fully_viable]
   applies_to_presets: [release-review]
 ```
+
+### Business abuse cases
+
+A business abuse case states in plain language what to check, for access-control and business rules a pattern cannot express: a delegated administrator granting themselves a role, a tenant administrator reaching another tenant, self-approval, or reuse of an approval after a content change. Most security checks stay deterministic; use business abuse cases for the few rules that need judgment. The verifier derives the actor, the operations, and the boundary from the check and your code, and cites the source line for its verdict; a citation that does not match the file is rejected and the case stays unresolved.
+
+Put cases for one repository in `<repo>/docs/security/abuse-cases/` with `REPO-AC-NNN` IDs, and cases for every repository in the organization profile through `abuse_cases.add` with `ORG-AC-NNN` IDs.
+
+```yaml
+schema_version: 2
+abuse_cases:
+  - id: REPO-AC-010
+    kind: descriptive
+    title: Requester approves their own expense report
+    check: Check whether an employee can approve an expense report they submitted.
+    exclusions:
+      - Reports below the amount that policy lets employees self-approve.
+    open_questions:
+      - Which amount, if any, may be self-approved?
+    scope_qualifier:
+      path_patterns: ["*expense*", "*approv*"]
+```
+
+`check` is required; `exclusions` names legitimate behavior that is not an abuse, and `open_questions` names business facts the code cannot answer. When the verifier leaves a case unresolved, its first `open_questions` entry can appear among the team questions in the Management Summary, linked to the findings its steps bind to; it must be one plain question without links or markup. A confirmed case becomes a finding in the register. An unresolved case becomes a finding marked unproven when the verifier cites code where it found no enforcing control; any other unresolved case is reported as unresolved, not as safe. When the verifier cites an existing finding, or the cited code already has a finding of the same weakness, the case links to it instead, the finding names the case, and a confirmation citing the finding's own file marks its evidence verified. The optional `finding` block classifies the new finding with `cwe`, `stride`, `severity`, and `mitigation_title`; without it the finding is CWE-840, Elevation of Privilege, and Medium, and its mitigation is named after the case title. Business abuse cases carry no `goal_impact`, `source`, `release_gate`, or `probe`. Standard and thorough runs load the seven generic cases in `data/abuse-cases/business.yaml`; disable one by ID or all defaults with `inherit_defaults: false`. Thorough runs also let the model propose up to three cases for the application from its validated architecture; §9 marks them model-derived with `MODEL-AC` IDs, and they are verified and reported like every other case.
+
+An optional `scope_qualifier` limits where a case applies. Every entry of `required_signals` (recon signal names such as `has_role_concept`) must hold. Three locators select the source files the verifier starts from: `route_patterns` match route paths such as `"*approv*"` in the route inventory, ignoring case; `detector_rules` name source-scanner checks such as `AUTHZ-003` whose findings mark a file; `path_patterns` match file and directory names, ignoring case, so `"*role*"` selects `RoleController.java` and every file below a `roles/` directory; a pattern that contains `/` matches the end of the file path instead. At least one locator must find runtime source; otherwise the case runs only when you name its ID with `--only-abuse-case`, or its file with `--abuse-case-file` when that file lies outside `docs/security/abuse-cases/` and `.appsec/abuse-cases/`. A case without a locator therefore runs only on such a request. A case may instead spell out `actor`, `initial_access`, `goal`, `boundary`, `steps`, and `expected_controls`; it then needs a `scope_qualifier`.
+
+Business abuse cases cost model time, so they are bounded per run by `data/abuse-case-limits.yaml`. Quick depth checks only requested cases. Standard depth checks up to three and thorough depth up to eight, strongest preselection evidence first. The report counts cases that did not apply or were not performed and names each requested case that was not performed. Validate your files before a run by executing `python3 scripts/model/resolve_abuse_cases.py --repo-root <repo> --list-ids` in the plugin directory, where `<repo>` is the target repository path; every problem names the file, case ID, and field.
 
 ## Hooks
 

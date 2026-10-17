@@ -308,3 +308,213 @@ def test_every_config_check_is_classified_exactly_once():
     assert sorted(classified) == sorted(ids)
     assert len(classified) == len(set(classified))
     assert {rule.get("entry") for rule in mapping["checks"].values()} <= set(mapping["entries"]) | {None}
+
+
+def _boundary(tid, file, line=4, **extra):
+    row = {
+        "id": tid,
+        "from": "external",
+        "to": "release",
+        "kind": "build",
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        "evidence": [{"file": file, "line": line}],
+    }
+    return {**row, **extra}
+
+
+def _mapped(view):
+    return {e["id"]: [b["id"] for b in e.get("boundaries") or []] for e in view["elements"] if e.get("boundaries")}
+
+
+@pytest.mark.parametrize(
+    ("systems", "cited"),
+    [
+        ((("Jenkins", "Jenkinsfile"), ("Travis CI", ".travis.yml")), "Jenkinsfile"),
+        ((("Buildkite", ".buildkite/pipeline.yml"), ("CircleCI", ".circleci/config.yml")), ".circleci/config.yml"),
+    ],
+)
+def test_a_boundary_marks_only_the_ci_system_whose_definition_evidences_it(systems, cited):
+    inventory = {"ci": [{"system": name, "source": source} for name, source in systems]}
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-3", cited)]
+    view = _view(model, {}, inventory)
+    owner = next(e["id"] for e in view["elements"] if e["kind"] == "ci" and e["sources"][0]["file"] == cited)
+    assert _mapped(view) == {owner: ["tb-3"]}
+
+
+def test_a_workflow_boundary_maps_to_its_ci_system_not_to_the_repository_row(tmp_path):
+    repo = _repo(tmp_path, {".github/workflows/publish.yml": RELEASE_WITH_INSTALL, "requirements.txt": "flask>=2\n"})
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-2", ".github/workflows/publish.yml", 8, confidence="inferred")]
+    view = _view(model, _facts(repo))
+    assert "repository" not in _mapped(view) and "execution" not in _mapped(view)
+    ci = next(e for e in view["elements"] if e["id"] == "ci:github-actions")
+    assert ci["boundaries"] == [
+        {
+            "id": "tb-2",
+            "confidence": "inferred",
+            "crossing": "ingress",
+            "evidence": {"file": ".github/workflows/publish.yml", "line": 8},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("frm", "to", "crossing"),
+    [
+        ("external", "release", "ingress"),  # a supplier enters the build
+        ("release", "external", "egress"),  # a push leaves it for a registry
+        ("release", "api", "egress"),  # a deploy step reaches the runtime
+    ],
+)
+def test_a_mapped_boundary_says_whether_it_enters_or_leaves_the_build(frm, to, crossing):
+    inventory = {"ci": [{"system": "Jenkins", "source": "Jenkinsfile"}]}
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", "Jenkinsfile", **{"from": frm, "to": to})]
+    view = _view(model, {}, inventory)
+    rows = [b for e in view["elements"] for b in e.get("boundaries") or []]
+    assert [(b["id"], b["crossing"]) for b in rows] == [("tb-1", crossing)]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _boundary("tb-5", "src/app.py"),  # nothing in the view cites its evidence
+        _boundary("tb-5", "Jenkinsfile", kind="network", to="api"),  # a runtime crossing
+        _boundary("tb-5", "Jenkinsfile", surface="in-process", transition=[], kind="process", to="api"),
+        _boundary("tb-5", "Jenkinsfile", resolution_status="unresolved"),
+    ],
+)
+def test_a_boundary_without_build_scope_or_cited_evidence_is_not_mapped(row):
+    inventory = {"ci": [{"system": "Jenkins", "source": "Jenkinsfile"}]}
+    model = _model([])
+    model["trust_boundaries"] = [row]
+    assert _mapped(_view(model, {}, inventory)) == {}
+
+
+INSTALLER_AND_PUSH = """\
+name: images
+on: push
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL https://get.example.dev/tool.sh | sh
+      - run: poetry install
+      - run: docker build -t quay.io/example-team/catalog:1 .
+      - run: docker push quay.io/example-team/catalog:1
+"""
+
+
+@pytest.mark.parametrize(
+    ("workflow", "line", "element"),
+    [
+        (RELEASE_WITH_INSTALL, 7, "input:github_action"),  # actions/checkout, a step that publishes nothing
+        (RELEASE_WITH_INSTALL, 8, "input:package:pip"),
+        (INSTALLER_AND_PUSH, 7, "input:remote_script"),
+        (INSTALLER_AND_PUSH, 9, "artifact:image:quay-io-example-team-catalog"),
+    ],
+    ids=["action", "pip-install", "remote-script", "pushed-image"],
+)
+def test_a_step_boundary_marks_only_the_element_of_that_step_and_its_ci_system(tmp_path, workflow, line, element):
+    repo = _repo(tmp_path, {".github/workflows/build.yml": workflow, "requirements.txt": "flask>=2\n"})
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", ".github/workflows/build.yml", line)]
+    view = _view(model, _facts(repo))
+    assert _mapped(view) == {"ci:github-actions": ["tb-1"], element: ["tb-1"]}
+
+
+def test_a_boundary_on_a_fact_row_beyond_the_displayed_sources_still_marks_its_element(tmp_path):
+    steps = "".join(f"      - uses: example-org/step-{n}@v1\n" for n in range(8))
+    workflow = f"name: many\non: push\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n{steps}"
+    repo = _repo(tmp_path, {".github/workflows/many.yml": workflow})
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", ".github/workflows/many.yml", 14)]  # the eighth action
+    view = _view(model, _facts(repo))
+    actions = next(e for e in view["elements"] if e["id"] == "input:github_action")
+    assert {"file": ".github/workflows/many.yml", "line": 14} not in actions["sources"]
+    assert _mapped(view) == {"ci:github-actions": ["tb-1"], "input:github_action": ["tb-1"]}
+
+
+@pytest.mark.parametrize(
+    ("file", "line"),
+    [
+        (".github/workflows/build.yml", 5),  # runs-on: no fact row sits on this line
+        (".github/workflows/other.yml", 8),  # pytest, on the line the install holds in build.yml
+    ],
+    ids=["non-fact-line", "other-workflow"],
+)
+def test_a_boundary_without_a_fact_row_on_its_line_marks_only_the_ci_system(tmp_path, file, line):
+    repo = _repo(
+        tmp_path,
+        {".github/workflows/build.yml": INSTALLER_AND_PUSH, ".github/workflows/other.yml": TEST_ONLY},
+    )
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", file, line)]
+    assert _mapped(_view(model, _facts(repo))) == {"ci:github-actions": ["tb-1"]}
+
+
+GITLAB_RELEASE = """\
+include:
+  - project: platform/pipelines
+    file: /lint.yml
+stages: [ship]
+bundle:
+  stage: ship
+  image: python:3.12
+  script:
+    - pip install -r requirements.txt
+    - docker build -t registry.example.net/team/ledger:1 .
+    - docker push registry.example.net/team/ledger:1
+"""
+
+
+def test_gitlab_facts_are_drawn_on_the_gitlab_system_not_on_github(tmp_path):
+    repo = _repo(
+        tmp_path,
+        {
+            ".gitlab-ci.yml": GITLAB_RELEASE,
+            ".github/workflows/checks.yml": TEST_ONLY,
+            "Dockerfile": "FROM python:3.12\n",
+        },
+    )
+    inventory = {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml", "publishes": ["container registry"]}]}
+    model = _model([], [{"id": "release", "paths": [".gitlab-ci.yml"]}])
+    view = _view(model, _facts(repo), inventory)
+    elements = {e["id"]: e for e in view["elements"]}
+    assert elements["ci:gitlab-ci"]["coverage"] == "full"
+    assert elements["ci:github-actions"]["coverage"] == "full"
+    artifact = "artifact:image:registry-example-net-team-ledger"
+    for source in ("input:package:pip", "input:base_image"):
+        assert _edge(view, source, "ci:gitlab-ci")["status"] == "evidenced"
+    assert _edge(view, "ci:gitlab-ci", artifact)["label"] == "push"
+    assert _edge(view, "ci:github-actions", artifact) is None
+    # The GitHub test job installs pip packages too, so pip is fetched by both systems.
+    assert _edge(view, "input:package:pip", "ci:github-actions")["status"] == "evidenced"
+    # The include names no job, so it is drawn as an input without an evidenced edge.
+    assert "input:ci_include" in elements
+    assert not any(e["from"] == "input:ci_include" for e in view["edges"])
+    # Evidenced outputs replace what the inventory says the system publishes.
+    assert not any(e.startswith("artifact:inventory:gitlab-ci") for e in elements)
+
+
+def test_a_dependency_path_runs_through_the_gitlab_job_that_pushes(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yml": GITLAB_RELEASE, "requirements.txt": "flask>=2\n"})
+    threat = _threat("T-011", "Dependencies resolved by range", "CWE-1104", ".gitlab-ci.yml", 9)
+    model = _model([threat], [{"id": "release", "paths": [".gitlab-ci.yml"]}])
+    view = _view(model, _facts(repo), {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml"}]})
+    assert [(s["from"], s["to"]) for s in view["highlighted_path"]["steps"]] == [
+        ("input:package:pip", "ci:gitlab-ci"),
+        ("ci:gitlab-ci", "artifact:image:registry-example-net-team-ledger"),
+    ]
+
+
+def test_a_template_only_gitlab_pipeline_keeps_its_inventory_publish(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yml": "include:\n  - template: Auto-DevOps.gitlab-ci.yml\n"})
+    inventory = {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml", "publishes": ["GitLab registry"]}]}
+    view = _view(_model([]), _facts(repo), inventory)
+    elements = {e["id"]: e for e in view["elements"]}
+    assert elements["ci:gitlab-ci"]["coverage"] == "full"
+    assert "ci:github-actions" not in elements
+    assert _edge(view, "ci:gitlab-ci", "artifact:inventory:gitlab-ci:gitlab-registry")["status"] == "unknown"

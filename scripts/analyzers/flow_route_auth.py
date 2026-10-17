@@ -26,12 +26,15 @@ import copy
 from analyzers.handler_resolver import HandlerSignal
 
 _MAX_EVIDENCE = 8
+# A guard seen at registration (`middleware_present`, `decorator_present`) that
+# the resolved chain also verifies is as authenticated as a handler check.
+_AUTHENTICATED_SIGNALS = frozenset({"present", "middleware_present", "decorator_present"})
 
 
 def route_outcome(route: dict) -> tuple[str, str, list[dict]] | None:
     """(scheme, scope, evidence) a route's resolved handler proves, or None."""
     signal = route.get("authn_handler_signal")
-    if signal == "verified" and route.get("authn_signal") == "present":
+    if signal == "verified" and route.get("authn_signal") in _AUTHENTICATED_SIGNALS:
         scheme = route.get("authn_handler_scheme") or "other"
     elif signal in {"none", "decode_only"} and route.get("authn_signal") == "absent":
         scheme = "none"

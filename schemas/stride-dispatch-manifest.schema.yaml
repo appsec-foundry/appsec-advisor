@@ -5,9 +5,8 @@ description: |
   Schema for `.stride-dispatch-manifest.json`, the validated controller handoff
   to bounded parallel `appsec-stride-analyzer-v2` jobs.
 
-  The per-component fields mirror the dispatch parameters documented in
-  `skills/create-threat-model/SKILL-thin-stage1-v2.md` (STRIDE dispatch contract)
-  and the Inputs section of `agents/appsec-stride-analyzer-v2.md`. Scalar context
+  The per-component fields mirror the Inputs section of
+  `agents/appsec-stride-analyzer-v2.md`. Scalar context
   fields (interfaces, controls, known_*) are authored by the
   analyst from its Phase 6-8 analysis (they are NOT all reconstructable from the
   structured on-disk artifacts, which is why the analyst must serialize them

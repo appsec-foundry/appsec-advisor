@@ -2,7 +2,7 @@
 
 Mirrors tests/test_agent_definitions.py, which has enforced agent frontmatter
 for a while. Skills had no equivalent guard, and two SKILL.md files
-(review-threat-model, update-threat-model) shipped with YAML-invalid
+(triage-security-assessment, update-threat-model) shipped with YAML-invalid
 frontmatter — an unquoted description containing a bare ``": "``, which YAML
 reads as a nested mapping key. Both passed review, `make test` and
 `make release-check` because nothing ever parsed them.
@@ -100,21 +100,6 @@ def test_skill_frontmatter_valid(skill_file: Path):
         pytest.fail(f"{slug} frontmatter issues:\n  - " + "\n  - ".join(problems))
 
 
-def test_plugin_root_is_not_discovered_by_filesystem_search():
-    """A machine can hold several appsec-advisor checkouts. Resolving the plugin
-    root with `find ... | head -1` picks an arbitrary one, so a scan silently ran
-    an old checkout and lost features the user had just installed."""
-    router = (SKILLS_DIR / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
-
-    assert "find /root /home /opt" not in router, (
-        "CLAUDE_PLUGIN_ROOT must not come from a filesystem search — use the skill base directory"
-    )
-    assert 'CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)' in router
-
-    searching = [p.parent.name for p in SKILL_FILES if "find /root /home /opt" in p.read_text(encoding="utf-8")]
-    assert not searching, f"skills resolve CLAUDE_PLUGIN_ROOT by filesystem search: {searching}"
-
-
 # A skill names a file it loads on demand as `<base-dir>/<path>`; `<base-dir>/..`
 # is the plugin-root fallback, not a skill file.
 _BASE_DIR_REF = re.compile(r"<base-dir>/(?!\.\.)([A-Za-z0-9_./-]+)")
@@ -134,7 +119,7 @@ def test_skill_on_demand_files_exist(skill_file: Path):
 
 
 @pytest.mark.parametrize(
-    "slug", ["ask-threat-model", "audit-security-requirements", "authnz-review", "review-threat-model"]
+    "slug", ["ask-security-assessment", "audit-security-requirements", "authnz-review", "triage-security-assessment"]
 )
 def test_help_lives_in_help_txt(slug: str):
     """Help text is loaded only on `--help`; inlined in SKILL.md it costs context on every call."""

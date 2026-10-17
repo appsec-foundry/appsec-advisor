@@ -54,9 +54,12 @@ FLAGS
   --org-profile <path>     Use this org profile for source resolution.
   --preset <name>          Use a specific preset from the active org profile.
   --no-org-profile         Ignore packaged/env-pointed org profiles.
-  --md                     Also save docs/security/appsec-requirements-change-report.md
-  --json                   Also save docs/security/appsec-requirements-change-report.json
+  --md                     Also save appsec-requirements-change-report.md
+  --json                   Also save appsec-requirements-change-report.json
   --save                   Both --md and --json
+  --output <dir>           Write reports and run-state files to <dir> instead of
+                           the application's private directory outside the
+                           repository
   --help, -h               Show this help and exit
 
 EXIT CODES
@@ -90,12 +93,13 @@ default (advisory / fail / MUST)**.
 - `--preset <name>` — set `preset_override`
 - `--no-org-profile` — set `no_org_profile = true`
 - `--md` / `--json` / `--save` — report-save flags
+- `--output <dir>` — set `output_dir_override`
 
 #### Reject unknown flags (hard fail)
 
 Any token starting with `--` that is not one of the recognized flags above — or
 is not the value consumed by `--gate-on` / `--priority-floor` / `--base` /
-`--requirements` / `--org-profile` / `--preset` — is a hard error. Do not read
+`--requirements` / `--org-profile` / `--preset` / `--output` — is a hard error. Do not read
 files, fetch, or dispatch. Print to stderr `Error: unknown argument '<TOKEN>'`
 followed by `Run /appsec-advisor:verify-requirements --help for details.` and
 exit with status `2`. A flag whose required value is missing counts as unknown.
@@ -116,8 +120,16 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   exit 2
 fi
 
-OUTPUT_DIR="${PWD}/docs/security"
-mkdir -p "$OUTPUT_DIR"
+# Reports and run state go to the application's private directory outside the
+# repository unless --output names one. Never fall back to docs/security; a
+# developer-authored catalog there stays a repository input (--catalog-dir).
+if [ -n "$OUTPUT_DIR_OVERRIDE" ]; then
+  OUTPUT_DIR="$OUTPUT_DIR_OVERRIDE"
+  mkdir -p "$OUTPUT_DIR" || exit 2
+else
+  OUTPUT_DIR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" destination --repo "$PWD" --create) || exit 2
+fi
+CATALOG_DIR="$PWD/docs/security"
 ```
 
 Resolve the org profile, then the requirements source, then fetch through the
@@ -134,7 +146,7 @@ ORG_ARGS=()
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/resolve_org_profile.py" \
   --output-dir "$OUTPUT_DIR" --emit-file "${ORG_ARGS[@]}" >/dev/null || exit $?
 
-FETCH_ARGS=(--caller verify-requirements --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+FETCH_ARGS=(--caller verify-requirements --output-dir "$OUTPUT_DIR" --catalog-dir "$CATALOG_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT" \
   --fallback-baseline "$CLAUDE_PLUGIN_ROOT/data/appsec-bestpractices-baseline.yaml")
 if [ -n "$REQUIREMENTS_URL_OVERRIDE" ]; then
   # Explicit company source: fail-closed, no baseline fallback — if you name a
@@ -257,7 +269,7 @@ exit "$GATE_EXIT"
 ## Step 6 — Save reports (conditional)
 
 If `--md` / `--json` / `--save` was set, render the report under
-`docs/security/appsec-requirements-change-report.{md,json}` from
+`$OUTPUT_DIR/appsec-requirements-change-report.{md,json}` from
 `.requirements-verification.json`, reusing the `audit-security-requirements`
 report format (open + gating requirements only). This is presentation only; it
 must not change the exit code computed in Step 5.

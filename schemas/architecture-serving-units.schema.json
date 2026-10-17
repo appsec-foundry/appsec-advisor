@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architecture-serving-units.schema.json",
+  "title": "Request-serving units and client applications a component inventory must carry",
+  "description": "Deterministic units from scripts/analyzers/serving_units.py. Discovery must carry each unit with a component that lists one of its entry files; component finalization stops the run when a unit stays uncarried.",
+  "type": "object",
+  "required": ["schema_version", "limits", "units"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "limits": {
+      "type": "object",
+      "required": ["max_units", "max_entry_files", "omitted_units"],
+      "additionalProperties": false,
+      "properties": {
+        "max_units": {"const": 16},
+        "max_entry_files": {"const": 8},
+        "omitted_units": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    },
+    "units": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "root", "framework", "entry_files", "omitted_entry_files"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 540},
+          "kind": {"enum": ["http-api", "client-app"]},
+          "root": {"type": "string", "maxLength": 512},
+          "framework": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+          "entry_files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}
+            }
+          },
+          "omitted_entry_files": {"type": "integer", "minimum": 0, "maximum": 1000000}
+        }
+      }
+    }
+  }
+}

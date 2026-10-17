@@ -1,0 +1,184 @@
+# Threat Model — Full Change Log
+
+> Complete, uncapped audit trail of every assessment run for this threat
+> model: all added, changed, and removed findings, mitigations, abuse
+> cases, instances, and components. The report's own Change Log section is
+> a summarized window of this history. Generated deterministically from
+> `threat-model.yaml`; do not hand-edit.
+
+## v1 — 2026-10-16 17:21 CEST · full · standard · sonnet-economy
+
+_commit `unknown` · 82 findings · delta basis: initial_
+
+### Added
+- **Findings (82):**
+  - T-001 — XSS via Trusted HTML Sanitizer Bypass
+  - T-002 — Session Token in Script-Readable Storage
+  - T-003 — Systemic IDOR Missing Ownership Checks
+  - T-004 — Missing Authorization on Product Update
+  - T-005 — Angular Sanitizer Bypass Rendering Untrusted HTML
+  - T-006 — SQL injection — routes/search.ts:23
+  - T-008 — Broken authorization
+  - T-012 — SQL injection in login email lookup — routes/login.ts:34
+  - T-014 — Chat identity taken from unverified JWT — routes/chat.ts:45
+  - T-016 — Predictable password derived from OAuth email — oauth.component.ts:30
+  - T-018 — Insecure JWT Verification
+  - T-019 — Password reset accepts a security-question answer — routes/resetPassword.ts:10
+  - T-020 — Hardcoded JWT private signing key in source — lib/insecurity.ts:21
+  - T-021 — Wallet top-up accepts unvalidated balance amount — routes/wallet.ts:27
+  - T-022 — Path traversal — routes/dataErasure.ts:104
+  - T-023 — Zip entry path traversal on complaint upload — routes/fileUpload.ts:34
+  - T-024 — IDOR — routes/basketItems.ts:68
+  - T-027 — Input in executable NoSQL predicate — routes/showProductReviews.ts:36
+  - T-028 — NoSQL where injection in product reviews — routes/showProductReviews.ts:36
+  - T-029 — NoSQL where injection in order tracking — routes/trackOrder.ts:18
+  - T-030 — Input compiled as template source — routes/userProfile.ts:87
+  - T-031 — Non-cryptographic RNG for a secret/token — lib/insecurity.ts:53
+  - T-032 — Unauthenticated encryption key file download — routes/keyServer.ts:14
+  - T-033 — XXE file content disclosure in upload errors — routes/fileUpload.ts:79
+  - T-034 — Server-side request forgery in profile — routes/profileImageUrlUpload.ts:24
+  - T-035 — Weak MD5 password hashing in User setter
+  - T-036 — Blocking busy-wait sleep reachable — routes/showProductReviews.ts:23
+  - T-037 — Code injection — routes/userProfile.ts:61
+  - T-038 — IDOR / broken object-level authorization — server.ts:426
+  - T-039 — Sensitive Routes Registered Without Authentication Middleware
+  - T-041 — Sensitive Routes Registered Without Authentication Middleware
+  - T-042 — Chatbot coupon tool lacks server-side discount limit — routes/chat.ts:184
+  - T-043 — Role accepted from user registration body — routes/verify.ts:53
+  - T-044 — Unauthenticated review creation — routes/createProductReviews.ts:26
+  - T-045 — Password change allowed without current password — routes/changePassword.ts:39
+  - T-046 — Hardcoded cookie-parser signing secret — server.ts:289
+  - T-047 — OAuth implicit flow without state, nonce or PKCE — login.component.ts:148
+  - T-048 — Hardcoded testing credentials in login component — login.component.ts:62
+  - T-049 — Unauthenticated WebSocket Channel
+  - T-050 — Unthrottled security-answer password reset — routes/resetPassword.ts:41
+  - T-051 — Substring redirect allowlist check — lib/insecurity.ts:136
+  - T-052 — File type allowlist bypass — routes/fileServer.ts:28
+  - T-053 — Client-supplied coupon data grants expired discounts — routes/order.ts:201
+  - T-054 — NoSQL selector injection in review likes — routes/likeProductReviews.ts:35
+  - T-055 — Client-supplied chat messages passed to model unvalidated — routes/chat.ts:191
+  - T-056 — Unsanitized product description setter — models/product.ts:45
+  - T-057 — Missing Container Image Signing — ci.yml:1
+  - T-058 — Unverified remote script piped to shell in deploy workflow — ci.yml:358
+  - T-059 — Untrusted npm Install/Postinstall Scripts Enabled
+  - T-060 — Mutable main branch action reference with write token
+  - T-061 — Release build uses non-locked dependency installation — release.yml:55
+  - T-062 — Unpinned Container Base Image
+  - T-063 — Unsanitized document.write of data export response — data-export.component.ts:71
+  - T-064 — DOM XSS — track-result.component.ts:48
+  - T-065 — Unsanitized login IP header stored when challenge — routes/saveLoginIp.ts:32
+  - T-066 — Template layout path read — routes/dataErasure.ts:107
+  - T-067 — CAPTCHA answer returned to client — routes/imageCaptcha.ts:31
+  - T-068 — Unauthenticated memories listing with user data — routes/memory.ts:24
+  - T-069 — CAPTCHA answer returned to the client — routes/captcha.ts:31
+  - T-070 — User enumeration — routes/securityQuestion.ts:21
+  - T-071 — Unauthenticated Prometheus metrics endpoint — routes/metrics.ts:92
+  - T-072 — Order PDFs with customer email in listed directory — routes/order.ts:45
+  - T-073 — Unauthenticated log directory browsing — server.ts:281
+  - T-074 — Unauthenticated access log download — routes/logfileServer.ts:14
+  - T-075 — Plaintext payment card storage — models/card.ts:38
+  - T-076 — Hardcoded wallet mnemonic in source — routes/checkKeys.ts:10
+  - T-077 — Private key submitted over configurable HTTP origin — keys.service.ts:45
+  - T-078 — Passwords sent as GET query parameters — user.service.ts:54
+  - T-079 — OAuth access token in userinfo query string — user.service.ts:68
+  - T-080 — Stored notifications and flags sent — registerWebsocketEvents.ts:30
+  - T-081 — Reset response returns full user object — routes/resetPassword.ts:46
+  - T-082 — Unbounded remote download for profile image — routes/profileImageUrlUpload.ts:30
+  - T-083 — Unbounded chat input with no rate limit on LLM endpoint — routes/chat.ts:191
+  - T-084 — Unbounded disk upload ahead of authentication
+  - T-085 — Unbounded unvalidated wallet set on open endpoint — routes/web3Wallet.ts:16
+  - T-086 — Unhandled exception from non-string event — registerWebsocketEvents.ts:41
+  - T-087 — Fail-open image CAPTCHA verification — routes/imageCaptcha.ts:52
+  - T-088 — Deluxe membership granted without payment — routes/deluxe.ts:43
+  - T-089 — Container Runs as Root — Dockerfile:1
+  - T-090 — Missing Workflow Permissions Block
+  - T-091 — Any authenticated user lists all accounts — routes/authenticatedUsers.ts:12
+  - T-110 — Session token stored in web-accessible client storage — basket.service.ts:64
+- **Mitigations (80):**
+  - M-001 — Manual review: verify Angular Sanitizer Bypass Rendering Untrusted HTML
+  - M-002 — Manual review: verify Broken authorization attacker-controlled owner ID in resource query…
+  - M-003 — Manual review: verify Chat identity taken from unverified JWT at chat.ts:45
+  - M-004 — Manual review: verify Path traversal filesystem access from request input
+  - M-005 — Manual review: verify NoSQL where injection in product reviews lookup
+  - M-006 — Manual review: verify Non-cryptographic RNG for a at insecurity.ts:53
+  - M-007 — Manual review: verify Blocking busy-wait sleep reachable from queries
+  - M-008 — Manual review: verify IDOR / broken object-level authorization PUT /api/BasketItems/:id
+  - M-009 — Manual review: verify Sensitive Routes Registered Without Authentication Middleware
+  - M-010 — Manual review: verify Role accepted from user registration body at verify.ts:53
+  - M-011 — Manual review: verify Unsanitized product description setter at product.ts:45
+  - M-012 — Manual review: verify Release build uses non-locked dependency installation
+  - M-013 — Manual review: verify Unsanitized document.write of data export response
+  - M-014 — Manual review: verify DOM XSS through sanitizer bypass on order ID
+  - M-015 — Manual review: verify Unsanitized login IP header stored when challenge flag on
+  - M-016 — Manual review: verify Template layout path read via request body in data erasure
+  - M-017 — Manual review: verify Unauthenticated memories listing with user data
+  - M-018 — Manual review: verify Order PDFs with customer email in listed directory
+  - M-019 — Manual review: verify Private key submitted over configurable HTTP origin
+  - M-020 — Manual review: verify Reset response returns full user object
+  - M-021 — Manual review: verify Unbounded chat input with no rate limit on LLM endpoint
+  - M-022 — Manual review: verify Unhandled exception from non-string event payloads
+  - M-023 — Sign and verify release artifacts
+  - M-024 — Disable untrusted package install scripts
+  - M-025 — Pin the container base image to an immutable digest
+  - M-026 — Drop unnecessary privileges in build and runtime
+  - M-027 — Apply least-privilege permissions
+  - M-028 — Remove sanitizer bypass for feedback comments
+  - M-029 — Issue session tokens in HttpOnly SameSite cookies
+  - M-030 — Check basket ownership before returning it
+  - M-031 — Restore authorization on product PUT route
+  - M-032 — Encode output instead of bypassing the framework sanitizer (F-005)
+  - M-033 — Use parameterized database queries (F-006)
+  - M-034 — Enforce object-level (ownership) authorization (F-008)
+  - M-035 — Use bind parameters in login query
+  - M-036 — Verify JWT signature in chat identity lookup
+  - M-037 — Remove email-derived password from OAuth login
+  - M-038 — Enforce JWT signature and algorithm verification (F-018)
+  - M-039 — Replace security-question recovery with a CSPRNG reset token delivered…
+  - M-040 — Load JWT private key from secret store
+  - M-041 — Validate wallet top-up amount server-side
+  - M-042 — Constrain file paths to a safe base directory (F-022)
+  - M-043 — Constrain zip entries to the upload directory
+  - M-044 — Enforce object-level (ownership) authorization (F-024)
+  - M-045 — Use typed query predicates instead of $where
+  - M-046 — Query reviews with numeric equality filter
+  - M-047 — Query orders by field equality not where strings
+  - M-048 — Remove server-side evaluation of untrusted input (F-030)
+  - M-049 — Use cryptographically secure random values
+  - M-050 — Remove public key directory serving
+  - M-051 — Disable XML external entity (XXE) resolution
+  - M-052 — Validate and allowlist outbound request targets
+  - M-053 — Hash passwords with a strong, salted algorithm
+  - M-054 — Remove global sleep and evaluate no where strings
+  - M-055 — Remove eval of stored username in profile render
+  - M-056 — Enforce server-side authorization on every endpoint (F-041)
+  - M-057 — Enforce correct server-side authorization
+  - M-058 — Allowlist client-controlled fields
+  - M-059 — Derive review author from authenticated token
+  - M-060 — Require current password for password changes
+  - M-061 — Load cookie secret from environment
+  - M-062 — Add anti-CSRF protection to state-changing requests
+  - M-063 — Remove hardcoded test credentials from client code
+  - M-064 — Require authentication on every exposed endpoint (F-049)
+  - M-065 — Rate limit and token-gate password reset
+  - M-066 — Validate redirect targets against an allowlist
+  - M-067 — Reject null bytes before validating the file name
+  - M-068 — Validate coupons server-side against issued state
+  - M-069 — Validate review id as a string before querying
+  - M-070 — Validate chat messages schema and allow user role only
+  - M-071 — Always sanitize product description in model setter
+  - M-072 — Remove curl-pipe-shell Heroku CLI install
+  - M-073 — Pin third-party dependencies to immutable versions
+  - M-074 — Commit lockfiles and install from them
+  - M-075 — Encode output instead of bypassing the framework sanitizer (F-063)
+  - M-076 — Encode output instead of bypassing the framework sanitizer (F-064)
+  - M-077 — Always sanitize stored login IP value
+  - M-078 — Ignore request-supplied layout and render options
+  - M-079 — Omit answer from CAPTCHA response
+  - M-080 — Limit joined user attributes
+- **Abuse cases (9):** AC-T-005, AC-B-001, AC-T-007, AC-B-003, AC-T-002, AC-T-004, AC-T-001, AC-B-004, AC-T-006
+- **Components (9):** component-1f61b207923dbaf5, component-290ae722e9565831, component-31ebe1b93ddf60d5, component-6ffadbc3868c2a3b, component-6ffaf23414c56207, component-790db1fed70651aa, component-8c3a32ee53769307, component-b213d5ab01236933, component-dff0840e0f4855be
+
+### Scope
+- **Re-analyzed:** component-1f61b207923dbaf5, component-290ae722e9565831, component-31ebe1b93ddf60d5, component-6ffadbc3868c2a3b, component-6ffaf23414c56207, component-790db1fed70651aa, component-8c3a32ee53769307, component-b213d5ab01236933, component-dff0840e0f4855be
+
+> first full scan

@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import analyzers.authz_confirm as ac  # noqa: E402
 import analyzers.route_inventory as ri  # noqa: E402
-from analyzers.handler_resolver import DECODE_ONLY_SCOPE, HandlerResolver  # noqa: E402
+from analyzers.handler_resolver import DECODE_ONLY_SCOPE, HandlerResolver, direct_imports  # noqa: E402
 
 SCHEMA = json.loads((ROOT / "schemas/route-inventory.schema.json").read_text())
 
@@ -107,6 +107,29 @@ def test_imported_handler_with_a_session_check_authenticates_its_route(tmp_path,
             "/ledger",
             "api/ledger_rows.js",
         ),
+        (
+            "import express from 'express'\n"
+            "import listMembers from './routes/memberList'\n"
+            "import * as helpers from './lib/helpers'\n"
+            "const app = express()\n"
+            "app.get('/members', helpers.catchErrors(listMembers()))\n",
+            {
+                "routes/memberList.ts": "async function loadMembers (req, res) {\n  res.json([])\n}\n\n"
+                "export default () => loadMembers\n",
+                "lib/helpers.ts": "export function catchErrors (fn) {\n  return (req, res, next) => fn(req, res, next)\n}\n",
+            },
+            "/members",
+            "routes/memberList.ts",
+        ),
+        (
+            "const express = require('express')\n"
+            "import archiveExport from './api/archive-export'\n"
+            "const app = express()\n"
+            "app.post('/archive', archiveExport)\n",
+            {"api/archive-export.js": "export default async function (req, res) {\n  res.json({})\n}\n"},
+            "/archive",
+            "api/archive-export.js",
+        ),
     ],
 )
 def test_route_records_the_module_of_its_own_handler_but_not_its_guards(tmp_path, server, files, path, module):
@@ -114,6 +137,44 @@ def test_route_records_the_module_of_its_own_handler_but_not_its_guards(tmp_path
     inventory = ri.build_inventory(tmp_path)
     jsonschema.validate(inventory, SCHEMA)
     assert route(inventory, path).get("handler_module") == module
+
+
+def test_default_exported_factory_follows_the_handler_it_returns(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": "import express from 'express'\n"
+            "import viewInvoice from './billing/invoice'\n"
+            "const app = express()\n"
+            "app.get('/invoice', viewInvoice())\n",
+            "billing/invoice.ts": "const showInvoice = async (req, res) => {\n"
+            "  const who = sessions.get(req.cookies.sid)\n"
+            "  if (!who) {\n"
+            "    res.status(401).end()\n"
+            "    return\n"
+            "  }\n"
+            "  res.json({ ok: true })\n"
+            "}\n"
+            "export default () => showInvoice\n",
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/invoice")
+    assert row["handler_module"] == "billing/invoice.ts"
+    assert row["authn_handler_signal"] == "verified" and row["authn_handler_scheme"] == "cookie"
+
+
+def test_factories_returning_each_other_stay_unresolved(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": "import express from 'express'\n"
+            "import pingRoute from './routes/ping'\n"
+            "const app = express()\n"
+            "app.get('/ping', pingRoute())\n",
+            "routes/ping.ts": "const first = () => second\nconst second = () => first\nexport default () => first\n",
+        },
+    )
+    assert route(ri.build_inventory(tmp_path), "/ping")["authn_handler_signal"] == "unresolved"
 
 
 def test_an_unresolved_handler_records_no_module(tmp_path):
@@ -237,6 +298,215 @@ def test_registration_guards_keep_their_signal(tmp_path):
         },
     )
     assert route(ri.build_inventory(tmp_path), "/feedback")["authn_signal"] == "middleware_present"
+
+
+PUBLIC_HANDLER = "export function submit () {\n  return (req, res) => res.json(req.body)\n}\n"
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        # An identity cache: verifies through a callback and always continues.
+        "export const remember = () => (req, res, next) => {\n"
+        "  const token = req.cookies.token\n"
+        "  if (token) {\n"
+        "    jwt.verify(token, KEY, (err, claims) => { if (!err) seen.set(token, claims) })\n"
+        "  }\n"
+        "  next()\n"
+        "}\n",
+        # An audit hook: decodes through a same-file helper and always continues.
+        "export const remember = () => function (req, res, next) {\n"
+        "  inspect(req)\n"
+        "  next()\n"
+        "}\n"
+        "function inspect (request) {\n"
+        "  const claims = jwt.decode(request.headers.authorization)\n"
+        "  if (claims) audit.push(claims.sub)\n"
+        "}\n",
+    ],
+    ids=["callback-verify-cache", "decode-audit-helper"],
+)
+def test_a_global_pass_through_credential_loader_does_not_hide_an_open_route(tmp_path, hook):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app(
+                "routes/feedback",
+                "submit",
+                "/feedback",
+                "import { remember } from './lib/identity'\napp.use(remember())\n",
+            ),
+            "lib/identity.ts": hook,
+            "routes/feedback.ts": PUBLIC_HANDLER,
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/feedback")
+    assert row["authn_handler_signal"] == "none" and row["authn_signal"] == "absent"
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [
+        "  req.user = jwt.verify(req.headers.authorization, KEY)\n  next()\n",
+        "  if (!sessions.get(req.cookies.session)) return next(createError(401))\n  next()\n",
+        "  if (!sessions.get(req.cookies.session)) return res.sendStatus(StatusCodes.UNAUTHORIZED)\n  next()\n",
+        "  if (!sessions.get(req.cookies.session)) throw new HttpError(401)\n  next()\n",
+    ],
+    ids=["synchronous-verify", "next-with-error", "named-status", "throw"],
+)
+def test_a_credential_middleware_that_can_stop_the_request_stays_unresolved(tmp_path, stop):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app(
+                "routes/feedback",
+                "submit",
+                "/feedback",
+                "import { gate } from './lib/gate'\napp.use(gate())\n",
+            ),
+            "lib/gate.ts": f"export const gate = () => (req, res, next) => {{\n{stop}}}\n",
+            "routes/feedback.ts": PUBLIC_HANDLER,
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/feedback")
+    assert row["authn_handler_signal"] == "unresolved" and row["authn_signal"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("read", "expected"),
+    [
+        ("const { stepToken, code } = req.body", "unresolved"),
+        ("const stepToken = req.body.stepToken", "unresolved"),
+        ("const stepToken = req.query?.resumeToken", "unresolved"),
+        ("const stepToken = req.body.csrfToken", "none"),
+        ("const { captchaToken } = req.body", "none"),
+    ],
+)
+def test_a_token_read_from_the_body_or_query_is_a_credential(tmp_path, read, expected):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("routes/step", "confirm", "/step"),
+            "routes/step.ts": (
+                "export function confirm () {\n"
+                "  return (req, res) => {\n"
+                f"    {read}\n"
+                "    res.json({ ok: true })\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert route(ri.build_inventory(tmp_path), "/step")["authn_handler_signal"] == expected
+
+
+@pytest.mark.parametrize(
+    ("helper", "call", "expected"),
+    [
+        (
+            "export const sessions = {\n  size () { return store.size },\n"
+            "  from (req) { return store.get(req.cookies.session) }\n}\n",
+            "access.sessions.from(req)",
+            "unresolved",
+        ),
+        (
+            "export function currentAccount (request) {\n  return lookup(request.headers.authorization)\n}\n",
+            "access.currentAccount(req)",
+            "unresolved",
+        ),
+        ("export function record (req) {\n  log.push(req.path)\n}\n", "access.record(req)", "none"),
+    ],
+    ids=["object-method", "imported-function", "credential-free-helper"],
+)
+def test_an_imported_helper_given_the_request_counts_for_the_handler(tmp_path, helper, call, expected):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("routes/step", "confirm", "/step"),
+            "lib/access.ts": helper,
+            "routes/step.ts": (
+                "import * as access from '../lib/access'\n"
+                "export function confirm () {\n"
+                "  return (req, res) => {\n"
+                f"    const who = {call}\n"
+                "    if (!who) return res.status(401).end()\n"
+                "    res.json({ ok: true })\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    assert route(ri.build_inventory(tmp_path), "/step")["authn_handler_signal"] == expected
+
+
+LIST_HANDLER = "export function listOrders () {\n  return (req, res) => res.json([])\n}\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "path", "evidence"),
+    [
+        (
+            {
+                "lib/access.ts": "import tokenGate from 'express-jwt'\n"
+                "export const requireToken = () => tokenGate(({ secret: publicKey }) as any)\n",
+                "server.ts": "import express from 'express'\n"
+                "import * as access from './lib/access'\n"
+                "import { listOrders } from './routes/orders'\n"
+                "const app = express()\n"
+                "app.use('/api/orders', access.requireToken())\n"
+                "app.get('/api/orders/:id', listOrders())\n",
+            },
+            "/api/orders/:id",
+            {"file": "lib/access.ts", "line": 2},
+        ),
+        (
+            {
+                "app.js": "const express = require('express')\n"
+                "const { expressjwt } = require('express-jwt')\n"
+                "const { listOrders } = require('./routes/orders')\n"
+                "const app = express()\n"
+                "app.get('/reports', expressjwt({ secret: KEY, algorithms: ['HS256'] }), listOrders())\n",
+            },
+            "/reports",
+            {"file": "app.js", "line": 5},
+        ),
+    ],
+)
+def test_an_authentication_package_guard_verifies_its_routes(tmp_path, files, path, evidence):
+    write(tmp_path, {"routes/orders.ts": LIST_HANDLER, "routes/orders.js": LIST_HANDLER, **files})
+    inventory = ri.build_inventory(tmp_path)
+    jsonschema.validate(inventory, SCHEMA)
+    row = route(inventory, path)
+    assert row["authn_handler_signal"] == "verified" and row["authn_handler_scheme"] == "bearer"
+    assert row["authn_handler_evidence"] == [evidence]
+    assert row["handler_module"] in {"routes/orders.ts", "routes/orders.js"}
+
+
+@pytest.mark.parametrize(
+    ("imported", "mount"),
+    [
+        ("tokenGate from 'express-jwt'", "'/api/orders', tokenGate({ secret: KEY, credentialsRequired: false })"),
+        ("tokenGate from 'express-jwt'", "'/api/orders', tokenGate(options)"),
+        ("{ claimCheck } from 'express-oauth2-jwt-bearer'", "'/api/orders', claimCheck((claims) => true)"),
+        ("tokenGate from 'express-jwt'", "'/admin', tokenGate({ secret: KEY })"),
+    ],
+    ids=["rejection-off", "options-by-name", "non-rejecting-member", "prefix-elsewhere"],
+)
+def test_an_authentication_package_that_may_not_reject_stays_unresolved(tmp_path, imported, mount):
+    write(
+        tmp_path,
+        {
+            "routes/orders.ts": LIST_HANDLER,
+            "server.ts": "import express from 'express'\n"
+            f"import {imported}\n"
+            "import { listOrders } from './routes/orders'\n"
+            "const app = express()\n"
+            f"app.use({mount})\n"
+            "app.get('/api/orders/:id', listOrders())\n",
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/api/orders/:id")
+    assert row["authn_handler_signal"] != "verified"
 
 
 def test_authz_confirm_reads_the_resolved_handler_not_the_registration_window(tmp_path):
@@ -410,3 +680,78 @@ def test_coverage_counts_an_unresolved_chain_as_unknown_not_absent(tmp_path):
         0,
         1,
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "expected"),
+    [
+        (
+            "routes/a.ts",
+            "import x from '../lib/x'\nconst y = require('./y')\nimport z from 'pkg'\n// import w from './w'\n",
+            ["lib/x.ts", "routes/y/index.js"],
+        ),
+        (
+            "svc/api/views.py",
+            "from .models import Order\nfrom ..core import auth\nimport os\n",
+            ["svc/api/models.py", "svc/core/__init__.py"],
+        ),
+        ("app/main.py", "from app.security import check\nfrom missing import nothing\n", ["app/security.py"]),
+    ],
+)
+def test_direct_imports_resolve_against_the_admitted_file_set(path, text, expected):
+    files = {
+        "lib/x.ts",
+        "routes/y/index.js",
+        "routes/w.ts",
+        "svc/api/models.py",
+        "svc/core/__init__.py",
+        "app/security.py",
+    }
+    assert direct_imports(path, text, files.__contains__) == expected
+
+
+@pytest.mark.parametrize(
+    "lib,guard,mount",
+    [("lib/insecurity.ts", "appendUserId", "/rest/wallet"), ("shared/session.ts", "bindOwner", "/api/cards")],
+)
+def test_middleware_definitions_name_route_and_prefix_guards_but_not_global_ones(tmp_path, lib, guard, mount):
+    """The guard a route runs is found in its own file, whatever that file and guard are called."""
+    module = lib.rsplit(".", 1)[0]
+    write(
+        tmp_path,
+        {
+            "server.ts": "import express from 'express'\n"
+            f"import * as security from './{module}'\n"
+            "import { show } from './routes/show'\n"
+            "const app = express()\n"
+            "app.use(security.trace())\n"
+            f"app.use('{mount}', security.isLoggedIn())\n"
+            f"app.get('{mount}/balance', security.{guard}(), show())\n",
+            lib: "export const trace = () => (req, res, next) => next()\n"
+            "export const isLoggedIn = () => (req, res, next) => {\n"
+            "  if (!req.headers.authorization) return res.sendStatus(401)\n"
+            "  next()\n"
+            "}\n"
+            f"export const {guard} = () => (req, res, next) => {{\n"
+            "  req.body.UserId = req.user.id\n"
+            "  next()\n"
+            "}\n",
+            "routes/show.ts": "export function show () {\n  return (req, res) => res.json(req.body.UserId)\n}\n",
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), f"{mount}/balance")
+    spans = HandlerResolver(tmp_path).middleware_definitions(row)
+    # The route's own guard first, then the guard mounted on its prefix; the
+    # path-less mount runs everywhere and the handler is no middleware.
+    assert spans == [(lib, 6, 9), (lib, 2, 5)]
+
+
+def test_a_route_without_middleware_names_no_definition(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("routes/feedback", "submit", "/feedback"),
+            "routes/feedback.ts": "export function submit () {\n  return (req, res) => res.json(req.body)\n}\n",
+        },
+    )
+    assert HandlerResolver(tmp_path).middleware_definitions(route(ri.build_inventory(tmp_path), "/feedback")) == []

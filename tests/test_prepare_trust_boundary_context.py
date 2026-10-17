@@ -14,6 +14,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import contexts.prepare_trust_boundary_context as prep  # noqa: E402
+from shared._boundary_interface import is_internal_interface  # noqa: E402
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -188,6 +189,57 @@ def test_promote_candidates_writes_canonical_and_coverage(tmp_path: Path):
     assert canonical["trust_boundaries"][0]["sources"] == ["detected"]
     assert coverage["status"] == "pass"
     assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
+
+
+@pytest.mark.parametrize(
+    ("network_name", "privilege_name"),
+    [("Internet to Web API", "Anonymous to admin"), ("Public ingress", "User to operator role")],
+)
+def test_a_signal_promotes_to_its_re_anchored_privilege_boundary(tmp_path: Path, network_name, privilege_name):
+    """Normalization moves a perimeter privilege crossing inside its component;
+    coverage still finds the boundary the candidate became."""
+    repo, out = _repo(tmp_path)
+    component_fp, input_fp = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    doc = _candidate_doc(component_fp, input_fp)
+    network = doc["candidates"][0]
+    network.update(name=network_name, candidate_key="candidate-network")
+    privilege_signal = "signal-identity-or-privilege-transition-external-to-web-api"
+    privilege = {
+        **network,
+        "candidate_key": "candidate-privilege",
+        "name": privilege_name,
+        "kind": "privilege",
+        "assumption": "Only verified administrators reach the privileged operations.",
+        "covered_signal_ids": [privilege_signal],
+    }
+    doc["candidates"].append(privilege)
+    doc["dispositions"][0]["candidate_keys"] = ["candidate-network"]
+    doc["dispositions"].append(
+        {
+            "signal_id": privilege_signal,
+            "disposition": "boundary",
+            "candidate_keys": ["candidate-privilege"],
+            "rationale": "Administrative operations are reachable from the internet behind a role check.",
+        }
+    )
+    document = _assessment(component_fp, input_fp)
+    document["signals"].append(
+        {**document["signals"][0], "id": privilege_signal, "class": "identity-or-privilege-transition"}
+    )
+    assessment, candidates = out / ".trust-boundary-assessment-input.json", out / ".trust-boundary-candidates.json"
+    _write_json(assessment, document)
+    _write_json(candidates, doc)
+
+    canonical, coverage = prep.promote_candidates(
+        repo_root=repo, output_dir=out, candidates_path=candidates, assessment_input_path=assessment, prior_model=None
+    )
+
+    by_name = {row["name"]: row for row in canonical["trust_boundaries"]}
+    assert (by_name[privilege_name]["from"], by_name[privilege_name]["to"]) == ("web-api", "web-api")
+    # The re-anchored row, never the network row that shares the original endpoints.
+    by_signal = {row["signal_id"]: row["boundary_ids"] for row in coverage["signals"]}
+    assert by_signal[privilege_signal] == [by_name[privilege_name]["id"]]
+    assert by_signal["signal-external-ingress-external-to-web-api"] == [by_name[network_name]["id"]]
 
 
 def test_assessment_and_coverage_schemas_close_evidence_locations(tmp_path: Path):
@@ -989,6 +1041,39 @@ def test_finding_reference_requires_candidate_adjacency_and_owned_evidence() -> 
     assert "non-candidate" in warnings[0]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "kept"),
+    [
+        ({"confidence": "inferred"}, True),
+        ({"confidence": "unknown", "from": "ci-runner", "to": "external", "kind": "build"}, True),
+        ({"resolution_status": "unresolved"}, False),
+        ({"resolution_status": "conflicted"}, False),
+    ],
+    ids=["inferred", "inferred-build", "unresolved", "conflicted"],
+)
+def test_a_reference_may_refute_an_inferred_boundary(overrides, kept):
+    """TB-14: a reference keeps an inferred boundary refutable; only an
+    incoherent declaration drops it. Elevation still checks confidence itself."""
+    boundary = _tb(**overrides)
+    origin = boundary["from"] if boundary["to"] == "external" else boundary["to"]
+    finding = {
+        "evidence": {"file": "src/auth.py", "line": 1},
+        "boundary_refs": [
+            {
+                "boundary_id": "tb-1",
+                "origin_component_id": origin,
+                "rationale": "The cited control at this crossing does not hold for the finding.",
+                "evidence_locations": [{"file": "src/auth.py", "line": 1}],
+            }
+        ],
+    }
+    refs, diagnostics = prep.validate_finding_boundary_refs(
+        finding, boundaries=[boundary], origin_component_id=origin, candidate_ids=None, require_candidate=False
+    )
+    assert (refs == finding["boundary_refs"]) is kept
+    assert (diagnostics == []) is kept
+
+
 def _tiered_repo(tmp_path: Path) -> tuple[Path, Path]:
     """Coarse owner (`routes/**`) plus a fine-grained component on one file."""
     repo, out = _repo(tmp_path)
@@ -1292,6 +1377,52 @@ def _resolved(**overrides) -> dict:
     return {**_row(), "resolution_status": "resolved", "sources": ["detected"], **overrides}
 
 
+_TIERED = [
+    {"id": "web-api", "name": "Web API", "tier": "application", "paths": ["src/**"]},
+    {"id": "worker", "name": "Worker", "tier": "application", "paths": ["worker/**"]},
+    {"id": "ledger-db", "name": "Ledger DB", "tier": "data", "paths": ["db/**"]},
+]
+
+
+@pytest.mark.parametrize(
+    ("kind", "surface", "expected"),
+    [
+        ("process", None, ["data-access"]),
+        ("network", None, ["data-access"]),
+        ("tenant", "in-process", ["tenant", "data-access"]),
+    ],
+    ids=["embedded-store", "store-over-network", "keeps-authored-transition"],
+)
+def test_a_crossing_into_a_data_store_is_a_data_access_boundary(tmp_path, kind, surface, expected) -> None:
+    """TB-13: a store interprets queries and holds every user's records, so the
+    crossing into it is a trust boundary in process or over the network, on one
+    row with any transition the analyst authored."""
+    row = _resolved(id="tb-1", name="API to ledger", **{"from": "web-api", "to": "ledger-db", "kind": kind})
+    if surface:
+        row["surface"] = surface
+
+    rows, _warnings = _normalized(tmp_path, [row], _TIERED)
+
+    assert len(rows) == 1
+    assert rows[0]["transition"] == expected
+    assert not is_internal_interface(rows[0])
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [("web-api", "worker"), ("ledger-db", "ledger-db"), ("external", "web-api")],
+    ids=["layer-to-layer", "inside-the-store", "perimeter"],
+)
+def test_only_a_crossing_into_a_data_store_gains_data_access(tmp_path, source, target) -> None:
+    """Another layer transition, such as a service calling a worker, is not a
+    data-access boundary; an in-process call there stays an internal interface."""
+    row = _resolved(id="tb-1", name="Crossing", **{"from": source, "to": target, "kind": "process"})
+
+    rows, _warnings = _normalized(tmp_path, [row], _TIERED)
+
+    assert all("data-access" not in r["transition"] for r in rows)
+
+
 def test_identical_rows_collapse_into_one(tmp_path: Path) -> None:
     rows, warnings = _normalized(
         tmp_path, [_resolved(id="tb-1"), _resolved(id="tb-2", evidence=[{"file": "src/auth.py", "line": 2}])]
@@ -1387,6 +1518,23 @@ def test_ingress_fold_never_lends_a_control_to_a_row_without_one(
             assert "covers_components" not in row
 
 
+def test_folding_ingress_rows_keeps_the_covered_component_limit(tmp_path: Path) -> None:
+    """Each row fits the covered-component contract; their fold must fit it too."""
+    others = [{"id": f"svc-{n:02d}", "name": f"Service {n}", "paths": [f"svc{n}/**"]} for n in range(30)]
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**/*.py"], "handles_sensitive_data": True},
+        {"id": "ws-gateway", "name": "WS Gateway", "paths": ["src/ws.py"]},
+        *others,
+    ]
+    host = _resolved(id="tb-1", name="Internet to API", to="web-api")
+    embedded = _resolved(id="tb-2", name="Internet to WS", to="ws-gateway")
+    host["covers_components"] = [c["id"] for c in others[:20]]
+    embedded["covers_components"] = [c["id"] for c in others[20:]]
+    rows, _warnings = _normalized(tmp_path, [host, embedded], components)
+    assert [row["to"] for row in rows] == ["web-api"]
+    assert len(rows[0]["covers_components"]) == 24
+
+
 def test_ingress_rows_to_unrelated_components_are_both_kept(tmp_path: Path) -> None:
     """Folding is justified by shared code, not by both being internet-facing."""
     components = [
@@ -1447,6 +1595,59 @@ def test_same_crossing_without_a_stated_reason_collapses(tmp_path: Path):
     assert any("merged into c1" in n for n in notes)
 
 
+_BUILD_COMPONENTS = {
+    "release-pipeline": {"id": "release-pipeline", "paths": [".ci/**", "Containerfile"]},
+}
+
+
+@pytest.mark.parametrize(
+    ("target", "channels"),
+    [
+        ("worker", ["signal-images", "signal-npm", "signal-installer"]),
+        ("release-pipeline", ["signal-pypi", "signal-remote-script"]),
+    ],
+    ids=["three-channels", "renamed-variant"],
+)
+def test_build_crossings_on_distinct_supply_channels_stay_apart(tmp_path: Path, target: str, channels: list[str]):
+    """Each scoped build signal is its own supply channel: merging them would
+    keep one channel's assumption over every channel's evidence."""
+    candidates = [
+        _cand(f"c{n}", frm="external", to=target, kind="build", signals=[sid]) for n, sid in enumerate(channels)
+    ]
+    merged, _alias, _notes = prep._consolidate_candidates(
+        candidates, components={**_COMPONENTS, **_BUILD_COMPONENTS}, repo_root=tmp_path
+    )
+    assert [c["candidate_key"] for c in merged] == [c["candidate_key"] for c in candidates]
+
+
+def test_build_crossings_on_one_supply_channel_still_collapse(tmp_path: Path):
+    merged, alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="worker", kind="build", signals=["signal-npm"]),
+            _cand("c2", frm="external", to="worker", kind="build", signals=["signal-npm"]),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1"]
+    assert alias["c2"] == "c1"
+
+
+def test_build_ingress_rows_into_one_component_are_not_folded(tmp_path: Path) -> None:
+    """The shared-perimeter fold applies to network ingress, not supply channels."""
+    components = [{"id": "release-pipeline", "name": "Release pipeline", "paths": [".ci/**"]}]
+    rows, warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Base images", to="release-pipeline", kind="build"),
+            _resolved(id="tb-2", name="Package registry", to="release-pipeline", kind="build"),
+        ],
+        components,
+    )
+    assert sorted(row["name"] for row in rows) == ["Base images", "Package registry"]
+    assert not any("folded ingress boundary" in w for w in warnings)
+
+
 def test_same_crossing_with_differing_kinds_stays_apart(tmp_path: Path):
     """`kind` is a weaker separation claim than `enforcement_point`, but it is
     still one: a generic HTTPS perimeter and an operator crossing on the same
@@ -1477,13 +1678,52 @@ def test_same_enforcement_point_merges_across_differing_names(tmp_path: Path):
     merged, alias, _notes = prep._consolidate_candidates(
         [
             _cand("c1", frm="external", to="api", point="Express route middleware"),
-            _cand("c2", frm="external", to="worker", point="express route MIDDLEWARE  "),
+            _cand("c2", frm="external", to="db", point="express route MIDDLEWARE  "),
         ],
         components=_COMPONENTS,
         repo_root=tmp_path,
     )
     assert [c["candidate_key"] for c in merged] == ["c1"]
     assert alias["c2"] == "c1"
+
+
+@pytest.mark.parametrize(
+    "components",
+    [
+        {"api": {"id": "api", "paths": ["src/**"]}, "worker": {"id": "worker", "paths": ["worker/**"]}},
+        {"billing": {"id": "billing", "paths": ["billing/**"]}, "catalog": {"id": "catalog", "paths": ["catalog/**"]}},
+    ],
+    ids=["api-worker", "neutral-names"],
+)
+def test_one_enforcement_point_keeps_separate_deployables_apart(tmp_path: Path, components):
+    """One middleware guarding two separately deployed targets is two crossings:
+    merging them kept only the first target's name and assumption."""
+    first, second = components
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to=first, point="Express route middleware"),
+            _cand("c2", frm="external", to=second, point="Express route middleware"),
+        ],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert sorted((c["candidate_key"], c["to"]) for c in merged) == [("c1", first), ("c2", second)]
+
+
+def test_one_enforcement_point_merges_components_over_identical_paths(tmp_path: Path):
+    """Two components over the same files are one deployable, so one control in
+    front of both is one crossing, whichever order the candidates arrive in."""
+    components = {"orders": {"id": "orders", "paths": ["svc/**"]}, "billing": {"id": "billing", "paths": ["svc/**"]}}
+    for first, second in (("orders", "billing"), ("billing", "orders")):
+        merged, _alias, _notes = prep._consolidate_candidates(
+            [
+                _cand("c1", frm="external", to=first, point="Request validation middleware"),
+                _cand("c2", frm="external", to=second, point="Request validation middleware"),
+            ],
+            components=components,
+            repo_root=tmp_path,
+        )
+        assert len(merged) == 1
 
 
 def test_declared_point_is_not_absorbed_by_an_undeclared_neighbour(tmp_path: Path):
@@ -1519,16 +1759,16 @@ def test_ingress_into_one_deployable_is_one_perimeter(tmp_path: Path):
     """The split into `api` and `auth` is a logical view of one Express process;
     two ingress crossings into it are one perimeter, and the surviving row must
     record the component it absorbed so that component keeps its anchor."""
-    merged, alias, notes = prep._consolidate_candidates(
+    merged, alias, _notes = prep._consolidate_candidates(
         [_cand("c1", frm="external", to="auth"), _cand("c2", frm="external", to="api")],
         components=_NESTED_COMPONENTS,
         repo_root=tmp_path,
     )
-    assert [c["candidate_key"] for c in merged] == ["c1"]
-    assert alias["c2"] == "c1"
+    # The member naming the deployable survives with its own name and assumption.
+    assert [c["candidate_key"] for c in merged] == ["c2"]
+    assert alias["c1"] == "c2"
     assert merged[0]["to"] == "api"
     assert merged[0]["covers_components"] == ["api", "auth"]
-    assert any("names the perimeter" in n for n in notes)
 
 
 def test_deployable_widening_does_not_cross_kinds(tmp_path: Path):
@@ -1717,18 +1957,51 @@ def test_ingress_and_egress_never_merge(tmp_path: Path):
     assert sorted(c["candidate_key"] for c in merged) == ["c1", "c2"]
 
 
-def test_same_deployable_is_reclassified_to_process_not_discarded(tmp_path: Path):
-    """`db` paths sit inside `api` globs -> one process. The row survives as an
-    internal enforcement interface; discarding it would strand the injection and
-    data-access findings that anchor there."""
-    merged, _alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="api", to="db", kind="network")],
+@pytest.mark.parametrize(
+    ("components", "source", "target", "kind", "transition"),
+    [
+        (
+            {"web": {"id": "web", "paths": ["src/**"]}, "worker": {"id": "worker", "paths": ["src/worker/**"]}},
+            "web",
+            "worker",
+            "network",
+            [],
+        ),
+        (
+            {
+                "gateway": {"id": "gateway", "paths": ["packages/**"]},
+                "processor": {"id": "processor", "paths": ["packages/processor/**"]},
+            },
+            "gateway",
+            "processor",
+            "privilege",
+            ["privilege"],
+        ),
+    ],
+)
+def test_nested_source_paths_do_not_erase_an_authored_crossing(tmp_path, components, source, target, kind, transition):
+    """Repository layout is not process identity: a separate service under its
+    caller's directory keeps its network crossing, and a privilege transition
+    survives into the derived axes instead of collapsing to `in-process`."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm=source, to=target, kind=kind)],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert len(merged) == 1 and merged[0]["kind"] == kind
+    prep._apply_axes(merged)
+    assert (merged[0]["surface"], merged[0]["transition"]) == ("network", transition)
+
+
+def test_authored_in_process_interface_survives_consolidation(tmp_path: Path):
+    """The row stays an internal enforcement interface; discarding it would strand
+    the injection and data-access findings that anchor there."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="db", kind="process")],
         components=_COMPONENTS,
         repo_root=tmp_path,
     )
-    assert len(merged) == 1
-    assert merged[0]["kind"] == "process"
-    assert any("ship in one deployable" in n for n in notes)
+    assert len(merged) == 1 and merged[0]["kind"] == "process"
 
 
 def test_separate_deployables_keep_their_kind(tmp_path: Path):
@@ -2591,3 +2864,331 @@ def test_partial_leg_declaration_adds_a_condition_but_never_removes_a_leg() -> N
     assert [leg["leg"] for leg in legs] == list(prep.INGRESS_LEGS)
     assert legs[2]["condition"] == "Objects are checked against the subject."
     assert "condition" not in legs[0]
+
+
+# --------------------------------------------------------------------------- #
+# Crossing surface vs trust transition, and deployment evidence
+# --------------------------------------------------------------------------- #
+_CANDIDATE_ITEM = Draft202012Validator(
+    json.loads(prep.CANDIDATES_SCHEMA.read_text(encoding="utf-8"))["properties"]["candidates"]["items"]
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "surface", "valid"),
+    [
+        ("privilege", "in-process", True),
+        ("tenant", "network", True),
+        ("third-party", "in-process", True),
+        ("process", "in-process", True),
+        ("process", "network", False),
+        ("network", "in-process", False),
+        ("build", "network", False),
+        ("identity", "build-pipeline", False),
+    ],
+)
+def test_candidate_surface_must_agree_with_kind(kind, surface, valid):
+    row = {**_cand("candidate-a", frm="api", to="db", kind=kind), "surface": surface}
+    row["covered_signal_ids"] = ["signal-a"]
+    assert _CANDIDATE_ITEM.is_valid(row) is valid
+    assert prep._surface_agrees(kind, surface) is valid
+
+
+@pytest.mark.parametrize(("kind", "transition"), [("privilege", ["privilege"]), ("tenant", ["tenant"])])
+def test_in_process_transition_survives_axes_and_is_not_an_interface(kind, transition):
+    from shared._boundary_interface import is_internal_interface
+
+    rows = [{"kind": kind, "surface": "in-process"}]
+    prep._apply_axes(rows)
+    assert (rows[0]["surface"], rows[0]["transition"]) == ("in-process", transition)
+    assert not is_internal_interface(rows[0])
+    # Re-running the derivation, as every later pass does, keeps the axis.
+    prep._apply_axes(rows)
+    assert rows[0]["surface"] == "in-process"
+
+
+def test_surface_contradicted_by_a_changed_kind_is_rederived():
+    rows = [{"kind": "network", "surface": "in-process"}]
+    prep._apply_axes(rows)
+    assert (rows[0]["surface"], rows[0]["transition"]) == ("network", [])
+
+
+def test_in_process_privilege_survives_canonical_normalization(tmp_path: Path):
+    rows, _warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(
+                id="tb-1",
+                name="Admin check",
+                to="web-api",
+                kind="privilege",
+                surface="in-process",
+                **{"from": "web-api"},
+            )
+        ],
+        [{"id": "web-api", "name": "Web API", "paths": ["src/**"]}],
+    )
+    assert (rows[0]["kind"], rows[0]["surface"], rows[0]["transition"]) == ("privilege", "in-process", ["privilege"])
+
+
+def test_contradicting_surface_is_discarded_with_a_warning(tmp_path: Path):
+    rows, warnings = _normalized(
+        tmp_path,
+        [_resolved(id="tb-1", to="web-api", kind="network", surface="in-process")],
+        [{"id": "web-api", "name": "Web API", "paths": ["src/**"]}],
+    )
+    assert rows[0]["surface"] == "network"
+    assert any("contradicts kind" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ({"id": "web", "paths": ["src/**"]}, {"id": "worker", "paths": ["src/worker/**"]}),
+        ({"id": "gateway", "paths": ["packages/**"]}, {"id": "billing", "paths": ["packages/billing/**"]}),
+    ],
+)
+def test_process_claim_across_separate_workloads_becomes_a_network_crossing(tmp_path, caller, callee):
+    components = {
+        caller["id"]: {**caller, "workload_zones": ["compose:frontend"]},
+        callee["id"]: {**callee, "workload_zones": ["compose:backend"]},
+    }
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm=caller["id"], to=callee["id"], kind="process", conf="confirmed")],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert (merged[0]["kind"], merged[0]["confidence"]) == ("network", "inferred")
+    assert any("disjoint deployment networks" in n for n in notes)
+
+
+@pytest.mark.parametrize(
+    ("caller_zones", "callee_zones"),
+    [(["compose:app"], ["compose:app", "compose:db"]), ([], ["compose:db"]), ([], [])],
+)
+def test_process_claim_stands_without_separating_deployment_evidence(tmp_path, caller_zones, callee_zones):
+    """Shared or missing workload zones prove nothing; the analyst's kind stands."""
+    components = {
+        "api": {"id": "api", "paths": ["src/**"], "workload_zones": caller_zones},
+        "db": {"id": "db", "paths": ["src/db/**"], "workload_zones": callee_zones},
+    }
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="db", kind="process")], components=components, repo_root=tmp_path
+    )
+    assert merged[0]["kind"] == "process"
+
+
+def test_ingress_into_a_separately_deployed_nested_service_stays_apart(tmp_path: Path):
+    components = {
+        "api": {"id": "api", "paths": ["src/**"], "workload_zones": ["kubernetes:public"]},
+        "admin": {"id": "admin", "paths": ["src/admin/**"], "workload_zones": ["kubernetes:ops"]},
+    }
+    assert prep._deployable_root("admin", components) == "admin"
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="admin"), _cand("c2", frm="external", to="api")],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert sorted(c["to"] for c in merged) == ["admin", "api"]
+
+
+def test_ingress_fold_respects_separate_workloads(tmp_path: Path):
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**"], "workload_zones": ["compose:edge"]},
+        {"id": "ws-gateway", "name": "WS Gateway", "paths": ["src/ws.py"], "workload_zones": ["compose:realtime"]},
+    ]
+    rows, _warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Internet to API", to="web-api"),
+            _resolved(id="tb-2", name="Internet to WS", to="ws-gateway"),
+        ],
+        components,
+    )
+    assert sorted(row["to"] for row in rows) == ["web-api", "ws-gateway"]
+
+
+def test_one_enforcement_point_does_not_merge_different_transitions(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="api", point="expressJwt middleware"),
+            _cand("c2", frm="external", to="api", kind="privilege", point="expressJwt middleware"),
+            _cand("c3", frm="external", to="api", point="expressJwt middleware"),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert sorted((c["candidate_key"], c["kind"]) for c in merged) == [("c1", "network"), ("c2", "privilege")]
+
+
+# --------------------------------------------------------------------------- #
+# Evidence-backed finding association
+# --------------------------------------------------------------------------- #
+def _store_boundary(boundary_id: str, store: str, *, file: str, line: int, owner: str = "api") -> dict:
+    return _tb(
+        id=boundary_id,
+        name=f"{owner} -> {store}",
+        **{"from": owner},
+        to=store,
+        kind="process",
+        surface="in-process",
+        transition=[],
+        evidence=[{"file": file, "line": line}],
+    )
+
+
+def _sqli(file: str, line: int, *, component: str = "api", check: str = "verified", **extra) -> dict:
+    return {
+        "id": "T-001",
+        "component": component,
+        "cwe": "CWE-89",
+        "evidence_check": check,
+        "evidence": [{"file": file, "line": line}],
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("owner", "store", "file", "line"),
+    [("api", "sqlite", "routes/search.ts", 23), ("orders-service", "ledger-db", "src/orders/repository.py", 81)],
+)
+def test_verified_finding_at_the_cited_interface_is_linked_and_refutes(owner, store, file, line):
+    boundary = _store_boundary("tb-6", store, file=file, line=line, owner=owner)
+    finding = _sqli(file, line, component=owner)
+    gaps = prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={owner, store})
+    assert gaps == []
+    [ref] = finding["boundary_refs"]
+    # The row declares no legs, so the link carries no leg label.
+    assert (ref["boundary_id"], ref["origin_component_id"], ref.get("leg")) == ("tb-6", owner, None)
+    assert ref["evidence_locations"] == [{"file": file, "line": line}]
+    assert prep.boundary_assumption_state(boundary, [finding]) == ("refuted", ["T-001"])
+
+
+def test_a_declared_condition_names_the_leg_the_link_breaks():
+    boundary = _store_boundary("tb-6", "sqlite", file="routes/search.ts", line=23)
+    boundary["assumption_legs"] = [{"leg": "data-interpretation", "condition": "Queries bind every value."}]
+    finding = _sqli("routes/search.ts", 23)
+    prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={"api", "sqlite"})
+    assert finding["boundary_refs"][0]["leg"] == "data-interpretation"
+    [state] = prep.boundary_leg_states(boundary, [finding])
+    assert (state["leg"], state["state"]) == ("data-interpretation", "refuted")
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        _sqli("routes/other.ts", 9),  # same weakness at another sink
+        _sqli("routes/search.ts", 23, check="unchecked"),  # evidence not established
+        _sqli("routes/search.ts", 23, check="ambiguous"),
+        _sqli("routes/search.ts", 23, component="worker"),  # not adjacent
+        {**_sqli("routes/search.ts", 23), "cwe": "CWE-330"},  # bears on no condition
+    ],
+)
+def test_no_reference_without_an_evidenced_interface_and_verified_violation(finding):
+    boundary = _store_boundary("tb-6", "sqlite", file="routes/search.ts", line=23)
+    prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={"api", "sqlite", "worker"})
+    assert "boundary_refs" not in finding
+    state, _ids = prep.boundary_assumption_state(boundary, [finding])
+    assert state != "refuted"
+
+
+def test_two_stores_behind_one_component_without_a_cited_line_get_no_link():
+    boundaries = [
+        _store_boundary("tb-5", "sqlite", file="models/index.ts", line=4),
+        _store_boundary("tb-6", "mongo", file="models/mongo.ts", line=7),
+    ]
+    finding = _sqli("routes/search.ts", 23)
+    gaps = prep.associate_boundary_refs(
+        [finding], boundaries=boundaries, known_component_ids={"api", "sqlite", "mongo"}
+    )
+    assert gaps == [] and "boundary_refs" not in finding
+
+
+def test_a_line_cited_by_two_boundaries_is_a_traceability_gap_not_a_link():
+    boundaries = [
+        _store_boundary("tb-5", "sqlite", file="routes/search.ts", line=23),
+        _store_boundary("tb-6", "mongo", file="routes/search.ts", line=23),
+    ]
+    finding = _sqli("routes/search.ts", 23)
+    gaps = prep.associate_boundary_refs(
+        [finding], boundaries=boundaries, known_component_ids={"api", "sqlite", "mongo"}
+    )
+    assert "boundary_refs" not in finding
+    assert gaps == [
+        {
+            "finding_id": "T-001",
+            "origin_component_id": "api",
+            "candidate_boundary_ids": ["tb-5", "tb-6"],
+            "reason": "evidence is cited by more than one adjacent boundary",
+        }
+    ]
+
+
+def test_an_analyst_reference_is_never_replaced():
+    boundary = _store_boundary("tb-6", "sqlite", file="routes/search.ts", line=23)
+    authored = {
+        "boundary_id": "tb-1",
+        "origin_component_id": "api",
+        "rationale": "Analyst-authored link that must stay as written.",
+        "evidence_locations": [{"file": "routes/search.ts", "line": 23}],
+    }
+    finding = _sqli("routes/search.ts", 23, boundary_refs=[authored])
+    prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={"api", "sqlite"})
+    assert finding["boundary_refs"] == [authored]
+
+
+def _tiered(owner: str, target: str, tier: str) -> list[dict]:
+    return [{"id": owner, "tier": "application"}, {"id": target, "tier": tier}]
+
+
+@pytest.mark.parametrize("cwe", ["CWE-94", "CWE-95", "CWE-1321"])
+def test_code_evaluation_on_a_cited_datastore_line_is_not_a_broken_query_interface(cwe):
+    """The boundary cites a line of the handler that is not the store call; an
+    `eval` there says nothing about how queries reach the store."""
+    boundary = _store_boundary("tb-4", "ledger-db", file="svc/render.py", line=42, owner="orders-svc")
+    finding = {**_sqli("svc/render.py", 42, component="orders-svc"), "cwe": cwe}
+    gaps = prep.associate_boundary_refs(
+        [finding],
+        boundaries=[boundary],
+        known_component_ids={"orders-svc", "ledger-db"},
+        components=_tiered("orders-svc", "ledger-db", "data"),
+    )
+    assert "boundary_refs" not in finding
+    assert [(gap["candidate_boundary_ids"], gap["reason"]) for gap in gaps] == [
+        (["tb-4"], "the finding's weakness class does not match the boundary's target")
+    ]
+    assert prep.boundary_assumption_state(boundary, [finding])[0] != "refuted"
+
+
+@pytest.mark.parametrize(
+    ("target", "tier", "cwe", "linked"),
+    [
+        pytest.param("ledger-db", "data", "CWE-89", True, id="query-on-datastore"),
+        pytest.param("ledger-db", "data", "CWE-943", True, id="nosql-query-on-datastore"),
+        pytest.param("render-sandbox", "application", "CWE-94", True, id="eval-on-non-datastore"),
+        pytest.param("render-sandbox", "application", "CWE-89", False, id="query-on-non-datastore"),
+        pytest.param("render-sandbox", "application", "CWE-639", True, id="unlisted-cwe-unrestricted"),
+    ],
+)
+def test_internal_link_requires_the_sink_class_to_fit_the_target(target, tier, cwe, linked):
+    boundary = _store_boundary("tb-4", target, file="svc/orders.py", line=17, owner="orders-svc")
+    finding = {**_sqli("svc/orders.py", 17, component="orders-svc"), "cwe": cwe}
+    prep.associate_boundary_refs(
+        [finding],
+        boundaries=[boundary],
+        known_component_ids={"orders-svc", target},
+        components=_tiered("orders-svc", target, tier),
+    )
+    assert [ref["boundary_id"] for ref in finding.get("boundary_refs", [])] == (["tb-4"] if linked else [])
+
+
+def test_sink_class_does_not_restrict_an_ingress_crossing():
+    boundary = _tb(evidence=[{"file": "svc/render.py", "line": 42}])
+    finding = {**_sqli("svc/render.py", 42, component="web-api"), "cwe": "CWE-94"}
+    prep.associate_boundary_refs(
+        [finding],
+        boundaries=[boundary],
+        known_component_ids={"web-api"},
+        components=[{"id": "web-api", "tier": "data"}],
+    )
+    assert [ref["boundary_id"] for ref in finding["boundary_refs"]] == ["tb-1"]

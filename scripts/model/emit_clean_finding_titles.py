@@ -46,6 +46,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from shared._register_titles import _cut_at_word
 
 # A file token must end in a KNOWN source/config extension (or be a bare
 # `Dockerfile`), else code identifiers like `DomSanitizer.trust`,
@@ -271,11 +272,9 @@ def _truncate_to_words(text: str, budget: int) -> str:
     text = text.strip()
     if len(text) <= budget:
         return text
-    cut = text[:budget]
-    # Back up to the last whitespace so we never split a word.
-    if " " in cut:
-        cut = cut.rsplit(" ", 1)[0]
-    return cut.strip(" -—–:,.")
+    # The shared heading rule: never split a word, never end on a dangling
+    # article or preposition ("…registered without").
+    return _cut_at_word(text, budget).strip(" -—–:,.")
 
 
 def _derive_title(raw_title: str, threat: dict) -> str:

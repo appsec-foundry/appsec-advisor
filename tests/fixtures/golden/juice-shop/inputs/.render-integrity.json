@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "report_integrity_ok": true,
+  "integrity_pct": 100,
+  "sections_in_scope": 20,
+  "sections_rendered": 20,
+  "sections_fallback": 0,
+  "sections_degraded": 0,
+  "sections_empty": 0,
+  "sections_skipped_conditional": 4,
+  "fragments_expected": 9,
+  "fragments_wired": 8,
+  "broken_sections": [],
+  "sections": [
+    {
+      "id": "infobox",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "changelog",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "quick_mode_notice",
+      "in_scope": false,
+      "outcome": "skipped_conditional",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "toc",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "management_summary",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "critical_attack_tree",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "ms-critical-attack-tree.json"
+      ],
+      "present_fragments": [
+        "ms-critical-attack-tree.json"
+      ]
+    },
+    {
+      "id": "system_overview",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "system-overview.md"
+      ],
+      "present_fragments": [
+        "system-overview.md"
+      ]
+    },
+    {
+      "id": "identified_actors",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "trust_boundary_catalog",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "architecture_diagrams",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "architecture-diagrams.md"
+      ],
+      "present_fragments": [
+        "architecture-diagrams.md"
+      ]
+    },
+    {
+      "id": "attack_walkthroughs",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "attack-walkthroughs.md"
+      ],
+      "present_fragments": [
+        "attack-walkthroughs.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "assets.md"
+      ],
+      "present_fragments": [
+        "assets.md"
+      ]
+    },
+    {
+      "id": "attack_surface",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "attack-surface.md"
+      ],
+      "present_fragments": [
+        "attack-surface.md"
+      ]
+    },
+    {
+      "id": "security_architecture",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "security-architecture.md"
+      ],
+      "present_fragments": [
+        "security-architecture.md"
+      ]
+    },
+    {
+      "id": "skipped_sections_placeholder",
+      "in_scope": false,
+      "outcome": "skipped_conditional",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "systemic_weaknesses",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "requirements_compliance",
+      "in_scope": false,
+      "outcome": "skipped_conditional",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "threat_register",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "compound-chains.json"
+      ],
+      "present_fragments": []
+    },
+    {
+      "id": "abuse_cases",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "mitigation_register",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "out_of_scope",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [
+        "out-of-scope.md"
+      ],
+      "present_fragments": [
+        "out-of-scope.md"
+      ]
+    },
+    {
+      "id": "appendix_run_statistics",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "composition_notes",
+      "in_scope": false,
+      "outcome": "skipped_conditional",
+      "expected_fragments": [],
+      "present_fragments": []
+    },
+    {
+      "id": "appendix_vektor_taxonomy",
+      "in_scope": true,
+      "outcome": "rendered",
+      "expected_fragments": [],
+      "present_fragments": []
+    }
+  ],
+  "generated": "2026-10-16T15:25:12Z"
+}

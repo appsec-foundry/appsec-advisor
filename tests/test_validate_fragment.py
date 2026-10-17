@@ -537,7 +537,7 @@ def test_gate_fragment_invalid_json_recorded_failed(tmp_path, capsys):
     data = json.loads((tmp_path / ".pre-render-report.json").read_text())
     assert data["failed"]
     assert rc == 1
-    assert "failed schema" in err
+    assert "fragment check(s) failed" in err
 
 
 def test_gate_all_valid_prints_summary(tmp_path, monkeypatch, capsys):
@@ -976,7 +976,7 @@ def _role_model(client="spa", role="ext-shopper", *, interaction=True, access=No
 
 
 @pytest.mark.parametrize("client,role", [("spa", "ext-shopper"), ("web-portal", "ext-member")])
-def test_roles_must_use_the_client_and_reach_one_privilege_level(client, role):
+def test_roles_must_use_the_client_while_a_mixed_path_is_left_to_classification(client, role):
     data, components = _role_model(client, role, interaction=False, behind=("none", "none"))
     errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
     assert [e for e in errors if "uses the client" in e] == [
@@ -985,10 +985,8 @@ def test_roles_must_use_the_client_and_reach_one_privilege_level(client, role):
     ]
     data, components = _role_model(client, role)
     errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
-    assert [e for e in errors if "cannot be derived" in e] == [
-        f"{role}: its request path reaches unauthenticated hops (df-001) and authenticated hops (df-002), "
-        "so its access cannot be derived; set `access`, modelling one role per privilege level"
-    ]
+    # The role-access classification splits a mixed path; the analyst is never asked to.
+    assert vf.legitimate_role_errors(data, components) == []
 
 
 @pytest.mark.parametrize(
@@ -1335,3 +1333,101 @@ def test_verdict_rejects_non_design_weakness_as_direct_evidence(tmp_path):
     (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
     errors = vf.verdict_floor_errors(tmp_path, _verdict(["W-071"], severity="yellow"))
     assert any("W-071" in error and "unavailable" in error for error in errors)
+
+
+# ---------------------------------------------------------------------------
+# Citations of unpublished findings in model-authored fragments
+# ---------------------------------------------------------------------------
+
+
+def _published_model(tmp_path: Path, numbers: list[int], refuted: list[int] = ()) -> None:
+    threats = [_finding(n, "High") for n in numbers]
+    threats += [_finding(n, "High", evidence_check="refuted") for n in refuted]
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump({"threats": threats}), encoding="utf-8")
+
+
+def _fragment(tmp_path: Path, name: str, text: str) -> Path:
+    frag = tmp_path / ".fragments"
+    frag.mkdir(exist_ok=True)
+    path = frag / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+_SECTION = (
+    "Rate limiting is absent on the message channel ([F-004](#f-004), [F-009](#f-009)).\n"
+    "\n"
+    "**Relevant findings**\n"
+    "\n"
+    "- [F-004](#f-004) — No connection throttle lets a client exhaust memory.\n"
+    "- [F-009](#f-009) — Any client can submit events without an identity.\n"
+)
+
+
+def test_unpublished_relevant_finding_item_is_removed_and_inline_citation_goes_to_the_fixer(tmp_path: Path):
+    _published_model(tmp_path, [1, 4])
+    path = _fragment(tmp_path, "security-architecture.md", _SECTION)
+    failed, removed = vf.unpublished_finding_ref_errors(tmp_path, tmp_path / ".fragments")
+    assert removed == [
+        {
+            "file": "security-architecture.md",
+            "items": ["- [F-009](#f-009) — Any client can submit events without an identity."],
+        }
+    ]
+    text = path.read_text(encoding="utf-8")
+    assert "- [F-004](#f-004)" in text and "Any client can submit" not in text
+    assert [f["file"] for f in failed] == ["security-architecture.md"]
+    assert "F-009" in failed[0]["error"] and "F-004" not in failed[0]["error"]
+
+
+def test_unpublished_refs_variant_refuted_t_link_bare_id_and_json_fragment(tmp_path: Path):
+    _published_model(tmp_path, [12], refuted=[31])
+    _fragment(tmp_path, "requirements-compliance.md", "The token signer is weak (see T-031 and [x](#t-031)).\n")
+    _fragment(
+        tmp_path,
+        "security-posture-attack-paths.json",
+        json.dumps({"paths": [{"label": "Forge a session", "findings": ["F-012", "T-031"]}]}),
+    )
+    failed, removed = vf.unpublished_finding_ref_errors(tmp_path, tmp_path / ".fragments")
+    assert removed == []
+    assert {f["file"] for f in failed} == {"requirements-compliance.md", "security-posture-attack-paths.json"}
+    assert all("F-031" in f["error"] and "F-012" not in f["error"] for f in failed)
+
+
+def test_published_links_other_namespaces_and_deterministic_fragments_are_untouched(tmp_path: Path):
+    _published_model(tmp_path, [2, 7])
+    body = (
+        "- [F-002](#f-002) — Injection in the search query.\n"
+        "See [the overview](#6-security-architecture), AC-T-044, SAF-019, M-088 and [T-007](#t-007).\n"
+    )
+    path = _fragment(tmp_path, "security-architecture.md", body)
+    _fragment(tmp_path, "attack-walkthroughs.md", "- [F-099](#f-099) — owned by the generator.\n")
+    assert vf.unpublished_finding_ref_errors(tmp_path, tmp_path / ".fragments") == ([], [])
+    assert path.read_text(encoding="utf-8") == body
+
+
+def test_unpublished_refs_without_readable_model_judge_nothing(tmp_path: Path):
+    _fragment(tmp_path, "security-architecture.md", "- [F-019](#f-019) — Weak token generator.\n")
+    assert vf.unpublished_finding_ref_errors(tmp_path, tmp_path / ".fragments") == ([], [])
+
+
+def test_emptied_relevant_findings_block_gets_the_scaffold_none_item(tmp_path: Path):
+    _published_model(tmp_path, [3])
+    path = _fragment(
+        tmp_path, "security-architecture.md", "**Relevant findings**\n\n- [F-021](#f-021) — Weak tokens.\n\n---\n"
+    )
+    assert vf.unpublished_finding_ref_errors(tmp_path, tmp_path / ".fragments")[0] == []
+    assert path.read_text(encoding="utf-8") == "**Relevant findings**\n\n- None.\n\n---\n"
+    assert vf.unpublished_finding_ref_errors(tmp_path, tmp_path / ".fragments") == ([], [])
+
+
+def test_pre_render_gate_blocks_unpublished_refs_with_an_actionable_plan(tmp_path: Path):
+    _published_model(tmp_path, [3])
+    _fragment(tmp_path, "security-architecture.md", "Tokens are predictable ([F-021](#f-021)).\n")
+    assert vf.run_pre_render_gate(tmp_path, write_repair_plan=True) == 1
+    plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text(encoding="utf-8"))
+    action = next(a for a in plan["actions"] if a["type"] == "unpublished_finding_refs")
+    assert plan["actionable"] is True
+    assert action["fragments_to_rewrite"] == [".fragments/security-architecture.md"]
+    assert action["severity"] == "blocking"
+    assert "F-021" in action["raw_issue"] and "Never re-point" in action["remediation"]

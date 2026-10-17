@@ -46,6 +46,7 @@ if not __package__:
 
 import copy
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -57,55 +58,81 @@ from model.enrichment_pass import EnrichmentContinuation
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared._atomic_io import atomic_write_json  # noqa: E402
 
+_ORM_SUFFIXES = {".js", ".ts", ".mjs", ".cjs"}
+_ORM_EXCLUDED_DIRECTORIES = {".git", "node_modules", "dist", "build", "vendor", "coverage"}
 
-def orm_source_files(components: list, repo_root: Path) -> dict[str, str]:
-    """Find contained executable ORM files claimed by stores, excluding tests and comments."""
+
+def _orm_framework(path: Path, root: Path) -> str | None:
+    """The ORM an executable, non-test source file imports and uses, or ``None``."""
     from analyzers.source_auth_scanner import _without_js_comments
 
+    relative = path.relative_to(root).as_posix()
+    if re.search(r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", relative):
+        return None
+    try:
+        if not path.resolve().is_relative_to(root) or not path.is_file() or path.stat().st_size > 512_000:
+            return None
+        source = _without_js_comments(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, RuntimeError):
+        return None
+    strings = list(re.finditer(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`", source, re.S))
+    imported = next(
+        (
+            match
+            for match in re.finditer(r"(?:from|require\s*\()\s*['\"](sequelize|typeorm|mongoose)['\"]", source)
+            if not any(span.start() <= match.start() < span.end() for span in strings)
+        ),
+        None,
+    )
+    executable_source = list(source)
+    for span in strings:
+        executable_source[span.start() : span.end()] = " " * (span.end() - span.start())
+    executable = re.search(
+        r"\.(?:define|init|query|model)\s*\(|@(?:Entity|Column)\s*\(|\bnew\s+(?:\w+\.)?(?:Schema|Sequelize|DataSource)\s*\(",
+        "".join(executable_source),
+    )
+    return imported.group(1) if imported and executable else None
+
+
+def _repository_sources(root: Path):
+    """Every candidate source file in the repository, skipping dependency and build trees."""
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = sorted(d for d in subdirectories if d not in _ORM_EXCLUDED_DIRECTORIES)
+        for name in sorted(files):
+            if Path(name).suffix in _ORM_SUFFIXES:
+                yield Path(directory) / name
+
+
+def orm_source_files(components: list, repo_root: Path, *, whole_repository: bool = False) -> dict[str, str]:
+    """Find contained executable ORM files, excluding tests and comments.
+
+    By default only files claimed by data components are inspected. With
+    ``whole_repository`` every repository source file is, so ORM code is found
+    even when no data component was discovered.
+    """
     root = repo_root.resolve()
-    found, inspected = {}, set()
-    for component in components:
-        if component.get("tier") != "data":
-            continue
-        for pattern in component.get("paths") or []:
-            if not isinstance(pattern, str) or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+    found = {}
+    if whole_repository:
+        candidates = _repository_sources(root)
+    else:
+        candidates = []
+        for component in components:
+            if component.get("tier") != "data":
                 continue
-            expanded = pattern + "/*" if pattern.endswith("**") else pattern
-            for index, path in enumerate(root.glob(expanded)):
-                if index >= 1000:
-                    break
-                relative = path.relative_to(root).as_posix()
-                if relative in inspected or path.suffix not in {".js", ".ts", ".mjs", ".cjs"}:
+            for pattern in component.get("paths") or []:
+                if not isinstance(pattern, str) or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
                     continue
-                inspected.add(relative)
-                if re.search(r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", relative):
-                    continue
-                try:
-                    if not path.resolve().is_relative_to(root) or not path.is_file() or path.stat().st_size > 512_000:
-                        continue
-                    source = _without_js_comments(path.read_text(encoding="utf-8", errors="replace"))
-                except (OSError, RuntimeError):
-                    continue
-                strings = list(re.finditer(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`", source, re.S))
-                imported = next(
-                    (
-                        match
-                        for match in re.finditer(
-                            r"(?:from|require\s*\()\s*['\"](sequelize|typeorm|mongoose)['\"]", source
-                        )
-                        if not any(span.start() <= match.start() < span.end() for span in strings)
-                    ),
-                    None,
-                )
-                executable_source = list(source)
-                for span in strings:
-                    executable_source[span.start() : span.end()] = " " * (span.end() - span.start())
-                executable = re.search(
-                    r"\.(?:define|init|query|model)\s*\(|@(?:Entity|Column)\s*\(|\bnew\s+(?:\w+\.)?(?:Schema|Sequelize|DataSource)\s*\(",
-                    "".join(executable_source),
-                )
-                if imported and executable:
-                    found[relative] = imported.group(1)
+                expanded = pattern + "/*" if pattern.endswith("**") else pattern
+                candidates.extend(path for _, path in zip(range(1000), root.glob(expanded)))
+    inspected = set()
+    for path in candidates:
+        relative = path.relative_to(root).as_posix()
+        if relative in inspected or path.suffix not in _ORM_SUFFIXES:
+            continue
+        inspected.add(relative)
+        framework = _orm_framework(path, root)
+        if framework:
+            found[relative] = framework
     return found
 
 
@@ -243,18 +270,18 @@ def _primary_component_id(components: list) -> str:
     pseudo-component threats (Dockerfile / CI findings) whose evidence file
     matches no component glob, so their §8 Component link resolves to a real
     `#c-NN` anchor instead of dangling at `#ci-cd-pipeline`. Falls back to the
-    first component with an id."""
+    first component with an id. A data-tier component is never the primary
+    one, even when it lists a file such as ``models/index.ts``."""
     entry_re = re.compile(r"(?:^|/)(?:server|app|main|index)\.(?:ts|js)\b")
     for c in components:
-        if not isinstance(c, dict):
+        if not isinstance(c, dict) or c.get("tier") == "data":
             continue
         for g in c.get("paths") or []:
             if isinstance(g, str) and entry_re.search(g):
                 return (c.get("id") or "").strip()
-    for c in components:
-        if isinstance(c, dict) and (c.get("id") or "").strip():
-            return (c.get("id") or "").strip()
-    return ""
+    named = [c for c in components if isinstance(c, dict) and (c.get("id") or "").strip()]
+    first = next((c for c in named if c.get("tier") != "data"), named[0] if named else None)
+    return (first.get("id") or "").strip() if first else ""
 
 
 def resolve_owner(file_path: str, components: list) -> tuple[str, str] | None:

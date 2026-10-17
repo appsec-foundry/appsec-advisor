@@ -1,0 +1,27 @@
+{
+  "abuse_case_id": "AC-T-002",
+  "step_verdicts": [
+    {
+      "controls_found": [],
+      "evidence": {
+        "excerpt": "      const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })",
+        "file": "routes/basket.ts",
+        "line": 19
+      },
+      "matched_finding_id": "T-003",
+      "reason": "retrieveBasket looks up the basket by attacker-supplied req.params.id and returns it. No ownership comparison gates the response. The user.bid comparison only feeds challengeUtils.solveIf.",
+      "state": "decided",
+      "step": 1,
+      "verdict": "confirmed"
+    },
+    {
+      "controls_found": [],
+      "evidence": null,
+      "matched_finding_id": "T-043",
+      "reason": "The matched line only reads req.body.role inside a challenge-detection middleware and then calls next(). It does not persist anything. The persisting create or update handler is not in the supplied source, so mass assignment cannot be decided.",
+      "state": "decided",
+      "step": 2,
+      "verdict": "inconclusive"
+    }
+  ]
+}

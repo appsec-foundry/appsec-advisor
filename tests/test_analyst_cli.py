@@ -68,3 +68,312 @@ def test_help_works_from_any_directory(tmp_path):
         [sys.executable, str(CLI), "--help"], cwd=tmp_path, capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0 and "usage:" in result.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--hypothesis", "Check access", "--revision", "HEAD"], "--path"),
+        (["--hypothesis", "Check access", "--path", "src"], "--revision"),
+        (["--hypothesis", " ", "--revision", "HEAD", "--path", "src"], "non-empty"),
+        (["--hypothesis", "Check access", "--revision", "HEAD", "--path", "../outside"], "invalid hypothesis"),
+    ],
+)
+def test_hypothesis_cli_rejects_missing_or_invalid_scope(repo, tmp_path, args, message):
+    state = tmp_path / "xdg"
+    result = run("hypothesis", "--repo", str(repo), *args, cwd=tmp_path, state=state)
+    assert result.returncode == 2 and message in result.stderr + result.stdout
+    assert not state.exists()
+
+
+def test_hypothesis_cli_builds_a_bounded_controller_invocation(repo, monkeypatch, capsys):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+
+    def invoke(invocation, transport, interactive):
+        observed.append(invocation)
+        return module["ctl"].Outcome(0, "complete", None, "Scoped result\n")
+
+    monkeypatch.setattr(module["ctl"], "run", invoke)
+    assert (
+        module["main"](
+            [
+                "hypothesis",
+                "--repo",
+                str(repo),
+                "--hypothesis",
+                "Check ownership",
+                "--revision",
+                "HEAD",
+                "--path",
+                "src/api",
+                "--path",
+                "src/auth",
+            ]
+        )
+        == 0
+    )
+    assert observed[0].mode == "hypothesis"
+    assert observed[0].hypothesis == "Check ownership"
+    assert observed[0].scope == {"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api", "src/auth"]}
+    assert "Scoped result" in capsys.readouterr().out
+
+
+def test_the_cli_transport_uses_the_admitted_job_model(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    seen = []
+
+    def resume(job_id, repo_root, answers, transport, state_root, **kwargs):
+        seen.append(transport(type("J", (), {"root": repo})(), {"host": {"model": "sonnet"}}))
+        return module["ctl"].Outcome(0, "complete", job_id, "")
+
+    monkeypatch.setattr(module["ctl"], "answer", resume)
+    argv = ["answer", "--repo", str(repo), "--job", "aj-" + "0" * 32, "--answers", str(repo / "a.json")]
+    assert module["main"]([*argv, "--model", "opus"]) == 0
+    assert seen[0].model == "sonnet"
+
+
+def _committed_repo(repo: Path) -> Path:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e.invalid"}
+    env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e.invalid", GIT_CONFIG_GLOBAL=os.devnull)
+    (repo / "src").mkdir()
+    (repo / "src" / "session.js").write_text("const claims = jwt.verify(token, publicKey)\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], check=True, env=env)
+    return repo
+
+
+def test_abuse_case_cli_fills_hypothesis_and_paths_from_the_case(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    argv = ["hypothesis", "--repo", str(_committed_repo(repo)), "--abuse-case", "AC-T-003", "--revision", "HEAD"]
+    assert module["main"]([*argv, "--no-org-profile"]) == 0
+    assert observed[0].scope["paths"] == ["src/session.js"]
+    assert observed[0].hypothesis.startswith("Abuse case AC-T-003 (technical abuse case, plugin)")
+    assert "runs without a threat model" in observed[0].hypothesis
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--abuse-case", "AC-NOPE-1", "--revision", "HEAD", "--no-org-profile"], "unknown abuse case ID"),
+        (["--abuse-case", "AC-T-003", "--hypothesis", "x", "--revision", "HEAD"], "not allowed with"),
+        (["--hypothesis", "x", "--revision", "HEAD", "--path", "src", "--no-org-profile"], "only to --abuse-case"),
+    ],
+)
+def test_abuse_case_cli_rejects_bad_selections_before_any_job(repo, tmp_path, args, message):
+    state = tmp_path / "xdg"
+    result = run("hypothesis", "--repo", str(_committed_repo(repo)), *args, cwd=tmp_path, state=state)
+    assert result.returncode == 2 and message in result.stderr + result.stdout
+    assert not state.exists()
+
+
+@pytest.mark.parametrize(("extra", "uses_model"), [([], True), (["--isolated"], False)])
+def test_abuse_case_cli_uses_the_existing_threat_model_unless_isolated(repo, monkeypatch, extra, uses_model):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    repo = _committed_repo(repo)
+    (repo / "docs" / "security").mkdir(parents=True)
+    # The smallest model that passes output validation; an invalid one is not used as context.
+    (repo / "docs" / "security" / "threat-model.yaml").write_text(
+        "meta: {schema_version: 1, project: Fixture, generated: '2026-10-10T00:00:00Z', mode: full, model: sonnet}\n"
+        "components: []\nassets: []\nattack_surface: []\ntrust_boundaries: []\nsecurity_controls: []\n"
+        "threats: []\nmitigations: []\n"
+    )
+    argv = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-T-003", "--revision", "HEAD", "--no-org-profile"]
+    assert module["main"]([*argv, *extra]) == 0
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    assert (observed[0].threat_model_path == model) is uses_model
+    assert ("uses the supplied threat model" in observed[0].hypothesis) is uses_model
+    assert ("runs without a threat model" in observed[0].hypothesis) is not uses_model
+
+
+@pytest.mark.parametrize(
+    ("extra", "uses_model"), [(["--interactive"], True), (["--interactive", "--isolated"], False), ([], False)]
+)
+def test_design_cli_uses_the_existing_threat_model_unless_isolated(repo, tmp_path, monkeypatch, extra, uses_model):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    model.parent.mkdir(parents=True)
+    model.write_text("meta: {}\n")
+    design = tmp_path / "design.md"
+    design.write_text("Let support staff export customer data.\n")
+    assert module["main"](["design", "--repo", str(repo), "--design-file", str(design), *extra]) == 0
+    assert (observed[0].threat_model_path == model) is uses_model
+    if not uses_model:
+        assert observed[0].threat_model_path is None
+
+
+@pytest.mark.parametrize(
+    ("command", "extra", "uses_model"),
+    [
+        (["review", "--worktree", "--interactive"], [], True),
+        (["review", "--worktree", "--interactive"], ["--isolated"], False),
+        (["review", "--base", "a", "--head", "b"], [], False),
+        (["hypothesis", "--hypothesis", "Check", "--revision", "HEAD", "--path", "src", "--interactive"], [], True),
+        (
+            ["hypothesis", "--hypothesis", "Check", "--revision", "HEAD", "--path", "src", "--interactive"],
+            ["--isolated"],
+            False,
+        ),
+    ],
+)
+def test_reviews_and_hypothesis_checks_use_the_existing_threat_model_interactively(
+    repo, monkeypatch, command, extra, uses_model
+):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    model.parent.mkdir(parents=True)
+    model.write_text("meta: {}\n")
+    assert module["main"]([command[0], "--repo", str(repo), *command[1:], *extra]) == 0
+    assert (observed[0].threat_model_path == model) is uses_model
+
+
+def test_a_focus_question_and_exploration_reach_the_review_invocation(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    argv = ["review", "--repo", str(repo), "--worktree", "--interactive", "--explore", "--question", "Tenant leak?"]
+    assert module["main"](argv) == 0
+    assert (observed[0].question, observed[0].explore) == ("Tenant leak?", True)
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["review", "--base", "a", "--head", "b", "--explore"], "--explore is interactive only"),
+        (["review", "--base", "a", "--head", "b", "--ci", "--explore"], "--explore is interactive only"),
+        (
+            [
+                "hypothesis",
+                "--hypothesis",
+                "Check",
+                "--revision",
+                "HEAD",
+                "--path",
+                "src",
+                "--interactive",
+                "--explore",
+            ],
+            "does not apply to a hypothesis check",
+        ),
+        (["review", "--worktree", "--interactive", "--question", " "], "--question must be non-empty"),
+    ],
+)
+def test_exploration_and_question_misuse_exit_2_before_any_job(repo, tmp_path, args, message):
+    state = tmp_path / "xdg"
+    result = run(args[0], "--repo", str(repo), *args[1:], cwd=tmp_path, state=state)
+    assert result.returncode == 2 and message in result.stderr
+    assert not state.exists()
+
+
+def test_an_exploring_job_gets_a_transport_confined_to_its_copy(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    seen = []
+
+    def invoke(invocation, transport, interactive):
+        job = type("J", (), {"root": repo})()
+        seen.append(transport(job, {"host": {"model": "sonnet"}, "explore": True}))
+        seen.append(transport(job, {"host": {"model": "sonnet"}}))
+        return module["ctl"].Outcome(0, "complete", None, "")
+
+    monkeypatch.setattr(module["ctl"], "run", invoke)
+    assert module["main"](["review", "--repo", str(repo), "--worktree", "--interactive", "--explore"]) == 0
+    assert seen[0].read_root == repo / "explore" and seen[1].read_root is None
+
+
+@pytest.mark.parametrize(
+    "args", [["--isolated"], ["--interactive", "--isolated", "--threat-model", "/x/threat-model.yaml"]]
+)
+def test_design_isolation_is_interactive_and_excludes_an_explicit_model(repo, tmp_path, args):
+    state = tmp_path / "xdg"
+    result = run("design", "--repo", str(repo), "--text", "Export", *args, cwd=tmp_path, state=state)
+    assert result.returncode == 2 and "--isolated is interactive only" in result.stderr
+    assert not state.exists()
+
+
+def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
+    state = tmp_path / "xdg"
+    argv = ["--abuse-case", "AC-T-003", "--revision", "HEAD", "--no-org-profile", "--isolated", "--preview"]
+    result = run("hypothesis", "--repo", str(_committed_repo(repo)), *argv, cwd=tmp_path, state=state)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "ABUSE-CASE CHECK",
+        "  AC-T-003  Privilege Escalation to Admin via JWT Algorithm Confusion  (technical abuse case, plugin)",
+        "    Goal: Forge an admin-role JWT without knowledge of the signing secret.",
+        "    Step 1: JWT algorithm not pinned on verification",
+        "    Step 2: Role claim trusted from token without re-fetch",
+        "  Revision: HEAD",
+        "  Files (1):",
+        "    src/session.js",
+        "  Threat model: none (isolated)",
+        "  Analysis model: sonnet",
+    ]
+    assert not state.exists()
+
+
+def test_preview_without_a_threat_model_warns_and_isolated_does_not(repo, tmp_path):
+    repo = _committed_repo(repo)
+    base = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-B-004", "--revision", "HEAD", "--no-org-profile"]
+    base += ["--path", "src/session.js", "--preview"]
+    warned = run(*base, cwd=tmp_path, state=tmp_path / "a").stdout
+    assert "  Recommendation: create a threat model first" in warned
+    plain = run(*base, "--isolated", cwd=tmp_path, state=tmp_path / "b").stdout
+    assert "Recommendation" not in plain and "Note:" not in plain
+
+
+def test_preview_notes_a_missing_threat_model_for_a_case_that_needs_none(repo, tmp_path):
+    repo = _committed_repo(repo)
+    cases = repo / "docs" / "security" / "abuse-cases"
+    cases.mkdir(parents=True)
+    (cases / "own.yaml").write_text(
+        "schema_version: 2\nabuse_cases:\n  - id: REPO-AC-040\n    kind: descriptive\n"
+        "    title: Session reused after logout\n    check: Check whether a session stays valid after logout.\n"
+        "    scope_qualifier:\n      path_patterns: ['*session*']\n"
+    )
+    argv = ["--repo", str(repo), "--abuse-case", "REPO-AC-040", "--revision", "HEAD", "--no-org-profile", "--preview"]
+    out = run("hypothesis", *argv, cwd=tmp_path, state=tmp_path / "s").stdout
+    assert "  Note: without a threat model only the selected files are checked" in out
+    assert "Recommendation" not in out

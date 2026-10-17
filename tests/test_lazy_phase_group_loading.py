@@ -13,119 +13,11 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_business_context_reaches_the_default_full_runtime():
-    runtime = _read(SKILL_DIR / "SKILL-full-runtime.md")
-    router = _read(SKILL_DIR / "SKILL.md")
-
-    assert "BUSINESS_CONTEXT_SOURCE = business_context_source" in runtime
-    assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
-    assert "prepare --interactive-context --" in runtime
-    assert "prepare --force --interactive-context --" in runtime
-    assert "ACTION.action=decision_required" in runtime
-    assert "modes/business-context.md" in runtime
-    mode = _read(MODES_DIR / "business-context.md")
-    assert "in English" in mode
-    assert "No, a different use case" in mode
-    assert "bare “No”" in mode
-    impact = _read(MODES_DIR / "business-impact.md")
-    assert "in English" in impact
-    assert "No material business harm" in impact
-    assert "wait for explicit selection" in impact
-    assert "including stated conditions" in impact
-    assert "AskUserQuestion" in mode
-    assert "complete-preflight" in mode
-    assert "business-context dialog" in router
-
-
-def test_full_runtime_loads_only_controller_returned_stage_surfaces():
-    runtime = " ".join(_read(SKILL_DIR / "SKILL-full-runtime.md").split())
-
-    assert "Read `ACTION.instruction_file` in full and follow it" in runtime
-    assert "SKILL-thin-stage1-v2.md" in runtime
-    assert "Do not substitute another file" in runtime
-    assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
-    assert "SKILL-thin-stage1d.md" in runtime
-    for name in (
-        "SKILL-thin-stage2.md",
-        "SKILL-thin-stage3.md",
-        "SKILL-thin-stage4.md",
-        "SKILL-thin-completion.md",
-    ):
-        assert name in runtime
-    assert "SKILL-impl.md" not in runtime
-    assert "SKILL-thin-stage1.md" not in runtime
-
-
-def test_rerender_runtime_uses_the_same_release_tail():
-    runtime = _read(SKILL_DIR / "SKILL-rerender-runtime.md")
-
-    assert "SKILL-thin-stage2.md" in runtime
-    assert "SKILL-thin-stage3.md" in runtime
-    assert "SKILL-thin-stage4.md" in runtime
-    assert "SKILL-thin-completion.md" in runtime
-    assert "secret gate is never optional" in runtime
-    assert "SKILL-impl.md" not in runtime
-    assert "SKILL-thin-stage1.md" not in runtime
-
-
-def test_stage3_preserves_the_secret_gate_and_canonical_mutation_order():
-    stage3 = _read(SKILL_DIR / "SKILL-thin-stage3.md")
-
-    assert "unmasked_secrets" in stage3
-    assert "Never skip this" in stage3 and "Quick" in stage3
-    assert "SKIP_QA=true" in stage3
-    assert "compose --strict → apply_prose_fixes → validators/qa_checks.py gate" in stage3
-    assert "MAX_REPAIR_ITERATIONS" in stage3
-    assert "appsec-advisor:appsec-fragment-fixer" in stage3
-    assert stage3.rindex("unmasked_secrets") > stage3.index('validators/qa_checks.py" gate')
-
-
-def test_completion_owns_cross_path_release_gates_in_order():
-    completion = _read(SKILL_DIR / "SKILL-thin-completion.md")
-
-    patch = completion.index("--patch-placeholders --no-print")
-    final_structure = completion.index('validators/qa_checks.py" final_structure')
-    completeness = completion.index("validators/assert_completeness.py")
-    integrity = completion.index("validators/section_integrity.py")
-    exports = completion.index("## 2. Exports and summary")
-    assert patch < final_structure < completeness < integrity < exports
-    assert "model/reclassify_components.py" in completion
-    assert "toc_closure" in completion
-    assert "runtime/runtime_cleanup.py" in completion
-
-
-def test_stage4_preserves_semantic_corrections_without_a_second_review():
-    stage4 = _read(SKILL_DIR / "SKILL-thin-stage4.md")
-    assert ".architect-status.json" in stage4
-    assert "analyzers/architect_review_runtime.py" in stage4
-    assert "Do not dispatch another review" in stage4
-    assert "repairs/apply_editorial_plan.py" not in stage4
-    assert "contexts/build_editorial_context.py" not in stage4
-    assert "unmasked_secrets" in stage4
-    assert "Every non-zero exit blocks completion" in stage4
-    assert "MAX_REPAIR_ITERATIONS" not in stage4
-
-
 def test_removed_legacy_runtime_surfaces_are_absent():
     assert not (SKILL_DIR / "SKILL-impl.md").exists()
     assert not (MODES_DIR / "rerender.md").exists()
     assert not (MODES_DIR / "rebuild-wipe.md").exists()
     assert not (MODES_DIR / "full-scan-recommendation.md").exists()
-
-
-def test_every_watchdog_launch_outlives_the_default_background_limit():
-    # Claude Code stops a background command after 30 minutes unless its Bash
-    # timeout is raised; a stage can run longer than that.
-    launches = [
-        path
-        for path in sorted((PLUGIN_ROOT / "skills").rglob("*.md"))
-        if "skill_watchdog.py" in (text := _read(path)) and "run_in_background: true" in text
-    ]
-    assert {p.name for p in launches} >= {"SKILL-full-runtime.md", "SKILL-rerender-runtime.md"}
-    for path in launches:
-        text = " ".join(_read(path).split())
-        assert "Bash timeout `7200000`" in text, path
-        assert "`killed` notification" in text, path
 
 
 def test_agents_md_describes_the_compact_runtime_only():

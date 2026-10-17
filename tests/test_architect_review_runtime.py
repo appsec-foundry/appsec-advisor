@@ -59,6 +59,124 @@ def setup_run(tmp_path, *, component="gateway", filename="routes/orders.py", cou
     return cfg, source, []
 
 
+def add_late_finding(path, *, component="gateway", filename="routes/orders.py"):
+    current = json.loads((path / ".threats-merged.json").read_text())
+    row = finding("T-002", component, filename)
+    row.update(abuse_case_id="AC-T-901", abuse_case_step=1)
+    current["threats"].append(row)
+    (path / ".threats-merged.json").write_text(json.dumps(current))
+    return current
+
+
+@pytest.mark.parametrize("component,filename", [("gateway", "routes/orders.py"), ("processor", "lib/records.rs")])
+def test_post_abuse_review_only_adds_new_findings_and_preserves_both_corrections(tmp_path, component, filename):
+    from model.emit_general_mitigation_titles import reviewed_fix_titles
+
+    cfg, _, calls = setup_run(tmp_path, component=component, filename=filename)
+    initial = review(tmp_path, cfg, calls=calls)
+    before = deepcopy(initial)
+    add_late_finding(tmp_path, component=component, filename=filename)
+    result = review(tmp_path, cfg, calls=calls, post_abuse=True)
+    assert {k: v for k, v in result.items() if k != "supplement"} == before
+    assert [[row["finding"]["t_id"] for row in packet["findings"]] for packet in calls] == [["T-001"], ["T-002"]]
+    current = json.loads((tmp_path / ".threats-merged.json").read_text())
+    assert current["threats"][0] == initial["snapshot"]["threats"][0]
+    assert current["threats"][1]["risk"] == "High"
+    model = runtime.project_model(tmp_path, model_for(current), current)
+    hydrate(model)
+    assert runtime.verify_model(tmp_path, model) == result
+    assert {tid for tid, _ in reviewed_fix_titles(tmp_path)} == {"T-001", "T-002"}
+    assert runtime.project_model(tmp_path, model, current) == model
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert runtime.main(["--output-dir", str(tmp_path)]) == 0
+    status = json.loads((tmp_path / ".architect-status.json").read_text())
+    assert (status["findings_recorded"], status["reviewed"], status["unreviewed"]) == (2, 2, 0)
+    assert review(tmp_path, cfg, calls=calls, post_abuse=True) == result
+    assert review(tmp_path, cfg, calls=calls) == result
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("late", [False, True])
+def test_final_coverage_counts_delivered_findings_absent_from_the_review(tmp_path, late):
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
+    current = add_late_finding(tmp_path) if late else result["snapshot"]
+    model = runtime.project_model(tmp_path, model_for(current), current)
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert runtime.main(["--output-dir", str(tmp_path)]) == 0
+    status = json.loads((tmp_path / ".architect-status.json").read_text())
+    assert status["findings_recorded"] == 1 + late
+    assert status["unreviewed"] == int(late)
+    assert status["outcome"] == ("incomplete" if late else "reviewed")
+
+
+def test_missing_post_abuse_reply_is_not_retried_or_replaced_by_the_first_reply(tmp_path):
+    cfg, _, _ = setup_run(tmp_path)
+    initial = review(tmp_path, cfg)
+    current = add_late_finding(tmp_path)
+    wave = runtime.advance_review(tmp_path, cfg, post_abuse=True)
+    assert wave and wave[0]["job_id"] != initial["dispatch_jobs"][0]["job_id"]
+    # Leave the original proposal file in place: its identity cannot answer this job.
+    assert runtime.advance_review(tmp_path, cfg, post_abuse=True) is None
+    result = runtime.load_review(tmp_path)
+    assert result["supplement"]["snapshot"] == current
+    coverage = runtime.review_coverage(result, finding_ids={"T-001", "T-002"})
+    assert (coverage["reviewed"], coverage["unreviewed"], coverage["outcome"]) == (1, 1, "incomplete")
+    assert runtime.advance_review(tmp_path, cfg, post_abuse=True) is None
+
+
+def test_post_abuse_review_without_new_findings_spends_no_job_and_closes_once(tmp_path):
+    cfg, _, calls = setup_run(tmp_path)
+    review(tmp_path, cfg, calls=calls)
+    result = review(tmp_path, cfg, calls=calls, post_abuse=True)
+    assert result["supplement"]["finding_ids"] == [] and len(calls) == 1
+    add_late_finding(tmp_path)
+    assert runtime.advance_review(tmp_path, cfg, post_abuse=True) is None
+    assert runtime.review_coverage(result, finding_ids={"T-001", "T-002"})["unreviewed"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["foreign_run", "widened_scope", "nested", "prior_fix", "snapshot"])
+def test_post_abuse_transaction_rejects_foreign_or_altered_state(tmp_path, mutation):
+    cfg, _, _ = setup_run(tmp_path)
+    review(tmp_path, cfg)
+    add_late_finding(tmp_path)
+    value = review(tmp_path, cfg, post_abuse=True)
+    child = value["supplement"]
+    if mutation == "foreign_run":
+        child["run_id"] = "another-run"
+    elif mutation == "widened_scope":
+        child["finding_ids"].append("T-001")
+    elif mutation == "nested":
+        child["supplement"] = deepcopy(child)
+    elif mutation == "prior_fix":
+        child["input"]["threats"][0]["mitigation_title"] = "Log only"
+    else:
+        child["snapshot"]["threats"][1]["risk"] = "Low"
+    (tmp_path / runtime.ARTIFACT).write_text(json.dumps(value))
+    with pytest.raises(ReviewError):
+        runtime.load_review(tmp_path)
+
+
+def test_post_abuse_publication_recovers_without_another_dispatch(tmp_path, monkeypatch):
+    cfg, _, calls = setup_run(tmp_path)
+    review(tmp_path, cfg, calls=calls)
+    add_late_finding(tmp_path)
+    write = runtime.atomic_write_json
+
+    def crash(path, value):
+        if path.name == ".threats-merged.json":
+            raise OSError("interrupted publication")
+        write(path, value)
+
+    monkeypatch.setattr(runtime, "atomic_write_json", crash)
+    with pytest.raises(OSError):
+        review(tmp_path, cfg, calls=calls, post_abuse=True)
+    monkeypatch.setattr(runtime, "atomic_write_json", write)
+    result = review(tmp_path, cfg, calls=calls, post_abuse=True)
+    assert len(calls) == 2
+    assert json.loads((tmp_path / ".threats-merged.json").read_text()) == result["supplement"]["snapshot"]
+
+
 def model_for(source):
     threats, _ = build_threats(source)
     return {"threats": threats, "mitigations": build_mitigations(threats)}
@@ -311,74 +429,6 @@ def test_non_object_yaml_fails_without_a_stale_success(tmp_path):
     assert not (tmp_path / ".architect-status.json").exists()
 
 
-def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-
-    cfg, _, calls = setup_run(tmp_path)
-    cfg["output_dir"] = str(tmp_path)
-    observed = []
-
-    def script(name, args, **kwargs):
-        observed.append(name)
-        if name == "validators/triage_validate_ratings.py":
-            assert json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][0]["risk"] == "High"
-            assert len(calls) == 1
-
-    events = []
-    monkeypatch.setattr(controller, "_run_script", script)
-    monkeypatch.setattr(controller, "_append_event", lambda _out, event, *_a, **_k: events.append(event))
-    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
-    action = controller._context_v2_after_evidence(tmp_path, cfg)
-    assert action["action"] == "dispatch_parallel"
-    assert action["next_boundary"] == "context-v2-post-architect-review"
-    assert "validators/triage_validate_ratings.py" not in observed
-    job = action["dispatch_jobs"][0]
-    assert job["semantic_role"] == "architect_reviewer"
-    assert job["agent_type"] == "appsec-advisor:appsec-architect-reviewer"
-    assert [receipt["artifact_path"] for receipt in action["artifact_receipts"]] == job["input_artifacts"]
-    run_agents(
-        tmp_path,
-        [
-            {
-                "job_id": job["job_id"],
-                "input_artifact": job["input_artifacts"][0],
-                "output_artifact": job["output_artifacts"][0],
-            }
-        ],
-        calls=calls,
-    )
-    assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
-    assert observed.index("model/reclassify_components.py") < observed.index("validators/triage_validate_ratings.py")
-    assert runtime.load_review(tmp_path)["application"]["accepted"]
-    assert "ARCHITECT_REVIEW_COMPLETE" in events and "ORCHESTRATION_GATE_WARN" not in events
-
-
-def test_controller_warns_when_the_review_decided_nothing(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-
-    cfg, _, _ = setup_run(tmp_path)
-    cfg["output_dir"] = str(tmp_path)
-    events = []
-    monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: None)
-    monkeypatch.setattr(controller, "_append_event", lambda _out, event, *_a, **_k: events.append(event))
-    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
-    assert controller._context_v2_after_evidence(tmp_path, cfg)["action"] == "dispatch_parallel"
-    assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
-    assert "ORCHESTRATION_GATE_WARN" in events
-
-
-def test_controller_skips_dispatch_when_review_is_disabled(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-
-    cfg, _, _ = setup_run(tmp_path)
-    cfg.update(architect_review=False, output_dir=str(tmp_path))
-    monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: None)
-    monkeypatch.setattr(controller, "_append_event", lambda *_a, **_k: None)
-    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
-    assert controller._context_v2_after_evidence(tmp_path, cfg) == {"action": "synthesis"}
-    assert not (tmp_path / runtime.ARTIFACT).exists()
-
-
 def test_concurrent_boundary_cannot_spend_or_consume_inflight_work(tmp_path, monkeypatch):
     import fcntl
     import os
@@ -432,21 +482,6 @@ def test_scoring_profile_change_during_review_blocks_publication(tmp_path):
     with pytest.raises(ReviewError, match="scoring profile changed"):
         review(tmp_path, cfg, change_profile)
     assert json.loads((tmp_path / ".threats-merged.json").read_text()) == source
-
-
-def test_required_review_is_preserved_by_cleanup_and_removed_by_fresh_preflight(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-    import runtime.runtime_cleanup as runtime_cleanup
-
-    cfg, _, _ = setup_run(tmp_path)
-    review(tmp_path, cfg)
-    runtime_cleanup.run_cleanup(tmp_path, "all", keep_runtime_files=False, force=True)
-    assert (tmp_path / runtime.ARTIFACT).exists()
-    assert runtime.ARTIFACT in runtime_cleanup.NEVER
-    assert runtime.ARTIFACT in controller._FULL_INTERMEDIATE_NAMES
-    assert runtime.ARTIFACT in controller._REBUILD_NAMES
-    controller._cleanup_full(tmp_path)
-    assert not (tmp_path / runtime.ARTIFACT).exists()
 
 
 def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp_path, monkeypatch):

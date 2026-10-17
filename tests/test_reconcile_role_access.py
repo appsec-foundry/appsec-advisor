@@ -220,20 +220,64 @@ def test_unclassified_role_behind_a_client_takes_the_class_its_whole_path_proves
 @pytest.mark.parametrize(
     "flows",
     [
-        # One authenticated endpoint behind an anonymous entry proves no login for this role.
-        [
-            flow("df-001", "external", "gateway", "none", entity="ext-role"),
-            flow("df-002", "gateway", "backend", "bearer"),
-        ],
         [flow("df-001", "external", "backend", "unknown", entity="ext-role")],
         [flow("df-001", "external", "spa", entity="ext-role", interaction=True)],
     ],
-    ids=["mixed", "unknown-only", "no-request-hop"],
+    ids=["unknown-only", "no-request-hop"],
 )
-def test_mixed_or_unknown_paths_leave_the_role_unclassified(flows):
+def test_unknown_paths_leave_the_role_unclassified(flows):
     assert _classified(flows) == (None, [])
-    if flows[0].get("authentication", {}).get("scheme") == "none":
-        assert mixed_request_path("ext-role", flows, {"db"}) == (["df-001"], ["df-002"])
+
+
+@pytest.mark.parametrize(
+    ("flows", "anonymous_flows", "authenticated_flows"),
+    [
+        # Public and signed-in endpoints called directly by one role.
+        (
+            [
+                flow("df-001", "external", "backend", "none", entity="ext-role"),
+                flow("df-002", "external", "backend", "bearer", entity="ext-role"),
+            ],
+            {"df-001"},
+            {"df-003"},
+        ),
+        # A client that serves both public and signed-in requests.
+        (
+            [
+                flow("df-001", "external", "spa", entity="ext-role", interaction=True),
+                flow("df-002", "spa", "backend", "none"),
+                flow("df-003", "spa", "backend", "cookie"),
+            ],
+            {"df-001"},
+            {"df-004"},
+        ),
+        # Authentication only behind a pass-through entry: both roles enter there.
+        (
+            [
+                flow("df-001", "external", "gateway", "none", entity="ext-role"),
+                flow("df-002", "gateway", "backend", "bearer"),
+            ],
+            {"df-001"},
+            {"df-003"},
+        ),
+    ],
+    ids=["direct", "via-client", "behind-entry"],
+)
+def test_a_mixed_path_splits_the_role_into_one_role_per_class(flows, anonymous_flows, authenticated_flows):
+    """A mixed path proves both classes; the controller models both instead of asking the analyst."""
+    doc = document(flows, access=None)
+    del doc["external_entities"][0]["access"]
+    result, changes = classify(doc, COMPONENTS)
+    assert changes == [{"entity_id": "ext-role", "to": "internet-anon", "split_into": "ext-role-authenticated"}]
+    roles = {e["id"]: e for e in result["external_entities"]}
+    assert roles["ext-role"]["access"] == "internet-anon"
+    assert roles["ext-role-authenticated"]["access"] == "internet-user"
+    owned = lambda role: {f["id"] for f in result["data_flows"] if f.get("from_entity") == role}  # noqa: E731
+    assert owned("ext-role") == anonymous_flows and owned("ext-role-authenticated") == authenticated_flows
+    assert len({f["id"] for f in result["data_flows"]}) == len(result["data_flows"])
+    assert doc["external_entities"][0].get("access") is None
+    # The split model is stable: classifying it again changes nothing.
+    assert classify(result, COMPONENTS)[1] == []
 
 
 def test_classification_leaves_classified_and_declared_roles_alone():
@@ -243,88 +287,47 @@ def test_classification_leaves_classified_and_declared_roles_alone():
     assert result["external_entities"][0]["access"] == "internet-user" and changes == []
 
 
-def _handoff(tmp_path, declaration=None, access="internet-user"):
-    import json
-
-    import orchestrator.orchestration_controller as controller
-
-    repo, out = tmp_path / "repo", tmp_path / "out"
-    (repo / "server").mkdir(parents=True)
-    out.mkdir()
-    (repo / "server/app.py").write_text("app = App()\n@app.get('/items')\ndef items():\n    return load()\n")
-    if declaration:
-        (repo / ".appsec").mkdir()
-        (repo / ".appsec/actors.yaml").write_text(declaration)
-    cited = [{"file": "server/app.py", "line": 2}]
-    components = [
-        {"id": "api", "tier": "application", "paths": ["server/**"]},
-        {"id": "db", "tier": "data", "paths": ["db/**"]},
+@pytest.mark.parametrize("connected", [True, False])
+def test_a_role_path_ends_at_a_reviewed_connection_into_another_repository(connected):
+    """The combined model reaches the verdict the role's own repository analyst saw."""
+    link = flow("df-3", "backend", "gateway")
+    if connected:
+        link["connection_id"] = "connection-" + "a" * 16
+    flows = [
+        flow("df-1", "external", "spa", entity="ext-role", interaction=True),
+        flow("df-2", "spa", "backend", "bearer"),
+        link,
+        # A hop inside the other repository, which the role's analyst never saw.
+        flow("df-4", "gateway", "backend", "none"),
     ]
-    fingerprint = "sha256:" + "a" * 64
-    (out / ".components.json").write_text(json.dumps({"components": components}))
-    (out / ".component-inventory-finalization.json").write_text(
-        json.dumps({"component_inventory_fingerprint": fingerprint, "component_ids": ["api", "db"]})
-    )
-    flows = {
-        "schema_version": 1,
-        "component_inventory_fingerprint": fingerprint,
-        "external_entities": [
-            {
-                "id": "ext-visitor",
-                "name": "Visitor",
-                "kind": "legitimate-role",
-                **({"access": access} if access else {}),
-                "description": "Uses the API.",
-                "evidence": cited,
-            }
-        ],
-        "data_flows": [
-            {
-                "id": "df-001",
-                "from": "external",
-                "from_entity": "ext-visitor",
-                "to": "api",
-                "label": "Lists items",
-                "protocol": "HTTPS",
-                "data_classification": "Internal",
-                "direction": "request-response",
-                "evidence": cited,
-                "authentication": {"scheme": "none", "scope": "The handler checks no credential", "evidence": cited},
-                "provenance": "architecture",
-            }
-        ],
-    }
-    (out / ".data-flows.json").write_text(json.dumps(flows))
-    controller._bind_finalized_component_fingerprint(out, repo)
-    result = json.loads((out / ".data-flows.json").read_text())
-    return {e["id"]: e for e in result["external_entities"]}, (out / ".agent-run.log").read_text()
+    mixed = mixed_request_path("ext-role", flows, {"db"})
+    assert (mixed is None) is connected
 
 
-def test_controller_withdraws_an_undeclared_authenticated_class_the_flows_disprove(tmp_path):
-    roles, log = _handoff(tmp_path)
-    assert roles["ext-visitor"]["access"] == "internet-anon" and "declared" not in roles["ext-visitor"]
-    assert "ROLE_ACCESS_WITHDRAWN" in log and "entity=ext-visitor" in log
+@pytest.mark.parametrize("mode", ["alternatives", "sequence"])
+def test_a_split_keeps_every_access_group_valid(mode):
+    """A group spans one sender; each role's share stays a valid group or none."""
+    from renderers.figure1_security import access_groups
 
+    def member(fid, scheme, step):
+        row = flow(fid, "external", "backend", scheme, entity="ext-role")
+        row.update(protocol="HTTPS", direction="unidirectional")
+        row["authentication"].update(scope="Request handler check.", evidence=[{"file": "app.py", "line": 1}])
+        row["access_group"] = {"id": "inbound-api", "mode": mode, "label": "Inbound API"}
+        if mode == "sequence":
+            row["access_group"]["step"] = step
+        return row
 
-def test_controller_classifies_an_unclassified_role_from_its_request_path(tmp_path):
-    roles, log = _handoff(tmp_path, access=None)
-    assert roles["ext-visitor"]["access"] == "internet-anon"
-    assert "ROLE_ACCESS_CLASSIFIED" in log and "entity=ext-visitor access=internet-anon" in log
-    assert "ROLE_ACCESS_WITHDRAWN" not in log
-
-
-def test_controller_keeps_a_declared_login_outside_the_repository(tmp_path):
-    declaration = (
-        "legitimate_roles:\n"
-        "  - id: ext-visitor\n"
-        "    name: Employee\n"
-        "    access: internet-user\n"
-        "    description: Staff behind the corporate SSO proxy.\n"
-        "    authentication: SSO via oauth2-proxy at the ingress\n"
-    )
-    roles, log = _handoff(tmp_path, declaration)
-    role = roles["ext-visitor"]
-    assert role["access"] == "internet-user" and role["name"] == "Employee"
-    assert role["declared"]["authentication"] == "SSO via oauth2-proxy at the ingress"
-    assert role["evidence"][0] == {"file": ".appsec/actors.yaml", "line": 2}
-    assert "ROLE_DECLARED" in log and "ROLE_ACCESS_WITHDRAWN" not in log
+    flows = [member("df-001", "none", 1), member("df-002", "bearer", 2), member("df-003", "api-key", 3)]
+    assert access_groups(flows)[1] == []
+    doc = document(flows, access=None)
+    del doc["external_entities"][0]["access"]
+    result, _ = classify(doc, COMPONENTS)
+    accepted, errors = access_groups(result["data_flows"])
+    assert errors == []
+    assert list(accepted) == ["inbound-api-authenticated"]
+    assert {f["from_entity"] for f in accepted["inbound-api-authenticated"]} == {"ext-role-authenticated"}
+    anonymous = [f for f in result["data_flows"] if f["from_entity"] == "ext-role"]
+    assert anonymous and all("access_group" not in f for f in anonymous)
+    if mode == "sequence":
+        assert [f["access_group"]["step"] for f in accepted["inbound-api-authenticated"]] == [1, 2]

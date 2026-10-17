@@ -4,6 +4,20 @@
   "title": "Durable architect review transaction",
   "type": "object",
   "properties": {
+    "supplement": {
+      "description": "The single controller-owned review of findings added after the initial review.",
+      "allOf": [
+        {"$ref": "#"},
+        {"required": ["finding_ids"], "not": {"required": ["supplement"]}}
+      ]
+    },
+    "finding_ids": {
+      "description": "Supplement only: exactly the new IDs relative to the initial review input.",
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 10000,
+      "items": {"type": "string", "pattern": "^T-[0-9]{3,}$"}
+    },
     "schema_version": {
       "const": 1
     },

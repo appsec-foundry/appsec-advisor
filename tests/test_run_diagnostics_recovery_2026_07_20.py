@@ -13,10 +13,8 @@ clean run. Three independent mechanisms had to fail for that:
 
 from __future__ import annotations
 
-import json
 import math
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -129,44 +127,6 @@ def test_completed_run_produces_no_outcome_issue(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_controller_abort_populates_run_issues(tmp_path: Path) -> None:
-    """An aborted run must leave a diagnostic bundle behind.
-
-    runtime/aggregate_run_issues.py's only call site is the Completion step, which an
-    aborted run never reaches — so the runs that most need diagnostics produced
-    none, and report-error/diagnose-bundle read a stale file or nothing.
-    """
-    out = tmp_path / "security"
-    out.mkdir()
-    (out / ".agent-run.log").write_text(
-        _log("2026-07-20T16:20:10Z", "WARN", "threat-analyst", "AGENT_ERROR", "something failed") + "\n",
-        encoding="utf-8",
-    )
-    active = out / ".active-tool-calls"
-    active.mkdir()
-    (active / "recon-scanner.json").write_text('{"agent":"recon-scanner"}\n', encoding="utf-8")
-
-    completed = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"),
-            "next",
-            "--output-dir",
-            str(out),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert completed.returncode != 0, "expected this run to abort"
-    assert json.loads(completed.stdout)["action"] == "abort"
-    assert (out / ".run-issues.json").is_file(), (
-        "controller aborted without leaving .run-issues.json; the diagnostic "
-        "bundle is empty for exactly the runs that need it"
-    )
-    assert not active.exists(), "RA-6: RUN_ABORTED retained stale live tool-call state"
-
-
 # --------------------------------------------------------------------------
 # D6 — evidence verifier: gate on content, and budget for the sample
 # --------------------------------------------------------------------------
@@ -221,9 +181,11 @@ def test_stage1_gates_evidence_content_not_just_existence() -> None:
     The pre-seed is schema-clean with every count at zero, so an existence check
     passes while triage silently loses the entire refutation signal.
     """
-    text = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
-    assert "validators/guard_evidence_verification.py" in text, (
-        "the content detector exists but is not invoked where its consumer runs"
+    controller = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
+    emitter = (REPO_ROOT / "scripts" / "auto_emitter_pass.sh").read_text(encoding="utf-8")
+    assert 'str(SCRIPT_DIR / "auto_emitter_pass.sh")' in controller
+    assert emitter.index("validators/guard_evidence_verification.py") < emitter.index(
+        "model/emit_review_mitigations.py"
     )
 
 

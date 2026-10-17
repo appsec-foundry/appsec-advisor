@@ -27,7 +27,64 @@ def _load():
 
 b = _load()
 import model.emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
-from shared._finding_state import is_confirmed  # noqa: E402
+
+_FUNCTION_WORDS = {"a", "an", "the", "of", "to", "in", "on", "at", "by", "for", "from", "with", "and", "or", "without"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "evidence", "instances", "expected"),
+    [
+        # Long class and qualifier plus a deep locator: the class survives whole.
+        (
+            "Broken authorization — attacker-controlled owner ID in resource query — "
+            "service/routes/admin/dataExport.ts:26",
+            {"file": "service/routes/admin/dataExport.ts", "line": 26},
+            None,
+            "Broken authorization — dataExport.ts:26",
+        ),
+        # A long title without a class separator is shortened on a whole phrase.
+        (
+            "Sensitive REST route registered without authentication middleware on the public "
+            "application router — server.ts:310",
+            {"file": "server.ts", "line": 310},
+            None,
+            None,
+        ),
+        # An ASCII " - " separator splits class and qualifier like the em-dash.
+        (
+            "Path traversal - user-controlled file name joined to the upload directory - routes/upload.ts:9",
+            {"file": "routes/upload.ts", "line": 9},
+            None,
+            "Path traversal — routes/upload.ts:9",
+        ),
+        # A consolidated survivor carries no representative locator.
+        (
+            "Insecure Direct Object Reference — owner ID taken from the request body — routes/order.ts:148",
+            {"file": "routes/order.ts", "line": 148},
+            [{"file": "routes/order.ts", "line": 148}, {"file": "routes/wallet.ts", "line": 27}],
+            "Insecure Direct Object Reference",
+        ),
+        # An already short, conforming title is unchanged.
+        ("SQL injection — routes/login.ts:34", {"file": "routes/login.ts", "line": 34}, None, None),
+    ],
+)
+def test_finding_title_keeps_its_class_through_builder_and_emitter(raw, evidence, instances, expected):
+    """The builder conforms a title, the emitter re-derives it; neither may cut
+    a weakness class mid-phrase. The builder used to drop the class separator
+    and truncate, then the emitter re-derived from that mangled string."""
+    threat = {"id": "T-001", "title": raw, "evidence": [evidence]}
+    if instances:
+        threat["instances"] = instances
+    b._conform_title(threat)
+    ecf.apply({"threats": [threat]})
+    title = threat["title"]
+    assert ecf._schema_ok(title), title
+    assert "…" not in title
+    assert title.split(" — ")[0].split()[-1].lower() not in _FUNCTION_WORDS, title
+    if expected is not None:
+        assert title == expected
+    if raw == "SQL injection — routes/login.ts:34":
+        assert title == raw
 
 
 def test_clamp_title_short_passthrough():
@@ -503,38 +560,78 @@ def test_attack_surface_completeness_restores_uncurated_routes():
 # (§7b traceability, MS subsection, requirements-compliance.md authoring) on
 # meta.check_requirements. build_meta must propagate the resolved skill_cfg flag
 # into the yaml, else a --requirements run that ran Phase 8b renders nothing.
-def _meta(**cfg):
+def _meta(repo_root, **cfg):
     return b.build_meta(
         skill_cfg=cfg,
         org=None,
         recon_project=None,
         plugin_root=ROOT,
-        repo_root=ROOT,
+        repo_root=repo_root,
         prior_yaml=None,
     )
 
 
-def test_build_meta_propagates_check_requirements_true():
-    assert _meta(check_requirements=True)["check_requirements"] is True
+@pytest.mark.parametrize(
+    ("manifest", "description", "runtime"),
+    [
+        (
+            {"name": "order-portal", "description": "Order intake for retail stores.", "engines": {"node": "20"}},
+            "Order intake for retail stores.",
+            "Node.js 20",
+        ),
+        ({"name": "ledger"}, None, None),
+    ],
+)
+def test_build_meta_describes_the_project_from_its_own_manifest(tmp_path, monkeypatch, manifest, description, runtime):
+    """§1 reads description and runtime from meta, never from the renderer's working directory."""
+    (tmp_path / "package.json").write_text(json.dumps(manifest))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "package.json").write_text(json.dumps({"name": "foreign", "description": "Not this project."}))
+    monkeypatch.chdir(elsewhere)
+    meta = _meta(tmp_path)
+    assert meta.get("project_description") == description
+    assert meta.get("runtime") == runtime
 
 
-def test_build_meta_check_requirements_defaults_false():
-    assert _meta()["check_requirements"] is False
-    assert _meta(check_requirements=False)["check_requirements"] is False
+def test_build_meta_masks_a_secret_in_the_manifest_description(tmp_path):
+    secret = "AKIA" + "ABCDEFGHIJKLMNOP"
+    (tmp_path / "package.json").write_text(json.dumps({"name": "api", "description": f"Deploy key {secret} here."}))
+    assert secret not in _meta(tmp_path)["project_description"]
 
 
-def test_build_meta_stride_cap_propagated_when_active():
+def test_build_meta_publishes_the_remote_without_credentials(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    remote = "https://deploy:t0ken@example.invalid/org/api.git"
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", remote], check=True)
+    assert _meta(tmp_path)["repo_url"] == "https://example.invalid/org/api.git"
+
+
+def test_build_meta_propagates_check_requirements_true(tmp_path):
+    assert _meta(tmp_path, check_requirements=True)["check_requirements"] is True
+
+
+def test_build_meta_check_requirements_defaults_false(tmp_path):
+    assert _meta(tmp_path)["check_requirements"] is False
+    assert _meta(tmp_path, check_requirements=False)["check_requirements"] is False
+
+
+def test_build_meta_stride_cap_propagated_when_active(tmp_path):
     """--stride-cap N → .skill-config stride_profile.max_threats_per_category
     reaches meta so the report self-discloses the reduced scope."""
-    m = _meta(stride_profile={"max_threats_per_category": 2, "stride_profile_label": "full (per-category cap 2)"})
+    m = _meta(
+        tmp_path, stride_profile={"max_threats_per_category": 2, "stride_profile_label": "full (per-category cap 2)"}
+    )
     assert m["stride_per_category_cap"] == 2
 
 
-def test_build_meta_records_the_register_severity_floor():
+def test_build_meta_records_the_register_severity_floor(tmp_path):
     """Reader-facing tallies need the floor to tell "no Low finding" apart from
     "Low was never collected"; .skill-config.json does not survive cleanup."""
-    assert _meta()["register_severity_floor"] == "medium"
-    assert _meta(register_severity_floor="low")["register_severity_floor"] == "low"
+    assert _meta(tmp_path)["register_severity_floor"] == "medium"
+    assert _meta(tmp_path, register_severity_floor="low")["register_severity_floor"] == "low"
 
 
 @pytest.mark.parametrize(
@@ -626,31 +723,31 @@ def test_build_meta_leaves_the_context_source_empty_without_context(tmp_path):
     assert m["business_context_sha256"] is None
 
 
-def test_build_meta_stride_cap_none_when_full():
+def test_build_meta_stride_cap_none_when_full(tmp_path):
     """No cap (full profile or missing) → None, renderer omits the row."""
-    assert _meta()["stride_per_category_cap"] is None
-    assert _meta(stride_profile={"stride_profile_label": "full"})["stride_per_category_cap"] is None
+    assert _meta(tmp_path)["stride_per_category_cap"] is None
+    assert _meta(tmp_path, stride_profile={"stride_profile_label": "full"})["stride_per_category_cap"] is None
 
 
-def test_build_meta_propagates_per_stage_reasoning_models():
+def test_build_meta_propagates_per_stage_reasoning_models(tmp_path):
     """Per-stage models reach meta so the report can disclose mixed tiers
     (e.g. APPSEC_TRIAGE_MODEL=opus while STRIDE stays sonnet)."""
-    m = _meta(stride_model="sonnet", triage_model="opus", merger_model="sonnet")
+    m = _meta(tmp_path, stride_model="sonnet", triage_model="opus", merger_model="sonnet")
     assert m["stride_model"] == "sonnet"
     assert m["triage_model"] == "opus"
     assert m["merger_model"] == "sonnet"
 
 
-def test_build_meta_records_invocation():
+def test_build_meta_records_invocation(tmp_path):
     """The exact invocation flags reach meta (reproducibility anchor that
     survives runtime cleanup, unlike .skill-config.json)."""
-    m = _meta(invocation_args="--reasoning-model sonnet-economy --triage-model opus --stride-cap 2")
+    m = _meta(tmp_path, invocation_args="--reasoning-model sonnet-economy --triage-model opus --stride-cap 2")
     assert m["invocation"] == "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2"
-    assert _meta()["invocation"] is None  # absent → None (renderer falls back)
+    assert _meta(tmp_path)["invocation"] is None  # absent → None (renderer falls back)
 
 
-def test_build_meta_serializes_rebuild_as_full_assessment():
-    assert _meta(mode="rebuild")["mode"] == "full"
+def test_build_meta_serializes_rebuild_as_full_assessment(tmp_path):
+    assert _meta(tmp_path, mode="rebuild")["mode"] == "full"
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -1685,230 +1782,7 @@ def test_changelog_mitigation_legacy_prior_no_baseline(tmp_path):
     assert cl[0]["mitigation_fingerprints"] == ["use parameterized queries"]
 
 
-# ─── Incremental depth-downgrade reconciliation (B1+B2) ────────────────────
-# reconcile_incremental_threats re-injects prior threats of RE-ANALYZED
-# components that a shallower re-scan dropped without an affirmative fix, and
-# records honest changelog buckets. See
-# docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md.
-
-import hashlib as _hashlib
-
-
-def _setup_incremental(tmp_path, *, prior_depth, stride):
-    """stride: {cid: (baseline_bytes, current_bytes)}.
-
-    A component is "re-analyzed" when baseline_bytes differ from current_bytes (the on-disk
-    .stride file no longer matches the baseline hash); "carried-forward" when they
-    are equal.
-    """
-    cache = tmp_path / ".appsec-cache"
-    cache.mkdir(parents=True, exist_ok=True)
-    sf = {}
-    for cid, (baseline_bytes, current_bytes) in stride.items():
-        sf[cid] = {"sha256": "sha256:" + _hashlib.sha256(baseline_bytes).hexdigest()}
-        (tmp_path / f".stride-{cid}.json").write_bytes(current_bytes)
-    (cache / "baseline.json").write_text(json.dumps({"last_run_depth": prior_depth, "stride_files": sf}))
-
-
-def _prior_threat(tid, comp, cwe, title):
-    return {
-        "id": tid,
-        "component": comp,
-        "cwe": cwe,
-        "title": title,
-        "risk": "High",
-        "likelihood": "Medium",
-        "impact": "High",
-    }
-
-
-def test_reanalyzed_component_ids_detects_sha_mismatch(tmp_path):
-    _setup_incremental(
-        tmp_path,
-        prior_depth="thorough",
-        stride={
-            "auth": (b'{"a":1}', b'{"a":2}'),  # changed -> re-analyzed
-            "api": (b'{"b":1}', b'{"b":1}'),  # unchanged -> carried-forward
-        },
-    )
-    assert b._reanalyzed_component_ids(tmp_path) == {"auth"}
-
-
-def test_reanalyzed_component_ids_none_without_baseline(tmp_path):
-    assert b._reanalyzed_component_ids(tmp_path) is None
-
-
-def test_reconcile_carries_dropped_prior_threat_at_shallower_depth(tmp_path):
-    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior_threat = _prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")
-    prior_threat.update(evidence_check="verified", evidence_basis="llm-verified")
-    prior = {"threats": [prior_threat]}
-    new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi (db.ts:3)"}]
-    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
-    carried = [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
-    assert len(carried) == 1
-    assert carried[0]["title"] == "Weak auth (login.ts:10)"
-    # The prior verdict's basis does not travel with an unverified carry-forward.
-    assert carried[0]["evidence_basis"] == "carried-unverified-shallower-depth"
-    assert not is_confirmed(carried[0])
-    # fresh, collision-free id (continues after T-001)
-    assert carried[0]["id"] == "T-002"
-    assert recon is not None
-    assert recon["reanalyzed_ids"] == ["auth"]
-    assert recon["resolved_reason_by_id"] == {}
-
-
-def test_reconcile_resolves_when_analyzer_affirms_fix(tmp_path):
-    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
-    resolved_prior = {"T-007": "MFA enforced at login.ts:10"}
-    out, recon = b.reconcile_incremental_threats([], prior, [{"id": "auth"}], tmp_path, "quick", resolved_prior)
-    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
-    assert recon["resolved_reason_by_id"] == {"T-007": "MFA enforced at login.ts:10"}
-
-
-def test_reconcile_no_carry_at_equal_depth(tmp_path):
-    _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
-    out, recon = b.reconcile_incremental_threats([], prior, [{"id": "auth"}], tmp_path, "quick", {})
-    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
-    # equal depth → recorded as resolved, not silently dropped
-    assert recon["resolved_reason_by_id"]["T-007"].startswith("not reproduced")
-
-
-def test_reconcile_skips_carried_forward_component(tmp_path):
-    # api unchanged → carried-forward → its prior threats must NOT be touched
-    _setup_incremental(tmp_path, prior_depth="thorough", stride={"api": (b"same", b"same")})
-    prior = {"threats": [_prior_threat("T-007", "api", "CWE-89", "SQLi (q.ts:9)")]}
-    out, recon = b.reconcile_incremental_threats([], prior, [{"id": "api"}], tmp_path, "quick", {})
-    assert out == []  # nothing injected
-    assert recon["resolved_reason_by_id"] == {}
-    assert recon["carried_forward_ids"] == ["api"]
-
-
-def _prior_threat_with_file(tid, comp, cwe, title, file, line):
-    t = _prior_threat(tid, comp, cwe, title)
-    t["evidence"] = [{"file": file, "line": line}]
-    return t
-
-
-def test_reconcile_recognises_reproduced_finding_across_cwe_drift(tmp_path):
-    """Regression (2026-06-26): an incremental re-scan that re-emits a prior
-    finding with a drifted component/CWE/title but the SAME evidence file must
-    recognise it as reproduced via the file|cwe-family match key — NOT mark it
-    resolved at equal depth (a false "fixed" claim)."""
-    _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
-    prior = {
-        "threats": [
-            _prior_threat_with_file(
-                "T-007", "auth", "CWE-798", "Hardcoded RSA private key enabling JWT forgery", "lib/insecurity.ts", 21
-            )
-        ]
-    }
-    # Re-emitted: component renamed, CWE swapped within hardcoded-key family
-    # (798→321), title reworded — same file.
-    new_threats = [
-        _prior_threat_with_file(
-            "T-001",
-            "express-backend",
-            "CWE-321",
-            "Hardcoded RSA private key enables arbitrary JWT signing",
-            "lib/insecurity.ts",
-            21,
-        )
-    ]
-    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
-    # Recognised as present: no bogus resolved, and not double-counted as added.
-    assert recon["resolved_reason_by_id"] == {}
-    assert recon["added_ids"] == []
-    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
-
-
-def test_reconcile_no_duplicate_carry_across_cwe_drift_shallower(tmp_path):
-    """Same drift at SHALLOWER depth must not DUPLICATE the finding: the prior
-    threat is recognised as re-emitted (match key) and not carried alongside its
-    own re-emission."""
-    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior = {
-        "threats": [_prior_threat_with_file("T-007", "auth", "CWE-770", "No rate limit on websocket", "lib/ws.ts", 19)]
-    }
-    new_threats = [
-        _prior_threat_with_file(
-            "T-001", "realtime-channel", "CWE-400", "No rate limiting on socket.io connections", "lib/ws.ts", 19
-        )
-    ]
-    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
-    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
-    assert len(out) == 1  # only the re-emitted finding, no carried duplicate
-
-
-def test_reconcile_distinct_findings_same_file_stay_separate(tmp_path):
-    """Narrow families must not over-merge in the incremental path either: a
-    distinct finding in a re-analyzed file (different family) that is genuinely
-    gone is still recorded resolved at equal depth."""
-    _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
-    prior = {
-        "threats": [
-            _prior_threat_with_file("T-007", "auth", "CWE-321", "Hardcoded key", "lib/insecurity.ts", 21),
-            _prior_threat_with_file("T-008", "auth", "CWE-916", "MD5 hashing", "lib/insecurity.ts", 41),
-        ]
-    }
-    # Only the hardcoded key persists; weak hashing is gone.
-    new_threats = [_prior_threat_with_file("T-001", "auth", "CWE-321", "Hardcoded RSA key", "lib/insecurity.ts", 21)]
-    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
-    # Hardcoded key recognised (present); weak hashing recorded resolved.
-    assert recon["resolved_reason_by_id"].get("T-008", "").startswith("not reproduced")
-    assert "T-007" not in recon["resolved_reason_by_id"]
-
-
-def test_reconcile_no_double_count_when_reemitted(tmp_path):
-    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
-    # analyzer re-emitted the same finding (same fingerprint) under a fresh id
-    new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-287", "title": "Weak auth (login.ts:10)"}]
-    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
-    assert len(out) == 1  # no re-injection
-    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
-
-
-def test_reconcile_noop_on_full_run(tmp_path):
-    # no baseline.json → full/first run → no-op, recon_info None
-    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
-    out, recon = b.reconcile_incremental_threats(
-        [{"id": "T-001", "component": "auth"}], prior, [{"id": "auth"}], tmp_path, "quick", {}
-    )
-    assert recon is None
-    assert len(out) == 1
-
-
-def test_changelog_incremental_buckets_populated(tmp_path):
-    recon = {
-        "reanalyzed_ids": ["auth"],
-        "carried_forward_ids": ["api"],
-        "resolved_reason_by_id": {"T-009": "fixed at x.ts:1"},
-        "carried_ids": ["T-002"],
-        "added_ids": ["T-001"],
-    }
-    cl = b.build_changelog(
-        {"mode": "incremental", "assessment_depth": "quick"},
-        [{"id": "T-001", "component": "auth"}, {"id": "T-002", "component": "auth"}],
-        [{"id": "auth"}, {"id": "api"}],
-        [],
-        None,
-        tmp_path,
-        current_sha="sha-x",
-        recon_info=recon,
-    )
-    e = cl[0]
-    assert e["reanalyzed_components"] == ["auth"]
-    assert e["carried_forward_components"] == ["api"]
-    assert e["added"]["threats"] == ["T-001"]
-    assert e["resolved"]["threats"] == ["T-009"]
-    assert e["resolved"]["reason_by_id"] == {"T-009": "fixed at x.ts:1"}
-
-
 def test_changelog_full_run_unchanged_without_recon(tmp_path):
-    # recon_info=None (full run) keeps the legacy "treat as full" behavior
     cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="s")
     assert cl[0]["carried_forward_components"] == []
     assert cl[0]["added"]["threats"] == ["T-001"]
@@ -2123,7 +1997,9 @@ def test_main_requirements_run_fixture(tmp_path, monkeypatch):
     if not _LAST_RUN_REQ.is_dir():
         pytest.skip("requirements-run fixture absent")
     run = _copy_run(_LAST_RUN_REQ, tmp_path)
-    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT), "--dry-run"])
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rc = _run_main(monkeypatch, [str(run), "--repo-root", str(repo), "--plugin-root", str(ROOT), "--dry-run"])
     assert rc == 0
 
 
@@ -2244,42 +2120,6 @@ def test_carry_forward_hit_and_miss(capsys):
         b._carry_forward(None, "components", ".components.json")
     assert exc.value.code == 4
     assert "neither .components.json" in capsys.readouterr().err
-
-
-def test_load_last_run_depth_variants(tmp_path):
-    assert b._load_last_run_depth(tmp_path) is None  # no baseline.json
-    cache = tmp_path / ".appsec-cache"
-    cache.mkdir()
-    bp = cache / "baseline.json"
-    bp.write_text(json.dumps({"last_run_depth": "thorough"}))
-    assert b._load_last_run_depth(tmp_path) == "thorough"
-    bp.write_text("{ malformed")
-    assert b._load_last_run_depth(tmp_path) is None
-
-
-def test_reanalyzed_component_ids_variants(tmp_path):
-    # no baseline → None
-    assert b._reanalyzed_component_ids(tmp_path) is None
-    cache = tmp_path / ".appsec-cache"
-    cache.mkdir()
-    bp = cache / "baseline.json"
-    # malformed baseline → None
-    bp.write_text("{ bad")
-    assert b._reanalyzed_component_ids(tmp_path) is None
-    # baseline with a stride file whose hash differs → changed set
-    import hashlib as _h
-
-    sfile = tmp_path / ".stride-comp-a.json"
-    sfile.write_text('{"new": true}')
-    bp.write_text(
-        json.dumps({"stride_files": {"comp-a": {"sha256": "sha256:deadbeef"}, "comp-gone": {"sha256": "sha256:x"}}})
-    )
-    changed = b._reanalyzed_component_ids(tmp_path)
-    assert changed == {"comp-a"}  # comp-gone has no on-disk stride file → skipped
-    # matching hash → not changed
-    real = "sha256:" + _h.sha256(sfile.read_bytes()).hexdigest()
-    bp.write_text(json.dumps({"stride_files": {"comp-a": {"sha256": real}}}))
-    assert b._reanalyzed_component_ids(tmp_path) == set()
 
 
 # --- build_threats branches --------------------------------------------------
@@ -2772,27 +2612,6 @@ def test_build_attack_surface_sidecar_only_when_no_routes():
     sidecar = {"additions": [{"entry_point": "GET /only", "protocol": "HTTP"}]}
     out, _ = b.build_attack_surface(None, sidecar)
     assert any(e["entry_point"] == "GET /only" for e in out)
-
-
-# --- _index_resolved_prior ---------------------------------------------------
-
-
-def test_index_resolved_prior_keys_by_id_and_fingerprint():
-    merged = {
-        "resolved_prior_findings": [
-            {"prior_id": "T-009", "reason": "fixed in PR", "component_id": "c1", "cwe": "CWE-89", "title": "SQLi"},
-            {"component_id": "c2", "cwe": "CWE-79", "title": "XSS"},  # no prior_id, no reason
-            "not-a-dict",  # skipped
-        ]
-    }
-    idx = b._index_resolved_prior(merged)
-    assert idx["T-009"] == "fixed in PR"
-    # fingerprint key present for the second (default reason). The key is the
-    # _fp_str string (comp|cwe|title), matching how the reconciler probes this
-    # dict — resolved findings carry no file, so the secondary key stays the
-    # comp|cwe|title fingerprint rather than the file|cwe-family match key.
-    fp = b._fp_str({"component": "c2", "cwe": "CWE-79", "title": "XSS"})
-    assert idx[fp] == "fix confirmed by re-scan"
 
 
 # --- renumber_trust_boundaries -----------------------------------------------

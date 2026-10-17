@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/data-flows-v2.schema.json",
+  "title": "Repository-qualified data-flow inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "data_flows",
+    "source_scope_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "component_inventory_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "external_entities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "description",
+          "evidence"
+        ],
+        "dependentSchemas": {
+          "access": {
+            "properties": {
+              "kind": {
+                "const": "legitimate-role"
+              }
+            }
+          },
+          "service_roles": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "identity-provider",
+                  "external-service"
+                ]
+              }
+            }
+          }
+        },
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "maxLength": 100
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "legitimate-role",
+              "identity-provider",
+              "external-service"
+            ]
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "internet-anon",
+              "internet-user",
+              "internet-priv-user"
+            ]
+          },
+          "service_roles": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "role",
+                "evidence"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "oauth-authorization-server",
+                    "oauth-resource-server",
+                    "oidc-provider",
+                    "saml-identity-provider",
+                    "llm-inference",
+                    "mcp-service",
+                    "retrieval-store",
+                    "blockchain-rpc",
+                    "payment-provider",
+                    "email-delivery",
+                    "object-storage",
+                    "message-broker",
+                    "telemetry-service",
+                    "package-registry"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "items": {
+                    "$ref": "https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/evidence"
+                  }
+                }
+              }
+            }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "declared": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "const": ".appsec/actors.yaml"
+              },
+              "authentication": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/evidence"
+            }
+          }
+        }
+      }
+    },
+    "data_flows": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/data_flow"
+      }
+    },
+    "source_scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "string",
+      "pattern": "^(?:external|[a-z][a-z0-9-]+)$",
+      "maxLength": 128
+    },
+    "evidence": {
+      "$ref": "https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/evidence"
+    },
+    "data_flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to",
+        "label",
+        "protocol",
+        "data_classification",
+        "direction",
+        "evidence",
+        "provenance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^df-[0-9]{3,}$"
+        },
+        "from": {
+          "$ref": "#/$defs/endpoint"
+        },
+        "to": {
+          "$ref": "#/$defs/endpoint"
+        },
+        "from_entity": {
+          "type": "string",
+          "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 100
+        },
+        "to_entity": {
+          "type": "string",
+          "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 100
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "diagram_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "pattern": "^[^\\r\\n\\t]+$",
+          "description": "Short plain-text name of the transported data for Figure 1 (e.g. Credentials, Order records), preserving authentication or direction distinctions. Omit repeated endpoint names and protocol. The full label remains authoritative; optional for older inventories."
+        },
+        "protocol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "authentication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scheme",
+            "scope",
+            "evidence"
+          ],
+          "properties": {
+            "scheme": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "none",
+                "password",
+                "basic",
+                "bearer",
+                "cookie",
+                "api-key",
+                "oauth2",
+                "oidc",
+                "saml",
+                "mtls",
+                "private-key",
+                "client-secret",
+                "mfa",
+                "other"
+              ]
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240,
+              "pattern": "^[^\\r\\n\\t]+$"
+            },
+            "transport": {
+              "type": "string",
+              "enum": [
+                "protected",
+                "cleartext",
+                "unknown"
+              ]
+            },
+            "flow": {
+              "type": "string",
+              "enum": [
+                "implicit",
+                "authorization-code",
+                "authorization-code-pkce",
+                "client-credentials",
+                "device-code"
+              ]
+            },
+            "factors": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "password",
+                  "totp",
+                  "webauthn",
+                  "hardware-key",
+                  "push",
+                  "sms",
+                  "email",
+                  "biometric"
+                ]
+              }
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "$ref": "https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/evidence"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "scheme": {
+                    "const": "mfa"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "factors"
+                ],
+                "properties": {
+                  "factors": {
+                    "contains": {
+                      "enum": [
+                        "password",
+                        "biometric"
+                      ]
+                    }
+                  }
+                }
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "factors"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "flow"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "scheme": {
+                    "enum": [
+                      "oauth2",
+                      "oidc"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "access_group": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "mode",
+            "label"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "maxLength": 80
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "alternatives",
+                "sequence"
+              ]
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 48,
+              "pattern": "^[^\\r\\n\\t]+$"
+            },
+            "step": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "mode": {
+                    "const": "sequence"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "step"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "step"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "interaction": {
+          "type": "boolean",
+          "description": "Human interaction with a client, not a technical API request."
+        },
+        "protocol_group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Evidenced multi-step integration; may use endpoint references in the overview."
+        },
+        "data_classification": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "unidirectional",
+            "bidirectional",
+            "request-response"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "route_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "interface_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "recon",
+            "architecture",
+            "route-extraction",
+            "repo-declared"
+          ]
+        },
+        "threats": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^T-[0-9]{3,}$"
+          }
+        },
+        "connection_id": {
+          "type": "string",
+          "pattern": "^connection-[a-f0-9]{16}$"
+        },
+        "deployment_activation": {
+          "const": "unknown",
+          "description": "Source evidence does not establish simultaneous production activation."
+        }
+      }
+    }
+  }
+}

@@ -10,7 +10,7 @@ Loaded by SKILL.md Step 4 only when `save_md`, `save_pdf` or `save_json` is set.
 
 ### 4a — If `save_md` is true
 
-Write the full report to `docs/security/appsec-requirements-report.md` (create `docs/security/` if needed).
+Write the full report to `$AUDIT_OUTPUT_DIR/appsec-requirements-report.md` (Step 1b created the directory).
 
 The Markdown report is more detailed than the console, but still includes
 only open requirements (`FAIL` and `PARTIAL`). Do not include `PASS` or
@@ -66,7 +66,7 @@ sequelize.query("select * from product where name like :term", {
 **Links:**
 - Requirement: <full requirement url>
 - Blueprint: <full blueprint section url, if available>
-- Threat model: [F-014](docs/security/threat-model.md#f-014)
+- Threat model: [F-014](security-assessment.md#f-014)
 
 ---
 
@@ -99,12 +99,12 @@ Markdown rules:
 - Sort open requirements with the same order as console output.
 - Use one `###` heading per open requirement: `### <STATUS> · <PRIORITY> · <ID> — <Title>`.
 - Include full URLs for requirement and blueprint links.
-- If `req_to_threats[req_id]` is non-empty (from Step 1.5), add one Threat model bullet per linked `F-NNN`, linking to `docs/security/threat-model.md#f-nnn`. Canonical link shape: `[F-NNN · Risk](docs/security/threat-model.md#f-nnn)`.
+- If `req_to_threats[req_id]` is non-empty (from Step 1.5), add one Threat model bullet per linked `F-NNN`, linking to the assessment report's `#f-nnn` anchor. Canonical link shape: `[F-NNN · Risk](<report>#f-nnn)`, where `<report>` is the bare `assessment_report` file name when `ASSESSMENT_DIR` (Step 1.5) equals `AUDIT_OUTPUT_DIR`, else its absolute path `<ASSESSMENT_DIR>/<assessment_report>`.
 - Include a short before/after code block only when there is meaningful code evidence. Omit code blocks for missing process controls or absent configuration.
 - Do not add a Passed section.
 - Do not add an Unverifiable section.
 
-Print: `✓ Markdown report written to docs/security/appsec-requirements-report.md`
+Print: `✓ Markdown report written to $AUDIT_OUTPUT_DIR/appsec-requirements-report.md`
 
 ### 4b — If `save_json` is true
 
@@ -118,7 +118,7 @@ cp "$AUDIT_OUTPUT_DIR/.requirements-audit.json" \
    "$AUDIT_OUTPUT_DIR/appsec-requirements-report.json"
 ```
 
-Print: `✓ JSON report written to docs/security/appsec-requirements-report.json`
+Print: `✓ JSON report written to $AUDIT_OUTPUT_DIR/appsec-requirements-report.json`
 
 ### 4c — If `save_pdf` is true
 
@@ -137,7 +137,7 @@ PDF_EXIT=$?
 ```
 
 Handle the result by exit code (the exporter is self-describing on stderr):
-- `0` — print `✓ PDF report written to docs/security/appsec-requirements-report.pdf`.
+- `0` — print `✓ PDF report written to $AUDIT_OUTPUT_DIR/appsec-requirements-report.pdf`.
 - `1` — a hard dependency (pandoc or weasyprint) is missing. This is **non-fatal**: the Markdown report was still written. Print:
   `⚠ PDF skipped — install pandoc + weasyprint (the Markdown report was saved).`
 - `2` / `3` — input/conversion error. Print `⚠ PDF conversion failed (see message above); the Markdown report was saved.`

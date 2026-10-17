@@ -152,10 +152,10 @@ def finding_signals(threats: list[dict], repo_root: Path) -> list[dict]:
                 if not isinstance(site, dict):
                     continue
                 text = _source_window(repo_root, site)
-                first_line_end = len(text.split("\n", 1)[0])
+                site_end = _cited_expression_end(text)
                 literals = [(m.start(), m.end()) for m in _JS_LEXEME.finditer(text)]
                 if not text or not any(
-                    match.start() < first_line_end and not any(start <= match.start() < end for start, end in literals)
+                    match.start() < site_end and not any(start <= match.start() < end for start, end in literals)
                     for pattern in selector["any_pattern"]
                     for match in re.finditer(pattern, text)
                 ):
@@ -182,3 +182,30 @@ def finding_signals(threats: list[dict], repo_root: Path) -> list[dict]:
             )
     validate_document({"version": 1, "design_signals": signals})
     return signals
+
+
+def _cited_expression_end(text: str) -> int:
+    """Admit a continued call at the cited line, never a neighbouring statement.
+
+    The source window remains bounded. Strings cannot open delimiters, and a
+    control/function body is not a continuation of the cited implementation API.
+    """
+    first_end = len(text.split("\n", 1)[0])
+    masked = _JS_LEXEME.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m.group()), text)
+    first = masked[:first_end]
+    if re.match(r"\s*(?:(?:export\s+)?(?:async\s+)?function\b|class\b|if\b|for\b|while\b|switch\b)", first):
+        return first_end
+    stack = []
+    for index, char in enumerate(masked):
+        if index == first_end and "(" not in stack and "[" not in stack:
+            return first_end
+        if char in "([{":
+            stack.append(char)
+        elif char in ")]}":
+            if not stack or stack.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+                return first_end
+            if index > first_end and not stack:
+                return index + 1
+        elif char == ";" and not stack:
+            return min(index + 1, first_end) if index < first_end else index + 1
+    return len(text) if stack else first_end

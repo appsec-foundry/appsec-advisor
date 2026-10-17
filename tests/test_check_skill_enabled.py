@@ -59,25 +59,25 @@ def _write_effective(tmp_path: Path, toggles: dict, active: bool = True) -> Path
 
 
 def test_no_effective_file_returns_enabled(tmp_path):
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
 def test_inactive_profile_returns_enabled(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": False}, active=False)
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": False}, active=False)
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
 def test_enabled_skill_passes(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": True}})
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": True}})
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
 def test_disabled_user_skill_hard(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    rc, msg = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_DISABLED_HARD
     assert "central" in msg
 
@@ -89,20 +89,20 @@ def test_disabled_operational_skill_soft(tmp_path):
 
 
 def test_help_only_disabled_returns_help_code(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    rc, _ = cse.check("export-threat-model", tmp_path, True)
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    rc, _ = cse.check("export-security-assessment", tmp_path, True)
     assert rc == cse.EXIT_DISABLED_HELP_OK
 
 
 def test_bool_shorthand_true(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": True})
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": True})
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
 def test_bool_shorthand_false_treated_as_disabled(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": False})
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": False})
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_DISABLED_HARD
 
 
@@ -115,32 +115,32 @@ def test_packaged_policy_blocks_without_any_effective_file(tmp_path, _empty_pack
     """The gap this closes: the effective profile is written by a scan into its
     output directory, so before the first scan there was no policy to find and
     every skill ran, while `status` reported it as disabled."""
-    _write_packaged(_empty_packaged_config, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    _write_packaged(_empty_packaged_config, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    rc, msg = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_DISABLED_HARD
     assert "packaged build" in msg
     assert "central" in msg
 
 
 def test_packaged_policy_applies_with_no_output_dir_at_all(_empty_packaged_config):
-    _write_packaged(_empty_packaged_config, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    rc, _ = cse.check("export-threat-model", None, False)
+    _write_packaged(_empty_packaged_config, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    rc, _ = cse.check("export-security-assessment", None, False)
     assert rc == cse.EXIT_DISABLED_HARD
 
 
 def test_a_resolved_run_outranks_the_packaged_policy(tmp_path, _empty_packaged_config):
     """The run knows what the preset and CLI resolved; the build cannot."""
-    _write_packaged(_empty_packaged_config, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": True}})
-    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    _write_packaged(_empty_packaged_config, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": True}})
+    rc, msg = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
     assert "org profile" in msg
 
 
 def test_an_inactive_profile_falls_back_to_the_packaged_policy(tmp_path, _empty_packaged_config):
-    _write_packaged(_empty_packaged_config, {"export-threat-model": {"enabled": False, "reason": "central"}})
+    _write_packaged(_empty_packaged_config, {"export-security-assessment": {"enabled": False, "reason": "central"}})
     _write_effective(tmp_path, {}, active=False)
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_DISABLED_HARD
 
 
@@ -152,16 +152,16 @@ def test_packaged_policy_keeps_the_operational_soft_rule(tmp_path, _empty_packag
 
 
 def test_config_local_wins_over_config(tmp_path, _empty_packaged_config):
-    _write_packaged(_empty_packaged_config, {"export-threat-model": {"enabled": False, "reason": "packaged"}})
-    _write_packaged(_empty_packaged_config, {"export-threat-model": {"enabled": True}}, local=True)
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    _write_packaged(_empty_packaged_config, {"export-security-assessment": {"enabled": False, "reason": "packaged"}})
+    _write_packaged(_empty_packaged_config, {"export-security-assessment": {"enabled": True}}, local=True)
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
 def test_a_damaged_config_does_not_block_a_skill(tmp_path, _empty_packaged_config):
     """Fail open: a broken config must not deny what nobody restricted."""
     (_empty_packaged_config / "config.json").write_text("{not json", encoding="utf-8")
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
@@ -197,21 +197,21 @@ def test_load_effective_malformed_json(tmp_path):
 def test_skill_toggle_absent_enabled_by_profile(tmp_path):
     # active profile, skill_toggles present but does NOT list this skill
     _write_effective(tmp_path, {"other-skill": {"enabled": False}})
-    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    rc, msg = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
     assert "enabled (org profile)" in msg
 
 
 def test_cfg_enabled_default_true_when_key_missing(tmp_path):
     # cfg dict with no "enabled" key → defaults to True (enabled)
-    _write_effective(tmp_path, {"export-threat-model": {"reason": "n/a"}})
-    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": {"reason": "n/a"}})
+    rc, _ = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_ENABLED
 
 
 def test_disabled_no_reason_uses_placeholder(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": False}})
-    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": False}})
+    rc, msg = cse.check("export-security-assessment", tmp_path, False)
     assert rc == cse.EXIT_DISABLED_HARD
     assert "no reason provided" in msg
 
@@ -222,38 +222,38 @@ def test_disabled_no_reason_uses_placeholder(tmp_path):
 
 
 def test_main_enabled_prints_message(tmp_path, capsys):
-    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path)])
+    rc = cse.main(["export-security-assessment", "--output-dir", str(tmp_path)])
     assert rc == cse.EXIT_ENABLED
     out = capsys.readouterr().out
     assert "no skill policy in effect" in out
 
 
 def test_main_quiet_suppresses_output(tmp_path, capsys):
-    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path), "--quiet"])
+    rc = cse.main(["export-security-assessment", "--output-dir", str(tmp_path), "--quiet"])
     assert rc == cse.EXIT_ENABLED
     assert capsys.readouterr().out == ""
 
 
 def test_main_disabled_hard_exit_code(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path)])
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    rc = cse.main(["export-security-assessment", "--output-dir", str(tmp_path)])
     assert rc == cse.EXIT_DISABLED_HARD
 
 
 def test_main_help_only_flag(tmp_path):
-    _write_effective(tmp_path, {"export-threat-model": {"enabled": False, "reason": "central"}})
-    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path), "--help-only"])
+    _write_effective(tmp_path, {"export-security-assessment": {"enabled": False, "reason": "central"}})
+    rc = cse.main(["export-security-assessment", "--output-dir", str(tmp_path), "--help-only"])
     assert rc == cse.EXIT_DISABLED_HELP_OK
 
 
 def test_main_output_dir_from_env(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    rc = cse.main(["export-threat-model"])
+    rc = cse.main(["export-security-assessment"])
     assert rc == cse.EXIT_ENABLED
     assert "no skill policy in effect" in capsys.readouterr().out
 
 
 def test_main_no_output_dir_falls_through_enabled(tmp_path, monkeypatch):
     monkeypatch.delenv("OUTPUT_DIR", raising=False)
-    rc = cse.main(["export-threat-model"])
+    rc = cse.main(["export-security-assessment"])
     assert rc == cse.EXIT_ENABLED
