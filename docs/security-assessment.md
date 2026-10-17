@@ -159,7 +159,7 @@ Figure 2 connects actors, attack routes, underlying weaknesses and impact using 
 
 ## Example report: OWASP Juice Shop
 
-The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
+The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/security-assessment-juice-shop-standard-v0.6.0b5.md) shows a standard assessment with evidence links, abuse cases, and attack paths. The [examples repository](https://github.com/appsec-foundry/appsec-advisor-examples) also provides its diagrams and exports.
 
 ![Runtime architecture and attack paths in the Juice Shop assessment](images/figure1-example.svg)
 
@@ -293,9 +293,9 @@ The following OWASP Juice Shop runs were measured with the earlier session-orche
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes |
 | **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $32.14 and 99 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b4.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $32.14 and 99 minutes |
 
 The standard and thorough runs each included one STRIDE retry. Cost follows the number and complexity of analyzed components more closely than raw repository size.
 

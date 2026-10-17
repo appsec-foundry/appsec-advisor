@@ -217,7 +217,7 @@ The [approved requirements](../../requirements.md) need review around `REQ-PUR-*
 
 Before this transition, retire the legacy workflow as a separate step. Both land in 0.6.0-beta.5, but in separate commits, so that a regression can be attributed to either the pipeline change or the name change. First verify that `create-threat-model2` covers every flag, mode, and consumer of `create-threat-model`, including the headless launcher, and inventory scripts, agents, and tests that only the legacy workflow uses. Then tag the last commit containing the legacy skill as `archive/create-threat-model`, remove `skills/create-threat-model/` in one commit, and remove the legacy-only code. Restoring the legacy skill later uses `git checkout archive/create-threat-model -- skills/create-threat-model`; no archive directory stays in the repository, because validators would keep scanning it and it would stop matching the current scripts.
 
-The reference result of the legacy workflow is a thorough OWASP Juice Shop run, kept for later use as a baseline:
+The reference result of the legacy workflow is a thorough OWASP Juice Shop run. Its published artifacts have since been removed from the examples repository; the following records its historical metadata:
 
 | Property | Value |
 |---|---|
@@ -226,9 +226,9 @@ The reference result of the legacy workflow is a thorough OWASP Juice Shop run, 
 | Run | 2026-10-11, full mode, depth `thorough`, Opus for every role, 99 minutes |
 | Result | 79 findings: 5 Critical, 33 High, 41 Medium |
 | Invocation | `--thorough --sarif --pentest-tasks --pentest-format strix --pentest-target http://localhost:3000 --threatdragon --pdf --html --slug juice-shop-thorough-v0.6.0b5 --keep-runtime-files` |
-| Published files | `appsec-advisor-examples`, `threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.*` (report, YAML, figures, SARIF, Threat Dragon, HTML, PDF) |
+| Formerly published files | `appsec-advisor-examples`, `threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.*` (report, YAML, figures, SARIF, Threat Dragon, HTML, PDF); no longer available in the repository |
 
-Later assessments of the same target commit and depth can be tested and compared against this result: finding count and severity mix, covered components and STRIDE categories, individual findings by component, CWE, and evidence location, and report structure. The YAML is the comparison basis; the Markdown report shows the presentation. Differences are evidence to examine, not automatic regressions, because model output varies between runs. The run's pentest tasks and intermediate artifacts are not published; they exist only in the local output directory of that run.
+If the original artifacts are retained locally, later assessments of the same target commit and depth can be tested and compared against this result: finding count and severity mix, covered components and STRIDE categories, individual findings by component, CWE, and evidence location, and report structure. The YAML is the comparison basis; the Markdown report shows the presentation. Differences are evidence to examine, not automatic regressions, because model output varies between runs. The run's pentest tasks and intermediate artifacts are not published; they exist only in the local output directory of that run.
 
 Deliver the workflow and storage transition together. These work packages contain no new document-analysis feature.
 
