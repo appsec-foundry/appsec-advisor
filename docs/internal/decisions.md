@@ -52,7 +52,7 @@ A guard marked *guard not located* may exist but was not found; *no guard writte
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| AS-1 | Assessments are stored per application under the user data directory as `<repo-name>-<hash8>`, hashed from the normalized origin URL (or the canonical root path without a remote); `--output` overrides. Alternative: `docs/security/` in the checkout, where an ignore rule does not stop forced adds, copies or uploads. Consequence: every producer and consumer resolves the same destination through one shared resolver, and legacy results need a consented migration (`REQ-TRU-005`, `REQ-EVO-003`) | — *(no guard written)* | `docs/proposals/application-security-assessment-concept.md` |
+| AS-1 | Assessments are stored per application under the user data directory as `<repo-name>-<hash8>`, hashed from the normalized origin URL (or the canonical root path without a remote); `--output` overrides. Alternative: `docs/security/` in the checkout, where an ignore rule does not stop forced adds, copies or uploads. Consequence: every producer and consumer resolves the same destination through one shared resolver, and legacy results need a consented migration (`REQ-TRU-005`, `REQ-EVO-003`) | `test_without_output_the_run_writes_to_a_private_application_directory`, `test_clones_of_one_remote_share_their_directory`, `test_a_finished_docs_security_assessment_is_imported_on_request_and_its_history_continues` | `docs/proposals/application-security-assessment-concept.md` |
 
 ## Extension surface
 
