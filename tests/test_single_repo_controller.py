@@ -29,7 +29,7 @@ def test_one_repository_assessment_publishes_a_version_1_model(tmp_path, monkeyp
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
     outcome, _, out = _assess(tmp_path, monkeypatch, (name,), ("--no-pdf",))
     assert outcome["status"] == "complete"
-    text = (out / "threat-model.yaml").read_text()
+    text = (out / "security-assessment.yaml").read_text()
     model = yaml.safe_load(text)
     assert model["meta"]["schema_version"] == 1
     assert "source_inventory" not in model
@@ -43,17 +43,17 @@ def test_one_repository_assessment_publishes_a_version_1_model(tmp_path, monkeyp
 def test_two_repositories_keep_the_qualified_version_2_model(tmp_path, monkeypatch):
     outcome, _, out = _assess(tmp_path, monkeypatch, ("frontend", "backend"), ("--no-pdf",))
     assert outcome["status"] == "complete"
-    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    model = yaml.safe_load((out / "security-assessment.yaml").read_text())
     assert model["meta"]["schema_version"] == 2
     assert len(model["source_inventory"]["repositories"]) == 2
-    assert model_file_is_portable(out / "threat-model.yaml")
+    assert model_file_is_portable(out / "security-assessment.yaml")
 
 
 def test_follow_on_tools_accept_a_one_repository_controller_model(tmp_path, monkeypatch):
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
     _, _, out = _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf",))
     # The shared refusal of publish, review, eval, baseline and analyst context.
-    assert not model_file_is_portable(out / "threat-model.yaml")
+    assert not model_file_is_portable(out / "security-assessment.yaml")
     loaded = review_threat_model._load_model(out)
     assert loaded["threats"]
 
@@ -117,8 +117,9 @@ def test_docs_security_keeps_foreign_files_and_overwrites_a_legacy_report(tmp_pa
     argv += ["--model", "haiku", "--no-pdf"]
     outcome = controller.assess_repositories(argv, host_factory=host.factory, progress=lambda text: None)
     assert outcome["status"] == "complete"
-    assert (reports / "threat-model.md").read_text() != "# Legacy report\n"
-    assert yaml.safe_load((reports / "threat-model.yaml").read_text())["meta"]["schema_version"] == 1
+    # The new set replaces the legacy report, so readers never meet both names.
+    assert (reports / "security-assessment.md").is_file() and not (reports / "threat-model.md").exists()
+    assert yaml.safe_load((reports / "security-assessment.yaml").read_text())["meta"]["schema_version"] == 1
     assert (reports / "business-context.md").read_text().startswith("# Business context")
     assert (reports / ".run-issues.json").is_file()
     # A rebuild removes only the controller's own files and keeps the rest.
@@ -133,14 +134,14 @@ def test_a_new_scan_continues_the_history_and_a_rebuild_resets_it(tmp_path, monk
     monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
     outcome, host, out = _assess(tmp_path, monkeypatch, names, ("--no-pdf",))
     assert outcome["status"] == "complete"
-    first = yaml.safe_load((out / "threat-model.yaml").read_text())["changelog"]
+    first = yaml.safe_load((out / "security-assessment.yaml").read_text())["changelog"]
     argv = [*[arg for name in names for arg in ("--repo", str(tmp_path / name))], "--output", str(out)]
     argv += ["--hard-budget", "5", "--trust-mode", "trusted", "--model", "haiku", "--no-pdf"]
 
     def changelog(*extra):
         result = controller.assess_repositories([*argv, *extra], host_factory=host.factory, progress=lambda t: None)
         assert result["status"] == "complete"
-        return yaml.safe_load((out / "threat-model.yaml").read_text())["changelog"]
+        return yaml.safe_load((out / "security-assessment.yaml").read_text())["changelog"]
 
     second = changelog()
     assert len(second) == len(first) + 1 and second[-len(first) :] == first
@@ -292,7 +293,7 @@ def test_pause_after_stops_at_the_phase_boundary_and_resume_reuses_its_jobs(tmp_
     assert not any(step.startswith("Measuring the boundary source context") for step in steps)
     out = tmp_path / "out"
     assert json.loads((out / ".assessment-state.json").read_text())["status"] == "interrupted"
-    assert not (out / "threat-model.md").exists()
+    assert not (out / "security-assessment.md").exists()
     calls = len(host.roles)
     argv = ["--repo", str(tmp_path / "solo"), "--output", str(out), "--hard-budget", "5", "--trust-mode", "trusted"]
     argv += ["--model", "haiku", "--no-pdf", "--resume"]
@@ -381,18 +382,18 @@ def test_requested_exports_and_slug_are_published(tmp_path, monkeypatch):
     )
     assert outcome["status"] == "complete"
     expected = (
-        "threat-model.md",
-        "threat-model.yaml",
-        "threat-model.sarif.json",
-        "threat-model.threatdragon.json",
-        "threat-model.pdf",
+        "security-assessment.md",
+        "security-assessment.yaml",
+        "security-assessment.sarif.json",
+        "security-assessment.threatdragon.json",
+        "security-assessment.pdf",
         "pentest-tasks.yaml",
     )
     for name in expected:
         assert (out / name).is_file(), name
         stamped = controller.stamp_threat_model._stamped_name(name, "probe")
         assert (out / stamped).is_file(), stamped
-    assert json.loads((out / "threat-model.sarif.json").read_text())["runs"]
+    assert json.loads((out / "security-assessment.sarif.json").read_text())["runs"]
     assert yaml.safe_load((out / "pentest-tasks.yaml").read_text())
 
 
@@ -409,7 +410,7 @@ def test_a_failed_export_publishes_nothing_and_leaves_the_earlier_report(tmp_pat
     monkeypatch.setattr(controller, "_run_script", run_script)
     with pytest.raises(controller.ControllerError, match="sarif exporter crashed"):
         _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf", "--sarif"))
-    assert not [path.name for path in (tmp_path / "out").iterdir() if path.name.startswith("threat-model")]
+    assert not [path.name for path in (tmp_path / "out").iterdir() if path.name.startswith("security-assessment")]
 
 
 def _assess_into_checkout(tmp_path, monkeypatch, root):

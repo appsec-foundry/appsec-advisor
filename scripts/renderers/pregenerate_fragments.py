@@ -76,6 +76,7 @@ import yaml
 from contexts.load_business_context import RUN_ONLY_NAME
 from shared._boundary_interface import is_internal_interface
 from shared._finding_locator import strip_trailing_locator
+from shared.artifact_names import MODEL
 
 from renderers._severity_rollup import (
     display_id,
@@ -593,7 +594,7 @@ def gen_system_overview(yaml_data: dict) -> str:
             f"**Not assessed:** {len(undecided)} security-relevant code "
             f"{'location was' if len(undecided) == 1 else 'locations were'} read but could not be judged ("
             + ", ".join(f"{name} {count}" for name, count in per_component.most_common())
-            + "); `threat-model.yaml` records each with its reason under `meta.undecided_targets`."
+            + f"); `{MODEL}` records each with its reason under `meta.undecided_targets`."
         )
         lines.append("")
     unowned = meta.get("unowned_source") if isinstance(meta.get("unowned_source"), dict) else {}
@@ -2184,7 +2185,7 @@ def gen_assets(yaml_data: dict) -> str:
     )
     lines.append("")
     if not assets:
-        lines.append("_No assets enumerated in threat-model.yaml._")
+        lines.append(f"_No assets enumerated in {MODEL}._")
         lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 

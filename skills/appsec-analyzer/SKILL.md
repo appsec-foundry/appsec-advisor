@@ -2,8 +2,8 @@
 name: appsec-analyzer
 description: >-
   Security assessment of one repository through the deterministic controller;
-  writes threat-model.md and threat-model.yaml to docs/security. Runs full
-  assessments only: --incremental, --rerender, --dry-run, --base, --pr-mode,
+  writes security-assessment.md and security-assessment.yaml to docs/security.
+  Runs full assessments only: --incremental, --rerender, --dry-run, --base, --pr-mode,
   --restore-from and a free-text focus are refused. Without a budget flag the
   depth sets a hard budget (quick 10, standard 20, thorough 40 USD). Models are
   fixed per role, not taken from the session; --model, --stride-model,
@@ -181,7 +181,7 @@ only progress display; do not mention that.
 
 In the same message as the launch, start a `Monitor` (load it with
 `ToolSearch` first when it is deferred) with `timeout_ms: 1800000`, the
-description `threat-model progress`, and this command:
+description `assessment progress`, and this command:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/assessment_console.py" follow \

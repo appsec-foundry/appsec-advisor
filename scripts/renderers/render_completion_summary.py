@@ -81,6 +81,7 @@ import model.stamp_threat_model as stamp_threat_model  # Owns which deliverables
 import runtime.completion_relay as completion_relay  # Records the summary for the hooks that show it.
 import runtime.run_timing as run_timing
 from shared._atomic_io import atomic_write_text
+from shared.artifact_names import REPORT, ArtifactSetError, report_path
 
 import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup  # See extract_metrics().
@@ -115,6 +116,14 @@ def _load_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _report(output_dir: Path) -> Path:
+    """The report of the naming set ``output_dir`` holds; the published name when it holds both or none."""
+    try:
+        return report_path(Path(output_dir))
+    except ArtifactSetError:
+        return Path(output_dir) / REPORT
 
 
 def _load_json_object(path: Path) -> dict[str, Any]:
@@ -1011,7 +1020,7 @@ def build_next_steps(
     # to be appended here ('…then Section 8 "Findings Register" for Critical
     # findings'), which made the entry twice as long as the two alternatives
     # under it for a pointer the Management Summary already links to.
-    lines.append(f'Open the report — {output_dir}/threat-model.md → start at "Management Summary"')
+    lines.append(f'Open the report — {_report(output_dir)} → start at "Management Summary"')
 
     # Triage — whenever the run surfaced findings, point at the consumer skill
     # that turns them into a prioritised, owned remediation plan. Runs later and
@@ -1097,8 +1106,9 @@ def build_follow_ups(output_dir: Path, metrics: dict, cfg: dict) -> list[str]:
 
     # Name the file and the class of tool, not three products: a reader has one
     # SARIF consumer and the list read as a menu to choose from.
-    if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
-        out.append("Upload threat-model.sarif.json to your SARIF consumer (code scanning, SonarQube, DefectDojo)")
+    sarif = _report(output_dir).with_suffix(".sarif.json")
+    if cfg.get("write_sarif") and sarif.is_file():
+        out.append(f"Upload {sarif.name} to your SARIF consumer (code scanning, SonarQube, DefectDojo)")
 
     # Sonnet-only run with significant Critical/High.
     if cfg.get("reasoning_model") == "sonnet" and (sev.get("Critical", 0) + sev.get("High", 0)) >= 3:
@@ -2006,17 +2016,18 @@ def render_next_steps(
 
 
 def render_security_notice(output_dir: Path) -> list[str]:
-    """Emit a security notice when threat-model.md is not git-ignored.
+    """Emit a security notice when the report is not git-ignored.
 
     Checks whether docs/security/ (or the actual output_dir) is covered by
     .gitignore in the nearest git root.  If the file would be tracked, warn
     the user.  Silently skipped when git is unavailable or outside a repo.
     """
+    report = _report(output_dir)
     try:
         import subprocess
 
         result = subprocess.run(
-            ["git", "check-ignore", "-q", str(output_dir / "threat-model.md")],
+            ["git", "check-ignore", "-q", str(report)],
             capture_output=True,
             cwd=str(output_dir),
         )
@@ -2028,7 +2039,7 @@ def render_security_notice(output_dir: Path) -> list[str]:
 
     lines = [""]
     lines.append("Security Notice")
-    lines.append("  Warning: threat-model.md is NOT git-ignored and may be committed.")
+    lines.append(f"  Warning: {report.name} is NOT git-ignored and may be committed.")
     lines.append("  Threat reports contain sensitive vulnerability details,")
     lines.append("  attack vectors, and architecture weaknesses.")
     lines.append("  Add docs/security/** to .gitignore to keep them out of git.")

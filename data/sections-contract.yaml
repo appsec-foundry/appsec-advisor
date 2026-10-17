@@ -46,7 +46,7 @@ contract_version: 5   # v5 adds the unnumbered Systemic Weaknesses chapter
 
 document:
   # Rendered as `# {{ title }}` at the top of the file.
-  title_template: "Threat Model — {{ project.name }}"
+  title_template: "Security Assessment Report — {{ project.name }}"
 
   # Sections are rendered in this order. Each id must appear in the
   # `sections:` map below. `condition` is evaluated against a small
@@ -134,7 +134,7 @@ document:
   # ---------------------------------------------------------------------------
   document_sets:
     full:
-      title_template: "Threat Model - {{ project.name }}"
+      title_template: "Security Assessment Report - {{ project.name }}"
       output_file: "threat-model.md"
       order:
         - infobox

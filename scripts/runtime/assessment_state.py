@@ -24,6 +24,7 @@ from pathlib import Path
 import yaml
 from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json, atomic_write_text
+from shared.artifact_names import LEGACY_MODEL, MODEL
 
 from runtime import acquire_lock
 from runtime.analyst_host import HostCancelled
@@ -269,8 +270,11 @@ class AssessmentState:
         return path if path.is_file() and not path.is_symlink() else None
 
     def _earlier_history(self, earlier) -> list | None:
-        """The changelog of the earlier run's own, unchanged model deliverable."""
-        name = "threat-model.yaml"
+        """The changelog of the earlier run's own, unchanged model deliverable.
+
+        A run before the publication rename recorded its model under the legacy name.
+        """
+        name = MODEL if MODEL in earlier["deliverables"] else LEGACY_MODEL
         try:
             if _deliverable(self.output, name) != earlier["deliverables"].get(name):
                 return None
