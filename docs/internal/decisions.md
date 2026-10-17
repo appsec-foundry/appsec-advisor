@@ -48,6 +48,12 @@ A guard marked *guard not located* may exist but was not found; *no guard writte
 | MR-3 | After the semantic stages the existing deterministic tail runs in a private workspace whose locations are `<repository label>/<path>` over a masked combined copy when the assessment covers several repositories, and the plain repository-relative path when it covers one; publication converts the model back to the qualified version-2 contract when the assessment covers several repositories (MR-8), and fails when a location does not resolve to a captured file | `test_combined_assessment_publishes_one_qualified_model`, `test_single_repository_workspace_uses_plain_paths` | `scripts/orchestrator/assessment_workspace.py` |
 | MR-8 | A one-repository controller assessment publishes its workspace model in the version-1 contract, with plain repository-relative paths and no `source_inventory`; only an assessment of two or more repositories publishes the qualified version-2 contract. `schema_version: 2` therefore keeps meaning a combined model, and follow-on tools treat a one-repository controller model like any single-repository model | `test_one_repository_assessment_publishes_a_version_1_model`, `test_follow_on_tools_accept_a_one_repository_controller_model` | `scripts/orchestrator/orchestration_controller.py::_assessment_publish` |
 
+## Assessment storage
+
+| ID | Decision | Guard | Rationale |
+|---|---|---|---|
+| AS-1 | Assessments are stored per application under the user data directory as `<repo-name>-<hash8>`, hashed from the normalized origin URL (or the canonical root path without a remote); `--output` overrides. Alternative: `docs/security/` in the checkout, where an ignore rule does not stop forced adds, copies or uploads. Consequence: every producer and consumer resolves the same destination through one shared resolver, and legacy results need a consented migration (`REQ-TRU-005`, `REQ-EVO-003`) | — *(no guard written)* | `docs/proposals/application-security-assessment-concept.md` |
+
 ## Extension surface
 
 | ID | Decision | Guard | Rationale |

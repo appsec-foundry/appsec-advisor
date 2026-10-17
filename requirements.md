@@ -6,7 +6,7 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 
 - **REQ-PUR-001:** The tool must derive a threat model of the analyzed system from its code and configuration.
 - **REQ-PUR-002:** The analysis must cover implementation weaknesses and insecure design assumptions without claiming runtime verification or release approval.
-- **REQ-PUR-004:** The threat model must help developers, architects, and AppSec reviewers understand risks and plan remediation.
+- **REQ-PUR-004:** The assessment report must help developers, architects, and AppSec reviewers understand risks and plan remediation.
 
 ## Analysis scope
 
@@ -114,6 +114,7 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 - **REQ-TRU-002:** Unmasked secrets in generated artifacts must block publication.
 - **REQ-TRU-003:** The tool must disclose which repository data is sent to external model providers.
 - **REQ-TRU-004:** Model-directed actions must remain within the user-authorized task, resources, and permissions.
+- **REQ-TRU-005:** Assessment results must be stored outside the analyzed repository by default and be readable only by the current user.
 
 ## Execution and recovery
 
