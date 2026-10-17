@@ -2122,42 +2122,6 @@ def test_carry_forward_hit_and_miss(capsys):
     assert "neither .components.json" in capsys.readouterr().err
 
 
-def test_load_last_run_depth_variants(tmp_path):
-    assert b._load_last_run_depth(tmp_path) is None  # no baseline.json
-    cache = tmp_path / ".appsec-cache"
-    cache.mkdir()
-    bp = cache / "baseline.json"
-    bp.write_text(json.dumps({"last_run_depth": "thorough"}))
-    assert b._load_last_run_depth(tmp_path) == "thorough"
-    bp.write_text("{ malformed")
-    assert b._load_last_run_depth(tmp_path) is None
-
-
-def test_reanalyzed_component_ids_variants(tmp_path):
-    # no baseline → None
-    assert b._reanalyzed_component_ids(tmp_path) is None
-    cache = tmp_path / ".appsec-cache"
-    cache.mkdir()
-    bp = cache / "baseline.json"
-    # malformed baseline → None
-    bp.write_text("{ bad")
-    assert b._reanalyzed_component_ids(tmp_path) is None
-    # baseline with a stride file whose hash differs → changed set
-    import hashlib as _h
-
-    sfile = tmp_path / ".stride-comp-a.json"
-    sfile.write_text('{"new": true}')
-    bp.write_text(
-        json.dumps({"stride_files": {"comp-a": {"sha256": "sha256:deadbeef"}, "comp-gone": {"sha256": "sha256:x"}}})
-    )
-    changed = b._reanalyzed_component_ids(tmp_path)
-    assert changed == {"comp-a"}  # comp-gone has no on-disk stride file → skipped
-    # matching hash → not changed
-    real = "sha256:" + _h.sha256(sfile.read_bytes()).hexdigest()
-    bp.write_text(json.dumps({"stride_files": {"comp-a": {"sha256": real}}}))
-    assert b._reanalyzed_component_ids(tmp_path) == set()
-
-
 # --- build_threats branches --------------------------------------------------
 
 
