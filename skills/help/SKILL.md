@@ -193,7 +193,6 @@ A prompt hook that adds matching guidance, and your requirements when a catalog 
 - `/appsec-advisor:security-score` — 0–100 score in seconds, no model needed
 - `/appsec-advisor:repo-profile` — size, stack, and layout
 - `/appsec-advisor:export-security-assessment` — PDF, HTML, SARIF
-- `/appsec-advisor:publish-threat-model` — commit the report to version control
 - `/appsec-advisor:report-error` — report a plugin issue
 
 ### Files

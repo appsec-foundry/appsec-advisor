@@ -107,9 +107,9 @@ These questions read `threat-model.yaml`; they do not scan the repository again 
 
 Decisions are stored separately from the generated model and survive reassessment. The workflow changes source only after an explicit implementation choice.
 
-### Export or publish
+### Export
 
-`/appsec-advisor:export-security-assessment` creates exports from an existing model. `/appsec-advisor:publish-threat-model` is the separate path for making reviewed report files trackable in version control.
+`/appsec-advisor:export-security-assessment` creates exports from an existing model. Sharing a result is always an explicit export; no command commits it to the analyzed repository.
 
 Figure 1 presents the Architecture and Threat Overview with attack paths and hexagonal authentication markers at component accesses. Equal methods share a number; `0` marks evidenced absence of separate authentication and `?` marks uncertainty. Marker colours describe method properties, not a security verdict. Dashed lines mark trust boundaries; the Trust Boundaries table lists them with their IDs. Matching E-labelled rows inside components name the peer and direction of connections whose lines are omitted. A model too large for one diagram also links a detail view that retains the data-flow and boundary catalogues. Existing models without authentication evidence need a new analysis to populate these markers; exporting does not infer missing controls.
 
@@ -543,7 +543,7 @@ Each file has a schema. A file that fails its schema stops the run; it is never 
 
 No agent reads the whole directory. The runtime gives each agent only the files its task needs, and often only part of a file. The STRIDE analyses of one component group run at the same time and do not see each other's findings. Their findings meet in the merge step.
 
-The intermediate files remain in the output directory after a run, so results can be audited and re-exported. `publish-threat-model` keeps them out of version control.
+The intermediate files remain in the output directory after a run, so results can be audited and re-exported.
 
 ## Workflow commands
 
@@ -553,7 +553,6 @@ The intermediate files remain in the output directory after a run, so results ca
 | `/appsec-advisor:show-security-assessment` | Show a fixed overview of freshness, findings, mitigations, and control posture. |
 | `/appsec-advisor:create-threat-model --full` | Reassess the repository while preserving report history. |
 | `/appsec-advisor:triage-security-assessment` | Review findings, record decisions, implement selected fixes, or build a remediation plan. |
-| `/appsec-advisor:publish-threat-model` | Make selected report files trackable after publication checks. |
 | `/appsec-advisor:export-security-assessment` | Export an existing model without another analysis. |
 | `/appsec-advisor:security-assessment-health` | Check whether the model is fresh, stale, missing, or blocked. |
 | `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |

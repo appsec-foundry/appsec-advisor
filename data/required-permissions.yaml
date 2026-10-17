@@ -116,10 +116,6 @@ required:
     reason: "repair loops edit direct dotfile sidecars; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
-  - entry: "Edit(${REPO_ROOT}/.gitignore)"
-    reason: "publish-threat-model skill patches .gitignore with negation exceptions for published files"
-    category: file
-
   - entry: "Edit(${PLUGIN_ROOT}/**)"
     reason: "explicit maintainer development edits plugin source after root-cause and contract review; fix-run-issues currently emits manual guidance only"
     category: file

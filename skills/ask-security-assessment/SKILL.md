@@ -346,7 +346,7 @@ in the semantic model. Freshness needs git and is only checked on request
   **build a remediation plan**. This is where "fix these" / "accept" go.
 - `create-threat-model` — **generate or update** the model (analyzes code).
 - `create-threat-model --full` — refresh an existing model.
-- `export-security-assessment` / `publish-threat-model` — render/share (PDF/HTML).
+- `export-security-assessment` — render/share (PDF/HTML).
 - `security-assessment-health` — freshness / CI probe.
 - `eval-security-assessment` — artifact-quality evaluation of the model itself.
 

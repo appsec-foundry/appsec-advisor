@@ -143,9 +143,9 @@ llm_context:
       max_bytes: 50000
       applies_to_components: [identity-api]
 skill_toggles:
-  publish-threat-model:
+  authnz-review:
     enabled: false
-    reason: "Publishing is restricted to the AppSec release job."
+    reason: "AuthN/AuthZ reviews are restricted to the AppSec release job."
 presets:
   ci-standard:
     base_mode: standard
@@ -515,7 +515,7 @@ Skills can be disabled with a reason. The policy is enforced by the `skill-polic
 
 A disabled skill is refused with the organization's reason:
 
-- **User skills** (e.g. `export-security-assessment`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
+- **User skills** (e.g. `export-security-assessment`, `authnz-review`): blocked with the reason printed. Exit code 30.
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
 - **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `security-assessment-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
@@ -593,7 +593,7 @@ Org Profile
   Preset           ci-standard (base: standard)
   Requirements     Acme AppSec Requirements
   Org context      organization, sso, platform
-  Disabled skills  publish-threat-model
+  Disabled skills  authnz-review
 ```
 
 Before the first run resolves the profile, the status is `configured (not yet resolved)`; without a
@@ -605,10 +605,10 @@ skill and one the package policy removed are both visible with the reason your p
 ```
 Skills (24 installed · 1 disabled by org profile · 1 removed by package policy)
 ------------------------------------------------------------------------------
-  create-threat-model   enabled
-  export-security-assessment   disabled — Release job only.
-  acme-release-check    enabled  [organization]
-  publish-threat-model  removed by package policy
+  appsec-analyzer             enabled
+  export-security-assessment  disabled — Release job only.
+  acme-release-check          enabled  [organization]
+  authnz-review               removed by package policy
 ```
 
 ## Examples

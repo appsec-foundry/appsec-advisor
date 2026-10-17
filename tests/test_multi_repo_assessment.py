@@ -1958,7 +1958,7 @@ def test_a_recorded_error_closes_with_the_report_error_pointer(tmp_path, monkeyp
 def test_a_report_git_would_commit_closes_with_the_security_notice(tmp_path, monkeypatch, capsys):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
-    assert "Security Notice" in out and "    /appsec-advisor:publish-threat-model" in out
+    assert "Security Notice" in out and "    /appsec-advisor:export-security-assessment" in out
     (tmp_path / ".gitignore").write_text("threat-model.*\n")
     out = _closing_lines(tmp_path, monkeypatch, capsys, "threats: []\n", ["threat-model.md"])
     assert "Security Notice" not in out

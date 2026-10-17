@@ -65,9 +65,9 @@ skill_toggles:
   appsec-analyzer: true
   audit-security-requirements: true
   export-security-assessment: true
-  publish-threat-model:
+  authnz-review:
     enabled: false
-    reason: "Publishing is restricted to the AppSec release job."
+    reason: "AuthN/AuthZ reviews are restricted to the AppSec release job."
   check-permissions: true
   clean-run-state: true
   fix-run-issues: true

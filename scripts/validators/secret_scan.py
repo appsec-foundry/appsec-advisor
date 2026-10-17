@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Detect raw, unmasked secrets in rendered threat-model artifacts.
 
-Single source of truth used by both:
-  - scripts/validators/qa_checks.py            (mandatory per-run QA gate)
-  - scripts/model/publish_threat_model.py (publish-time gate)
+Single source of truth for these patterns: the mandatory per-run QA gate
+(scripts/validators/qa_checks.py) and the other secret checks import it.
 
 A hit means the value still looks like a raw, reusable secret. Values that
 contain any masking marker (``****``, ``[REDACTED]``, ``<…>``, ``XXXX``,

@@ -259,7 +259,7 @@ Use denylists when you want to keep the upstream surface except for a small numb
 plugin_surface:
   skills:
     exclude:
-      - publish-threat-model
+      - authnz-review
       - export-security-assessment
   hooks:
     exclude:
