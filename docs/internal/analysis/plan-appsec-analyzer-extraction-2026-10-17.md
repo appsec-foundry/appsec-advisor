@@ -187,6 +187,23 @@ Select checks per changed behavior and affected consumer. Use exact test nodes f
 
 The import check establishes source/history fidelity. Offline tests establish deterministic boundaries. Installed-artifact tests establish packaging independence. Live provider runs establish the declared model/depth qualification. None substitutes for the others.
 
+## Implementation model and reasoning effort
+
+Use GPT-6.1 Sol with `high` reasoning effort as the default coding assistant for this plan. This recommendation concerns the assistant implementing the extraction; the Analyzer's runtime model selection remains governed by A3–A5. If using one model and effort throughout, choose GPT-6.1 Sol / High.
+
+| Work package or activity | Recommended model and effort | Purpose |
+| --- | --- | --- |
+| A1–A2 inventory and history import | GPT-6.1 Sol / `high` | Trace dependencies, prepare the path selection, preserve history, and verify the import. |
+| A3–A5 adapter implementation and tests | GPT-6.1 Sol / `high` | Implement the agreed boundaries and focused regression cases. |
+| Difficult A3–A5 design decisions | GPT-6 Astra / `high` | Resolve provider abstraction, canonical schema projection/decoding, spending bounds, and resume compatibility. |
+| A6–A7 packaging and B1 integration | GPT-6.1 Sol / `high` | Build the standalone package, public interfaces, pinned composition, and affected tests. |
+| Review before B2 cutover and B3 deletion | GPT-6 Astra / `high`, with fresh context | Review the proposed diff, ownership manifest, relevant contracts, acceptance evidence, and rollback limits before applying the transition. |
+| B3 approved cleanup implementation | GPT-6.1 Sol / `high` | Remove transferred implementation and reconcile its remaining consumers. |
+
+Use `xhigh` selectively when a concrete complex problem remains unresolved at `high`, with a bounded question and evidence to inspect. Do not make Max or Ultra the default. A review with fresh context should receive the current plan, relevant source and diff, and verification results so it can assess the implementation without relying on the implementing session's conclusions. It can run as a separate session and does not require parallel agents.
+
+The [official OpenAI model guidance](https://learn.chatgpt.com/docs/models), checked on 2026-10-17, recommends GPT-6.1 Sol for complex coding workflows, Astra for the most demanding work, and High or Extra High for difficult multistep tasks. The allocation above is an engineering recommendation for this extraction, not a measured comparison on this repository. Model availability depends on the account and client; model choice does not replace any milestone's acceptance evidence.
+
 ## Milestones and remaining inputs
 
 | Milestone | Completion evidence | Advisor state |
