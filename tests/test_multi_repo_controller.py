@@ -1257,7 +1257,7 @@ def test_controls_overlap_within_the_limit_keep_order_and_reuse_receipts(tmp_pat
     scope, architecture = _control_scope(tmp_path, names)
     components = architecture["components"]["components"]
     positions = {component["id"]: index for index, component in enumerate(components)}
-    barrier = threading.Barrier(4)
+    barrier = threading.Barrier(3)
     second_finished = threading.Event()
     lock = threading.Lock()
     started, finished = set(), []
@@ -1274,7 +1274,7 @@ def test_controls_overlap_within_the_limit_keep_order_and_reuse_receipts(tmp_pat
                 running[0] += 1
                 peak[0] = max(peak[0], running[0])
             try:
-                if first and index < 4:
+                if first and index < 3:
                     barrier.wait(5)
                 if index == 0:
                     assert second_finished.wait(5), "Control jobs must overlap"
@@ -1297,7 +1297,7 @@ def test_controls_overlap_within_the_limit_keep_order_and_reuse_receipts(tmp_pat
     budget.plan_completion()
     jobs = AssessmentJobs(scope, scope.output / ".assessment/jobs", budget, host.factory, lambda: False, lambda: None)
     controls = controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
-    assert peak[0] == 4 and finished.index(1) < finished.index(0)
+    assert peak[0] == 3 and finished.index(1) < finished.index(0)
     assert [row["component_ids"] for row in controls] == [[component["id"]] for component in components]
     assert len(list(jobs.directory.glob("*.receipt.json"))) == len(components)
     assert budget.calls == len(host.calls) == 2 * len(components)
@@ -1425,9 +1425,9 @@ def test_control_and_stride_contexts_omit_path_hashes_and_controls_answer_in_one
     assert all(row["sha256"] for c in architecture["components"]["components"] for row in c["paths"])
 
 
-@pytest.mark.parametrize("count", [6, 9])
-def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, count):
-    """MR-16: up to four components at a time; results and warnings keep component order."""
+@pytest.mark.parametrize("count,workers", [(6, 3), (9, 2)])
+def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, count, workers):
+    """MR-16: the selected component limit preserves result and warning order."""
     import threading
     import time
 
@@ -1438,7 +1438,7 @@ def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, c
     jobs = AssessmentJobs(
         scope,
         scope.output / ".assessment/jobs",
-        AssessmentBudget(2, 0.05, 60, 120),
+        AssessmentBudget(2, 0.05, 60, 120, component_workers=workers),
         Host(scope).factory,
         lambda: False,
         lambda: None,
@@ -1459,9 +1459,24 @@ def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, c
 
     names = [f"c{n}" for n in range(count)]
     results = controller._assessment_components_concurrently(jobs, names, analyze)
-    assert 1 < peak[0] <= controller.ASSESSMENT_COMPONENT_WORKERS
+    assert peak[0] == workers
     assert results == [(f"document {n}", f"review {n}") for n in names]
     assert jobs.notes == [f"note {n}" for n in names]
+
+
+def test_component_workers_flag_sets_budget_and_invocation():
+    parse = controller._assessment_argument_parser().parse_args
+    base = ["--repo", "/r", "--hard-budget", "5"]
+
+    assert controller._assessment_budget(parse(base)).component_workers == 3
+    assert controller._assessment_budget(parse([*base, "--component-workers", "2"])).component_workers == 2
+    assert controller._assessment_invocation([*base, "--component-workers", "2"]).endswith("--component-workers 2")
+
+
+@pytest.mark.parametrize("workers", ["0", "5", "not-a-number"])
+def test_component_workers_flag_rejects_invalid_values(workers):
+    with pytest.raises(SystemExit):
+        controller._assessment_argument_parser().parse_args(["--repo", "/r", "--component-workers", workers])
 
 
 def test_a_failed_component_admits_no_further_job_and_is_raised(tmp_path):

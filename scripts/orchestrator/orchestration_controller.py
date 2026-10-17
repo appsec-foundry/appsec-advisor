@@ -77,6 +77,7 @@ import runtime.ensure_output_gitignore as ensure_output_gitignore  # noqa: E402
 import runtime.resolve_config as resolve_config  # noqa: E402
 import validators.validate_intermediate as intermediate_contract  # noqa: E402
 from renderers.term_style import ANSI_RE, SPINNER, Style, logo, plugin_version  # noqa: E402
+from runtime.assessment_jobs import ASSESSMENT_COMPONENT_WORKERS, MAX_ASSESSMENT_COMPONENT_WORKERS  # noqa: E402
 from runtime.event_log import format_line  # noqa: E402
 from shared._fragment_ownership import FORCE_REGENERATED_FRAGMENTS  # noqa: E402
 from shared.artifact_names import (  # noqa: E402
@@ -1976,10 +1977,6 @@ def _assessment_stride(
     return documents, reviews, merged
 
 
-# Components whose control jobs or STRIDE and evidence-review jobs run at the same time.
-ASSESSMENT_COMPONENT_WORKERS = 4
-
-
 def _assessment_components_concurrently(jobs, components, analyze):
     """Run `analyze(position, component, jobs)` for every component on a bounded pool (MR-16).
 
@@ -2006,7 +2003,7 @@ def _assessment_components_concurrently(jobs, components, analyze):
                 halt.set()
             raise
 
-    with ThreadPoolExecutor(max_workers=ASSESSMENT_COMPONENT_WORKERS, thread_name_prefix="component") as pool:
+    with ThreadPoolExecutor(max_workers=jobs.budget.component_workers, thread_name_prefix="component") as pool:
         futures = [
             pool.submit(run, position, component, view)
             for (position, component), view in zip(enumerate(components, 1), views, strict=True)
@@ -2269,6 +2266,14 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
         help="Started by an interactive skill: without a budget flag, the depth sets the hard budget (MR-7).",
     )
     parser.add_argument("--max-duration", type=int, metavar="SECONDS")
+    parser.add_argument(
+        "--component-workers",
+        type=int,
+        choices=range(1, MAX_ASSESSMENT_COMPONENT_WORKERS + 1),
+        default=ASSESSMENT_COMPONENT_WORKERS,
+        metavar="N",
+        help=f"Analyze 1–{MAX_ASSESSMENT_COMPONENT_WORKERS} components concurrently (default: {ASSESSMENT_COMPONENT_WORKERS}).",
+    )
     # appsec-analyzer runs one phase per invocation and continues with --resume.
     parser.add_argument(
         "--pause-after",
@@ -2349,7 +2354,9 @@ def _assessment_budget(ns, rest: list[str] = ()):
         raise CallError(f"--max-duration must be between 1 and {MAX_ASSESSMENT_SECONDS} seconds")
     if not (limit > 0 and limit < float("inf")):
         raise CallError("the assessment budget must be a positive amount in USD")
-    return AssessmentBudget(limit, min(ASSESSMENT_CALL_USD, limit), MAX_ASSESSMENT_CALLS, seconds)
+    return AssessmentBudget(
+        limit, min(ASSESSMENT_CALL_USD, limit), MAX_ASSESSMENT_CALLS, seconds, component_workers=ns.component_workers
+    )
 
 
 def _assessment_preflight(roots: list[str]) -> None:
@@ -3766,6 +3773,7 @@ def _assessment_invocation(argv: list[str]) -> str:
         "--hard-budget",
         "--max-budget",
         "--max-duration",
+        "--component-workers",
         "--model",
         "--trust-mode",
         "--fail-on",
