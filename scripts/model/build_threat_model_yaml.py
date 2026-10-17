@@ -864,11 +864,6 @@ def build_component_selection(
     }
 
 
-def _output_mode(skill_cfg: dict) -> str:
-    """Map runtime modes to the public threat-model assessment mode."""
-    return "incremental" if str(skill_cfg.get("mode") or "full").lower() == "incremental" else "full"
-
-
 def _apply_business_context_basis(threats: list[dict], output_dir: Path, skill_cfg: dict) -> int:
     """Record on each finding which declared context fields apply to its component.
 
@@ -1114,10 +1109,9 @@ def build_meta(
         **({"project_name": project_name} if project_name else {}),
         **described,
         "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        # ``rebuild`` is an orchestration/cleanup mode, not a public assessment
-        # mode.  The output contract deliberately exposes only a complete
-        # assessment (``full``) or a delta assessment (``incremental``).
-        "mode": _output_mode(skill_cfg),
+        # Every controller run is a complete assessment; ``rebuild`` only resets
+        # the retained history and is not a public assessment mode.
+        "mode": "full",
         "model": skill_cfg.get("stride_model", "sonnet"),
         "analyst": f"context-v2 pipeline ({skill_cfg.get('stride_model', 'sonnet')})",
         "plugin_version": plugin_ver,
@@ -2605,7 +2599,7 @@ def build_changelog(
 
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
     run_mode = str(skill_cfg.get("mode") or "full").lower()
-    mode = _output_mode(skill_cfg)
+    mode = "full"
     cur_depth = skill_cfg.get("assessment_depth", "standard")
     cur_n = len(threats)
 

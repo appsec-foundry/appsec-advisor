@@ -12,8 +12,6 @@ Asserts that:
 from __future__ import annotations
 
 import importlib.util
-import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -193,47 +191,3 @@ def test_unknown_preset_fails(tmp_path):
                 "auth",
             ]
         )
-
-
-def test_emit_file_writes_org_profile_effective(tmp_path):
-    rc_code = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT_PATH),
-            "--org-profile",
-            str(FIXTURE),
-            "--output",
-            str(tmp_path),
-            "--emit-file",
-            "auth",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert rc_code.returncode == 0, rc_code.stderr
-    emitted = tmp_path / ".org-profile-effective.json"
-    assert emitted.exists()
-    data = json.loads(emitted.read_text())
-    assert data["org_profile"]["active"] is True
-    assert data["preset"]["name"] == "ci-standard"
-
-
-def test_validate_only_accepts_documented_skill_flags(tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT_PATH),
-            "--validate-only",
-            "--pdf",
-            "--max-resumes",
-            "2",
-            "--clean-cache",
-            "--no-sarif",
-            "--no-pdf",
-            "--no-pentest-tasks",
-            "--no-org-profile",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

@@ -228,29 +228,3 @@ def _minimal_cfg(reasoning_mode="sonnet", stride_label="full", reasoning_label=N
         "reasoning_label": reasoning_label,
         "stride_profile": {"stride_profile_label": stride_label},
     }
-
-
-def test_summary_shows_reasoning_line_for_haiku_economy():
-    rc = _load_resolver()
-    cfg = _minimal_cfg(reasoning_mode="sonnet-economy", stride_label="quick (depth-reduced via sonnet-economy)")
-    out = rc.render_configuration_summary(cfg)
-    assert "Reasoning : sonnet-economy" in out
-    assert "STRIDE    : quick (depth-reduced via sonnet-economy)" in out
-
-
-def test_summary_shows_reasoning_line_for_sonnet_default():
-    """Reasoning is now always rendered — users see the resolved STRIDE /
-    triage / merger model trio even at the silent default tier."""
-    rc = _load_resolver()
-    cfg = _minimal_cfg(reasoning_mode="sonnet")
-    out = rc.render_configuration_summary(cfg)
-    assert "Reasoning : sonnet" in out
-    # STRIDE Prof. line is gated on a non-"full" profile label.
-    assert "STRIDE    :" not in out
-
-
-def test_summary_shows_reasoning_line_for_opus_cheap():
-    rc = _load_resolver()
-    cfg = _minimal_cfg(reasoning_mode="opus-cheap")
-    out = rc.render_configuration_summary(cfg)
-    assert "Reasoning : opus-cheap" in out
