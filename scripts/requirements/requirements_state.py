@@ -46,8 +46,8 @@ try:  # PyYAML is available across the plugin; degrade gracefully if not.
 except Exception:  # pragma: no cover - yaml is a hard dep in practice
     yaml = None  # type: ignore[assignment]
 
-# The user-authored local catalog lives next to the audit output (docs/security/)
-# under a NON-dot name so it is never confused with the generated, resolved
+# The user-authored local catalog lives in the repository's docs/security/ (the
+# callers' --catalog-dir, by default their output directory) under a NON-dot name so it is never confused with the generated, resolved
 # ``.requirements.yaml`` the gate writes.
 LOCAL_REPO_FILENAMES = ("requirements.yaml", "requirements.yml")
 

@@ -262,6 +262,8 @@ def main(argv: list[str] | None = None) -> int:
         command = sub.add_parser(name, help=help_text)
         command.add_argument("--repo", type=Path, required=True)
         command.add_argument("--json", action="store_true")
+        if name == "destination":
+            command.add_argument("--create", action="store_true", help="Create it with mode 0700 at every level.")
     args = parser.parse_args(argv)
     if not args.repo.is_dir():
         print("Error: --repo is not a directory", file=sys.stderr)
@@ -269,9 +271,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "destination":
             directory, legacy = application_directory(args.repo), False
+            if args.create:
+                private_directory(directory, data_base())
         else:
             directory, legacy = locate(args.repo)
-    except (LocationError, ArtifactSetError) as exc:
+    except (LocationError, ArtifactSetError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
     if args.json:
