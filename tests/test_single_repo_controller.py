@@ -170,7 +170,7 @@ def test_explicit_budget_replaces_the_depth_default():
     assert _budget(["--interactive-launch", "--thorough", "--hard-budget", "7"]) == 7.0
     assert _budget(["--interactive-launch", "--soft-budget", "8"]) == 10.0
     # Without the interactive launch a budget flag stays mandatory.
-    with pytest.raises(controller.CallError, match="requires --soft-budget or --hard-budget"):
+    with pytest.raises(controller.CallError, match="requires --hard-budget"):
         _budget(["--thorough"])
     with pytest.raises(controller.CallError, match="invalid --assessment-depth"):
         _budget(["--interactive-launch", "--assessment-depth", "deep"])

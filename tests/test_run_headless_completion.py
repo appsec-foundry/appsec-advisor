@@ -500,7 +500,7 @@ def test_an_explicit_hard_budget_wins_over_the_derived_one(tmp_path: Path, monke
 @pytest.mark.parametrize(
     ("extra", "message"),
     [
-        ((), "requires --soft-budget or --hard-budget"),
+        ((), "requires --hard-budget"),
         (("--hard-budget", "5", "--trust-mode", "trusted"), "repository selection rejected"),
         (("--hard-budget", "5", "--incremental"), "--incremental is not supported"),
     ],

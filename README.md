@@ -211,14 +211,14 @@ To assess several local checkouts as one system, repeat `--repo` in the headless
   --repo /repos/backend \
   --repo /repos/worker \
   --output /reports/order-system \
-  --soft-budget 40
+  --hard-budget 50
 ```
 
 A combined run has these requirements:
 
 - Select 2–16 top-level Git checkouts that do not contain each other.
 - Without `--output`, the results go to one shared `combined-<hash8>` directory of the selection; an explicit `--output` must lie outside every selected checkout.
-- Set `--soft-budget` or `--hard-budget`. The controller reserves part of the budget for required analysis and report completion.
+- Set `--hard-budget`. The controller reserves part of the budget for required analysis and report completion.
 
 Components, findings and exports name the repository they come from, for example `Order API [backend]` and `backend/src/orders.ts:42`. The order of the `--repo` flags does not matter, and no repository takes precedence. A connection between repositories appears only when source evidence supports it, and repository membership never creates a trust boundary. Like a single-repository run, a combined run supports `--resume` of an interrupted run whose sources and settings are unchanged and `--rebuild` to start over. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system) for details and limits.
 

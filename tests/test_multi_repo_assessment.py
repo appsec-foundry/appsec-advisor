@@ -943,7 +943,7 @@ def test_changed_source_stops_publication(tmp_path, monkeypatch):
         (("--rerender",), "--rerender is not supported"),
         (("focus", "on", "auth"), "'focus on auth' was read as a free-text focus"),
         (("--sarif", "payment service only"), "'payment service only' was read as a free-text focus"),
-        ((), "requires --soft-budget or --hard-budget"),
+        ((), "requires --hard-budget"),
     ],
 )
 def test_unsupported_modes_stop_before_admission(tmp_path, extra, message):
