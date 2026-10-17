@@ -1772,9 +1772,12 @@ def _write_assessment_summary(sid: str) -> None:
     yaml_path = ""
     output_dir = _output_dir()
     if output_dir:
-        candidate = os.path.join(output_dir, "threat-model.yaml")
-        if os.path.exists(candidate):
-            yaml_path = candidate
+        # One naming set per directory: the published name, or the legacy one.
+        for name in ("security-assessment.yaml", "threat-model.yaml"):
+            candidate = os.path.join(output_dir, name)
+            if os.path.exists(candidate):
+                yaml_path = candidate
+                break
     if not yaml_path and threat_model_path:
         candidate = threat_model_path.replace("threat-model.md", "threat-model.yaml")
         if os.path.exists(candidate):

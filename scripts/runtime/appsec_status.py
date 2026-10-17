@@ -45,6 +45,8 @@ HOOK_SCRIPT_IDS = {
 # Phase budgets for the live-view age cutoff. Falls back to 300 s when the
 # loader is unavailable.
 sys.path.insert(0, str(HERE))
+from shared.artifact_names import ArtifactSetError, model_path, report_path  # noqa: E402
+
 try:
     import runtime.phase_budgets as phase_budgets  # type: ignore
 except Exception:  # pragma: no cover
@@ -372,7 +374,10 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
 
     Returns None if no baseline yaml exists yet.
     """
-    yaml_path = output_dir / "threat-model.yaml"
+    try:
+        yaml_path = model_path(output_dir)
+    except ArtifactSetError:
+        return None
     if not yaml_path.is_file():
         return None
     code, out, _ = _run_helper(
@@ -486,7 +491,10 @@ def _cutoff_verdict(output_dir: Path, *, live_snapshot: dict | None = None) -> d
 
     Otherwise returns ``{"kind": ..., "block": ...}`` from ``cutoff_cause``.
     """
-    if (output_dir / "threat-model.md").is_file():
+    try:
+        if report_path(output_dir).is_file():
+            return None
+    except ArtifactSetError:
         return None
     if not ((output_dir / ".agent-run.log").is_file() or (output_dir / ".appsec-checkpoint").is_file()):
         return None

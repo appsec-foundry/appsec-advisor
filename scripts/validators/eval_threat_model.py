@@ -47,6 +47,7 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
+from shared.artifact_names import ArtifactSetError, model_path
 
 # Canonical STRIDE category names. Mirrors scripts/model/merge_threats.py
 # `_STRIDE_ORDER` / `_STRIDE_LETTER` (STRIDE is a fixed, stable acronym).
@@ -176,9 +177,12 @@ def _repo_relative_path_exists(repo_root: Path, raw_path: object) -> bool:
 # prepare
 # --------------------------------------------------------------------------- #
 def prepare(run_dir: Path, out: Path, repo: Path | None) -> int:
-    yml = run_dir / "threat-model.yaml"
+    try:
+        yml = model_path(run_dir)
+    except ArtifactSetError as exc:
+        return _err(str(exc))
     if not yml.is_file():
-        return _err(f"no threat-model.yaml under {run_dir}")
+        return _err(f"no assessment model under {run_dir}")
     try:
         model = _load_yaml(yml)
     except Exception as exc:  # noqa: BLE001 — surface any parse failure as usage error
