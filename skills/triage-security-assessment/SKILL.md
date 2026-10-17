@@ -10,7 +10,7 @@ description: >-
   "Build a remediation plan" decides mitigate / accept-risk per finding and
   emits a remediation-plan.md without code changes. Within a session you can
   also discuss a single finding by id (F-/T-/M-/W-), a read-only aside that
-  changes nothing. Runs later and independently of create-threat-model; reads
+  changes nothing. Runs later and independently of appsec-analyzer; reads
   the model, never regenerates or re-scores it. Not an artifact-quality check
   (that is eval-security-assessment). To only *ask* about the model without acting on
   it, use ask-security-assessment.
@@ -30,10 +30,10 @@ fix / accept per finding → `remediation-plan.md`, no code changes).
 - Triage decisions live **only** in a sidecar (`<repo>/.appsec-triage/triage.yaml`);
   the sidecar and the plan live under `<repo>/.appsec-triage/`, a namespace the
   generation pipeline never touches — triage changes nothing about the
-  create-threat-model workflow.
+  appsec-analyzer workflow.
 - **One explicit, opt-in exception (Step 6b):** on the user's request, `accept-risk`
   decisions may be promoted into `<repo>/docs/known-threats.yaml` as `status:
-  accepted` entries. That file is a create-threat-model **input** (re-read each
+  accepted` entries. That file is a appsec-analyzer **input** (re-read each
   scan), *not* the generated model — so the accepted threat is skipped (not
   re-raised) on the next scan and surfaced as an accepted risk. This still never
   writes `threat-model.yaml`, never runs automatically, and preserves any
@@ -109,7 +109,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
 ```
 
 Exit `1` means no model was found — tell the user to run
-`/appsec-advisor:create-threat-model` first, then stop. Otherwise parse the JSON
+`/appsec-advisor:appsec-analyzer` first, then stop. Otherwise parse the JSON
 **once** and keep it in context for the whole session — it is the single source
 for every screen below. Do not re-run `console` on each loop; the static data
 (findings, mitigations, areas) does not change, only your decisions do.
@@ -197,7 +197,7 @@ axis is priority (the ramp), a finding's axis is severity (the colour dot).
 **Empty model guard.** If `total == 0` (the model exists but has no findings —
 e.g. a stub or a threats-less file), do **not** show the landing or the menu.
 Tell the user the threat model has no findings yet and to (re-)run
-`/appsec-advisor:create-threat-model` to scan, then stop. (A *missing* model is
+`/appsec-advisor:appsec-analyzer` to scan, then stop. (A *missing* model is
 already handled at Step 3 by the `console` exit `1`.)
 
 Print `screens.landing` **verbatim**. The script already formatted it: a bold

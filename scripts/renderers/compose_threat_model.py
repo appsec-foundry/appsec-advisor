@@ -5938,7 +5938,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     elif detail_path.exists():
         detail_path.unlink()  # Never leave a prior run's detail next to the current overview.
     # Embed inline when the CLI flag is set OR the skill persisted the choice in
-    # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
+    # .skill-config.json — the latter lets `/appsec-analyzer --embed-figures`
     # work through the renderer/recompose paths without threading a flag to each.
     embed = bool(getattr(ctx, "embed_figures", False))
     if not embed:
@@ -13582,7 +13582,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         invocation if invocation != "(not recorded)" else (skill_cfg.get("invocation_args") or "(not recorded)")
     )
     inv_prefix = (
-        "/appsec-advisor:create-threat-model "
+        "/appsec-advisor:appsec-analyzer "
         if (invocation_cell != "(not recorded)" and not invocation_cell.startswith("/"))
         else ""
     )

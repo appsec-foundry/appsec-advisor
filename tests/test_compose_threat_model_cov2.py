@@ -840,7 +840,7 @@ class TestRenderAppendixRunStatistics:
         )
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert (
-            "| Invocation | `/appsec-advisor:create-threat-model "
+            "| Invocation | `/appsec-advisor:appsec-analyzer "
             "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2` |"
         ) in out
 

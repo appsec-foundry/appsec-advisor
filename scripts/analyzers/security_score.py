@@ -3,7 +3,7 @@
 
 A fast indication, not an assessment. The score runs the deterministic scanner
 layer only: no agents, no LLM, no run state, nothing written into the target
-repository. A full ``/appsec-advisor:create-threat-model`` run stays the
+repository. A full ``/appsec-advisor:appsec-analyzer`` run stays the
 authority on severity and risk.
 
 What the number means

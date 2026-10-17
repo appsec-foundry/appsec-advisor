@@ -10,7 +10,7 @@ or *Accept instead* in the Mode 5B fix loop — and only on the user's explicit
 `.appsec-triage/`. Ask once with `AskUserQuestion`:
 
 > Also record these as accepted in `docs/known-threats.yaml`? On the next
-> `create-threat-model` scan they'll be treated as accepted — skipped (not
+> `appsec-analyzer` scan they'll be treated as accepted — skipped (not
 > re-raised as open findings) and shown as accepted risks — instead of
 > reappearing. (Your triage sidecar is unaffected either way.)
 

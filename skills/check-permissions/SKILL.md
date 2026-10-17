@@ -1,6 +1,6 @@
 ---
 name: check-permissions
-description: Preflight the Claude Code permission allow-list for the AppSec plugin. Reports which Bash/Write/Edit/Read rules from data/required-permissions.yaml are missing from the user's settings.json, so unattended /appsec-advisor:create-threat-model runs do not block on prompts. Read-only by default; --update merges missing entries into a chosen scope.
+description: Preflight the Claude Code permission allow-list for the AppSec plugin. Reports which Bash/Write/Edit/Read rules from data/required-permissions.yaml are missing from the user's settings.json, so unattended /appsec-advisor:appsec-analyzer runs do not block on prompts. Read-only by default; --update merges missing entries into a chosen scope.
 ---
 
 You are running a preflight check that tells the user which Claude Code permission rules are still needed for unattended AppSec runs, and optionally writes them into their settings.json. This skill does **not** analyze code, dispatch agents, or modify repository content. It only reads / writes `settings.json` files.

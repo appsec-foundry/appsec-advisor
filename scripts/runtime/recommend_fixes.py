@@ -629,8 +629,8 @@ def _recommend_contract_gate_drift(issue: dict, output_dir: Path) -> dict:
             },
             {
                 "type": "rerun",
-                "target": "/appsec-advisor:create-threat-model --rerender",
-                "details": "Recompose from the existing fragments when the drift is real (a fragment was edited or a renderer/contract change landed).",
+                "target": "/appsec-advisor:appsec-analyzer",
+                "details": "Run a new assessment when the drift is real (a fragment was edited or a renderer/contract change landed); recomposing from existing fragments is not available.",
             },
         ],
         "verification": [],
@@ -658,7 +658,7 @@ def _recommend_inline_shortcut_unresolved(issue: dict, output_dir: Path) -> dict
             },
             {
                 "type": "rerun",
-                "target": "/appsec-advisor:create-threat-model --rebuild",
+                "target": "/appsec-advisor:appsec-analyzer --rebuild",
                 "details": "A contract-compliant Phase-11 output is reachable from the on-disk artifacts; if this reproduces, file a plugin bug.",
             },
         ],

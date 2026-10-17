@@ -8,7 +8,7 @@ description: >-
   security judgement of any kind. Use it to decide whether a repository is worth
   a full run, at which assessment depth, and whether it is one service or a
   monorepo; use /appsec-advisor:security-score for a scanner-based number and
-  /appsec-advisor:create-threat-model for the assessment itself.
+  /appsec-advisor:appsec-analyzer for the assessment itself.
 ---
 
 You are printing a repository profile. This skill is **read-only** — do not analyze the repository yourself, do not write files, do not dispatch sub-agents. Run the script and present its output.
@@ -77,4 +77,4 @@ Reprint the script's stdout **verbatim**, in a fenced code block, every line of 
 
 Nothing may be added after the block: no summary of the size, no verdict on the stack, no estimate of what a scan would cost, no recommendation of an assessment depth. None of that is in the data.
 
-Two exceptions, both only when the user asks: point at `/appsec-advisor:create-threat-model` when they want the actual assessment, and at `/appsec-advisor:security-score` when they want a number about the repository's security rather than its shape.
+Two exceptions, both only when the user asks: point at `/appsec-advisor:appsec-analyzer` when they want the actual assessment, and at `/appsec-advisor:security-score` when they want a number about the repository's security rather than its shape.

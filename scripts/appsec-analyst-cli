@@ -195,7 +195,7 @@ def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser)
     if not args.threat_model and not args.isolated and not advice:
         advice = (
             "  Note: without a threat model only the selected files are checked; "
-            "/appsec-advisor:create-threat-model adds earlier findings and their files.\n"
+            "/appsec-advisor:appsec-analyzer adds earlier findings and their files.\n"
         )
     args.scope_summary = f"{scope}\n  Threat model: {model}\n  Analysis model: {args.model}\n{advice}"
 

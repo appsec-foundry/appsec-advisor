@@ -155,7 +155,7 @@ Resolve the active org profile before resolving the requirements source. The
 audit report output directory is the current repository's `docs/security/`;
 the resolver writes `.org-profile-effective.json` there so the shared
 requirements resolver and fetch gate see the same profile state as
-`create-threat-model`.
+`appsec-analyzer`.
 
 ```bash
 AUDIT_OUTPUT_DIR="${PWD}/docs/security"

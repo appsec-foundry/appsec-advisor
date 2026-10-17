@@ -48,7 +48,7 @@ WHEN TO USE
   * The Claude Code UI shows the threat-modeling skill as "scanning" but no
     claude process is actually running.
   * /appsec-advisor:status reports a run in progress from an old session.
-  * A ~/appsec-advisor:create-threat-model invocation bails out with
+  * A ~/appsec-advisor:appsec-analyzer invocation bails out with
     LOCK_BLOCKED and you've verified the other session is dead.
 
 The skill is safe to invoke at any time — if no stale state exists, it

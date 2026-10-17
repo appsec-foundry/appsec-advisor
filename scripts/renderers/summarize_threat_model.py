@@ -393,9 +393,9 @@ def build_summary(data: dict, output_dir: Path) -> dict:
 VERDICT_ICON = {"FRESH": "✓", "STALE": "⚠", "NO_MODEL": "✗", "UNKNOWN": "?"}
 RECOMMEND_TEXT = {
     "noop": "no re-scan needed — model is up to date",
-    "incremental": "next /appsec-advisor:create-threat-model runs incremental",
-    "full": "re-scan recommended: /appsec-advisor:create-threat-model --full",
-    "rebuild": "rebuild recommended: /appsec-advisor:create-threat-model --rebuild",
+    "incremental": "next /appsec-advisor:appsec-analyzer runs incremental",
+    "full": "re-scan recommended: /appsec-advisor:appsec-analyzer --full",
+    "rebuild": "rebuild recommended: /appsec-advisor:appsec-analyzer --rebuild",
     "none": "",
 }
 
@@ -627,7 +627,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
             " — the headline folds practice sites into the weakness register"
         )
     if total_findings == 0 and totals["threats"] == 0:
-        buf.append("           no findings recorded — run /appsec-advisor:create-threat-model to (re)scan")
+        buf.append("           no findings recorded — run /appsec-advisor:appsec-analyzer to (re)scan")
         buf.append("")
         buf.append(f"Report     {summary['report']}")
         return "\n".join(buf) + "\n"
@@ -774,12 +774,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def _emit_no_model(output_dir: Path, as_json: bool) -> None:
     """Uniform 'no usable model' response — used for a missing file and for a
     present-but-empty one (an empty YAML is not a usable model). Points the user
-    at create-threat-model rather than showing an empty overview."""
+    at appsec-analyzer rather than showing an empty overview."""
     if as_json:
         print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
     else:
         print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
-        print("Run /appsec-advisor:create-threat-model to generate one.")
+        print("Run /appsec-advisor:appsec-analyzer to generate one.")
 
 
 def main(argv: list[str] | None = None) -> int:

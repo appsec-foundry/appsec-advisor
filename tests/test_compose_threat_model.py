@@ -6334,7 +6334,7 @@ def test_render_figure1_svg_custom_basename(tmp_path: Path) -> None:
 
 
 def test_render_figure1_svg_embed_via_skill_config(tmp_path: Path) -> None:
-    # `/create-threat-model --embed-figures` persists embed_figures to
+    # `/appsec-analyzer --embed-figures` persists embed_figures to
     # .skill-config.json; compose honours it without a CLI flag (renderer path).
     out = tmp_path / "out"
     out.mkdir()

@@ -43,7 +43,7 @@ rm -rf /tmp/coverage-test-baseline/.appsec-cache
 rm -rf /tmp/coverage-test-baseline/.fragments
 
 # Baseline run
-time /appsec-advisor:create-threat-model \
+time /appsec-advisor:appsec-analyzer \
     --assessment-depth quick \
     --output /tmp/coverage-test-baseline \
     --no-confirm \
@@ -63,7 +63,7 @@ mkdir -p /tmp/coverage-test-treatment
 rm -rf /tmp/coverage-test-treatment/.appsec-cache
 rm -rf /tmp/coverage-test-treatment/.fragments
 
-time /appsec-advisor:create-threat-model \
+time /appsec-advisor:appsec-analyzer \
     --assessment-depth quick \
     --reasoning-model haiku-economy \
     --output /tmp/coverage-test-treatment \

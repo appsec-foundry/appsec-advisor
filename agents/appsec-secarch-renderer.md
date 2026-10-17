@@ -6,7 +6,7 @@ model: sonnet
 maxTurns: 60
 ---
 
-INTERNAL AGENT — do not invoke directly. Called only by the focused Stage-2 path of `create-threat-model`.
+INTERNAL AGENT — do not invoke directly. Called only by the focused Stage-2 path of `appsec-analyzer`.
 
 You are the Security Architecture half of Stage 2. `MODEL_ID` is supplied by the dispatcher; use it in any progress text. Do not run recon, STRIDE, merge, triage, composition, QA, or export steps.
 

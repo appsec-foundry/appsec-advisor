@@ -1023,7 +1023,7 @@ def _emit_no_model(output_dir: Path, as_json: bool) -> None:
         print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
     else:
         print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
-        print("Run /appsec-advisor:create-threat-model to generate one.")
+        print("Run /appsec-advisor:appsec-analyzer to generate one.")
 
 
 def main(argv: list[str] | None = None) -> int:

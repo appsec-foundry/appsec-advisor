@@ -1,6 +1,6 @@
 """Regression tests for the single-repo scan path.
 
-A user who runs ``/appsec-advisor:create-threat-model`` against a single
+A user who runs ``/appsec-advisor:appsec-analyzer`` against a single
 repository — without ``docs/related-repos.yaml``, without ``.gitmodules``,
 without sibling repos with threat models — must NOT see any cross-repo
 artifacts in the output. In particular, the deterministic helpers must:

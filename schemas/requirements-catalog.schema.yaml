@@ -8,7 +8,7 @@ description: |
   (`scripts/requirements/fetch_requirements.py` → `$OUTPUT_DIR/.requirements.yaml`):
 
     * `audit-security-requirements` — grades each requirement against the repo.
-    * `create-threat-model` — Phase 8b maps threats to violated requirement IDs
+    * `appsec-analyzer` — Phase 8b maps threats to violated requirement IDs
       and emits the §7b compliance table + mitigation `Fulfills:` references.
 
   Both load the same file and both accept `--requirements <http(s) URL | local

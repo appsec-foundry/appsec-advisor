@@ -1,6 +1,6 @@
 # Shared Completion Contract
 
-All create-threat-model pipeline agents (orchestrator + sub-agents) MUST follow this contract for their final assistant message — the text the agent produces on its last turn, as opposed to anything it writes to disk.
+All appsec-analyzer pipeline agents (orchestrator + sub-agents) MUST follow this contract for their final assistant message — the text the agent produces on its last turn, as opposed to anything it writes to disk.
 
 ## Why this exists
 

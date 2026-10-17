@@ -1,7 +1,7 @@
 {
   "files": {
     "expected-meta.json": "sha256:9451aa6dd25199b6ee285b0917c77ab7abca7a4446e8f4832bc6710349a49472",
-    "golden/threat-model.md": "sha256:320a96f5f81c8c9fefc59ce62158b2303041cd30b00097f7077cfa7402df6e1e",
+    "golden/threat-model.md": "sha256:2c28a50ceac23c65d553125c82af73edfbd34e4229f1a1bd827429085e966354",
     "golden/threat-model.sarif.json": "sha256:c77ea27de90aa1883b3fe1cc2a63e2744b8baed4c2d0f619275d45a35abba744",
     "golden/threat-model.yaml": "sha256:2151430fdaeccb34216f81d6f2609284fccc839ae391448ed4175a4dde391b63",
     "inputs/.abuse-case-matches.json": "sha256:41850a6d65fd98ffc6f55c856db83de9d997128484fd6be3843d0694a7888c03",

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """validators/ground_truth_recall.py: measure threat-model recall against known vulnerabilities.
 
-Developer test tool, not part of the create-threat-model pipeline. It answers
+Developer test tool, not part of the appsec-analyzer pipeline. It answers
 "which known vulnerabilities did a run locate?" so that depth or model changes
 can be compared on hard numbers instead of finding counts.
 

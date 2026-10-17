@@ -249,7 +249,7 @@ def test_hypothesis_report_names_cited_and_uncited_files():
     assert lines.index("## Technical details") > lines.index("## Why") > lines.index("## Where")
     assert "- Read more files: run the check again with `--path <file or directory>`." in lines
     assert "- Result of a full run: `/appsec-advisor:abuse-cases AC-T-001`" in lines
-    assert "- Use earlier findings as context: `/appsec-advisor:create-threat-model`" in lines
+    assert "- Use earlier findings as context: `/appsec-advisor:appsec-analyzer`" in lines
 
 
 def test_a_listed_step_without_a_verdict_or_without_code_is_never_rendered():

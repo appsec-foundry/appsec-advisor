@@ -40,10 +40,10 @@ WHAT IT DOES
     select — one at a time, for review — based on their remediation.
   * After an accept-risk, optionally (opt-in) records the accepted risks in
     <repo>/docs/known-threats.yaml as status: accepted, so the next
-    create-threat-model scan skips them (not re-raised) and shows them as accepted.
+    appsec-analyzer scan skips them (not re-raised) and shows them as accepted.
 
 DOES NOT
-  * Regenerate or re-score the threat model (use create-threat-model).
+  * Regenerate or re-score the threat model (use appsec-analyzer).
   * Judge the model's quality (use eval-security-assessment).
   * Write back to threat-model.yaml, or promote accepted risks without your
     explicit opt-in.
@@ -51,4 +51,4 @@ DOES NOT
 
 RELATED
   /appsec-advisor:show-security-assessment     Read-only overview by severity
-  /appsec-advisor:create-threat-model   Generate or update the threat model
+  /appsec-advisor:appsec-analyzer   Generate or update the threat model

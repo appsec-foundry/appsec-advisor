@@ -165,7 +165,7 @@ properties:
 
       Two things are refused rather than resolved quietly. A name that collides
       with an upstream skill aborts the build, because replacing, say,
-      `create-threat-model` would change what its command does without anyone
+      `appsec-analyzer` would change what its command does without anyone
       deciding to. And frontmatter that would not pass for an upstream skill
       aborts too: `name` must match the directory, `description` must be
       non-empty and at most 1024 characters, and no other keys are allowed.

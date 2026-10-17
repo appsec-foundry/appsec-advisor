@@ -1,7 +1,7 @@
 ---
 name: diagnose-run
 description: >-
-  Find the plugin defects behind the issues a create-threat-model run recorded.
+  Find the plugin defects behind the issues a appsec-analyzer run recorded.
   Reads `.run-issues.json`, re-reads each symptom next to the plugin's own code,
   and reports a `file:line` root cause per issue, or classifies it as an
   environment or expected condition. Read-only against the plugin; writes only

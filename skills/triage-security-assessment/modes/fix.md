@@ -7,7 +7,7 @@ Loaded by SKILL.md Step 5B when the user picks this mode or bridges into it. SKI
 A menu loop that changes code. **On entry, if `freshness.verdict` is `STALE`,
 say so once** — this mode edits source against a model the code has already moved
 past, so its `location`s and remediation steps may no longer match the file. Name
-the reason and offer to re-scan first (`/appsec-advisor:create-threat-model`); if
+the reason and offer to re-scan first (`/appsec-advisor:appsec-analyzer`); if
 the user wants to continue anyway, continue. Do not block, do not repeat it per
 finding, and do not raise it in the read-only modes.
 

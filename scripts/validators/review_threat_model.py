@@ -1062,7 +1062,7 @@ def render(output_dir: Path, sidecar_path: Path, plan_path: Path) -> Path:
 #
 # The ONE place this consumer writes outside its own .appsec-triage/ namespace,
 # and only on the skill's explicit, opt-in request. It never touches the
-# generated threat-model.yaml — it writes the create-threat-model *input* channel
+# generated threat-model.yaml — it writes the appsec-analyzer *input* channel
 # (docs/known-threats.yaml). A `status: accepted` entry there is re-read on every
 # scan: the STRIDE analyzer skips it (not re-raised) and the orchestrator surfaces
 # it in meta.accepted_risks[] (verified in appsec-stride-analyzer-v2.md / build_*).

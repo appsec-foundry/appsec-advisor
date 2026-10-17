@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """validators/eval_threat_model.py: developer-facing quality eval for a threat-model run.
 
-This is a TEST tool, not part of the create-threat-model pipeline. The pytest
+This is a TEST tool, not part of the appsec-analyzer pipeline. The pytest
 suite + validators/qa_checks.py already cover STRUCTURAL correctness (schema, render,
 cross-refs, determinism). They do NOT judge the SEMANTIC quality of the
 LLM-authored output. This harness fills that gap with a find -> adversarial-verify

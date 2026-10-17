@@ -1,6 +1,6 @@
 ---
 name: setup-target
-description: Write the required Claude Code permission allow-list into a target repository so that /appsec-advisor:create-threat-model runs without permission prompts. One-shot setup; idempotent.
+description: Write the required Claude Code permission allow-list into a target repository so that /appsec-advisor:appsec-analyzer runs without permission prompts. One-shot setup; idempotent.
 ---
 
 You are performing a one-shot setup that writes the required Claude Code permission rules into a target repository's `.claude/settings.json`. This skill does **not** analyse code, dispatch agents, or modify repository content beyond `.claude/settings.json`.

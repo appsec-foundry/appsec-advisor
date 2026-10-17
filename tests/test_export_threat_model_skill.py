@@ -332,7 +332,7 @@ def test_html_helper_missing_input_exits_two(tmp_path: Path):
 
 
 def test_slug_names_every_export_like_the_create_stamp():
-    """`--slug` must name each export the way `create-threat-model --slug`
+    """`--slug` must name each export the way `appsec-analyzer --slug`
     stamps it, so both skills put the same file into a shared directory."""
     sys.path.insert(0, str(SCRIPTS))
     import model.stamp_threat_model as stamp_threat_model

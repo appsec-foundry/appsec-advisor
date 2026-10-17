@@ -18,7 +18,7 @@ contract). Keep the diagnosis anchored to the structured fields — never invent
 cause the bundle does not support.
 
 This is a **maintainer/dev** skill — never auto-triggered, not part of
-`create-threat-model`, and it needs no new permissions (read-only triage of a
+`appsec-analyzer`, and it needs no new permissions (read-only triage of a
 file the maintainer chose to open).
 
 ## Step 1 — Parse arguments

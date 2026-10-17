@@ -483,7 +483,7 @@ def build(
         )
     reasons = [] if with_threat_model else model_recommendation(selected)
     if reasons:
-        summary += "\n  Recommendation: create a threat model first with /appsec-advisor:create-threat-model"
+        summary += "\n  Recommendation: create a threat model first with /appsec-advisor:appsec-analyzer"
         summary += "".join(f"\n    {r}" for r in reasons)
     return hypothesis, paths, summary
 

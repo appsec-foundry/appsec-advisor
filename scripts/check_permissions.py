@@ -379,7 +379,7 @@ def render_human(
         lines.append(
             f"All permissions are already configured to scan repo path {repo_label} and write output to {out_label}."
         )
-        lines.append("Unattended /appsec-advisor:create-threat-model runs will not prompt.")
+        lines.append("Unattended /appsec-advisor:appsec-analyzer runs will not prompt.")
         return "\n".join(lines) + "\n"
 
     # --- user-level-only warning (no truly missing entries) ---

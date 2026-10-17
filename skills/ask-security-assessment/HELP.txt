@@ -26,4 +26,4 @@ FLAGS
 RELATED
   /appsec-advisor:show-security-assessment     Print the summary block (display only)
   /appsec-advisor:triage-security-assessment   Triage: apply fixes / accept risk / plan
-  /appsec-advisor:create-threat-model   Generate or update the model
+  /appsec-advisor:appsec-analyzer   Generate or update the model

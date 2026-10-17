@@ -5,7 +5,7 @@ description: >-
   fix. Finds what actually broke (log symptoms plus the artifact divergences no
   log records), proves the root cause by executing it, derives a fix that holds
   for arbitrary target repositories rather than the one that exposed it, and
-  lands it with a guard test. Use after a create-threat-model run that produced
+  lands it with a guard test. Use after an appsec-analyzer run that produced
   wrong numbers, a broken or inconsistent report, a crash, or Run Issues you
   want explained — and whenever you are about to fix plugin code at all.
 ---
