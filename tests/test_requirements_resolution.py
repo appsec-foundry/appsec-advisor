@@ -424,8 +424,8 @@ class TestSkillApplicability:
         """Requirements audit links must target rendered F-NNN anchors, not
         internal T-NNN ids."""
         content = (PLUGIN_DIR / "skills" / "audit-security-requirements" / "save-reports.md").read_text()
-        assert "[F-NNN · Risk](docs/security/threat-model.md#f-nnn)" in content
-        assert "[T-NNN · Risk](docs/security/threat-model.md#t-nnn)" not in content
+        assert "[F-NNN · Risk](<report>#f-nnn)" in content
+        assert "#t-nnn" not in content
 
     def test_check_skill_uses_shared_org_profile_requirements_resolvers(self):
         """The standalone audit skill must not bypass org-profile requirements

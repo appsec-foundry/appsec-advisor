@@ -568,7 +568,10 @@ if [ -n "$OUTPUT_PATH" ]; then
         *) OUTPUT_PATH="$(pwd)/$OUTPUT_PATH" ;;
     esac
 else
-    OUTPUT_PATH="$REPO_PATH/docs/security"
+    # The audit report belongs to the application's private directory outside
+    # the checkout, like an assessment; never fall back to docs/security.
+    OUTPUT_PATH="$(python3 "$PLUGIN_DIR/scripts/shared/assessment_location.py" destination --repo "$REPO_PATH" --create)" \
+        || die "Cannot resolve the private output directory for $REPO_PATH"
 fi
 
 mkdir -p "$OUTPUT_PATH" 2>/dev/null || die "Cannot create output directory: $OUTPUT_PATH"
@@ -662,6 +665,9 @@ if [ "$SKILL" = "audit-security-requirements" ]; then
 
     # Save flags
     [ -n "$SAVE_REPORT" ] && PROMPT="$PROMPT $SAVE_REPORT"
+
+    # The skill writes its verdict and reports where this wrapper reads them.
+    PROMPT="$PROMPT --output \"$OUTPUT_PATH\""
 
     # Pass any extra flags
     PROMPT="$PROMPT$SKILL_FLAGS"
@@ -811,7 +817,7 @@ cleanup_tails() {
 }
 
 cleanup_live_tool_markers() {
-    _cleanup_dir="${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}"
+    _cleanup_dir="${RESULT_DIR:-$OUTPUT_PATH}"
     OUTPUT_DIR="$_cleanup_dir" python3 "$PLUGIN_DIR/scripts/runtime/agent_logger.py" \
         --clear-active-tool-calls >/dev/null 2>&1 || true
 }
@@ -843,7 +849,7 @@ start_progress_monitor() {
 
 if [ -n "$VERBOSE" ]; then
     # Determine log directory for tail -f
-    RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    RESULT_DIR="$OUTPUT_PATH"
     mkdir -p "$RESULT_DIR" 2>/dev/null || true
     LOG_FILE="$RESULT_DIR/.hook-events.log"
     RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
@@ -890,7 +896,7 @@ elif [ -z "$QUIET" ]; then
     # Default: lightweight live progress (milestone events only) so the run
     # isn't a silent black box. Use --verbose for the full firehose, --quiet
     # for no live output at all.
-    RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    RESULT_DIR="$OUTPUT_PATH"
     mkdir -p "$RESULT_DIR" 2>/dev/null || true
     LOG_FILE="$RESULT_DIR/.hook-events.log"
     RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
@@ -911,7 +917,7 @@ echo ""
 # is unaffected. Redirecting a plain `>` keeps claude a direct child, so the
 # process-group signal handling below (kill -SIG -$CLAUDE_PID) still works; a
 # pipe would make $! the reader's PID and break escalation.
-RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+RESULT_DIR="$OUTPUT_PATH"
 mkdir -p "$RESULT_DIR" 2>/dev/null || true
 # Hooks are separate processes of the Claude child. Export the resolved run
 # directory before launching that child so Stop, Bash, and other non-Agent
@@ -1049,7 +1055,7 @@ on_terminate() {
 # also walked into an abort. Reused by both the Ctrl-C abort path and the
 # non-zero-exit failure path so the hint is never only on one.
 print_recovery_hint() {
-    _rh_dir="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    _rh_dir="$OUTPUT_PATH"
     warn "Check the intermediate files in $_rh_dir; this run cannot be continued."
 }
 
@@ -1156,7 +1162,7 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
     # and `runtime/appsec_status.py --live` reports an unknown phase until the
     # heartbeat ages out — the process that took the lock is already gone.
     python3 "$PLUGIN_DIR/scripts/runtime/terminate_run.py" \
-        --output-dir "${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}" \
+        --output-dir "${RESULT_DIR:-$OUTPUT_PATH}" \
         --outcome interrupt --reason "operator interrupt (exit $EXIT_CODE)" \
         --run-id "$APPSEC_RUN_ID" \
         --repo-root "${REPO_PATH:-.}" --depth "${ASSESSMENT_DEPTH:-standard}" \
@@ -1169,7 +1175,7 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
 fi
 
 # ── Parse duration and files from log ──────────────────────────────
-RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+RESULT_DIR="$OUTPUT_PATH"
 
 # ── Foreign output directory (the lock was refused) ────────────────
 # `acquire_lock.lock_held_by_live_other_run` is the rule a run that was refused

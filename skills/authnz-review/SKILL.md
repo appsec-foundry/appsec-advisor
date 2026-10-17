@@ -78,8 +78,11 @@ Parse the user's message or slash-command arguments:
 - `--requirements <path>` → `REQUIREMENTS_PATH` (default: `none`; also
   auto-detect `$REPO_ROOT/docs/security/requirements.yaml` when it exists)
 - `--with-threat-model` → `WITH_THREAT_MODEL=true`
-- `--save` → `SAVE_FILES=true`; set `OUTPUT_DIR=<REPO_ROOT>/docs/security`
-  and run `mkdir -p "$OUTPUT_DIR"`
+- `--save` → `SAVE_FILES=true`; set `OUTPUT_DIR` to the application's private
+  directory outside the repository, printed (and created) by
+  `python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" destination --repo "$REPO_ROOT" --create`.
+  If it exits non-zero, print its `Error: ...` line and stop; never fall back
+  to `docs/security`
 - `--pentest-tasks` → `PENTEST_TASKS=true`
 - `--no-pentest-tasks` → `PENTEST_TASKS=false`, even when the organization
   profile enables it
@@ -130,7 +133,7 @@ authnz-review  <repo name (basename of REPO_ROOT)>
 
   <REPO_ROOT>
   route inventory · auth-check scan · IDOR confirmation · cross-component reasoning
-  requirements: <REQUIREMENTS_PATH or: none>  ·  output: <docs/security/ | console only>
+  requirements: <REQUIREMENTS_PATH or: none>  ·  output: <OUTPUT_DIR | console only>
   pentest tasks: <PENTEST_FORMAT>  ·  target: <PENTEST_TARGET or: none>  ·  <PENTEST_SOURCE>
                                        ← omit line when PENTEST_TASKS is false
 ```
@@ -244,12 +247,14 @@ Circle: 🟢 for 0 confirmed, 🟡 for 1–2, 🔴 for 3+.
 
 ## Step 5 — Resolve STRIDE EoP input
 
-Only when `WITH_THREAT_MODEL=true`: glob for
-`$REPO_ROOT/docs/security/.stride-*.json`. If files exist set
-`STRIDE_FINDINGS_GLOB="$REPO_ROOT/docs/security/.stride-*.json"`.
+Only when `WITH_THREAT_MODEL=true`: print the assessment directory with
+`python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" locate --repo "$REPO_ROOT"`
+and set `ASSESSMENT_DIR` to it (`none` when the call fails). Glob for
+`$ASSESSMENT_DIR/.stride-*.json`. If files exist set
+`STRIDE_FINDINGS_GLOB="$ASSESSMENT_DIR/.stride-*.json"`.
 Otherwise set `STRIDE_FINDINGS_GLOB=none` and print:
 ```
-  ⚪ --with-threat-model: no .stride-*.json found in docs/security/ — running standalone
+  ⚪ --with-threat-model: no .stride-*.json found in the assessment directory — running standalone
 ```
 
 When `WITH_THREAT_MODEL` is not set: `STRIDE_FINDINGS_GLOB=none`.
@@ -280,7 +285,7 @@ AUTHZ_CONFIRM_PATH=<OUTPUT_DIR>/.authz-confirm-findings.json
 
 REQUIREMENTS_PATH=<REQUIREMENTS_PATH>
 STRIDE_FINDINGS_GLOB=<STRIDE_FINDINGS_GLOB>
-COMPONENT_INVENTORY_PATH=<$REPO_ROOT/docs/security/.components.json if exists, else none>
+COMPONENT_INVENTORY_PATH=<$ASSESSMENT_DIR/.components.json if WITH_THREAT_MODEL and it exists, else none>
 ```
 
 Wait for the agent to complete, then validate the report and compute its

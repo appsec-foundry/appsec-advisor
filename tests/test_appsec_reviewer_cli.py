@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from shared import assessment_location as loc
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "appsec-reviewer-cli"
@@ -34,7 +35,12 @@ def fake_claude(tmp_path: Path, writes_verdict: bool) -> tuple[dict, Path]:
     script = bindir / "claude"
     script.write_text(f"#!/usr/bin/env python3\n{body}")
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}", "CLAUDE_PLUGIN_ROOT": str(ROOT)}
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "CLAUDE_PLUGIN_ROOT": str(ROOT),
+        "XDG_DATA_HOME": str(tmp_path / "data"),
+    }
     return env, log
 
 
@@ -50,15 +56,21 @@ def run(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
 
 
 def test_a_checked_in_verdict_is_never_reported_as_this_review(checkout, tmp_path):
-    verdict = checkout / "docs" / "security" / ".requirements-verification.json"
-    verdict.parent.mkdir(parents=True)
-    verdict.write_text(json.dumps({"results": [], "summary": {"pass": 1}}))
+    passing = json.dumps({"results": [], "summary": {"pass": 1}})
+    checked_in = checkout / "docs" / "security" / ".requirements-verification.json"
+    checked_in.parent.mkdir(parents=True)
+    checked_in.write_text(passing)
+    base = tmp_path / "data" / "appsec-advisor" / "assessments"
+    private = loc.private_directory(loc.application_directory(checkout, base), base)
+    stale = private / ".requirements-verification.json"
+    stale.write_text(passing)
     env, log = fake_claude(tmp_path, writes_verdict=False)
     result = run(checkout, env, "--fail-on", "must")
     assert result.returncode == 2 and "no verdict produced" in result.stderr
-    assert not verdict.exists()
+    assert not stale.exists()
     argv = json.loads(log.read_text())
     assert argv[argv.index("--allowedTools") + 1] == "Read,Write,Glob,Grep,Bash,Agent"
+    assert f'--output "{private}"' in argv[argv.index("-p") + 1]
 
 
 @pytest.mark.parametrize("owned", [".claude/settings.json", ".claude/settings.local.json"])

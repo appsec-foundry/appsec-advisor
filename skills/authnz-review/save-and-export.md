@@ -52,21 +52,31 @@ and Step 6 validated it.
 
 Print:
 ```
-  Saved → docs/security/authnz-report.md
-  Saved → docs/security/.authnz-report.json
+  Saved → <OUTPUT_DIR>/authnz-report.md
+  Saved → <OUTPUT_DIR>/.authnz-report.json
 ```
 
 ---
 
 ## Step 9b — Pentest tasks (only when --pentest-tasks)
 
-Only when `PENTEST_TASKS=true`. Run:
+Only when `PENTEST_TASKS=true`. The task file goes to the application's private
+directory outside the repository, also without `--save`, because `OUTPUT_DIR`
+may be the temp dir Step 10 removes. Print it once:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/shared/assessment_location.py" destination --repo "$REPO_ROOT" --create
+```
+
+If it exits non-zero, print its `Error: ...` line and skip the export; never fall
+back to `docs/security`. Otherwise write the printed path literally as
+`PENTEST_DIR` and run:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_pentest_tasks.py" \
   --authnz "$OUTPUT_DIR/.authnz-report.json" \
   --route-inventory "$OUTPUT_DIR/.route-inventory.json" \
-  --output "$REPO_ROOT/docs/security/$PENTEST_FILE" \
+  --output "$PENTEST_DIR/$PENTEST_FILE" \
   --dialect "$PENTEST_FORMAT" \
   --project "<repo name>"
 ```
@@ -84,5 +94,5 @@ does not invalidate the review.
 
 Print (task count from the exporter's `VALID: wrote <N> pentest tasks` line):
 ```
-  Saved → docs/security/<PENTEST_FILE>  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
+  Saved → <PENTEST_DIR>/<PENTEST_FILE>  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
 ```
