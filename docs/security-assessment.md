@@ -333,7 +333,7 @@ The session model does not affect the run. `--reasoning-model` chooses the analy
 | `--soft-budget <usd>` | Deprecated. Alone, it sets the limit to 1.25 times its value; an explicit `--hard-budget` takes precedence. |
 | `--max-duration <seconds>` | Cumulative deadline of the run, kept on `--resume`. Default: 14,400 seconds. |
 
-Without a budget flag, `/appsec-advisor:appsec-analyzer` sets the limit from the depth: 10 USD for quick, 20 USD for standard, and 40 USD for thorough. A headless run requires `--soft-budget` or `--hard-budget`.
+Without a budget flag, `/appsec-advisor:appsec-analyzer` sets the limit from the depth: 10 USD for quick, 20 USD for standard, and 40 USD for thorough. A headless run requires `--hard-budget`.
 
 ```bash
 ./scripts/run-headless.sh --max-duration 1800 --hard-budget 30

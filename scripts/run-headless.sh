@@ -112,7 +112,7 @@ Options:
   --repo <path|url>          Local repository or HTTPS/SSH Git URL (default: current directory)
                              Repeat --repo to assess several repositories as one
                              system; this requires --output outside every checkout
-                             and --soft-budget or --hard-budget
+                             and --hard-budget
   --output <path>            Output directory (default: the application's private
                              directory under the user data directory)
   --migrate-legacy           Import a finished assessment from <repo>/docs/security
@@ -543,7 +543,7 @@ fi
 if [ "$BILLING_MODE" = "api" ]; then
     # Warn if spending is uncapped — easy to run up unexpected charges.
     if [ -z "$MAX_BUDGET" ]; then
-        warn "API billing mode active with no budget cap — consider --soft-budget <usd>"
+        warn "API billing mode active with no budget cap — consider --hard-budget <usd>"
     fi
 else
     # Subscription mode: the host's cut is not available; drop it. Only say so

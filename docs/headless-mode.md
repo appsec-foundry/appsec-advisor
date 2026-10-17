@@ -35,7 +35,7 @@ export ANTHROPIC_API_KEY="<from-secret-store>"
 ./scripts/run-headless.sh --repo /path/to/repository --hard-budget 30
 ```
 
-A headless run requires `--hard-budget` or `--soft-budget`; see [Cost and duration limits](#cost-and-duration-limits).
+A headless run requires `--hard-budget`; see [Cost and duration limits](#cost-and-duration-limits).
 
 An installed wrapper can be invoked from its plugin directory. Set
 `CLAUDE_PLUGIN_DIR` when several installed copies exist and the desired one is
