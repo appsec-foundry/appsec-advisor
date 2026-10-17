@@ -119,12 +119,12 @@ Options:
                              first; its files there stay
   --ignore-legacy            Start without that assessment; a run that finds one
                              and has neither option stops
-  --yaml                     (no-op) yaml is always written by default
-  --no-yaml                  Suppress security-assessment.yaml output
   --sarif                    Also write security-assessment.sarif.json (SARIF v2.1.0)
-  --threatdragon             Also write threat-model.threatdragon.json
+  --threatdragon             Also write security-assessment.threatdragon.json
                              (OWASP Threat Dragon v2 — ALPHA, opt-in only)
-  --slug [<value>]           Also write a copy set named threat-model-<value>.*
+  --pdf, --html              Also write security-assessment.pdf / .html
+  --pentest-tasks            Also write pentest-tasks.yaml
+  --slug [<value>]           Also write a copy set named security-assessment-<value>.*
                              (1-64 of A-Z a-z 0-9 . _ -); bare --slug picks a
                              random value
   --requirements [<src>]     Enable requirements check, optionally from an
@@ -133,33 +133,21 @@ Options:
   --context <src>            Business context for this run: an http(s):// URL or
                              a file path. Optional; applies to this run only —
                              persist it by committing docs/security/business-context.md
-  --dry-run                  Unsupported by the compact runtime; exits before dispatch
-  --incremental              Unsupported by the compact runtime; exits before dispatch
-  --full                     Force full scan even when prior output exists
-  --rerender                 Re-render Stage 2 + re-run Stage 3 QA from the
-                             EXISTING Stage-1 fragments (no Stage 1, no no-op).
-                             For fragment/renderer/QA changes; not for code changes.
-  --resume                   Unsupported; use --rerender or a fresh --rebuild
-  --base <ref>               Reserved for incremental mode, which is unsupported
-  --pr-mode                  Unsupported because incremental mode is unavailable
-  --fail-on <level>          Non-zero exit on new threats >= critical|high|medium
-  --no-qa                    Skip Stage-3 QA reviewer (faster CI runs)
-  --restore-from <path>      Unsupported because incremental mode is unavailable
-  --max-duration <seconds>   Abort the run if it exceeds the given duration
-  --soft-budget <usd>        Steer the run to this cost. A run that cannot fit
-                             does not start; a run that overruns still finishes.
-  --hard-budget <usd>        Kill the session at this cost, losing the report
-                             (API billing only). Defaults to 1.25 x the soft
-                             budget when only --soft-budget is given.
-  --clean-cache              Delete cache & transient files in \$OUTPUT_DIR; keeps
-                             the threat model and audit logs. Exits without running.
-  --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
-                             unless --force / CI=true). Exits without running.
-  --force                    Skip the interactive confirmation for --clean-all.
-                             With --full or --rebuild it also discards a
-                             completed Stage 1 that the run would otherwise
-                             offer to render with --rerender.
-  --model <model>            Override the session model (default: claude-sonnet-4-6, economy)
+  --skip-context             Use no business context, stored or supplied
+  --resume                   Continue an interrupted assessment, reusing its
+                             accepted steps
+  --rebuild                  Start the assessment over and reset its history
+  --fail-on <level>          Exit 20 when new findings reach critical|high|medium
+  --max-duration <seconds>   Cumulative deadline of the run (default 14400)
+  --hard-budget <usd>        Total model-cost limit; required unless the run is
+                             launched interactively
+  --soft-budget <usd>        Deprecated: a limit of 1.25 x this value
+  --model <model>            Run every model role on this model
+  --stride-model, --triage-model, --merger-model <model>
+                             Override one role's model
+  Refused (full assessments only): --incremental, --rerender, --dry-run, --base,
+                             --pr-mode, --restore-from, --clean-cache, --clean-all,
+                             --max-wall-time and a free-text focus
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
