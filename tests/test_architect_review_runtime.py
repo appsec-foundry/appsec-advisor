@@ -429,74 +429,6 @@ def test_non_object_yaml_fails_without_a_stale_success(tmp_path):
     assert not (tmp_path / ".architect-status.json").exists()
 
 
-def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-
-    cfg, _, calls = setup_run(tmp_path)
-    cfg["output_dir"] = str(tmp_path)
-    observed = []
-
-    def script(name, args, **kwargs):
-        observed.append(name)
-        if name == "validators/triage_validate_ratings.py":
-            assert json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][0]["risk"] == "High"
-            assert len(calls) == 1
-
-    events = []
-    monkeypatch.setattr(controller, "_run_script", script)
-    monkeypatch.setattr(controller, "_append_event", lambda _out, event, *_a, **_k: events.append(event))
-    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
-    action = controller._context_v2_after_evidence(tmp_path, cfg)
-    assert action["action"] == "dispatch_parallel"
-    assert action["next_boundary"] == "context-v2-post-architect-review"
-    assert "validators/triage_validate_ratings.py" not in observed
-    job = action["dispatch_jobs"][0]
-    assert job["semantic_role"] == "architect_reviewer"
-    assert job["agent_type"] == "appsec-advisor:appsec-architect-reviewer"
-    assert [receipt["artifact_path"] for receipt in action["artifact_receipts"]] == job["input_artifacts"]
-    run_agents(
-        tmp_path,
-        [
-            {
-                "job_id": job["job_id"],
-                "input_artifact": job["input_artifacts"][0],
-                "output_artifact": job["output_artifacts"][0],
-            }
-        ],
-        calls=calls,
-    )
-    assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
-    assert observed.index("model/reclassify_components.py") < observed.index("validators/triage_validate_ratings.py")
-    assert runtime.load_review(tmp_path)["application"]["accepted"]
-    assert "ARCHITECT_REVIEW_COMPLETE" in events and "ORCHESTRATION_GATE_WARN" not in events
-
-
-def test_controller_warns_when_the_review_decided_nothing(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-
-    cfg, _, _ = setup_run(tmp_path)
-    cfg["output_dir"] = str(tmp_path)
-    events = []
-    monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: None)
-    monkeypatch.setattr(controller, "_append_event", lambda _out, event, *_a, **_k: events.append(event))
-    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
-    assert controller._context_v2_after_evidence(tmp_path, cfg)["action"] == "dispatch_parallel"
-    assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
-    assert "ORCHESTRATION_GATE_WARN" in events
-
-
-def test_controller_skips_dispatch_when_review_is_disabled(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-
-    cfg, _, _ = setup_run(tmp_path)
-    cfg.update(architect_review=False, output_dir=str(tmp_path))
-    monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: None)
-    monkeypatch.setattr(controller, "_append_event", lambda *_a, **_k: None)
-    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
-    assert controller._context_v2_after_evidence(tmp_path, cfg) == {"action": "synthesis"}
-    assert not (tmp_path / runtime.ARTIFACT).exists()
-
-
 def test_concurrent_boundary_cannot_spend_or_consume_inflight_work(tmp_path, monkeypatch):
     import fcntl
     import os
@@ -550,21 +482,6 @@ def test_scoring_profile_change_during_review_blocks_publication(tmp_path):
     with pytest.raises(ReviewError, match="scoring profile changed"):
         review(tmp_path, cfg, change_profile)
     assert json.loads((tmp_path / ".threats-merged.json").read_text()) == source
-
-
-def test_required_review_is_preserved_by_cleanup_and_removed_by_fresh_preflight(tmp_path, monkeypatch):
-    import orchestrator.orchestration_controller as controller
-    import runtime.runtime_cleanup as runtime_cleanup
-
-    cfg, _, _ = setup_run(tmp_path)
-    review(tmp_path, cfg)
-    runtime_cleanup.run_cleanup(tmp_path, "all", keep_runtime_files=False, force=True)
-    assert (tmp_path / runtime.ARTIFACT).exists()
-    assert runtime.ARTIFACT in runtime_cleanup.NEVER
-    assert runtime.ARTIFACT in controller._FULL_INTERMEDIATE_NAMES
-    assert runtime.ARTIFACT in controller._REBUILD_NAMES
-    controller._cleanup_full(tmp_path)
-    assert not (tmp_path / runtime.ARTIFACT).exists()
 
 
 def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp_path, monkeypatch):

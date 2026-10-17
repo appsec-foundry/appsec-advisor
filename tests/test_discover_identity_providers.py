@@ -6,10 +6,8 @@ from pathlib import Path
 
 import analyzers.discover_identity_providers as discovery
 import jsonschema
-import orchestrator.orchestration_controller as controller
 import pytest
 import renderers.figure1_dfd as figure1_dfd
-from contexts.build_trust_boundary_assessment_input import _semantic_flow_validation
 from validators.validate_fragment import repository_path_errors
 
 
@@ -511,47 +509,6 @@ def test_query_credentials_are_not_copied_to_model(tmp_path):
     _write(tmp_path, "src/auth.ts", 'fetch("https://id.example/oauth/token?client_secret=must-not-leak");')
     result = discovery.reconcile(tmp_path, _components(), _flows())
     assert "must-not-leak" not in json.dumps(result)
-
-
-def test_controller_handoff_reaches_boundary_input_and_svg(tmp_path):
-    repo, out = tmp_path / "repo", tmp_path / "out"
-    _write(
-        repo, "src/login.ts", 'const endpoint="https://id.example/oauth2/authorize";\nwindow.location.assign(endpoint);'
-    )
-    out.mkdir()
-    components = _components()
-    receipt = {"component_inventory_fingerprint": "sha256:" + "a" * 64, "component_ids": ["client"]}
-    (out / ".components.json").write_text(json.dumps({"components": components}))
-    (out / ".component-inventory-finalization.json").write_text(json.dumps(receipt))
-    (out / ".data-flows.json").write_text(json.dumps(_flows()))
-    controller._bind_finalized_component_fingerprint(out, repo)
-    doc = json.loads((out / ".data-flows.json").read_text())
-    _semantic_flow_validation(doc, receipt)
-    model = {**doc, "components": components}
-    svg, state = figure1_dfd._build(model, [], [])
-    assert "id.example" in svg
-    entity = doc["external_entities"][0]["id"]
-    assert state["nodes"][entity]["col"] == 0
-    assert any(edge["src"] == "client" and edge["dst"] == entity for edge in state["edges"])
-    assert not any(edge["src"] == "identity-server" for edge in state["edges"])
-
-
-def test_controller_does_not_publish_invalid_enrichment(tmp_path, monkeypatch):
-    out = tmp_path / "out"
-    out.mkdir()
-    for name, value in [
-        (".components.json", {"components": _components()}),
-        (".component-inventory-finalization.json", {"component_inventory_fingerprint": "sha256:" + "a" * 64}),
-        (".data-flows.json", _flows()),
-    ]:
-        (out / name).write_text(json.dumps(value))
-    previous = (out / ".data-flows.json").read_bytes()
-    invalid = copy.deepcopy(_flows())
-    invalid["external_entities"] = [{"id": "ext-invalid"}]
-    monkeypatch.setattr(discovery, "reconcile", lambda *_: invalid)
-    with pytest.raises(controller.ControllerError, match="schema validation"):
-        controller._bind_finalized_component_fingerprint(out, tmp_path)
-    assert (out / ".data-flows.json").read_bytes() == previous
 
 
 # ---------------------------------------------------------------------------

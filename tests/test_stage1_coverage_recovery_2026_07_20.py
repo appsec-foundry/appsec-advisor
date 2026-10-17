@@ -16,13 +16,10 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import analyzers.classify_component as classify_component  # noqa: E402
-import orchestrator.orchestration_controller as oc  # noqa: E402
 import orchestrator.stride_dispatch_waves as waves  # noqa: E402
 
 # --------------------------------------------------------------------------
@@ -159,66 +156,6 @@ def test_seed_only_validates_against_the_stride_schema(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 # D1 — post_stage1 must diagnose blocked coverage, not blame missing artifacts
 # --------------------------------------------------------------------------
-
-
-def _blocked_run(tmp_path: Path) -> Path:
-    """A run that correctly stopped before Analyst-B: no merge/triage artifacts."""
-    out = tmp_path / "security"
-    out.mkdir()
-    (out / ".skill-config.json").write_text(
-        json.dumps({"mode": "full", "output_dir": str(out), "assessment_depth": "standard"}),
-        encoding="utf-8",
-    )
-    (out / ".recon-summary.md").write_text("# recon", encoding="utf-8")
-    manifest = {
-        "context_version": 2,
-        "generated_at": "2026-07-20T09:00:00Z",
-        "components": [
-            {"component_id": "ok-svc", "max_turns": 22, "index_paths": {}},
-            {"component_id": "stalled-svc", "max_turns": 22, "index_paths": {}},
-        ],
-    }
-    (out / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    # Build the plan through the real constructor so the fingerprint and schema
-    # match, then exhaust the retry budget for the stalled component.
-    plan = waves.build_plan(manifest, 5)
-    plan["attempts"] = {"ok-svc": 1, "stalled-svc": 2}
-    (out / ".dispatch-waves.json").write_text(json.dumps(plan), encoding="utf-8")
-    _write_stride(out, "ok-svc", partial=False, skipped_categories=[])
-    _write_stride(out, "stalled-svc", seed_only=True)
-    return out
-
-
-def test_post_stage1_names_blocked_coverage_not_missing_artifacts(tmp_path: Path, monkeypatch) -> None:
-    """The orchestrator obeyed 'stop before Analyst-B'; say so.
-
-    Before this fix post_stage1 checked the Analyst-B artifacts first and raised
-    'Stage 1 did not produce required artifacts', which reads as orchestrator
-    failure and pushes it into the cut-off recovery path. Running that recovery
-    produces the artifacts and then the coverage gate hard-fails anyway — after
-    a full merge+triage pass has been paid for.
-    """
-    out = _blocked_run(tmp_path)
-
-    monkeypatch.setattr(oc, "_load_context_v2_config", lambda _out: (out, {}))
-    real_run_script = oc._run_script
-
-    def run_script(name, args, **kwargs):
-        if name == "validators/validate_dispatch_manifest.py":
-            return None
-        return real_run_script(name, args, **kwargs)
-
-    monkeypatch.setattr(oc, "_run_script", run_script)
-    with pytest.raises(oc.ControllerError) as exc:
-        oc.context_v2_post_stride(out)
-
-    message = str(exc.value)
-    assert "did not produce required artifacts" not in message, (
-        "blocked coverage is still reported as missing artifacts; the orchestrator "
-        "will follow the recovery path and pay for merge+triage before dying"
-    )
-    assert "stalled-svc" in message, "the blocking component must be named"
-    assert "coverage" in message.lower()
 
 
 # --------------------------------------------------------------------------

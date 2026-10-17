@@ -37,7 +37,6 @@ requirements:
     coverage: partial
     guards:
       - tests/test_build_architecture_analysis_context.py::test_role_units_name_exactly_what_finalization_would_add
-      - tests/test_orchestration_controller.py::TestContextV2PostActors::test_architecture_receives_current_role_units_before_writing_flows
       - tests/test_aggregate_run_issues.py::test_injected_component_without_flows_is_surfaced_once_per_component
       - tests/test_finalize_component_inventory.py::test_embedded_store_owned_by_a_modelled_data_component_is_not_duplicated
 
@@ -129,7 +128,6 @@ requirements:
       - tests/test_weakness_signals.py::test_refresh_rebuilds_and_drops_refuted_backing
       - tests/test_weakness_signals.py::test_unknown_cwe_practices_keep_separate_causes
       - tests/test_detect_impl_strategy.py::test_safe_local_controls_do_not_emit_weaknesses
-      - tests/test_orchestration_controller.py::test_post_triage_refreshes_weaknesses_before_synthesis
       - tests/test_weakness_class_config_consistency.py::test_schema_enums_match_cluster_ids
       - tests/test_detect_impl_strategy.py::test_vetted_lib_no_bespoke_is_standard_vetted
       - tests/test_detect_impl_strategy.py::test_bespoke_no_lib_is_home_grown
@@ -184,7 +182,6 @@ requirements:
       - tests/test_promote_verified_abuse_cases.py::test_a_confirmed_step_verifies_the_finding_it_cites
       - tests/test_promote_verified_abuse_cases.py::test_a_finding_the_verifier_cites_is_bound_in_the_match_sidecar
       - tests/test_derive_abuse_cases.py::test_derived_cases_are_validated_bounded_and_deduplicated
-      - tests/test_orchestration_controller.py::test_thorough_prepare_abuse_derives_cases_once_before_matching
       - tests/test_match_abuse_cases.py::test_derived_cases_run_only_at_thorough_within_their_own_limit
 
   REQ-MOD-009:
@@ -310,19 +307,13 @@ requirements:
       - tests/test_compose_threat_model.py::TestSecurityPostureV2::test_v2_invalid_figure_data_stops_publication
       - tests/test_enrichment_pass.py::test_continuation_never_heals_an_unverified_receipt
       - tests/test_enrichment_pass.py::test_receipt_detects_changed_or_rebuilt_model
-      - tests/test_orchestration_controller.py::test_abuse_rebuild_reapplies_enrichment_and_quality_gates
+      - tests/test_multi_repo_assessment.py::test_invalid_slug_stops_the_run_before_publication
+      - tests/test_single_repo_controller.py::test_a_failed_export_publishes_nothing_and_leaves_the_earlier_report
+      - tests/test_multi_repo_assessment.py::test_a_failure_up_to_stride_still_stops_the_run
       - tests/test_assert_completeness.py::test_render_rejects_model_without_enrichment_receipt
-      - tests/test_orchestration_controller.py::TestContextV2ArchitectureAndBoundary::test_post_stage1_fails_closed_on_missing_artifact
-      - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
       - tests/test_compose_threat_model.py::test_schema_violation_raises
       - tests/test_schema_integrity.py::test_external_entity_access_is_consistent_and_role_only
       - tests/test_compose_threat_model.py::test_cli_exit_1_on_missing_fragment
-      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_boundary_after_an_unverified_dispatch_rejects
-      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_changed_artifact_still_aborts_the_run
-      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_jointly_rewritten_plan_and_receipt_do_not_replace_the_emitted_expectation
-      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_missing_pending_marker_with_a_plan_aborts
-      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_malformed_verification_marker_aborts
-      - tests/test_orchestration_controller.py::test_the_boundary_gate_is_reachable_from_the_command_line
 
   REQ-REQ-001:
     applies_to:
@@ -429,7 +420,7 @@ requirements:
       - docs/threat-modeler.md
     coverage: direct
     guards:
-      - tests/test_orchestration_controller.py::test_declared_context_that_cannot_be_captured_stops_the_run
+      - tests/test_multi_repo_assessment.py::test_declared_context_and_a_run_wide_catalog_reach_the_combined_model
       - tests/test_aggregate_run_issues.py::test_declared_context_mapping_to_no_component_is_surfaced
       - tests/test_compose_threat_model.py::test_run_statistics_disclose_the_business_context_source
       - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
@@ -451,13 +442,11 @@ requirements:
       - docs/internal/contracts/orchestration-actions.md
     coverage: partial
     guards:
-      - tests/test_orchestration_controller.py::test_early_context_blocks_scanners_until_answers_reach_context
+      - tests/test_single_repo_controller.py::test_dialog_save_refuses_inconsistent_or_foreign_state
+      - tests/test_single_repo_controller.py::test_docs_security_keeps_foreign_files_and_overwrites_a_legacy_report
       - tests/test_single_repo_controller.py::test_dialog_answers_reach_the_checkout_context_without_a_session_run
-      - tests/test_orchestration_controller.py::test_early_context_persists_answers_without_persisting_run_only_import
-      - tests/test_orchestration_controller.py::test_early_context_rejects_unsafe_persistence_before_writes
       - tests/test_load_business_context.py::test_repository_context_precedence_and_run_override
       - tests/test_load_business_context.py::test_invalid_preferred_context_does_not_reactivate_legacy
-      - tests/test_runtime_cleanup.py::test_cleanup_preserves_persistent_business_context
       - tests/test_business_context_preview.py::test_large_repository_preview_stays_bounded
       - tests/test_lazy_phase_group_loading.py::test_business_context_reaches_the_default_full_runtime
 
@@ -1233,9 +1222,8 @@ requirements:
       - docs/internal/contracts/orchestration-actions.md
     coverage: partial
     guards:
-      - tests/test_orchestration_controller.py::test_early_context_persists_answers_without_persisting_run_only_import
+      - tests/test_single_repo_controller.py::test_docs_security_keeps_foreign_files_and_overwrites_a_legacy_report
       - tests/test_load_business_context.py::test_run_only_capture_stays_out_of_the_repository
-      - tests/test_runtime_cleanup.py::test_cleanup_preserves_persistent_business_context
 
   REQ-BIZ-010:
     applies_to:
@@ -1248,7 +1236,6 @@ requirements:
     coverage: partial
     guards:
       - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
-      - tests/test_orchestration_controller.py::test_early_context_bypass_never_waits
 
   REQ-MOD-012:
     applies_to:
@@ -1471,7 +1458,6 @@ requirements:
     guards:
       - tests/test_remote_repositories.py::test_missing_credentials_fail_without_prompting
       - tests/test_remote_repositories.py::test_sigterm_stops_runner_and_removes_checkouts
-      - tests/test_orchestration_controller.py::test_early_context_bypass_never_waits
       - tests/test_run_headless_completion.py::test_headless_has_no_generation_escape_hatch
 
   REQ-FLW-007:

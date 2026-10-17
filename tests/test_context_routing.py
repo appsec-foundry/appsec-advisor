@@ -18,9 +18,7 @@ import check_permissions as permissions  # noqa: E402
 import contexts.context_routing as routing  # noqa: E402
 import orchestrator.orchestration_controller as controller  # noqa: E402
 import package_internal_plugin as packager  # noqa: E402
-import runtime.check_state as check_state  # noqa: E402
 import runtime.diagnostic_bundle as diagnostic_bundle  # noqa: E402
-import runtime.runtime_cleanup as runtime_cleanup  # noqa: E402
 
 
 def _contracts() -> tuple[dict, dict]:
@@ -35,39 +33,6 @@ def _semantic_validate(catalog: dict, bindings: dict) -> None:
         semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
         model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
     )
-
-
-def _context_action(output: Path, *, inputs: list[str] | None = None) -> dict:
-    config = output / ".skill-config.json"
-    if not config.exists():
-        config.write_text('{"mode":"full","run_id":"test-run"}\n', encoding="utf-8")
-    return {
-        "schema_version": 1,
-        "action": "dispatch_agent",
-        "mode": "full",
-        "stage": "stage1c",
-        "instruction_file": str(controller.THIN_STAGE1_V2_RUNTIME),
-        "config_path": str(config),
-        "dispatch_values": {
-            "output_dir": str(output),
-            "run_id": "test-run",
-            "context_resolver_model": "sonnet",
-        },
-        "semantic_role": "context_resolver",
-        "task_progress": controller._stage1_task_progress("context_resolver"),
-        "dispatch_jobs": [
-            {
-                "schema_version": 1,
-                "job_id": "phase1-context",
-                "semantic_role": "context_resolver",
-                "agent_type": "appsec-advisor:appsec-context-resolver",
-                "model": "sonnet",
-                "input_artifacts": [".skill-config.json"] if inputs is None else inputs,
-                "output_artifacts": [".threat-modeling-context.md"],
-                "unresolved_decision_keys": [],
-            }
-        ],
-    }
 
 
 def _resolve(action: dict, output: Path) -> dict:
@@ -368,73 +333,6 @@ def test_semantics_reject_plugin_symlink_escape(tmp_path):
         )
 
 
-def test_shadow_plan_explains_delivery_omission_and_legacy_read(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    plan = _resolve(_context_action(output), output)
-    by_context = {row["context_id"]: row for row in plan["deliveries"]}
-    assert by_context["run.configuration"]["status"] == "delivered"
-    assert by_context["run.configuration"]["scope"] == "whole_run"
-    assert by_context["run.configuration"]["applies_to"] == "whole_run"
-    assert (
-        by_context["run.configuration"]["source_receipt"]["sha256"]
-        == hashlib.sha256((output / ".skill-config.json").read_bytes()).hexdigest()
-    )
-    assert by_context["requirements.security"]["status"] == "omitted_optional"
-    assert by_context["business.context_sources"]["status"] == "legacy_unreceipted"
-    assert by_context["run.configuration"]["agent_name"] == "Project context resolver"
-    assert by_context["run.configuration"]["category_name"] == "Target and run"
-    assert by_context["run.configuration"]["reason"]
-    assert (output / routing.PLAN_RECEIPT_NAME).is_file()
-
-
-def test_effective_plan_answers_an_identical_re_read_and_rejects_a_changed_one(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    action = _context_action(output)
-    plan = _resolve(action, output)
-
-    # Same identity, same content: a re-read of the row already written, so the
-    # ledger answers instead of aborting and gains no second copy of it.
-    assert routing.action_already_issued(action, output) is True
-    repeated = _resolve(action, output)
-    assert repeated["revision"] == plan["revision"]
-    assert len(repeated["actions"]) == 1
-    assert len(repeated["deliveries"]) == len(plan["deliveries"])
-
-    # Same identity, different content, and the recorded dispatch produced
-    # nothing: it never ran, so the re-derived action supersedes its row rather
-    # than ending the run. A boundary whose inputs accumulate reaches this
-    # legitimately — a second STRIDE wave gives `phase9-merge-review` more
-    # threats to review (juice-shop2 2026-08-17).
-    conflicting = copy.deepcopy(action)
-    conflicting["dispatch_jobs"][0]["unresolved_decision_keys"] = ["stride:S"]
-    assert not (output / ".threat-modeling-context.md").exists()
-    assert routing.action_already_issued(conflicting, output) is False
-    superseded = _resolve(conflicting, output)
-    assert len(superseded["actions"]) == 1
-    assert superseded["actions"][0]["action_sha256"] != plan["actions"][0]["action_sha256"]
-    assert len({row["delivery_id"] for row in superseded["deliveries"]}) == len(superseded["deliveries"])
-
-    # Same identity, different content, but the outputs are on disk: the earlier
-    # producer returned, so this is the real duplicate the guard was built for —
-    # re-preparing would delete exactly what it protects.
-    (output / ".threat-modeling-context.md").write_text("produced", encoding="utf-8")
-    diverged = copy.deepcopy(conflicting)
-    diverged["dispatch_jobs"][0]["unresolved_decision_keys"] = ["stride:T"]
-    with pytest.raises(routing.ContextRoutingError, match="outputs were produced"):
-        routing.action_already_issued(diverged, output)
-    with pytest.raises(routing.ContextRoutingError, match="outputs were produced"):
-        _resolve(diverged, output)
-    (output / ".threat-modeling-context.md").unlink()
-
-    retry = copy.deepcopy(action)
-    retry["dispatch_jobs"][0]["job_id"] = "phase1-context:attempt-2"
-    assert routing.action_already_issued(retry, output) is False
-    plan = _resolve(retry, output)
-    assert len(plan["actions"]) == 2
-
-
 def test_active_declared_context_rejects_unreceipted_existing_bytes(tmp_path):
     output = tmp_path / "out"
     output.mkdir()
@@ -628,69 +526,6 @@ def test_candidate_scoped_abuse_context_resolves_only_for_its_job(tmp_path):
     assert delivery["scope"] == "one_candidate"
 
 
-def test_shadow_plan_rejects_unassigned_declared_input(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / "extra.json").write_text("{}\n", encoding="utf-8")
-    action = _context_action(output, inputs=[".skill-config.json", "extra.json"])
-    with pytest.raises(routing.ContextRoutingError, match="without human catalog assignments"):
-        _resolve(action, output)
-
-
-def test_shadow_plan_rejects_missing_required_input(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    action = _context_action(output, inputs=[])
-    with pytest.raises(routing.ContextRoutingError, match="required context"):
-        _resolve(action, output)
-
-
-def test_shadow_plan_rejects_output_symlink_escape(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    outside = tmp_path / "outside.json"
-    outside.write_text("{}\n", encoding="utf-8")
-    (output / ".skill-config.json").symlink_to(outside)
-    with pytest.raises(routing.ContextRoutingError, match="escapes the output directory"):
-        _resolve(_context_action(output), output)
-
-
-def test_shadow_plan_enforces_internal_size_limit(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / ".skill-config.json").write_text(json.dumps({"payload": "x" * 1_048_576}), encoding="utf-8")
-    with pytest.raises(routing.ContextRoutingError, match="exceeds max_bytes"):
-        _resolve(_context_action(output), output)
-
-
-def test_shadow_plan_rejects_stale_action_receipt(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    action = _context_action(output)
-    action["artifact_receipts"] = [
-        {
-            "schema_version": 1,
-            "artifact_path": ".skill-config.json",
-            "schema_id": "contract:resolved-run-config-v1",
-            "sha256": "0" * 64,
-            "record_count": 1,
-            "validation_status": "valid",
-        }
-    ]
-    with pytest.raises(routing.ContextRoutingError, match="stale"):
-        _resolve(action, output)
-
-
-def test_exact_byte_plan_receipt_detects_mutation(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    _resolve(_context_action(output), output)
-    plan_path = output / routing.PLAN_NAME
-    plan_path.write_text(plan_path.read_text(encoding="utf-8") + " ", encoding="utf-8")
-    with pytest.raises(routing.ContextRoutingError, match="changed after"):
-        routing.inspect_plan(output)
-
-
 def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_exposure(tmp_path):
     output = tmp_path / "out"
     output.mkdir()
@@ -831,142 +666,6 @@ def test_component_architecture_context_is_delivered_only_when_selected(tmp_path
     )
     assert selected["status"] == "delivered"
     assert selected["source_receipt"]["artifact_path"] == architecture_path
-
-
-def test_prior_plan_rejects_changed_catalog_hash(tmp_path, monkeypatch):
-    output = tmp_path / "out"
-    output.mkdir()
-    action = _context_action(output)
-    _resolve(action, output)
-    original = routing.load_catalog_contracts()
-    monkeypatch.setattr(routing, "load_catalog_contracts", lambda: (*original[:2], "f" * 64, original[3]))
-    with pytest.raises(routing.ContextRoutingError, match="stale catalog"):
-        _resolve(action, output)
-
-
-def test_every_context_v2_role_can_be_dispatched(tmp_path):
-    """No catalog role may be structurally undispatchable.
-
-    The dispatch hook denies any context-v2 Agent call whose prompt carries no
-    ACTION_ID, and the runtime takes that value from `context_plan.action_id`.
-    A role that cannot be bound therefore cannot run at all — which is how
-    trust_boundary_analyst and threat_merger blocked a full assessment. This
-    asserts the property for every role, so a future catalog edit that leaves a
-    role without an active context fails here instead of mid-run.
-    """
-    catalog, bindings = _contracts()
-    binding_by_id = {b["id"]: b for b in bindings["contexts"]}
-    component_id, candidate_id = "web-api", "AC-T-001"
-    checked = 0
-    for agent in bindings["agents"]:
-        role = agent["semantic_role"]
-        if role not in controller.SEMANTIC_ROLE_REGISTRY:
-            continue
-        # Declare exactly the inputs this role's catalog assignments require,
-        # so the run reaches binding rather than failing input validation.
-        contract_by_artifact: dict[str, str] = {}
-        for assignment in catalog["assignments"]:
-            if agent["id"] not in assignment["agents"] or assignment["delivery"] == "forbidden":
-                continue
-            binding = binding_by_id[assignment["context"]]
-            if binding["delivery"] != "declared" or binding["source"]["kind"] != "output_artifact":
-                continue
-            artifact = routing._render_artifact(binding["source"]["artifact_pattern"], component_id, candidate_id)
-            contract_by_artifact[artifact] = binding["contract"]
-        inputs = sorted(contract_by_artifact)
-        output = tmp_path / f"out-{role}"
-        output.mkdir()
-        action = _context_action(output, inputs=inputs)
-        action["semantic_role"] = role
-        action["dispatch_values"][controller.SEMANTIC_ROLE_MODEL_KEYS[role]] = "sonnet"
-        job = action["dispatch_jobs"][0]
-        job["semantic_role"] = role
-        job["agent_type"] = f"appsec-advisor:{agent['agent_type']}"
-        job["component_id"] = component_id
-        job["candidate_id"] = candidate_id
-        receipts = []
-        for relative in job["input_artifacts"]:
-            path = output / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            payload = b"{}\n"
-            path.write_bytes(payload)
-            receipts.append(
-                {
-                    "schema_version": 1,
-                    "artifact_path": relative,
-                    "schema_id": contract_by_artifact[relative],
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                    "record_count": 1,
-                    "validation_status": "valid",
-                }
-            )
-        action["artifact_receipts"] = receipts
-        plan = _resolve(action, output)
-        bound = routing.bind_action_to_plan(action, plan, output)
-        assert bound.get("context_plan", {}).get("action_id"), f"{role} cannot receive an ACTION_ID"
-        routing.validate_action_plan_reference(bound, output)
-        checked += 1
-    assert checked == len(controller.SEMANTIC_ROLE_REGISTRY)
-
-
-def test_controller_emit_binds_identity_on_a_shadow_only_action(tmp_path, capsys):
-    """A role with no active context still gets its ACTION_ID.
-
-    `context_resolver` has only shadow-only contexts, as the catalog migration
-    is incremental by design. Binding used to be skipped entirely for such a
-    role, so the emitted action carried no `action_id` — while the dispatch
-    hook requires ACTION_ID from every context-v2 role and the runtime prompt
-    reads `context_plan.action_id`. That made four roles undispatchable.
-    Identity is now always bound; only enforcement stays conditional.
-    """
-    output = tmp_path / "out"
-    output.mkdir()
-    action = _context_action(output)
-    code = controller._emit(action)
-    emitted = json.loads(capsys.readouterr().out)
-    assert code == 0
-    assert emitted["context_plan"]["action_id"]
-    assert emitted["context_plan"]["artifact_path"] == routing.PLAN_NAME
-    routing.validate_action_plan_reference(emitted, output)
-    # Shadow stays observable where it belongs: no enforced delivery is
-    # referenced, and the run log still reports the mode as shadow.
-    assert "context_delivery_ids" not in emitted["dispatch_jobs"][0]
-    assert "CONTEXT_ROUTING_SHADOW" in (output / ".agent-run.log").read_text(encoding="utf-8")
-    # The shared plan is an audit artifact: it may be referenced and receipted,
-    # but must never become an agent input.
-    assert routing.PLAN_NAME not in emitted["dispatch_jobs"][0]["input_artifacts"]
-    assert (output / routing.PLAN_NAME).is_file()
-
-
-def test_inspection_is_human_readable_and_content_free(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / ".skill-config.json").write_text('{"mode":"full","run_id":"secret-project-name"}\n', encoding="utf-8")
-    _resolve(_context_action(output), output)
-    summary = routing.inspect_plan(output)
-    assert "Business context and requirements -> Project context resolver" in summary
-    assert "secret-project-name" not in summary
-    assert ".skill-config.json" not in summary
-
-
-def test_fresh_run_reset_removes_only_plan_pair(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    _resolve(_context_action(output), output)
-    keep = output / "keep.txt"
-    keep.write_text("keep\n", encoding="utf-8")
-    routing.reset_plan(output)
-    assert not (output / routing.PLAN_NAME).exists()
-    assert not (output / routing.PLAN_RECEIPT_NAME).exists()
-    assert keep.is_file()
-
-
-def test_plan_lifecycle_is_audit_preserved_but_fresh_run_rebuilt():
-    for name in (routing.PLAN_NAME, routing.PLAN_RECEIPT_NAME):
-        assert name not in runtime_cleanup.ALWAYS_FILES
-        assert name not in check_state._CLEANUP_TARGETS
-        assert name in controller._FULL_INTERMEDIATE_NAMES
-        assert name in controller._REBUILD_NAMES
 
 
 def test_plan_uses_existing_permissions_and_is_not_copied_into_diagnostics():

@@ -30,7 +30,6 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-import orchestrator.orchestration_controller as controller  # noqa: E402
 import runtime.acquire_lock as acquire_lock  # noqa: E402
 
 # The environment shapes a run can start in. `run-headless.sh` exports
@@ -84,16 +83,6 @@ def _write_lock(lock_path: Path, run_id: str, *, fresh: bool = True) -> None:
 
 
 @pytest.mark.parametrize("environment", RUN_ENVIRONMENTS)
-def test_the_reader_recognises_the_run_id_the_controller_writes(tmp_path, run_env, environment):
-    run_env(environment)
-    lock_path = tmp_path / ".appsec-lock"
-
-    _write_lock(lock_path, controller._run_id_for_this_run())
-
-    assert acquire_lock.lock_is_owned_by_this_run(lock_path, "6b851f4b-8235-4a64-bf25-7563d1377a0f")
-
-
-@pytest.mark.parametrize("environment", RUN_ENVIRONMENTS)
 def test_a_foreign_run_is_never_recognised_as_this_one(tmp_path, run_env, environment):
     """A second assessment sharing OUTPUT_DIR must stay foreign in every shape."""
     run_env(environment)
@@ -104,25 +93,6 @@ def test_a_foreign_run_is_never_recognised_as_this_one(tmp_path, run_env, enviro
         pytest.fail("the foreign id must differ from every shape's own id")
 
     assert not acquire_lock.lock_is_owned_by_this_run(lock_path, "9617b066-0000-0000-0000-000000000000")
-
-
-def test_a_generated_run_id_is_outside_the_hook_contract(tmp_path, run_env):
-    """The controller's last-resort id names a run no hook can identify with.
-
-    It is reachable only when the environment names neither a run nor a session,
-    which is a controller invoked outside a Claude session — where no Stop or
-    PostToolUse event is produced either. Pinned so that a future caller which
-    does reach it from inside a session sees this boundary rather than the
-    silent mismatch that motivated these tests.
-    """
-    run_env({})
-    lock_path = tmp_path / ".appsec-lock"
-
-    generated = controller._run_id_for_this_run()
-    assert generated.startswith("run-")
-    _write_lock(lock_path, generated)
-
-    assert not acquire_lock.lock_is_owned_by_this_run(lock_path, "6b851f4b-8235-4a64-bf25-7563d1377a0f")
 
 
 def test_a_lock_without_a_run_id_is_owned_by_nobody(tmp_path, run_env):

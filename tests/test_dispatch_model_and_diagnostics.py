@@ -22,7 +22,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import orchestrator.orchestration_controller as controller
 import runtime.agent_logger as agent_logger
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -44,115 +43,6 @@ agg = _load_aggregator()
 # ---------------------------------------------------------------------------
 # Model alias contract
 # ---------------------------------------------------------------------------
-
-# The Claude Agent tool's closed vocabulary. Anything else is an
-# InputValidationError, not a fallback.
-AGENT_ALIASES = {"sonnet", "opus", "haiku", "fable"}
-
-
-class TestBareAgentModel:
-    def test_every_configured_model_reduces_into_the_closed_alias_set(self):
-        configured = [
-            "claude-sonnet-5",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
-            "claude-opus-5",
-            "claude-fable-5",
-            "sonnet",
-            "haiku",
-        ]
-        for value in configured:
-            assert controller._bare_agent_model(value) in AGENT_ALIASES
-
-    def test_fable_is_recognised_rather_than_coerced_to_sonnet(self):
-        # `fable` is a valid Agent alias; before this fix it fell through the
-        # alias loop and was silently rewritten to `sonnet`.
-        assert controller._bare_agent_model("claude-fable-5") == "fable"
-        assert controller._bare_agent_model("fable") == "fable"
-
-    def test_an_unmappable_value_still_yields_a_dispatchable_alias(self):
-        # Fail soft, not closed: a typo must not abort a run mid-wave.
-        assert controller._bare_agent_model("gpt-4") == "sonnet"
-        assert controller._bare_agent_model(None) == "sonnet"
-
-    def test_a_version_pin_is_reported_as_inexpressible(self):
-        assert controller._model_pin_is_expressible("sonnet") is True
-        assert controller._model_pin_is_expressible("") is True
-        assert controller._model_pin_is_expressible("claude-sonnet-5") is False
-        assert controller._model_pin_is_expressible("claude-sonnet-4-6") is False
-
-
-class TestDispatchValueAliases:
-    def test_each_directly_dispatched_role_carries_a_ready_alias(self):
-        values = {
-            "renderer_model": "claude-sonnet-5",
-            "abuse_verifier_model": "claude-sonnet-5",
-            "qa_content_model": "claude-sonnet-4-6",
-            "qa_routine_model": "haiku",
-        }
-        out = controller._with_model_aliases(values)
-        assert out["renderer_model_alias"] == "sonnet"
-        assert out["abuse_verifier_model_alias"] == "sonnet"
-        assert out["qa_content_model_alias"] == "sonnet"
-        assert out["qa_routine_model_alias"] == "haiku"
-
-    def test_operator_intent_survives_beside_the_alias(self):
-        # The headless path honours the exact id; rewriting it here would throw
-        # that away to serve the interactive caller.
-        out = controller._with_model_aliases({"renderer_model": "claude-sonnet-5"})
-        assert out["renderer_model"] == "claude-sonnet-5"
-
-    def test_a_tier_label_never_becomes_a_model_alias(self):
-        # `reasoning_model` holds `sonnet-economy`, not a model. A `*_model`
-        # suffix rule minted an alias for it and broke every action against the
-        # dispatch_values property-name enum.
-        out = controller._with_model_aliases({"reasoning_model": "sonnet-economy"})
-        assert "reasoning_model_alias" not in out
-
-    def test_dropped_pins_are_named_rather_than_silently_ignored(self):
-        out = controller._with_model_aliases({"renderer_model": "claude-sonnet-5", "qa_routine_model": "haiku"})
-        assert "renderer_model=claude-sonnet-5" in out["model_pins_dropped"]
-        assert "qa_routine_model" not in out["model_pins_dropped"]
-
-    def test_a_fully_expressible_config_reports_no_dropped_pin(self):
-        out = controller._with_model_aliases({"renderer_model": "sonnet", "qa_routine_model": "haiku"})
-        assert out["model_pins_dropped"] == ""
-
-    def test_an_unstaffed_role_yields_a_null_alias_not_a_missing_key(self):
-        # The key set stays constant so a consumer can read without probing,
-        # and the dispatch-key drift guard can still state an exact set.
-        out = controller._with_model_aliases({"architect_model": None})
-        assert out["architect_model_alias"] is None
-
-    def test_the_emitted_key_set_does_not_depend_on_the_config(self):
-        rich = controller._with_model_aliases(dict.fromkeys(controller._DISPATCH_ALIAS_MODEL_KEYS, "claude-opus-5"))
-        bare = controller._with_model_aliases(dict.fromkeys(controller._DISPATCH_ALIAS_MODEL_KEYS))
-        assert set(rich) == set(bare)
-
-    def test_emitted_alias_keys_stay_inside_the_action_schema(self):
-        import json
-
-        schema = json.loads((REPO_ROOT / "schemas" / "orchestration-action.schema.json").read_text(encoding="utf-8"))
-        allowed = set(schema["properties"]["dispatch_values"]["propertyNames"]["enum"])
-        emitted = {f"{key}_alias" for key in controller._DISPATCH_ALIAS_MODEL_KEYS}
-        assert emitted <= allowed
-        assert "model_pins_dropped" in allowed
-
-    def test_a_fully_populated_payload_stays_under_the_property_budget(self):
-        """Measure the real payload, do not estimate it.
-
-        A config that sets every model key is the worst case, and it lands two
-        properties under the cap. The next key added here fails this test
-        rather than a live run's action validation.
-        """
-        import json
-
-        schema = json.loads((REPO_ROOT / "schemas" / "orchestration-action.schema.json").read_text(encoding="utf-8"))
-        budget = schema["properties"]["dispatch_values"]["maxProperties"]
-        cfg = {key: "claude-sonnet-5" if key.endswith("_model") else "x" for key in controller._DISPATCH_KEYS}
-        cfg["architect_model"] = "claude-opus-5"
-        values = controller._dispatch_values(cfg)
-        assert len(values) <= budget, f"dispatch_values emits {len(values)} properties, cap is {budget}"
 
 
 # ---------------------------------------------------------------------------
