@@ -615,7 +615,7 @@ def render_case_list(
         + (" --isolated" if recorded and recorded.get("combined") else "")
         + " [--model opus]",
         "Details:    /appsec-advisor:abuse-cases <ID>",
-        "Add your own:  YAML file in docs/security/abuse-cases/ (format: docs/threat-modeler.md)",
+        "Add your own:  YAML file in docs/security/abuse-cases/ (format: docs/security-assessment.md)",
     ]
     if recorded is None:
         lines.append("Results per case:  create a threat model with /appsec-advisor:appsec-analyzer")

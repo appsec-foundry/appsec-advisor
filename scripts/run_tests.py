@@ -1551,7 +1551,7 @@ SOURCE_TESTS = {
         business_abuse_cases
         requirements_verification
     """),
-    "docs/threat-modeler.md": _tests("requirements_verification"),
+    "docs/security-assessment.md": _tests("requirements_verification"),
     "requirements.md": _tests("""
         check_specs
         requirements_hook

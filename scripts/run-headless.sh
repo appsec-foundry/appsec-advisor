@@ -531,7 +531,7 @@ fi
 # biggest saving on an unattended run. Opt out with --model <id>. In API billing
 # mode a model MUST be explicit anyway (billed per-token), so this also satisfies
 # that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5-5,
-# APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/threat-modeler.md).
+# APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/security-assessment.md).
 if [ -z "$MODEL" ]; then
     MODEL="claude-sonnet-4-6"
     info "Economy default: session model '$MODEL' (use --model to override)"

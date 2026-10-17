@@ -17,11 +17,6 @@ The line it prints is the invocation, including any environment prefix the
 member needs. `--output-root` receives one subdirectory per member, so two
 members never share run state.
 
-Set `APPSEC_TELEMETRY_STRICT=1` for an acceptance run. It turns a telemetry
-disagreement at a semantic boundary into an abort instead of a warning, so the
-run cannot pass on evidence its own producers contradict. Export it in the
-environment that launches the run, so the skill's Bash sees it.
-
 ## Verify before the run costs anything
 
 As soon as `.skill-config.json` exists in the output directory, verify its settings before the first model dispatch:
@@ -49,8 +44,8 @@ python3 scripts/live_canary.py run   --output <canary-dir> [--max-duration 900]
 python3 scripts/live_canary.py check --output <canary-dir>/run
 ```
 
-It scans the bundled synthetic repository under a hard wall-clock cap with
-`APPSEC_TELEMETRY_STRICT=1`, then checks five properties of what the host
+It scans the bundled synthetic repository under a hard wall-clock cap, then
+checks five properties of what the host
 actually produced: a foreground child completed, a bounded parallel pair
 overlapped, a completed child reported non-zero usage, every terminal call's
 turn budget was retired, and live markers were cleared. `check` reads artifacts

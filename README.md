@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-0.6.0--beta.5-orange.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](docs/threat-modeler.md)
+[![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](docs/security-assessment.md)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-blue.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![codecov](https://codecov.io/gh/appsec-foundry/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/appsec-foundry/appsec-advisor)
 
@@ -13,7 +13,7 @@
 
 The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Product requirements](requirements.md) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Product requirements](requirements.md) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
 
 ---
 
@@ -21,14 +21,14 @@ The **Threat Analyst** covers the design side: on request, it analyzes a planned
 
 `appsec-advisor` prepares threat models from code and configuration. It does not replace collaborative threat modeling with the people who own the system. You do not need an existing threat model or a workshop to start.
 
-| | [Threat Modeler](#threat-modeler) | Collaborative threat modeling |
+| | [Security Assessment](#security-assessment) | Collaborative threat modeling |
 |---|---|---|
 | **Works from** | Code, configuration, and supplied context | Design intent, business context, and knowledge of runtime and production controls |
 | **Delivers** | Architecture, trust boundaries, and threats; every finding cites repository evidence | Judgment on which threats matter and which assumptions hold |
 | **Strength** | Covers the whole repository the same way on every run | Sees what the code cannot show |
 | **Leaves open** | Business impact, risk acceptance, and controls outside the repository | Consistent coverage of a large or fast-changing codebase |
 
-Run the Threat Modeler for a first assessment and again when code or configuration changes. Before code exists, the experimental [Threat Analyst](#threat-analyst) prepares the team discussion of a planned feature with threat scenarios, protection assumptions, and open questions. It also reviews single changes and reports evidence-backed findings.
+Run the security assessment for a first assessment and again when code or configuration changes. Before code exists, the experimental [Threat Analyst](#threat-analyst) prepares the team discussion of a planned feature with threat scenarios, protection assumptions, and open questions. It also reviews single changes and reports evidence-backed findings.
 
 The code cannot tell the tool which networks you trust or which data is critical to your business. You add that as business context and trust-boundary declarations, and the analysis then treats them as stated assumptions.
 
@@ -53,9 +53,9 @@ Python renders reports from validated structured data. If a run artifact contain
 
 ## Quick start
 
-Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Threat Modeler reference](docs/threat-modeler.md).
+Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Security Assessment reference](docs/security-assessment.md).
 
-For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5.5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. A [multi-repository assessment](#assess-multiple-repositories) runs STRIDE on Sonnet 5.5 instead. Very large repositories may require a Sonnet 5.5 session for the larger context window. See [when to use the latest Sonnet](docs/model-selection.md#when-to-use-the-latest-sonnet).
+The assessment does not run on your Claude Code session model. The plugin's controller calls a fixed model per role: a standard assessment uses Sonnet 5.5 for discovery, STRIDE, and judgment, and a thorough one uses Opus for STRIDE and judgment. Without a budget flag, the depth sets a hard budget of 10 USD (quick), 20 USD (standard), or 40 USD (thorough). See [model selection](docs/model-selection.md) and [when to use the latest Sonnet](docs/model-selection.md#when-to-use-the-latest-sonnet).
 
 ### 1. Install the plugin
 
@@ -96,10 +96,10 @@ The command adds the missing rules, including `Bash(*)`, to this repository's `.
 Restart or reload Claude Code, then create the model:
 
 ```text
-/appsec-advisor:create-threat-model
+/appsec-advisor:appsec-analyzer
 ```
 
-The assessment writes `threat-model.md` and `threat-model.yaml` to `docs/security/`.
+The assessment writes `security-assessment.md` and `security-assessment.yaml` to a private directory for this application under your user data directory, for example `~/.local/share/appsec-advisor/assessments/<repo-name>-<hash8>` on Linux; `--output` chooses another directory. Nothing is written into the repository. `/appsec-advisor:status` shows the directory. See [where results are stored](docs/security-assessment.md#where-results-are-stored), including how an earlier assessment in `docs/security` is imported.
 
 ### 3. Work with the model
 
@@ -116,26 +116,26 @@ what should I fix first?
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
 /appsec-advisor:analyze-threats --worktree
 
-# Reassess after code changes while preserving history
-/appsec-advisor:create-threat-model --full
+# Reassess after code changes; the history continues
+/appsec-advisor:appsec-analyzer
 ```
 
-Updates preserve finding IDs. Review decisions are stored separately. Run `/appsec-advisor:help` for the complete command list.
+Every run is a full assessment, and a new run over a completed one continues its history. Review decisions are stored separately. Run `/appsec-advisor:help` for the complete command list.
 
-## Threat Modeler
+## Security Assessment
 
-Run `/appsec-advisor:create-threat-model` to get:
+Run `/appsec-advisor:appsec-analyzer` to get:
 
 - an architecture model with components, data flows, and trust boundaries;
 - findings ordered by risk and tied to repository evidence;
 - a Weakness Register for systemic and design patterns;
 - abuse cases checked against the code, including your own one-sentence business rules in `docs/security/abuse-cases/`;
 - mitigation guidance and generated diagrams;
-- `threat-model.md` and `threat-model.yaml`, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports.
+- `security-assessment.md` and `security-assessment.yaml`, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports.
 
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 
-The [Threat Modeler guide](docs/threat-modeler.md) covers depth, focused scans, repository context, exports, costs, and limits.
+The [Security Assessment guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
 
 **Example:** [Read a thorough assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.md) or browse [more examples](https://github.com/appsec-foundry/appsec-advisor-examples).
 
@@ -160,7 +160,7 @@ Figure 2 connects threat actors through example attack routes and the linked wea
   <img src="docs/images/figure2-example.svg" alt="Figure 2 of the Juice Shop threat model">
 </picture>
 
-Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. See [assessment depth and cost control](docs/threat-modeler.md#assessment-depth--cost-control) for measured costs.
+Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. See [assessment depth and cost control](docs/security-assessment.md#assessment-depth--cost-control) for measured costs.
 
 ### Abuse cases
 
@@ -188,9 +188,9 @@ abuse_cases:
     scope_qualifier: {path_patterns: ["*expense*"]}
 ```
 
-The next run checks this rule in files such as `ExpenseController.java` or below `expenses/`. [Repository abuse cases](docs/threat-modeler.md#abuse-cases-docssecurityabuse-cases) explains when a case runs and how its result is reported. To apply cases to every repository of your organization, add them to an organization profile. [Abuse cases in organization profiles](docs/org-profiles.md#abuse-cases) also covers technical attack chains, turning off built-in cases, and failing a CI run on a confirmed case.
+The next run checks this rule in files such as `ExpenseController.java` or below `expenses/`. [Repository abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases) explains when a case runs and how its result is reported. To apply cases to every repository of your organization, add them to an organization profile. [Abuse cases in organization profiles](docs/org-profiles.md#abuse-cases) also covers technical attack chains, turning off built-in cases, and failing a CI run on a confirmed case.
 
-`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing threat model. `/appsec-advisor:ask-security-assessment` reports how each case turned out.
+`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:appsec-analyzer --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing assessment. `/appsec-advisor:ask-security-assessment` reports how each case turned out.
 
 ### Assess multiple repositories
 
@@ -210,14 +210,12 @@ To assess several local checkouts as one system, repeat `--repo` in the headless
 A combined run has these requirements:
 
 - Select 2–16 top-level Git checkouts that do not contain each other.
-- Choose an `--output` directory outside every selected checkout.
-- Set `--soft-budget` or `--hard-budget`. The run stops when the budget is exhausted.
+- Without `--output`, the results go to one shared `combined-<hash8>` directory of the selection; an explicit `--output` must lie outside every selected checkout.
+- Set `--soft-budget` or `--hard-budget`. The controller reserves part of the budget for required analysis and report completion.
 
-A combined run uses Sonnet 5.5 for STRIDE at quick and standard depth instead of Sonnet 4.6, because Sonnet 4.6 returns no STRIDE result in this mode. STRIDE calls therefore cost more than in a single-repository scan. The run prints each role's model at the start and warns about this change. See [Assess several repositories as one system](docs/headless-mode.md#assess-several-repositories-as-one-system).
+Components, findings and exports name the repository they come from, for example `Order API [backend]` and `backend/src/orders.ts:42`. The order of the `--repo` flags does not matter, and no repository takes precedence. A connection between repositories appears only when source evidence supports it, and repository membership never creates a trust boundary. Like a single-repository run, a combined run supports `--resume` of an interrupted run whose sources and settings are unchanged and `--rebuild` to start over. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system) for details and limits.
 
-Components, findings and exports name the repository they come from, for example `Order API [backend]` and `backend/src/orders.ts:42`. The order of the `--repo` flags does not matter, and no repository takes precedence. A connection between repositories appears only when source evidence supports it, and repository membership never creates a trust boundary. The run supports full assessments and `--resume` of an interrupted run whose sources and settings are unchanged; `--incremental`, `--rerender` and `--rebuild` are not available for combined runs. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system) for details and limits.
-
-To keep separate reports instead, run one assessment per repository with its own `--output` directory. Configure `docs/related-repos.yaml` in a repository to include existing dependency models as [cross-repository context](docs/threat-modeler.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code.
+To keep separate reports instead, run one assessment per repository with its own `--output` directory. Configure `docs/related-repos.yaml` in a repository to include existing dependency models as [cross-repository context](docs/security-assessment.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code.
 
 ## Threat Analyst
 
@@ -228,7 +226,7 @@ Run `/appsec-advisor:analyze-threats` before or while you build a feature. It re
 - the security requirements that apply to it;
 - assumptions it made and questions the team needs to answer.
 
-The report is advisory and does not change `threat-model.yaml`. The Threat Analyst is *experimental*.
+The report is advisory and does not change `security-assessment.yaml`. The Threat Analyst is *experimental*.
 
 | When | Command |
 |---|---|
@@ -317,7 +315,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 
 | Goal | Start here |
 |---|---|
-| Run or configure a threat model | [Threat Modeler](docs/threat-modeler.md) |
+| Run or configure a security assessment | [Security Assessment](docs/security-assessment.md) |
 | Analyze a planned feature or selected code change | [Threat Analyst](docs/threat-analyst.md) |
 | Configure models, cost, or logging | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
@@ -357,7 +355,7 @@ Highlights from the 0.6.0 beta releases.
 
 ### What's new in 0.6.0-beta.5
 
-- **New abuse-case catalog.** The built-in catalog now covers business misuse, such as viewing other users' data or skipping an approval, alongside technical attack chains. Runs check both by default, and you can add your own cases as one sentence each. Reworked rules keep unrelated findings from inflating severity and report unchecked cases. See [Abuse cases](docs/threat-modeler.md#abuse-cases-docssecurityabuse-cases).
+- **New abuse-case catalog.** The built-in catalog now covers business misuse, such as viewing other users' data or skipping an approval, alongside technical attack chains. Runs check both by default, and you can add your own cases as one sentence each. Reworked rules keep unrelated findings from inflating severity and report unchecked cases. See [Abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases).
 - **New `/appsec-advisor:abuse-cases` command.** It lists all abuse cases with their result and explains each one step by step.
 - **Reworked Threat Analyst.** It checks a single abuse case against your code (`--abuse-case <ID>`), rates each attack step with evidence, and uses your existing threat model as context. See [Threat Analyst](#threat-analyst).
 - **Several repositories, one threat model.** Repeat `--repo` in headless mode to assess a system split across repositories in a single report. See [Assess multiple repositories](#assess-multiple-repositories).

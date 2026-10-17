@@ -44,7 +44,7 @@ requirements:
   REQ-PUR-002:
     applies_to:
       - agents/appsec-stride-analyzer-v2.md
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - agents/appsec-threat-renderer.md
       - agents/shared/ms-template.md
       - agents/shared/prose-samples.md
@@ -56,7 +56,7 @@ requirements:
     decisions: []
     documents:
       - README.md
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_severity_rollup.py::test_verdict_concern_basis
@@ -72,7 +72,7 @@ requirements:
       - scripts/orchestrator/assessment_workspace.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - docs/headless-mode.md
       - README.md
     coverage: direct
@@ -145,7 +145,7 @@ requirements:
       - schemas/trust-boundaries-repo.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_prepare_trust_boundary_context.py::test_context_carries_the_assumption_legs_to_the_analyzer
@@ -267,7 +267,7 @@ requirements:
       - scripts/runtime/aggregate_run_issues.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_stride_quick_profile.py::test_profile_does_not_skip_stride_categories
@@ -344,7 +344,7 @@ requirements:
       - schemas/known-threats.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_build_threat_modeling_context.py::test_rejects_invalid_known_threats_before_context_publication
@@ -357,7 +357,7 @@ requirements:
       - data/actors/**
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_resolve_actors.py::test_resolver_never_writes_actor_choices_back_to_repo
@@ -386,7 +386,7 @@ requirements:
       - schemas/threat-model.output.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_build_threat_modeling_context.py::test_run_only_business_context_replaces_the_repository_file
@@ -417,7 +417,7 @@ requirements:
       - scripts/renderers/compose_threat_model.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_multi_repo_assessment.py::test_declared_context_and_a_run_wide_catalog_reach_the_combined_model
@@ -435,7 +435,7 @@ requirements:
       - skills/appsec-analyzer/SKILL.md
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - docs/internal/contracts/orchestration-actions.md
     coverage: partial
     guards:
@@ -690,7 +690,7 @@ requirements:
       - scripts/model/hydrate_mitigation_details.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_architect_review_runtime.py::test_final_gate_rejects_lost_corrections_and_clears_old_success
@@ -712,7 +712,7 @@ requirements:
     decisions: []
     documents:
       - docs/threat-dragon-export.md
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - docs/internal/contracts/schema-invariants.md
     coverage: direct
     guards:
@@ -775,7 +775,7 @@ requirements:
       - scripts/validators/review_threat_model.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_query_threat_model.py::test_display_id_maps_t_to_f
@@ -1031,7 +1031,7 @@ requirements:
       - schemas/trust-boundaries-repo.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_resolve_actors.py::test_resolver_never_writes_actor_choices_back_to_repo
@@ -1089,11 +1089,11 @@ requirements:
   REQ-PUR-004:
     applies_to:
       - README.md
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - agents/shared/prose-style.md
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: advisory
     guards: []
 
@@ -1104,7 +1104,7 @@ requirements:
       - scripts/runtime/multi_repo_scope.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_build_threat_model_yaml.py::test_business_context_trace_records_safe_provenance_without_prose
@@ -1117,7 +1117,7 @@ requirements:
       - skills/appsec-analyzer/**
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_resolve_config.py::TestCLI::test_quick_shortcut_maps_to_assessment_depth
@@ -1132,7 +1132,7 @@ requirements:
       - data/architecture-coverage-rules.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: advisory
     guards: []
 
@@ -1143,7 +1143,7 @@ requirements:
       - schemas/threat-model.output.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_query_threat_model.py::test_components_assets_boundaries_controls_are_indexed
@@ -1167,7 +1167,7 @@ requirements:
       - schemas/known-threats.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_build_threat_modeling_context.py::test_rejects_invalid_known_threats_before_context_publication
@@ -1195,7 +1195,7 @@ requirements:
       - schemas/threat-model.output.schema.yaml
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_triage_validate_ratings.py::test_step5b_explicit_no_harm_does_not_request_higher_impact
@@ -1216,7 +1216,7 @@ requirements:
       - skills/appsec-analyzer/business-context.md
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - docs/internal/contracts/orchestration-actions.md
     coverage: partial
     guards:
@@ -1230,7 +1230,7 @@ requirements:
       - scripts/runtime/resolve_config.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
@@ -1279,7 +1279,7 @@ requirements:
     decisions: []
     documents:
       - docs/threat-dragon-export.md
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
@@ -1293,7 +1293,7 @@ requirements:
       - scripts/model/build_threat_model_yaml.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_export_threat_model_skill.py::test_sarif_helper_runs_standalone
@@ -1309,7 +1309,7 @@ requirements:
       - skills/appsec-analyzer/**
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: direct
     guards:
       - tests/test_single_repo_controller.py::test_a_new_scan_continues_the_history_and_a_rebuild_resets_it
@@ -1323,7 +1323,7 @@ requirements:
       - skills/show-security-assessment/**
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_query_threat_model.py::test_cli_default_digest
@@ -1335,7 +1335,7 @@ requirements:
       - skills/security-assessment-health/**
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_threat_model_health.py::test_freshness_no_yaml_no_md
@@ -1348,7 +1348,7 @@ requirements:
       - skills/export-security-assessment/**
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: advisory
     guards: []
 
@@ -1359,7 +1359,7 @@ requirements:
       - scripts/contexts/build_architect_context.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_architect_review_runtime.py::test_corrections_survive_grouping_hydration_and_repeat_rebuild
@@ -1454,7 +1454,7 @@ requirements:
     decisions:
       - AS-1
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: partial
     guards:
       - tests/test_single_repo_controller.py::test_without_output_the_run_writes_to_a_private_application_directory
@@ -1492,7 +1492,7 @@ requirements:
     decisions: []
     documents:
       - README.md
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
     coverage: advisory
     guards: []
 
@@ -1507,7 +1507,7 @@ requirements:
       - scripts/orchestrator/orchestration_controller.py
     decisions: []
     documents:
-      - docs/threat-modeler.md
+      - docs/security-assessment.md
       - docs/headless-mode.md
     coverage: partial
     guards:

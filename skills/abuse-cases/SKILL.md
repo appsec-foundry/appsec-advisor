@@ -48,7 +48,7 @@ WHAT IT SHOWS
 
 ADD YOUR OWN
   Put a YAML file in docs/security/abuse-cases/ of the repository; the
-  format is described in docs/threat-modeler.md, section "Abuse cases".
+  format is described in docs/security-assessment.md, section "Abuse cases".
 
 RELATED
   /appsec-advisor:analyze-threats --abuse-case <ID>            Check one case without a full run
