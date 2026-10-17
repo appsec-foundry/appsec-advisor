@@ -1,5 +1,5 @@
 ---
-name: review-threat-model
+name: triage-security-assessment
 description: >-
   User-facing triage of an existing threat model — an overview-first console
   over an already-generated threat-model.yaml (backlog by priority, severity
@@ -12,8 +12,8 @@ description: >-
   also discuss a single finding by id (F-/T-/M-/W-), a read-only aside that
   changes nothing. Runs later and independently of create-threat-model; reads
   the model, never regenerates or re-scores it. Not an artifact-quality check
-  (that is eval-threat-model). To only *ask* about the model without acting on
-  it, use ask-threat-model.
+  (that is eval-security-assessment). To only *ask* about the model without acting on
+  it, use ask-security-assessment.
 ---
 
 You help a user work through the findings of a threat model that already exists,
@@ -77,7 +77,7 @@ to stderr, substituting the first unknown token, then exit `2`:
 
 ```
 Error: unknown argument '<TOKEN>'
-Run /appsec-advisor:review-threat-model --help for usage.
+Run /appsec-advisor:triage-security-assessment --help for usage.
 ```
 
 ## Step 2 — Resolve `CLAUDE_PLUGIN_ROOT`
@@ -301,7 +301,7 @@ When the user wants to act, offer the **bridge** with one `AskUserQuestion`: swi
 to **Fix or accept findings now** (Mode 5B) or **Build a remediation plan**
 (Mode 5A) — carrying the findings they were just looking at (e.g. the aspect they
 drilled into) over as a suggested starting selection — or **Done** to exit. (For a
-read-only overview outside the console, `/appsec-advisor:show-threat-model` is the
+read-only overview outside the console, `/appsec-advisor:show-security-assessment` is the
 standalone equivalent.)
 
 ## Step 5D — Discuss a finding (read-only, nothing written)

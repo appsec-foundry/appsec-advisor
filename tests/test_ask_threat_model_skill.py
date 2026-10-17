@@ -1,11 +1,11 @@
-"""Drift guards for the read-only ask-threat-model skill contract."""
+"""Drift guards for the read-only ask-security-assessment skill contract."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SKILL = ROOT / "skills" / "ask-threat-model" / "SKILL.md"
+SKILL = ROOT / "skills" / "ask-security-assessment" / "SKILL.md"
 
 
 def test_ask_skill_requires_host_supplied_plugin_root() -> None:

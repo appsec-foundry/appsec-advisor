@@ -1,5 +1,5 @@
 """
-Integration tests for the `export-threat-model` skill.
+Integration tests for the `export-security-assessment` skill.
 
 The skill is a Bash wrapper over three Python helpers (exporters/export_sarif.py,
 renderers/render_pentest_tasks.py, exporters/export_pdf.py). These tests exercise the helpers
@@ -174,7 +174,7 @@ def test_pentest_helper_with_target_url(tmp_path: Path):
 
 
 def test_skill_file_exists():
-    skill = ROOT / "skills" / "export-threat-model" / "SKILL.md"
+    skill = ROOT / "skills" / "export-security-assessment" / "SKILL.md"
     assert skill.is_file(), "SKILL.md must exist"
     content = skill.read_text()
     # Sanity-check: every documented format must appear in the body so the
@@ -200,7 +200,7 @@ def test_skill_file_exists():
 def test_threat_dragon_is_alpha_and_opt_in():
     """The alpha format must not ride along with `--formats all`, and the help
     block must say so — otherwise every run starts shipping it."""
-    content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
+    content = (ROOT / "skills" / "export-security-assessment" / "SKILL.md").read_text()
     assert "`all` (any element) → `pdf,html,sarif,pentest`." in content, (
         "threatdragon must stay out of the `all` expansion while it is alpha"
     )
@@ -337,7 +337,7 @@ def test_slug_names_every_export_like_the_create_stamp():
     sys.path.insert(0, str(SCRIPTS))
     import model.stamp_threat_model as stamp_threat_model
 
-    content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
+    content = (ROOT / "skills" / "export-security-assessment" / "SKILL.md").read_text()
     outputs = re.findall(r"\$EXPORTS_DIR/([\w.$-]+)", content.split("## Step 4")[1])
     assert outputs, "no export destinations found in Step 4"
     for name in outputs:
@@ -351,7 +351,7 @@ def test_slug_validation_matches_the_create_stamp():
     sys.path.insert(0, str(SCRIPTS))
     import model.stamp_threat_model as stamp_threat_model
 
-    content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
+    content = (ROOT / "skills" / "export-security-assessment" / "SKILL.md").read_text()
     pattern = re.search(r"grep -Eqx '([^']+)'", content).group(1)
     assert pattern == stamp_threat_model._SLUG_RE.pattern
     for value, ok in (("a3f9", True), ("team.v2_x-1", True), ("../x", False), ("a b", False), ("x" * 65, False)):

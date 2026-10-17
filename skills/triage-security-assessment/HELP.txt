@@ -1,7 +1,7 @@
-/appsec-advisor:review-threat-model — Triage an existing threat model.
+/appsec-advisor:triage-security-assessment — Triage an existing threat model.
 
 USAGE
-  /appsec-advisor:review-threat-model [--repo <path>] [--output <path>] [--plan <path>]
+  /appsec-advisor:triage-security-assessment [--repo <path>] [--output <path>] [--plan <path>]
 
 FLAGS
   --repo <path>     Repository the model belongs to (default: current working dir)
@@ -44,11 +44,11 @@ WHAT IT DOES
 
 DOES NOT
   * Regenerate or re-score the threat model (use create-threat-model).
-  * Judge the model's quality (use eval-threat-model).
+  * Judge the model's quality (use eval-security-assessment).
   * Write back to threat-model.yaml, or promote accepted risks without your
     explicit opt-in.
   * Bulk-apply code changes blindly, commit, or touch findings you did not select.
 
 RELATED
-  /appsec-advisor:show-threat-model     Read-only overview by severity
+  /appsec-advisor:show-security-assessment     Read-only overview by severity
   /appsec-advisor:create-threat-model   Generate or update the threat model

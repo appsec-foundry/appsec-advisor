@@ -21,7 +21,7 @@ Split of labour (AGENTS.md: prefer deterministic Python, make the LLM do less):
 
 The five dimensions and the JUDGE/VERIFY agent logic live in
 `agents/appsec-eval-judge.md`; the orchestration in
-`skills/eval-threat-model/SKILL.md`.
+`skills/eval-security-assessment/SKILL.md`.
 
 Exit codes:
     0  prepare succeeded, or aggregate found no confirmed High+/Critical defect
@@ -189,7 +189,7 @@ def prepare(run_dir: Path, out: Path, repo: Path | None) -> int:
         if repo is not None:
             return _err(
                 single_repository_only(
-                    "eval-threat-model --repo", "Omit --repo; component paths cannot be checked in one checkout."
+                    "eval-security-assessment --repo", "Omit --repo; component paths cannot be checked in one checkout."
                 )
             )
         try:

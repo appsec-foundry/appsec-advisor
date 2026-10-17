@@ -4565,7 +4565,7 @@ def _launch_main(command: str, argv: list[str]) -> int:
 def _print_completion(outcome: dict, elapsed: str, out: Style, stream=None) -> None:
     """The closing result block: what was assessed, what it found, where it is and what comes next.
 
-    Verdict, finding and mitigation rows come from the `show-threat-model`
+    Verdict, finding and mitigation rows come from the `show-security-assessment`
     summary, so both name the same numbers. Figures are counted, not listed:
     the report embeds them.
     """

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 model/threat_model_health.py — read-only three-check health probe for the threat
-model, used by ``/appsec-advisor:threat-model-health``.
+model, used by ``/appsec-advisor:security-assessment-health``.
 
 Three checks, in order:
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/appsec-advisor/eval-threat-model.schema.json",
-  "title": "eval-threat-model artifacts",
-  "description": "Structured artifact contracts for the developer-facing eval-threat-model skill.",
+  "title": "eval-security-assessment artifacts",
+  "description": "Structured artifact contracts for the developer-facing eval-security-assessment skill.",
   "$defs": {
     "dimension": {
       "type": "string",

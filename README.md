@@ -110,7 +110,7 @@ how well is authentication protected?
 what should I fix first?
 
 # Fix findings, accept their risk, or build a remediation plan
-/appsec-advisor:review-threat-model
+/appsec-advisor:triage-security-assessment
 
 # Analyze a planned feature or your current changes
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
@@ -193,7 +193,7 @@ abuse_cases:
 
 The next run checks this rule in files such as `ExpenseController.java` or below `expenses/`. [Repository abuse cases](docs/threat-modeler.md#abuse-cases-docssecurityabuse-cases) explains when a case runs and how its result is reported. To apply cases to every repository of your organization, add them to an organization profile. [Abuse cases in organization profiles](docs/org-profiles.md#abuse-cases) also covers technical attack chains, turning off built-in cases, and failing a CI run on a confirmed case.
 
-`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing threat model. `/appsec-advisor:ask-threat-model` reports how each case turned out.
+`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing threat model. `/appsec-advisor:ask-security-assessment` reports how each case turned out.
 
 ### Assess multiple repositories
 

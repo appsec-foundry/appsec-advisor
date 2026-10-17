@@ -932,7 +932,7 @@ INTERNAL_SKILLS = INTERNAL_REQUIRED_SKILLS
 # Skills grouped into a single utility section
 UTILITY_SKILLS = [
     "help",
-    "threat-model-health",
+    "security-assessment-health",
     "check-permissions",
     "status",
     "fix-run-issues",

@@ -744,7 +744,7 @@ SOURCE_TESTS = {
     ),
     "skills/authnz-review/HELP.txt": _tests(f"{_SKILL_FILE_TESTS} skill_definitions"),
     "skills/abuse-cases/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} resolve_abuse_cases skill_definitions"),
-    "skills/ask-threat-model/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
+    "skills/ask-security-assessment/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} query_threat_model skill_definitions"),
     "skills/help/SKILL.md": _tests(f"{_SKILL_FILE_TESTS} help_reference skill_definitions"),
     "skills/appsec-analyzer/SKILL.md": _tests(
         f"{_SKILL_FILE_TESTS} assessment_console single_repo_controller skill_definitions"

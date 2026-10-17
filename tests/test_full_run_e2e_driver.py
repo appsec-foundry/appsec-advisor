@@ -52,7 +52,7 @@ def test_semantic_eval_target_gates_high_and_critical_defects() -> None:
     makefile = MAKEFILE.read_text(encoding="utf-8")
     script = RUN_EVAL.read_text(encoding="utf-8")
     assert "e2e-full-eval: e2e-full" in makefile
-    assert "/appsec-advisor:eval-threat-model" in script
+    assert "/appsec-advisor:eval-security-assessment" in script
     assert "eval-results.json" in script
     assert 'counts.get("critical", 0)' in script
     assert 'counts.get("high", 0)' in script

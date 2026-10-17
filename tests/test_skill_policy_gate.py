@@ -71,7 +71,7 @@ def test_a_bare_skill_name_is_matched(build):
 
 
 def test_an_enabled_skill_passes(build):
-    assert spg.decide(tool_call("acme-appsec:review-threat-model")) is None
+    assert spg.decide(tool_call("acme-appsec:triage-security-assessment")) is None
 
 
 def test_a_recovery_skill_is_never_blocked(build):
@@ -162,7 +162,7 @@ def test_process_emits_a_deny_payload(build):
 
 
 def test_process_stays_silent_when_allowing(build):
-    code, out = run_hook(build, tool_call("review-threat-model"))
+    code, out = run_hook(build, tool_call("triage-security-assessment"))
     assert code == 0
     assert out.strip() == ""
 

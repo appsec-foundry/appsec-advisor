@@ -1023,13 +1023,13 @@ class TestNextSteps:
         assert not any("fix first" in l for l in clean)
 
     def test_ask_step_does_not_name_the_skill_command(self, tmp_path):
-        # ask-threat-model routes itself from any natural-language question
+        # ask-security-assessment routes itself from any natural-language question
         # about the model, so printing the slash command implies a step the
         # reader does not have to take — the question is the invocation.
-        # review-threat-model is a console you start, so it keeps its command.
+        # triage-security-assessment is a console you start, so it keeps its command.
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
-        assert not any("ask-threat-model" in l for l in lines)
-        assert any("review-threat-model" in l for l in lines)
+        assert not any("ask-security-assessment" in l for l in lines)
+        assert any("triage-security-assessment" in l for l in lines)
 
     def test_every_alternative_is_a_self_contained_entry(self, tmp_path):
         # Nothing joins the bullets any more, so no entry may be a lowercase
@@ -1064,9 +1064,9 @@ class TestNextSteps:
 
     def test_triage_hint_only_when_findings_present(self, tmp_path):
         with_findings = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
-        assert any("review-threat-model" in l for l in with_findings)
+        assert any("triage-security-assessment" in l for l in with_findings)
         clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
-        assert not any("review-threat-model" in l for l in clean)
+        assert not any("triage-security-assessment" in l for l in clean)
 
     def test_architect_review_shown_when_file_exists(self, tmp_path):
         (tmp_path / ".architect-review.md").write_text("# review\n")

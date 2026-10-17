@@ -2479,7 +2479,7 @@ def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | No
     """Return evidence and weakness counts without treating W as findings.
 
     Thin delegate — the rule lives in ``_severity_rollup`` so the overview
-    printed by ``show-threat-model`` computes it identically. See that module
+    printed by ``show-security-assessment`` computes it identically. See that module
     for why the three tallies in the model differ.
     """
     return _severity_rollup.weakness_basis_breakdown(yaml_data)

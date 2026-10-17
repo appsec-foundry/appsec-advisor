@@ -2313,7 +2313,7 @@ def _to_canonical_finding_label(ref: str) -> str:
 
 
 # Route-inventory tags stay machine-readable in the YAML (pentest tasks and
-# ask-threat-model match on them); §5 shows them in reader wording. The
+# ask-security-assessment match on them); §5 shows them in reader wording. The
 # `handler: file:line` part is dropped: the linked finding already locates it.
 _ROUTE_NOTE_READER_TEXT = {
     "public-by-design": "Public by design",

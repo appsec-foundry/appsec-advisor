@@ -1,7 +1,7 @@
 """Tests for scripts/renderers/_severity_rollup.py — the shared finding-severity rules.
 
 The module exists because two surfaces disagreed about the same model: the
-report bucketed findings on `risk` while the show-threat-model overview ranked
+report bucketed findings on `risk` while the show-security-assessment overview ranked
 them by `effective_severity`. These tests pin the rules that resolved it.
 """
 
