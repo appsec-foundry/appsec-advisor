@@ -16,12 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Experimental: repeat `--repo` in the headless runner to assess several local checkouts as one system, with evidenced cross-repository calls and repository attribution in the model, report, and Figure 1; replacing an earlier combined report requires `--rebuild`.
 - Standard and thorough runs check business abuse cases, thorough runs add application-specific cases, and repositories and organization profiles can supply their own checks; `/appsec-advisor:abuse-cases` lists cases and results or explains a selected case.
 - The Threat Analyst checks concrete hypotheses or a selected abuse case against code at a Git revision, answers change-specific questions with `--question`, and supports read-only repository exploration for design questions and reviews with `--explore`.
-- Experimental: `/appsec-advisor:create-threat-model2` runs a single-repository assessment in the background with business-context questions, depth-based cost limits, live progress, and `--stop`.
 - Headless assessments accept HTTPS and SSH Git URLs with token or SSH authentication and automatic temporary checkout cleanup.
-- Rerunning `/appsec-advisor:create-threat-model`, or passing `--incremental`, re-analyzes changed components and reuses unchanged STRIDE results, refusing the run before any change if the previous model cannot be carried forward.
 
 ### Changed
 
+- `/appsec-advisor:appsec-analyzer` replaces `create-threat-model` and `update-threat-model` with full security assessments, business-context questions, depth-based budgets, live progress, and `--stop`; incremental and rerender modes are no longer supported.
+- Assessment commands are now `ask-security-assessment`, `show-security-assessment`, `triage-security-assessment`, `export-security-assessment`, `security-assessment-health`, and `eval-security-assessment`; the former `publish-threat-model` skill is removed.
+- Reports and exports use `security-assessment.*` in a private application directory outside the repository by default; existing `docs/security/threat-model.*` results remain readable and can be imported with their history.
 - The Management Summary groups remediation priorities by root cause and severity, and Critical Findings by Root Cause replaces the Critical Attack Tree with links to weakness records and structural fixes.
 - Headless controller assessments analyze up to three components concurrently by default, let operators choose one to four, reserve resources for required completion, and retain a clearly incomplete snapshot when required work cannot finish.
 - Headless findings count as confirmed exploitable when source evidence establishes insecure code, attacker reachability, and no stopping control; reports identify unresolved checks and source coverage gaps.
