@@ -8,13 +8,18 @@ copying fragile rsync/sed/json snippets into every company's CI repository.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -240,7 +245,9 @@ def upstream_url_from_git(source: Path) -> str | None:
     return None
 
 
-def patch_plugin_json(build: Path, name: str, version: str, description: str | None, source: Path) -> None:
+def patch_plugin_json(
+    build: Path, name: str, version: str, description: str | None, source: Path, *, provenance: dict | None = None
+) -> None:
     plugin_path = build / ".claude-plugin" / "plugin.json"
     data = json.loads(plugin_path.read_text(encoding="utf-8"))
     core_version = data.get("version", "")
@@ -249,7 +256,7 @@ def patch_plugin_json(build: Path, name: str, version: str, description: str | N
     data["description"] = (
         description if description is not None else f"Internal packaged build of appsec-advisor for {name}."
     )
-    data.update(core_provenance(source, core_version))
+    data.update(core_provenance(source, core_version) if provenance is None else provenance)
     plugin_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -555,7 +562,7 @@ def _available_hook_ids(build: Path) -> set[str]:
     return ids
 
 
-def apply_skill_policy(build: Path, surface: dict) -> dict:
+def apply_skill_policy(build: Path, surface: dict, *, required: set[str] | None = None) -> dict:
     available = _available_skills(build)
     required_internal = _required_internal_skills(build)
     missing_internal = required_internal - available
@@ -565,7 +572,7 @@ def apply_skill_policy(build: Path, surface: dict) -> dict:
         surface.get("skills"),
         available,
         "skills",
-        required={"appsec-analyzer"},
+        required={"appsec-analyzer"} if required is None else required,
     )
     keep.update(required_internal)
     removed = sorted(available - keep)
@@ -813,13 +820,18 @@ def write_surface_manifest(
 
 
 def apply_package_surface_policy(
-    build: Path, policy: dict, policy_path: Path | None, upstream_url: str | None = None
+    build: Path,
+    policy: dict,
+    policy_path: Path | None,
+    upstream_url: str | None = None,
+    *,
+    required_skills: set[str] | None = None,
 ) -> None:
     surface = _policy_surface(policy)
     # Added first, so the package policy can name an org skill like any other
     # and so the manifest counts it among what this build ships.
     org_added = overlay_org_skills(build)
-    skills = apply_skill_policy(build, surface)
+    skills = apply_skill_policy(build, surface, required=required_skills)
     if org_added:
         # Recorded separately, the way org hooks are: the artifact surface has
         # to say which parts are the organization's own.
@@ -851,10 +863,12 @@ def _text_files(root: Path):
             yield path
 
 
-def rewrite_namespace(build: Path, name: str) -> None:
+def rewrite_namespace(build: Path, name: str, *, protected: set[str] | None = None) -> None:
     old = f"{UPSTREAM_NAMESPACE}:"
     new = f"{name}:"
     for path in _text_files(build):
+        if protected and path.relative_to(build).as_posix() in protected:
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -863,7 +877,7 @@ def rewrite_namespace(build: Path, name: str) -> None:
             path.write_text(text.replace(old, new), encoding="utf-8")
 
 
-def check_namespace_leaks(build: Path) -> None:
+def check_namespace_leaks(build: Path, *, protected: set[str] | None = None) -> None:
     needle = f"{UPSTREAM_NAMESPACE}:"
     leaks: list[str] = []
     for root_name in ("skills", "agents", "scripts"):
@@ -871,6 +885,8 @@ def check_namespace_leaks(build: Path) -> None:
         if not root.exists():
             continue
         for path in _text_files(root):
+            if protected and path.relative_to(build).as_posix() in protected:
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
@@ -897,13 +913,27 @@ def run_validation(build: Path) -> None:
     )
 
 
-def write_archive(build: Path, name: str, version: str, dist_dir: Path) -> tuple[Path, Path]:
+def write_archive(
+    build: Path, name: str, version: str, dist_dir: Path, *, deterministic: bool = False
+) -> tuple[Path, Path]:
     dist_dir.mkdir(parents=True, exist_ok=True)
     tar_path = dist_dir / f"{name}-{version}.tgz"
     sha_path = dist_dir / f"{name}-{version}.tgz.sha256"
 
-    with tarfile.open(tar_path, "w:gz") as archive:
-        archive.add(build, arcname=name)
+    if deterministic:
+        with (
+            tar_path.open("wb") as stream,
+            gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=0) as compressed,
+        ):
+            with tarfile.open(fileobj=compressed, mode="w") as archive:
+                for relative, data in sorted(_staging_tree(build).items()):
+                    entry = tarfile.TarInfo(f"{name}/{relative}")
+                    entry.size = len(data)
+                    entry.mode = 0o644
+                    archive.addfile(entry, io.BytesIO(data))
+    else:
+        with tarfile.open(tar_path, "w:gz") as archive:
+            archive.add(build, arcname=name)
 
     digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
     sha_path.write_text(f"{digest}  {tar_path.name}\n", encoding="utf-8")
@@ -1142,9 +1172,306 @@ def write_readme(
     target.write_text(content, encoding="utf-8")
 
 
+SOURCE_LOCK = "organization-source/components.lock.json"
+SOURCE_MANIFEST = "organization-source/component-manifest.json"
+
+
+def _staging_tree(root: Path) -> dict[str, bytes]:
+    """Read a bounded, portable tree without following links or executing inputs."""
+    import compose_plugin as composition
+
+    files: dict[str, bytes] = {}
+    seen: set[str] = set()
+    total = 0
+
+    def visit(directory: Path) -> None:
+        nonlocal total
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                relative = composition.portable_path(path.relative_to(root).as_posix())
+                folded = relative.casefold()
+                if folded in seen or len(seen) >= composition.MAX_ENTRIES:
+                    raise composition.CompositionError("staging tree has colliding paths or too many entries")
+                seen.add(folded)
+                mode = entry.stat(follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode):
+                    visit(path)
+                elif stat.S_ISREG(mode):
+                    data = composition.read_bounded(path, composition.MAX_ARCHIVE)
+                    total += len(data)
+                    if total > composition.MAX_EXPANDED:
+                        raise composition.CompositionError("staging tree exceeds its byte limit")
+                    files[relative] = data
+                else:
+                    raise composition.CompositionError("staging tree forbids links and special files")
+
+    visit(root)
+    return files
+
+
+def _staging_inputs(files: dict[str, bytes]) -> tuple[dict, dict, set[str]]:
+    import compose_plugin as composition
+    from jsonschema import Draft202012Validator
+    from referencing import Registry, Resource
+
+    if len(files["components.lock.json"]) > 2 * 1024 * 1024 or len(files["component-manifest.json"]) > 8 * 1024 * 1024:
+        raise composition.CompositionError("staging metadata exceeds its byte limit")
+    lock = composition.parse_lock(files["components.lock.json"])
+    manifest = json.loads(files["component-manifest.json"], object_pairs_hook=composition.unique_fields)
+    schema_root = Path(__file__).resolve().parents[1] / "schemas"
+    lock_schema = json.loads((schema_root / "components-lock.schema.json").read_bytes())
+    schema = json.loads((schema_root / "component-manifest.schema.json").read_bytes())
+    registry = Registry().with_resource("components-lock.schema.json", Resource.from_contents(lock_schema))
+    if not Draft202012Validator(schema, registry=registry).is_valid(manifest):
+        raise composition.CompositionError("staging manifest does not match its schema")
+    if manifest["components"] != lock["components"] or manifest["lock_sha256"] != composition.digest(
+        composition.canonical(lock)
+    ):
+        raise composition.CompositionError("staging manifest does not match its lock")
+    host = next(c["id"] for c in lock["components"] if c["role"] == "host")
+    owners = {}
+    for component in lock["components"]:
+        for mapping in component["files"]:
+            owners[composition.portable_path(mapping["target"])] = component["id"]
+        if component["artifact"].endswith(".whl"):
+            path = "runtime/wheels/" + component["artifact"]
+            owners[path] = component["id"]
+            if composition.digest(files[path]) != component["sha256"]:
+                raise composition.CompositionError("locked staging wheel integrity mismatch")
+            members = composition.archive_files(files[path])
+            for mapping in component["files"]:
+                if files[mapping["target"]] != members[mapping["source"]]:
+                    raise composition.CompositionError("selected engine file differs from its pinned wheel")
+    if "security-score" in lock.get("skill_bindings", []):
+        prefix = "skills/security-score/"
+        owners[prefix + "WORKFLOW.md"] = owners.pop(prefix + "SKILL.md")
+        owners[prefix + "SKILL.md"] = host
+    delivered = {entry["path"]: entry for entry in manifest["files"]}
+    if len(delivered) != len(manifest["files"]) or set(delivered) != set(owners):
+        raise composition.CompositionError("staging inventory differs from selected files")
+    if set(files) != set(delivered) | composition.RESERVED:
+        raise composition.CompositionError("staging tree contains missing or unlisted files")
+    protected = set(composition.RESERVED)
+    for path, entry in delivered.items():
+        data = files[path]
+        if (
+            entry["component"] != owners[path]
+            or entry["size"] != len(data)
+            or entry["sha256"] != composition.digest(data)
+        ):
+            raise composition.CompositionError("staging payload integrity or ownership mismatch")
+        if owners[path] != host:
+            protected.add(path)
+    for path in (".claude-plugin/plugin.json", "scripts/composition_runtime.py"):
+        if owners.get(path) != host:
+            raise composition.CompositionError("staging manifest and bootstrap must be host-owned")
+    plugin = json.loads(files[".claude-plugin/plugin.json"], object_pairs_hook=composition.unique_fields)
+    if not isinstance(plugin, dict) or any(plugin.get(key) != value for key, value in lock["plugin"].items()):
+        raise composition.CompositionError("staging plugin identity differs from its lock")
+    protected.add("scripts/composition_runtime.py")
+    return lock, manifest, protected
+
+
+def _staging_profile(profile: dict) -> None:
+    """Reject settings whose mandatory engine/host consumer has not migrated."""
+    allowed = {
+        "api_version",
+        "organization",
+        "compatibility",
+        "default_preset",
+        "presets",
+        "banner",
+        "skills",
+        "hooks",
+        "mcp",
+        "skill_toggles",
+    }
+    unsupported = set(profile) - allowed
+    for preset in profile.get("presets", {}).values():
+        unsupported.update(f"presets.*.{key}" for key in set(preset) - {"base_mode"})
+    if unsupported:
+        _die(
+            "staging settings require P4 runtime dispatch: "
+            + ", ".join(sorted(unsupported))
+            + "; use the existing --source packaging path"
+        )
+
+
+def _staging_profile_data(data: bytes) -> dict:
+    import yaml
+
+    if len(data) > 2 * 1024 * 1024:
+        _die("staging organization profile exceeds its byte limit")
+
+    class UniqueLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
+            if any(not isinstance(key, str) for key in keys) or len(keys) != len(set(keys)):
+                _die("staging organization profile contains ambiguous keys")
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        if any(isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken)) for token in yaml.scan(data)):
+            _die("staging organization profile cannot contain YAML anchors or aliases")
+        return yaml.load(data, Loader=UniqueLoader)
+    except yaml.YAMLError:
+        _die("staging organization profile is not valid data-only YAML")
+
+
+def _staging_readme(build: Path, name: str, skills: list[str]) -> None:
+    rows = "".join(f"| `/{name}:{skill}` | {_skill_description(build, skill)} |\n" for skill in skills)
+    (build / "README.md").write_text(
+        f"# {name} staging plugin\n\n"
+        "Unqualified organization package. This selected surface is not a replacement release of the full Advisor plugin.\n\n"
+        "## Selected commands\n\n| Command | Description |\n|---|---|\n" + rows + "\n"
+        "## Explicit runtime setup\n\n"
+        "Use the interpreter selected by `components.lock.json`. Replace `/installed/plugin` with the extracted package directory.\n\n"
+        '```sh\npython3 "/installed/plugin/scripts/composition_runtime.py" setup --plugin "/installed/plugin"\n'
+        'python3 "/installed/plugin/scripts/composition_runtime.py" preflight --plugin "/installed/plugin"\n```\n\n'
+        "Setup is explicit and offline. Engine invocation uses the pinned runtime; it does not resolve an engine from PATH.\n\n"
+        "The bundled profile retains organization resources. Unmapped engine settings are refused during packaging.\n",
+        encoding="utf-8",
+    )
+
+
+def package_staging(args: argparse.Namespace, source: Path, org_profile: Path, build: Path, dist_dir: Path) -> None:
+    """Brand the host surface, preserving pinned payloads and original provenance."""
+    import compose_plugin as composition
+    from validators import validate_org_profile
+
+    composition.portable_path(args.name)
+    composition.portable_path(f"{args.name}-{args.version}.tgz")
+    for input_root in (source, org_profile):
+        for output in (build, dist_dir):
+            if output == input_root or output in input_root.parents or input_root in output.parents:
+                _die("staging outputs must be separate from their inputs")
+    if dist_dir == build or build in dist_dir.parents:
+        _die("staging archives must be outside the build tree")
+    if args.readme:
+        _die("--readme is not supported with --staging; the delivered README must stay inventoried")
+    files = _staging_tree(source)
+    lock, manifest, protected = _staging_inputs(files)
+    profile_files = _staging_tree(org_profile)
+    if "org-profile.yaml" not in profile_files:
+        _die("organization profile must contain org-profile.yaml")
+    policy, policy_path = load_package_policy(org_profile, args.package_policy)
+    profile = _staging_profile_data(profile_files["org-profile.yaml"])
+    # Shape validation remains mandatory even when optional semantic checks are skipped.
+    errors = validate_org_profile._schema_errors(profile, validate_org_profile._load_schema())
+    if errors:
+        _die("staging organization profile does not match its schema")
+    _staging_profile(profile)
+    upstream_url = args.upstream_url or next(c["source"] for c in lock["components"] if c["role"] == "host")
+    build.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".organization-package-", dir=build.parent) as temporary:
+        work = Path(temporary) / "plugin"
+        work.mkdir()
+        for path, data in files.items():
+            target = work / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        overlay = work / "org-profile"
+        if overlay.exists():
+            shutil.rmtree(overlay)
+        for path, data in profile_files.items():
+            target = overlay / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        if validate_org_profile._check_hooks(profile, overlay) or validate_org_profile._check_mcp(profile):
+            _die("staging organization hooks or MCP declarations violate their security contract")
+        host_component = next(c for c in lock["components"] if c["role"] == "host")
+        patch_plugin_json(
+            work,
+            args.name,
+            args.version,
+            args.description,
+            source,
+            provenance={
+                "appsec_advisor_core_version": host_component["version"],
+                "appsec_advisor_core_commit": host_component["revision"],
+            },
+        )
+        if not (work / "config.json").exists():
+            (work / "config.json").write_text("{}\n", encoding="utf-8")
+        patch_config(work, args.info_url)
+        (work / "hooks").mkdir(exist_ok=True)
+        apply_package_surface_policy(work, policy, policy_path, upstream_url, required_skills=set())
+        surface = json.loads((work / SURFACE_MANIFEST).read_bytes())
+        # Until the host policy gate migrates, physically exclude disabled entries.
+        known = set(surface["skills"]["included"]) | set(surface["skills"]["removed"])
+        for skill, toggle in _org_profile_skill_toggles(work).items():
+            if skill not in known:
+                _die("staging skill toggle names an unavailable skill")
+            if not toggle["enabled"] and skill in surface["skills"]["included"]:
+                if skill in _required_internal_skills(work):
+                    _die("staging skill toggle disables an agent's required internal skill")
+                shutil.rmtree(work / "skills" / skill)
+                surface["skills"]["included"].remove(skill)
+                surface["skills"]["removed"].append(skill)
+        surface["skills"]["removed"].sort()
+        surface["composition"] = {"source_lock": SOURCE_LOCK, "source_manifest": SOURCE_MANIFEST}
+        (work / SURFACE_MANIFEST).write_bytes(composition.canonical(surface))
+        if not args.skip_validation:
+            errors = validate_org_profile.validate(profile, overlay, lock["plugin"]["version"], plugin_root=work)
+            if errors:
+                _die("staging organization profile semantic validation failed")
+        _staging_readme(work, args.name, surface["skills"]["included"])
+        if args.name != UPSTREAM_NAMESPACE:
+            rewrite_namespace(work, args.name, protected=protected)
+            check_namespace_leaks(work, protected=protected)
+        result = _staging_tree(work)
+        removed = set(files) - set(result)
+        for path in protected:
+            # Surface selection may remove an entire skill, never individual resources.
+            parts = path.split("/")
+            excluded_skill = len(parts) > 2 and parts[0] == "skills" and parts[1] in surface["skills"]["removed"]
+            if path in removed and excluded_skill:
+                continue
+            if result.get(path) != files[path]:
+                _die("organization packaging attempted to change a pinned component file")
+        for path in (SOURCE_LOCK, SOURCE_MANIFEST):
+            if path in result:
+                _die("staging input collides with organization provenance output")
+        result[SOURCE_LOCK] = files["components.lock.json"]
+        result[SOURCE_MANIFEST] = files["component-manifest.json"]
+        included = set(surface["skills"]["included"])
+        if "skill_bindings" in lock:
+            lock["skill_bindings"] = [skill for skill in lock["skill_bindings"] if skill in included]
+        result["components.lock.json"] = composition.canonical(lock)
+        host = next(c["id"] for c in lock["components"] if c["role"] == "host")
+        original = {entry["path"]: entry for entry in manifest["files"]}
+        manifest["lock_sha256"] = composition.digest(result["components.lock.json"])
+        manifest["files"] = [
+            {
+                "path": path,
+                "sha256": composition.digest(data),
+                "size": len(data),
+                "component": original.get(path, {}).get("component", host),
+            }
+            for path, data in sorted(result.items())
+            if path not in composition.RESERVED
+        ]
+        result["component-manifest.json"] = composition.canonical(manifest)
+        if len(result["component-manifest.json"]) > 8 * 1024 * 1024:
+            _die("organization package manifest exceeds the bootstrap's byte limit")
+        for path, data in result.items():
+            target = work / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        # Recheck all output bounds, including generated metadata, before publication.
+        _staging_tree(work)
+        remove_stale_archive(args.name, args.version, dist_dir)
+        if build.exists():
+            shutil.rmtree(build)
+        work.replace(build)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and validate an internal appsec-advisor plugin package.")
-    parser.add_argument("--source", default=".", help="upstream appsec-advisor checkout")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--source", default=".", help="upstream appsec-advisor checkout")
+    inputs.add_argument("--staging", help="extracted, verified compose_plugin staging tree")
     parser.add_argument("--org-profile", required=True, help="org-profile directory to bundle")
     parser.add_argument("--name", required=True, help="internal plugin name / command namespace")
     parser.add_argument("--version", required=True, help="internal package version")
@@ -1186,6 +1513,20 @@ def main(argv: list[str] | None = None) -> int:
     org_profile = Path(args.org_profile).resolve()
     build = (Path(args.build_dir) / args.name).resolve()
     dist_dir = Path(args.dist_dir).resolve()
+    _validate_package_name(args.name)
+    _validate_version(args.version)
+    if args.staging:
+        import compose_plugin as composition
+
+        try:
+            package_staging(args, Path(args.staging).resolve(), org_profile, build, dist_dir)
+        except (composition.CompositionError, OSError, ValueError, KeyError, TypeError, RecursionError):
+            _die("invalid or incompatible staging package; no artifact published")
+        if not args.skip_archive:
+            tar_path, sha_path = write_archive(build, args.name, args.version, dist_dir, deterministic=True)
+            print(f"==> Artifact: {tar_path}\n==> SHA256:   {sha_path}")
+        print(f"==> Build tree ready at {build}")
+        return 0
     package_policy, package_policy_path = load_package_policy(org_profile, args.package_policy)
 
     _validate_package_name(args.name)

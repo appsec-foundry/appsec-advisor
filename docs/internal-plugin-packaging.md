@@ -1,6 +1,6 @@
 # Internal plugin packaging
 
-For the new component-based staging workflow, see the [offline composition contract](internal/contracts/plugin-composition.md). Its explicit artifact builder and isolated runtime bootstrap are separate from the existing organization packager below; organization overlays do not yet consume the composed tree. Staging output is unqualified and does not replace the current plugin runtime.
+The organization packager accepts an upstream checkout or an [assembled staging tree](#package-an-assembled-staging-tree). The [offline composition contract](internal/contracts/plugin-composition.md) defines staging integrity, provenance and runtime setup. Staging output is unqualified and does not replace the current plugin runtime.
 
 Build a company-branded Claude Code plugin so developers run your namespace with your defaults:
 
@@ -9,6 +9,22 @@ Build a company-branded Claude Code plugin so developers run your namespace with
 ```
 
 The package uses the upstream analysis code with your plugin name, org profile, default preset, and optional restrictions on included skills and hooks. See the [org profile reference](org-profiles.md) for profile fields.
+
+## Package an assembled staging tree
+
+Verify and extract the reviewed assembler ZIP into a dedicated input directory. Run the packager from the Advisor checkout with its existing dependencies; no component checkout or network access is needed. Replace the paths, name and version in this example:
+
+```bash
+python3 scripts/package_internal_plugin.py --staging /staging/extracted-plugin --org-profile /packaging/org-profile --name team-appsec --version 1.0.0-internal --build-dir /packaging/build --dist-dir /packaging/dist
+```
+
+`--staging` replaces `--source`. The build and archive directories must be separate from both inputs, and the archive directory must be outside the build. Branding, description and information-URL overrides apply to host outputs. Package-policy skill selection works on the assembled surface, including a score-only package without the legacy primary skill. Organization-added skills, hooks and MCP declarations use the existing profile mechanisms and surface inventory. Disabled skills are removed from staging packages, with their reasons retained in configuration. The generated README lists the selected commands and explicit runtime setup; `--readme` is unavailable on this path.
+
+Staging profiles retain the required identity, compatibility and base-mode-only preset metadata. Engine settings and policies awaiting P4 dispatch are refused rather than silently ignored. These include requirements, model/data restrictions, context, report branding, baseline enforcement, actor and abuse-case changes, analyst and coach settings, and additional preset fields. Use `--source` for profiles needing those current runtime features. `--skip-validation` cannot skip staging integrity, safe profile parsing, profile shape or pinned-file preservation.
+
+The output contains a normalized branded tarball and checksum. `organization-source/` retains the original lock and component inventory; the delivered inventory hashes the final surface. Engine wheels, retained engine resources, portable skill resources and the bootstrap remain unchanged. The [composition contract](internal/contracts/plugin-composition.md#organization-packaging-boundary) explains delivery ownership and the removal of bindings for excluded skills.
+
+Extract the branded archive and use the [staging setup procedure](internal/runbooks/composed-score-staging.md#prepare-the-runtime), substituting the organization package directory. Session-only loading uses the branded namespace, such as `/team-appsec:security-score`. Packaging does not install an engine, invoke a model or start an MCP server.
 
 ## Quick start
 

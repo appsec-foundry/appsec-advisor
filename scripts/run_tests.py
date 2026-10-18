@@ -584,16 +584,16 @@ _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verif
 
 SOURCE_TESTS = {
     "scripts/compose_plugin.py": _tests(
-        "compose_plugin composition_runtime finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
+        "compose_plugin composition_runtime package_internal_plugin finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
     ),
     "scripts/composition_runtime.py": _tests(
-        "compose_plugin composition_runtime finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
+        "compose_plugin composition_runtime package_internal_plugin finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
     ),
     "schemas/components-lock.schema.json": _tests(
-        "compose_plugin check_target_specificity requirements_verification schemas"
+        "compose_plugin package_internal_plugin check_target_specificity requirements_verification schemas"
     ),
     "schemas/component-manifest.schema.json": _tests(
-        "compose_plugin check_target_specificity requirements_verification schemas"
+        "compose_plugin package_internal_plugin check_target_specificity requirements_verification schemas"
     ),
     "scripts/runtime/remote_repositories.py": _tests("remote_repositories"),
     ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
@@ -6215,6 +6215,7 @@ SOURCE_TESTS = {
         check_target_specificity
         gate_preconditions
         org_profile_schema
+        package_internal_plugin
         requirements_verification
         resolve_config
         resolve_config_org_profile

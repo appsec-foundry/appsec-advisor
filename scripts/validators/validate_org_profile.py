@@ -395,10 +395,10 @@ def _check_hooks(profile: dict, profile_dir: Path) -> list[str]:
     return errors
 
 
-def _check_skill_toggles(profile: dict) -> list[str]:
+def _check_skill_toggles(profile: dict, plugin_root: Path | None = None) -> list[str]:
     errors: list[str] = []
     toggles = profile.get("skill_toggles") or {}
-    known = known_skills()
+    known = known_skills(plugin_root) if plugin_root is not None else known_skills()
     for skill, value in toggles.items():
         # An empty set means the skills directory could not be read; skip the
         # membership check rather than reject every toggle.
@@ -480,7 +480,9 @@ def _read_plugin_version() -> str:
 # ---------------------------------------------------------------------------
 
 
-def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None) -> list[str]:
+def validate(
+    profile: Any, profile_dir: Path, plugin_version: str | None = None, *, plugin_root: Path | None = None
+) -> list[str]:
     """Run schema + semantic checks. Returns a list of error strings."""
     errors: list[str] = []
     try:
@@ -503,7 +505,7 @@ def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None)
     errors += _check_mcp(profile)
     errors += _check_hooks(profile, profile_dir)
     errors += _check_baseline(profile, profile_dir)
-    errors += _check_skill_toggles(profile)
+    errors += _check_skill_toggles(profile, plugin_root)
     errors += _check_compatibility(profile, plugin_version or _read_plugin_version())
     errors += _check_abuse_cases(profile, profile_dir)
     return errors

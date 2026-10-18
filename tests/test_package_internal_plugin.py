@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
 import package_internal_plugin as pkg
 import pytest
+
+from tests.test_compose_plugin import add_score_skill, make_composition
+from tests.test_composition_runtime import installed_plugin as installed_plugin
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -1527,3 +1531,304 @@ def test_custom_baseline_drops_modular_bundle_and_keeps_complete_mode(tmp_path):
     assert config["mode"] == "complete"
     assert config["bundle_dir"] is None and config["release"] is None
     assert not directory.exists()
+
+
+def _staging_case(tmp_path, engine_path="scripts/pinned/entry.py"):
+    import compose_plugin as composition
+    import composition_runtime as runtime
+
+    lock, artifacts = make_composition(tmp_path)
+    add_score_skill(lock, artifacts)
+    host, engine = lock["components"][:2]
+    host_files = composition.archive_files((artifacts / host["artifact"]).read_bytes())
+    host_files["skills/appsec-analyzer/SKILL.md"] = b"Run /appsec-advisor:appsec-analyzer.\n"
+    host_bytes = composition.zip_bytes(host_files)
+    (artifacts / host["artifact"]).write_bytes(host_bytes)
+    host["sha256"] = composition.digest(host_bytes)
+    members = composition.archive_files((artifacts / engine["artifact"]).read_bytes())
+    members["resources/entry.py"] = b"# appsec-advisor:engine-owned; never rewrite\n"
+    wheel = composition.zip_bytes(members)
+    (artifacts / engine["artifact"]).write_bytes(wheel)
+    engine.update(sha256=composition.digest(wheel), files=[{"source": "resources/entry.py", "target": engine_path}])
+    lock["runtime"] = {"python": [f"3.{sys.version_info.minor}"], "platforms": [runtime.target_platform()]}
+    files = composition.assemble(lock, artifacts)
+    source = tmp_path / "assembled input"
+    for relative, data in files.items():
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    profile = tmp_path / "organization"
+    profile.mkdir()
+    (profile / "org-profile.yaml").write_text(
+        "api_version: appsec-advisor.org-profile/v2\n"
+        'organization: {id: example, name: Example Organization, profile_version: "1"}\n'
+        'compatibility: {core: ">=1 <2"}\n'
+        "default_preset: local\npresets: {local: {base_mode: standard}}\n"
+        "banner: {headline: Example Security}\n"
+    )
+    return source, profile, files
+
+
+def _package_staging_case(tmp_path, source, profile, *, name="example-security", extra=()):
+    return pkg.main(
+        [
+            "--staging",
+            str(source),
+            "--org-profile",
+            str(profile),
+            "--name",
+            name,
+            "--version",
+            "2.0.0",
+            "--build-dir",
+            str(tmp_path / "build"),
+            "--dist-dir",
+            str(tmp_path / "dist"),
+            *extra,
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "name,engine_path",
+    [
+        ("example-security", "scripts/pinned/entry.py"),
+        ("team-review", "agents/vendor/guide.md"),
+    ],
+)
+def test_staging_branding_surface_and_pinned_engine(tmp_path, name, engine_path):
+    import composition_runtime as runtime
+    import smoke_test_package as smoke
+
+    source, profile, files = _staging_case(tmp_path, engine_path)
+    with (profile / "org-profile.yaml").open("a") as stream:
+        stream.write("skills: {add: 'skills/*/SKILL.md'}\n")
+    local_skill = profile / "skills/local-review"
+    local_skill.mkdir(parents=True)
+    (local_skill / "SKILL.md").write_text(ORG_SKILL.format(name="local-review"))
+    (profile / "package-policy.yaml").write_text(
+        "plugin_surface:\n  skills:\n    include: [security-score, local-review]\n"
+    )
+    for path in source.rglob("*"):
+        if path.is_file():
+            path.chmod(0o444)
+    assert _package_staging_case(tmp_path, source, profile, name=name) == 0
+    build = tmp_path / "build" / name
+    plugin = json.loads((build / ".claude-plugin/plugin.json").read_bytes())
+    assert (plugin["name"], plugin["version"], plugin["appsec_advisor_core_commit"]) == (name, "2.0.0", "a" * 40)
+    assert (build / engine_path).read_bytes() == files[engine_path]
+    for relative in ["scripts/composition_runtime.py", "skills/security-score/WORKFLOW.md", "THIRD-PARTY-NOTICES.txt"]:
+        assert (build / relative).read_bytes() == files[relative]
+    assert (build / pkg.SOURCE_LOCK).read_bytes() == files["components.lock.json"]
+    assert (build / pkg.SOURCE_MANIFEST).read_bytes() == files["component-manifest.json"]
+    config = json.loads((build / "config.json").read_bytes())
+    assert config["banner"]["headline"] == "Example Security"
+    assert config["organization_profile"]["path"] == "org-profile/org-profile.yaml"
+    surface = json.loads((build / pkg.SURFACE_MANIFEST).read_bytes())
+    assert surface["skills"]["included"] == ["local-review", "security-score"]
+    assert surface["skills"]["removed"] == ["appsec-analyzer"]
+    assert surface["skills"]["org_added"] == ["local-review"]
+    assert not (build / "skills/appsec-analyzer").exists()
+    assert f"/{name}:security-score" in (build / "README.md").read_text()
+    smoke.check_surface_manifest(build)
+    lock, manifest, _ = runtime.verified_inputs(build)
+    assert lock["skill_bindings"] == ["security-score"]
+    assert {row["path"] for row in manifest["files"]} == set(pkg._staging_tree(build)) - {
+        "components.lock.json",
+        "component-manifest.json",
+        "THIRD-PARTY-NOTICES.txt",
+    }
+    for relative, data in files.items():
+        assert (source / relative).read_bytes() == data
+    archive = tmp_path / "dist" / f"{name}-2.0.0.tgz"
+    assert (
+        archive.with_suffix(".tgz.sha256").read_text().startswith(pkg.hashlib.sha256(archive.read_bytes()).hexdigest())
+    )
+    with tarfile.open(archive) as packaged:
+        for relative, data in pkg._staging_tree(build).items():
+            assert packaged.extractfile(f"{name}/{relative}").read() == data
+
+
+@pytest.mark.parametrize(
+    "kind", ["file", "wheel", "unlisted", "symlink", "duplicate", "owner", "lock", "size", "traversal"]
+)
+def test_staging_rejects_invalid_inputs_before_publication(tmp_path, kind, capsys):
+    source, profile, files = _staging_case(tmp_path)
+    manifest_path = source / "component-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    if kind in {"file", "wheel"}:
+        path = "scripts/pinned/entry.py" if kind == "file" else next(p for p in files if p.endswith(".whl"))
+        (source / path).write_bytes(b"tampered")
+    elif kind == "unlisted":
+        (source / "unlisted.py").write_text("raise AssertionError('must not execute')")
+    elif kind == "symlink":
+        (profile / "escaped").symlink_to(source, target_is_directory=True)
+    elif kind == "duplicate":
+        manifest["files"].append(manifest["files"][0])
+    elif kind == "owner":
+        next(row for row in manifest["files"] if row["path"] == "scripts/pinned/entry.py")["component"] = "advisor-host"
+    elif kind == "lock":
+        manifest["lock_sha256"] = "0" * 64
+    elif kind == "size":
+        manifest["files"][0]["size"] += 1
+    elif kind == "traversal":
+        manifest["files"][0]["path"] = "../outside.py"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert not (tmp_path / "build/example-security").exists()
+    assert not (tmp_path / "dist").exists()
+    assert "Traceback" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("engine_path", ["config.json", "README.md", "hooks/hooks.json"])
+def test_staging_rejects_org_changes_to_pinned_paths(tmp_path, engine_path):
+    source, profile, _ = _staging_case(tmp_path, engine_path)
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert not (tmp_path / "build/example-security").exists()
+    assert not (tmp_path / "dist").exists()
+
+
+@pytest.mark.parametrize("selection", ["exclude", "toggle"])
+def test_staging_removed_binding_keeps_runtime_inputs_consistent(tmp_path, selection):
+    import composition_runtime as runtime
+
+    source, profile, files = _staging_case(tmp_path)
+    if selection == "exclude":
+        (profile / "package-policy.yaml").write_text("plugin_surface: {skills: {exclude: [security-score]}}\n")
+    else:
+        with (profile / "org-profile.yaml").open("a") as stream:
+            stream.write("skill_toggles: {security-score: {enabled: false, reason: Not included in this package}}\n")
+    assert _package_staging_case(tmp_path, source, profile, extra=["--skip-archive"]) == 0
+    build = tmp_path / "build/example-security"
+    lock, _, _ = runtime.verified_inputs(build)
+    assert lock["skill_bindings"] == []
+    assert lock["components"] == json.loads(files["components.lock.json"])["components"]
+    assert not (build / "skills/security-score").exists()
+    assert "example-security:appsec-analyzer" in (build / "skills/appsec-analyzer/SKILL.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "policy: {disable_opus: true}",
+        "llm_policy: {approval_required_actions: [publish]}",
+        "presets: {local: {base_mode: standard, guardrails: {max_wall_time: 60s}}}",
+    ],
+)
+def test_staging_refuses_unmapped_organization_runtime_policy(tmp_path, setting):
+    import yaml
+
+    source, profile, _ = _staging_case(tmp_path)
+    path = profile / "org-profile.yaml"
+    data = yaml.safe_load(path.read_text())
+    data.update(yaml.safe_load(setting))
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert not (tmp_path / "dist").exists()
+
+
+def test_staging_inputs_are_explicit_and_disjoint(tmp_path):
+    source, profile, _ = _staging_case(tmp_path)
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--source", str(source)])
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--build-dir", str(source)])
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--name", ".."])
+    assert (source / "components.lock.json").is_file()
+
+
+def test_staging_preserves_org_hooks_mcp_and_repeatable_archive(tmp_path):
+    import smoke_test_package as smoke
+
+    source, profile, _ = _staging_case(tmp_path)
+    hook = profile / "hooks/guard.py"
+    hook.parent.mkdir()
+    hook.write_text("# Organization hook, deliberately never executed by packaging.\n")
+    with (profile / "org-profile.yaml").open("a") as stream:
+        stream.write(
+            "hooks:\n  local-guard:\n    event: PreToolUse\n    matcher: Bash\n"
+            "    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py\n"
+            "mcp:\n  servers:\n    local-check:\n      command: ${CLAUDE_PLUGIN_ROOT}/org-profile/check\n"
+            '      env: {ACCESS_TOKEN: "${EXAMPLE_ACCESS_TOKEN}"}\n'
+        )
+    assert _package_staging_case(tmp_path, source, profile) == 0
+    build = tmp_path / "build/example-security"
+    smoke.check_surface_manifest(build)
+    assert (build / "org-profile/hooks/guard.py").read_bytes() == hook.read_bytes()
+    mcp = json.loads((build / ".mcp.json").read_bytes())
+    assert mcp["mcpServers"]["local-check"]["env"]["ACCESS_TOKEN"] == "${EXAMPLE_ACCESS_TOKEN}"
+    archive = tmp_path / "dist/example-security-2.0.0.tgz"
+    first = archive.read_bytes()
+    assert _package_staging_case(tmp_path, source, profile) == 0
+    assert archive.read_bytes() == first
+
+
+def test_staging_packaged_binding_runs_offline(request, tmp_path, capfd):
+    import composition_runtime as runtime
+
+    source, home, _ = request.getfixturevalue("installed_plugin")
+    profile = tmp_path / "organization"
+    profile.mkdir()
+    (profile / "org-profile.yaml").write_text(
+        "api_version: appsec-advisor.org-profile/v2\n"
+        'organization: {id: example, name: Example Organization, profile_version: "1"}\n'
+        'compatibility: {core: ">=1 <2"}\n'
+        "default_preset: local\npresets: {local: {base_mode: standard}}\n"
+    )
+    assert _package_staging_case(tmp_path, source, profile) == 0
+    build = tmp_path / "build/example-security"
+    capfd.readouterr()
+    python = runtime.setup(build, home)
+    assert runtime.preflight(build, home)[0] == python
+    capfd.readouterr()
+    for repository, status in [
+        ("source with spaces;$(literal)", 0),
+        ("undetermined-source", 2),
+        ("incomplete-source", 1),
+    ]:
+        assert runtime.launch(build, home, ["score", repository, "--json"], 30, "security-score") == status
+        result = json.loads(capfd.readouterr().out)
+        assert result["args"] == ["score", repository, "--json"]
+        assert result["python"] == str(python)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "!!python/object/apply:os.system ['touch must-not-exist']",
+        "organization: {}\norganization: {}\n",
+        "organization: &shared {}\npresets: *shared\n",
+        "[]\n",
+    ],
+)
+def test_staging_profile_rejects_executable_ambiguous_or_invalid_data(tmp_path, data):
+    source, profile, _ = _staging_case(tmp_path)
+    (profile / "org-profile.yaml").write_text(data)
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert not (tmp_path / "dist").exists()
+    assert not (Path.cwd() / "must-not-exist").exists()
+
+
+def test_staging_cannot_skip_hook_confinement(tmp_path):
+    source, profile, _ = _staging_case(tmp_path)
+    with (profile / "org-profile.yaml").open("a") as stream:
+        stream.write('hooks: {escape: {event: PreToolUse, command: "python3 /outside/guard.py"}}\n')
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert not (tmp_path / "dist").exists()
+
+
+@pytest.mark.parametrize("limit", ["MAX_ENTRIES", "MAX_EXPANDED"])
+def test_staging_tree_limits_stop_publication(tmp_path, monkeypatch, limit):
+    import compose_plugin as composition
+
+    source, profile, _ = _staging_case(tmp_path)
+    monkeypatch.setattr(composition, limit, 1)
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile)
+    assert not (tmp_path / "dist").exists()

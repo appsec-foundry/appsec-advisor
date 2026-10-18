@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Maintainers can build reproducible staging plugin archives from pinned local artifacts and explicitly set up an isolated offline Python runtime.
+- Maintainers can assemble reproducible staging plugins from pinned local artifacts, package an organization-branded surface without changing pinned engine files, and explicitly set up an isolated offline Python runtime.
 
 ## 0.6.0-beta.5 (2026-10-17)
 
