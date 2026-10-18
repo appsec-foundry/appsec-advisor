@@ -1,6 +1,6 @@
 # AppSec Advisor component packaging plan
 
-Status: proposed implementation plan, 2026-10-18. AppSec Advisor becomes a thin Claude Code integration assembled from independently maintained components. Its installed package includes the skills and Analyzer distribution needed by the supported workflows. A thin source repository does not imply a small installation archive.
+Status: implementation started with the [P1 inventory and compatibility backlog](appsec-advisor-composition-inventory-2026-10-18.md), 2026-10-18. P2–P6 await the existing A7 qualification gate. AppSec Advisor becomes a thin Claude Code integration assembled from independently maintained components. Its installed package includes the skills and Analyzer distribution needed by the supported workflows. A thin source repository does not imply a small installation archive.
 
 This document extends the [product architecture](../../proposals/appsec-product-architecture-concept.md) and details Phase B of the [Analyzer extraction plan](plan-appsec-analyzer-extraction-2026-10-17.md). The [assessment transition handoff](handoff-appsec-analyzer-transition-2026-10-17.md) remains relevant to compatibility. The current inventory below replaces the extraction plan's historical starting-point description, not its acceptance gates. Do not repeat the history import or rebuild capabilities that already exist in Analyzer.
 
@@ -151,4 +151,4 @@ Installed-artifact checks establish independence from source trees. Cross-platfo
 
 The platform family and Python prerequisite are settled. The remaining technical selections are the exact Python/OS/architecture matrix, initial immutable component versions, complete capability compatibility declarations, and the resulting asset layout. Resolve these from the package inventory and platform evidence. Ask the operator before reducing the agreed platform or workflow scope, changing a product promise, or revising the existing provider qualification gate.
 
-The first next step is P1's ownership and compatibility inventory against a clean Analyzer revision. This produces a bounded implementation backlog and identifies which existing workflows can switch immediately and which need a public engine operation first.
+The [P1 inventory](appsec-advisor-composition-inventory-2026-10-18.md) records all existing skills, hook consumers, configuration fields, permissions, cleanup boundaries, and relevant Advisor fixes against committed component revisions. No workflow has switched. The next step is to close the recorded Analyzer qualification and reconciliation gaps; P2–P6 remain behind the existing A7 gate. The inventory distinguishes available commands from compatible replacements and records the evidence required for each transfer.
