@@ -751,3 +751,163 @@ def test_assessment_dispatch_rejects_incomplete_capability_or_provenance_overrid
         args = ["organization-config", "show", "--profile-source=/unchecked.yaml"]
     with pytest.raises(runtime.RuntimeError):
         runtime.organization_arguments(tmp_path, Path(sys.executable), args, manifest)
+
+
+@pytest.mark.parametrize("command", ["status", "progress", "stop", "results", "query", "export", "assessment-entry"])
+def test_output_consumers_remain_available_with_missing_external_profile(tmp_path, monkeypatch, command):
+    monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", "/missing/operator.yaml")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: pytest.fail("output operations need no profile or model inspection")
+    )
+    arguments = [command, "--output", "/private/output"]
+    assert (
+        runtime.organization_arguments(
+            tmp_path, Path(sys.executable), arguments, {"files": [{"path": runtime.ORG_DISPATCH}]}
+        )
+        == arguments
+    )
+
+
+@pytest.mark.parametrize("status", [0, 20, 3, 2, 130])
+def test_assessment_binding_preserves_claude_arguments_and_real_exit_status(installed_plugin, monkeypatch, status):
+    plugin, home, lock = installed_plugin
+    lock["skill_bindings"].append("appsec-analyzer")
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(runtime, "engine_capabilities", lambda python, names: None)
+    seen = []
+
+    class Process:
+        def wait(self, timeout):
+            return status
+
+    monkeypatch.setattr(subprocess, "Popen", lambda arguments, **kw: seen.append((arguments, kw)) or Process())
+    args = ["scan", "--repo", "source with spaces;$(literal)", "--output=/private/output", "--budget=7", "--resume"]
+    assert runtime.launch(plugin, home, args, 60, "appsec-analyzer") == status
+    assert seen[0][0] == [
+        sys.executable,
+        "-I",
+        "-m",
+        "appsec_analyzer.cli",
+        *args,
+        "--interactive-launch",
+        "--host=claude-cli",
+        "--non-interactive",
+    ]
+    assert not seen[0][1].get("shell")
+
+
+@pytest.mark.parametrize("arguments", [["score", "source"], ["review", "/result"], ["organization-config", "run"]])
+def test_assessment_binding_refuses_unrelated_or_nested_execution(installed_plugin, monkeypatch, arguments):
+    plugin, home, lock = installed_plugin
+    lock["skill_bindings"].append("appsec-analyzer")
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("refused workflow cannot start"))
+    with pytest.raises(runtime.RuntimeError, match="permits only"):
+        runtime.launch(plugin, home, arguments, 60, "appsec-analyzer")
+
+
+@pytest.mark.parametrize("interruption,expected", [(KeyboardInterrupt, 130), (subprocess.TimeoutExpired, 2)])
+def test_assessment_cancellation_uses_public_stop_with_equals_output(
+    installed_plugin, monkeypatch, interruption, expected
+):
+    plugin, home, lock = installed_plugin
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    called = []
+
+    class Process:
+        pid = 123
+        calls = 0
+
+        def wait(self, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                if interruption is KeyboardInterrupt:
+                    raise KeyboardInterrupt
+                raise subprocess.TimeoutExpired("engine", timeout)
+            return 130
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: Process())
+    monkeypatch.setattr(subprocess, "run", lambda arguments, **kw: called.append(arguments))
+    monkeypatch.setattr(runtime.os, "killpg", lambda *a: None)
+    if expected == 130:
+        assert runtime.launch(plugin, home, ["scan", "--output=/private/output"], 1) == 130
+    else:
+        with pytest.raises(runtime.RuntimeError, match="timed out"):
+            runtime.launch(plugin, home, ["scan", "--output=/private/output"], 1)
+    assert called == [[sys.executable, "-I", "-m", "appsec_analyzer.cli", "stop", "--output", "/private/output"]]
+
+
+def test_public_follower_finishes_after_owner_without_stopping_it(installed_plugin, monkeypatch, capsys):
+    plugin, home, lock = installed_plugin
+    lock["skill_bindings"].append("appsec-analyzer")
+    target = plugin / "scripts/runtime/assessment_console.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes((Path(__file__).parents[1] / "scripts/runtime/assessment_console.py").read_bytes())
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(runtime, "engine_capabilities", lambda *a: None)
+    calls = []
+
+    def invoke(arguments, **kwargs):
+        args = arguments[4:]
+        calls.append(args)
+        if args[0] == "assessment-entry":
+            document = {"live": True, "run_id": "selected-run"}
+        else:
+            document = {
+                "run_id": "selected-run",
+                "assessment_status": "complete",
+                "next_offset": 1,
+                "events": [{"event": "warning", "detail": "Coverage gap: optional check skipped"}],
+            }
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"interface_version": 1, **document}).encode())
+
+    monkeypatch.setattr(subprocess, "run", invoke)
+    assert runtime.follow(plugin, home, "/private/output", 30) == 0
+    assert "Coverage gap: optional check skipped" in capsys.readouterr().out
+    assert [args[0] for args in calls] == ["assessment-entry", "progress"]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"available": True},
+        {"available": True, "schema_version": True, "model_calls": False},
+        {"available": True, "schema_version": 1, "model_calls": True},
+    ],
+)
+def test_assessment_binding_requires_versioned_model_free_preparation(monkeypatch, record):
+    capability = {name: {"available": True} for name in runtime.ASSESSMENT_CAPABILITIES}
+    capability.update(interface_version=1, assessment_entry=record)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(capability).encode())
+    )
+    with pytest.raises(runtime.RuntimeError, match="entry contract"):
+        runtime.engine_capabilities(Path(sys.executable), runtime.ASSESSMENT_CAPABILITIES)
+
+
+@pytest.mark.parametrize("defect", ["cursor", "events", "event"])
+def test_public_follower_rejects_malformed_engine_progress(installed_plugin, monkeypatch, defect):
+    plugin, home, lock = installed_plugin
+    lock["skill_bindings"].append("appsec-analyzer")
+    target = plugin / "scripts/runtime/assessment_console.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes((Path(__file__).parents[1] / "scripts/runtime/assessment_console.py").read_bytes())
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(runtime, "engine_capabilities", lambda *a: None)
+
+    def invoke(arguments, **kwargs):
+        if arguments[4] == "assessment-entry":
+            document = {"live": True, "run_id": "selected-run"}
+        else:
+            document = {"run_id": "selected-run", "assessment_status": "complete", "next_offset": 1, "events": []}
+            if defect == "cursor":
+                document["next_offset"] = "1"
+            elif defect == "events":
+                document["events"] = {}
+            else:
+                document["events"] = ["execute a command"]
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"interface_version": 1, **document}).encode())
+
+    monkeypatch.setattr(subprocess, "run", invoke)
+    with pytest.raises(runtime.RuntimeError, match="invalid public progress"):
+        runtime.follow(plugin, home, "/private/output", 30)

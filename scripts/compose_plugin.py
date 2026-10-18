@@ -239,6 +239,42 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
         )
         host = next(c for c in lock["components"] if c["role"] == "host")
         add(prefix + "SKILL.md", binding.encode(), host["id"])
+    if "appsec-analyzer" in lock.get("skill_bindings", []):
+        prefix = "skills/appsec-analyzer/"
+        engine = next(c for c in lock["components"] if c["role"] == "engine")
+        required = [prefix + name for name in ("SKILL.md", "claude-code.md", "business-context.md")]
+        if any(
+            name not in outputs
+            for name in [*required, "scripts/composition_runtime.py", "scripts/runtime/assessment_console.py"]
+        ):
+            raise CompositionError("assessment binding requires its complete engine entry and bootstrap")
+        if any(owners[name.casefold()] != engine["id"] for name in required):
+            raise CompositionError("assessment workflow must belong to the exact selected engine")
+        if not set(composition_runtime.ASSESSMENT_CAPABILITIES) <= set(engine["capabilities"]):
+            raise CompositionError("assessment binding requires the locked public assessment operations")
+        workflow = outputs.pop(prefix + "SKILL.md")
+        owner = owners.pop((prefix + "SKILL.md").casefold())
+        total -= len(workflow)
+        add(prefix + "WORKFLOW.md", workflow, owner)
+        binding = (
+            "---\nname: appsec-analyzer\n"
+            "description: Run the bundled Claude security assessment, follow progress, stop it and inspect its results.\n---\n\n"
+            "# Advisor staging assessment invocation\n\n"
+            "Follow [the engine's Claude Code workflow](claude-code.md); the [engine entry](WORKFLOW.md) "
+            "remains available as reference. Use the existing Python interpreter selected during explicit setup "
+            "(replace python3 when needed, including on Windows). Every appsec-analyzer command means:\n\n"
+            "```sh\n"
+            'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/composition_runtime.py" run '
+            '--plugin "${CLAUDE_PLUGIN_ROOT}" --skill appsec-analyzer -- <public-command-and-literal-arguments>\n'
+            "```\n\n"
+            "The public progress follower is the same bootstrap's `follow` action with `--output <output>`; "
+            "use `--from-end` when restarting the display. It only displays public engine events and never stops "
+            "the owner. Host questions, tasks and display belong to Advisor. Never use a PATH engine, private "
+            "state, private scripts or automatic setup. Preserve stdout, stderr and exit status. "
+            "This unqualified staging binding grants neither setup nor model-spending authorization.\n"
+        )
+        host = next(c for c in lock["components"] if c["role"] == "host")
+        add(prefix + "SKILL.md", binding.encode(), host["id"])
     manifest = {
         "schema_version": 1,
         "qualification": "unqualified-staging",

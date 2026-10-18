@@ -14,12 +14,14 @@ import hashlib
 import json
 import os
 import platform
+import runpy
 import shutil
 import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 MAX_LOCK = 2 * 1024 * 1024
@@ -219,6 +221,23 @@ def score_requirements(declaration: dict) -> dict:
     return required
 
 
+ASSESSMENT_CAPABILITIES = ["scan", "assessment_entry", "status", "progress", "stop", "results", "query", "export"]
+ASSESSMENT_COMMANDS = {
+    "version",
+    "capabilities",
+    "scan",
+    "assess",
+    "assessment-entry",
+    "status",
+    "progress",
+    "stop",
+    "results",
+    "query",
+    "export",
+    "organization-config",
+}
+
+
 def engine_capabilities(python: Path, names: list[str], score: dict | None = None) -> None:
     result = subprocess.run(
         [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
@@ -237,6 +256,14 @@ def engine_capabilities(python: Path, names: list[str], score: dict | None = Non
         )
     ):
         raise RuntimeError("installed engine lacks required capabilities")
+    if "assessment_entry" in names:
+        entry = capabilities["assessment_entry"]
+        if (
+            type(entry.get("schema_version")) is not int
+            or entry["schema_version"] != 1
+            or entry.get("model_calls") is not False
+        ):
+            raise RuntimeError("installed engine lacks the public assessment entry contract")
     if score is not None:
         actual = capabilities.get("score", {})
         if not isinstance(actual, dict) or any(
@@ -524,7 +551,19 @@ def organization_arguments(
     """Dispatch the engine-only projection through its declared public API."""
     inventory = {entry["path"] for entry in manifest["files"]}
     packaged = ORG_DISPATCH in inventory
-    if arguments[0] in {"version", "capabilities"}:
+    if arguments[0] in {
+        "version",
+        "capabilities",
+        "assessment-entry",
+        "status",
+        "progress",
+        "stop",
+        "results",
+        "query",
+        "export",
+    }:
+        # Output-scoped consumers make no assessment or model call. In particular,
+        # cancellation must remain usable with a missing external profile.
         return arguments
     disabled = os.environ.get("APPSEC_ADVISOR_NO_ORG_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
     preset = os.environ.get("APPSEC_ADVISOR_PRESET")
@@ -642,14 +681,32 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         raise RuntimeError("select a supported public engine command")
     manifest = read_json(regular(plugin, "component-manifest.json"), MAX_MANIFEST)
     if skill is not None:
-        if skill != "security-score" or skill not in lock.get("skill_bindings", []):
+        if skill not in lock.get("skill_bindings", []):
             raise RuntimeError("skill invocation binding is not selected in this composition")
-        if not arguments or arguments[0] not in {"version", "capabilities", "score"}:
-            raise RuntimeError("security-score binding permits only version, capabilities and score")
-        requirements = score_requirements(
-            read_json(regular(plugin, "skills/security-score/dependencies.json"), MAX_LOCK)
-        )
-        engine_capabilities(python, ["score"], requirements)
+        if skill == "security-score":
+            if arguments[0] not in {"version", "capabilities", "score"}:
+                raise RuntimeError("security-score binding permits only version, capabilities and score")
+            requirements = score_requirements(
+                read_json(regular(plugin, "skills/security-score/dependencies.json"), MAX_LOCK)
+            )
+            engine_capabilities(python, ["score"], requirements)
+        elif skill == "appsec-analyzer":
+            if arguments[0] not in ASSESSMENT_COMMANDS:
+                raise RuntimeError("assessment binding permits only its public workflow and consumers")
+            if arguments[0] == "organization-config" and (
+                len(arguments) < 2 or arguments[1] not in {"show", "validate"}
+            ):
+                raise RuntimeError("assessment configuration binding permits only inspection")
+            engine_capabilities(python, ASSESSMENT_CAPABILITIES)
+            if arguments[0] == "organization-config" and "--" in arguments:
+                inner = arguments.index("--") + 1
+                if inner < len(arguments) and arguments[inner] in {"scan", "assess"}:
+                    arguments = [*arguments, "--interactive-launch", "--host=claude-cli", "--non-interactive"]
+            if arguments[0] in {"scan", "assess"}:
+                # The host entry remains on Claude and cannot answer budget prompts.
+                arguments = [*arguments, "--interactive-launch", "--host=claude-cli", "--non-interactive"]
+        else:
+            raise RuntimeError("skill invocation binding is not supported")
     if not arguments or arguments[0] not in {
         "version",
         "capabilities",
@@ -668,8 +725,18 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "analyze-threats",
         "audit-requirements",
         "authnz-review",
+        "assessment-entry",
+        "query",
+        "export",
     }:
         raise RuntimeError("select a supported public engine command")
+    cancellable = arguments[0] in {"scan", "assess"}
+    output = None
+    for index, argument in enumerate(arguments):
+        if argument.startswith("--output="):
+            output = argument.partition("=")[2]
+        elif argument == "--output" and index + 1 < len(arguments):
+            output = arguments[index + 1]
     with contextlib.ExitStack() as stack:
         arguments = organization_arguments(plugin, python, arguments, manifest, lock=lock, home=home, stack=stack)
         options = (
@@ -682,22 +749,20 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         )
         try:
             return process.wait(timeout=timeout)
-        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as interruption:
             # Give the engine a bounded opportunity to settle its own run accounting.
-            if "--output" in arguments:
-                index = arguments.index("--output") + 1
-                if index < len(arguments):
-                    try:
-                        subprocess.run(
-                            [str(python), "-I", "-m", "appsec_analyzer.cli", "stop", "--output", arguments[index]],
-                            env=clean_environment(),
-                            stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            timeout=10,
-                        )
-                    except (OSError, subprocess.TimeoutExpired):
-                        pass
+            if cancellable and output:
+                try:
+                    subprocess.run(
+                        [str(python), "-I", "-m", "appsec_analyzer.cli", "stop", "--output", output],
+                        env=clean_environment(),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             if sys.platform == "win32":
                 # No shell or PATH executable selection. Native qualification remains required.
                 killer = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/taskkill.exe"
@@ -717,16 +782,83 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
                 except ProcessLookupError:
                     pass
             process.wait(timeout=10)
-            raise RuntimeError("engine invocation interrupted; inspect public status before resuming") from None
+            if isinstance(interruption, KeyboardInterrupt):
+                return 130
+            raise RuntimeError(
+                "engine invocation interrupted or timed out; inspect public status before resuming"
+            ) from None
+
+
+def follow(plugin: Path, home: Path, output: str, timeout: int, from_end: bool = False) -> int:
+    """Display public progress; ending this monitor never cancels its owner."""
+    python, lock = preflight(plugin, home)
+    if "appsec-analyzer" not in lock.get("skill_bindings", []):
+        raise RuntimeError("assessment binding is not selected")
+    engine_capabilities(python, ASSESSMENT_CAPABILITIES)
+    render = runpy.run_path(str(regular(plugin, "scripts/runtime/assessment_console.py")))["render"]
+
+    def query(*arguments):
+        result = subprocess.run(
+            [str(python), "-I", "-m", "appsec_analyzer.cli", *arguments],
+            env=clean_environment(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode or len(result.stdout) > 2 * 1024 * 1024:
+            raise RuntimeError("public assessment progress unavailable; inspect the owner task")
+        document = json.loads(result.stdout)
+        if not isinstance(document, dict) or document.get("interface_version") != 1:
+            raise RuntimeError("invalid public assessment progress")
+        return document
+
+    deadline = time.monotonic() + timeout
+    startup = time.monotonic() + min(60, timeout)
+    run_id, offset = None, 0
+    while time.monotonic() < deadline:
+        holder = query("assessment-entry", "holder", "--output", output)
+        if holder.get("live") is True:
+            if run_id is not None and holder.get("run_id") != run_id:
+                print("Assessment owner changed; inspect public status.", flush=True)
+                return 0
+            run_id = holder.get("run_id")
+        if run_id is None:
+            if time.monotonic() >= startup:
+                print("No live assessment observed; inspect the owner task notification.", flush=True)
+                return 0
+        else:
+            progress = query("progress", "--output", output, "--after", str(offset))
+            if progress.get("run_id") == run_id:
+                events = progress.get("events")
+                cursor = progress.get("next_offset")
+                if not isinstance(events, list) or len(events) > 100 or type(cursor) is not int or cursor < 0:
+                    raise RuntimeError("invalid public progress events or cursor")
+                if not from_end:
+                    if progress.get("events_omitted"):
+                        print("Earlier progress events omitted; inspect the owner output.", flush=True)
+                    for event in events:
+                        if not isinstance(event, dict):
+                            raise RuntimeError("invalid public progress event")
+                        for line in render(event):
+                            print(line, flush=True)
+                from_end, offset = False, cursor
+                if progress.get("assessment_status") != "running" or holder.get("live") is False:
+                    return 0
+        time.sleep(1)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("setup", "preflight", "run"))
+    parser.add_argument("action", choices=("setup", "preflight", "run", "follow"))
     parser.add_argument("--plugin", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--output", help="Explicit assessment directory for the public progress follower")
+    parser.add_argument("--from-end", action="store_true")
     parser.add_argument("--runtime-home", type=Path, default=default_home())
     parser.add_argument("--timeout", type=int, default=43200)
-    parser.add_argument("--skill", choices=("security-score",), help="Use a selected staging skill invocation binding")
+    parser.add_argument(
+        "--skill", choices=("security-score", "appsec-analyzer"), help="Use a selected staging skill invocation binding"
+    )
     raw = list(sys.argv[1:] if argv is None else argv)
     split = raw.index("--") if "--" in raw else len(raw)
     ns = parser.parse_args(raw[:split])
@@ -737,7 +869,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("skill bindings are only valid for run")
     if not 1 <= ns.timeout <= 43200:
         parser.error("timeout must be between 1 and 43200 seconds")
+    if ns.action == "follow" and not ns.output:
+        parser.error("follow requires --output")
+    if ns.action != "follow" and (ns.output or ns.from_end):
+        parser.error("--output and --from-end belong to follow; engine arguments follow --")
     try:
+        if ns.action == "follow":
+            return follow(ns.plugin, ns.runtime_home, ns.output, min(ns.timeout, 1800), ns.from_end)
         if ns.action == "setup":
             setup(ns.plugin, ns.runtime_home)
             print("Staging runtime ready. Model-host prerequisites and live qualification remain separate.")

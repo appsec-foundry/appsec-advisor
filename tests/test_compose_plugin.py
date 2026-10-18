@@ -415,3 +415,80 @@ def test_deep_plugin_manifest_fails_without_traceback(composition, tmp_path, cap
     assert compose.main(["--lock", str(lock_path), "--artifacts", str(inputs), "--output", str(tmp_path / "out")]) == 2
     assert "Traceback" not in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
+
+
+def add_assessment_skill(lock, inputs, source_prefix="appsec_analyzer/skills/appsec-analyzer"):
+    """Select the authoritative primary entry from the same wheel as the engine."""
+    engine = next(c for c in lock["components"] if c["role"] == "engine")
+    members = compose.archive_files((inputs / engine["artifact"]).read_bytes())
+    resources = {
+        "SKILL.md": b"---\nname: appsec-analyzer\n---\nEngine-owned primary workflow.\n",
+        "claude-code.md": b"Follow the existing Claude assessment lifecycle.\n",
+        "business-context.md": b"Preserve explicit answers.\n",
+    }
+    members.update({source_prefix + "/" + name: body for name, body in resources.items()})
+    wheel = compose.zip_bytes(members)
+    (inputs / engine["artifact"]).write_bytes(wheel)
+    engine["sha256"] = compose.digest(wheel)
+    engine["capabilities"] = sorted(
+        set(engine["capabilities"]) | set(compose.composition_runtime.ASSESSMENT_CAPABILITIES)
+    )
+    engine["files"] += [
+        {"source": source_prefix + "/" + name, "target": "skills/appsec-analyzer/" + name} for name in resources
+    ]
+    host = next(c for c in lock["components"] if c["role"] == "host")
+    host["files"] = [m for m in host["files"] if m["target"] != "skills/appsec-analyzer/SKILL.md"]
+    members = compose.archive_files((inputs / host["artifact"]).read_bytes())
+    renderer = "scripts/runtime/assessment_console.py"
+    members[renderer] = (Path(__file__).parents[1] / renderer).read_bytes()
+    data = compose.zip_bytes(members)
+    (inputs / host["artifact"]).write_bytes(data)
+    host["sha256"] = compose.digest(data)
+    host["files"].append({"source": renderer, "target": renderer})
+    lock["skill_bindings"] = [*lock.get("skill_bindings", []), "appsec-analyzer"]
+    return resources
+
+
+@pytest.mark.parametrize("source_prefix", ["appsec_analyzer/skills/appsec-analyzer", "engine/resources/primary"])
+def test_assessment_binding_preserves_engine_workflow_and_packager_admission(composition, source_prefix):
+    import package_internal_plugin as package
+
+    lock, inputs = composition
+    resources = add_assessment_skill(lock, inputs, source_prefix)
+    compose.parse_lock(compose.canonical(lock))
+    files = compose.assemble(lock, inputs)
+    assert files["skills/appsec-analyzer/WORKFLOW.md"] == resources["SKILL.md"]
+    assert files["skills/appsec-analyzer/claude-code.md"] == resources["claude-code.md"]
+    assert b"--skill appsec-analyzer --" in files["skills/appsec-analyzer/SKILL.md"]
+    checked, manifest, protected = package._staging_inputs(files)
+    assert checked == lock
+    assert "skills/appsec-analyzer/WORKFLOW.md" in protected
+    files["skills/appsec-analyzer/WORKFLOW.md"] = b"altered engine instructions"
+    with pytest.raises(compose.CompositionError, match="pinned wheel"):
+        package._staging_inputs(files)
+
+
+@pytest.mark.parametrize("defect", ["owner", "capability", "dialog", "renderer", "collision"])
+def test_assessment_binding_refuses_incomplete_or_mixed_engine_surface(composition, defect):
+    lock, inputs = composition
+    add_assessment_skill(lock, inputs)
+    engine = lock["components"][1]
+    if defect == "owner":
+        engine["files"] = [m for m in engine["files"] if not m["target"].endswith("/SKILL.md")]
+        lock["components"][0]["files"].append(
+            {"source": "skills/appsec-analyzer/SKILL.md", "target": "skills/appsec-analyzer/SKILL.md"}
+        )
+    elif defect == "capability":
+        engine["capabilities"].remove("progress")
+    elif defect in {"dialog", "renderer"}:
+        target = (
+            "skills/appsec-analyzer/business-context.md"
+            if defect == "dialog"
+            else "scripts/runtime/assessment_console.py"
+        )
+        for component in lock["components"]:
+            component["files"] = [m for m in component["files"] if m["target"] != target]
+    else:
+        engine["files"].append({"source": engine["files"][0]["source"], "target": "skills/appsec-analyzer/WORKFLOW.md"})
+    with pytest.raises(compose.CompositionError):
+        compose.assemble(lock, inputs)

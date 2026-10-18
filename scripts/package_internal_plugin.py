@@ -1241,10 +1241,13 @@ def _staging_inputs(files: dict[str, bytes]) -> tuple[dict, dict, set[str]]:
                 raise composition.CompositionError("locked staging wheel integrity mismatch")
             members = composition.archive_files(files[path])
             for mapping in component["files"]:
-                if files[mapping["target"]] != members[mapping["source"]]:
+                target = mapping["target"]
+                if any(target == f"skills/{skill}/SKILL.md" for skill in lock.get("skill_bindings", [])):
+                    target = target.removesuffix("SKILL.md") + "WORKFLOW.md"
+                if files[target] != members[mapping["source"]]:
                     raise composition.CompositionError("selected engine file differs from its pinned wheel")
-    if "security-score" in lock.get("skill_bindings", []):
-        prefix = "skills/security-score/"
+    for skill in lock.get("skill_bindings", []):
+        prefix = f"skills/{skill}/"
         owners[prefix + "WORKFLOW.md"] = owners.pop(prefix + "SKILL.md")
         owners[prefix + "SKILL.md"] = host
     delivered = {entry["path"]: entry for entry in manifest["files"]}
