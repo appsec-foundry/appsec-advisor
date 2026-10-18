@@ -22,6 +22,7 @@ retired_ids:
   - REQ-EVO-002
   - REQ-MOD-005 # Merged into REQ-MOD-001.
   - REQ-ANA-006 # Merged into REQ-ANA-005.
+  - REQ-CFG-003 # Replaced by REQ-HST-004.
 
 requirements:
   REQ-PUR-001:
@@ -1043,19 +1044,87 @@ requirements:
       - tests/test_resolve_actors.py::test_resolver_never_writes_actor_choices_back_to_repo
       - tests/test_build_threat_modeling_context.py::test_rejects_invalid_known_threats_before_context_publication
 
-  REQ-CFG-003:
+  REQ-HST-001:
     applies_to:
+      - .claude-plugin/marketplace.json
+      - .claude-plugin/plugin.json
+      - scripts/compose_plugin.py
+    decisions: []
+    documents:
+      - README.md
+      - docs/internal/contracts/plugin-composition.md
+    coverage: partial
+    guards:
+      - tests/test_marketplace_manifest.py::test_entry_name_matches_the_plugin_manifest
+      - tests/test_marketplace_manifest.py::test_entry_installs_from_the_release_branch
+      - tests/test_compose_plugin.py::test_reproducible_archive_selection_notices_and_manifest
+
+  REQ-HST-002:
+    applies_to:
+      - scripts/compose_plugin.py
+      - scripts/composition_runtime.py
+    decisions: []
+    documents:
+      - docs/internal/contracts/plugin-composition.md
+    coverage: partial
+    guards:
+      - tests/test_compose_plugin.py::test_tampered_artifact_does_not_create_output
+      - tests/test_compose_plugin.py::test_incompatible_and_ambiguous_locks_fail_closed
+      - tests/test_compose_plugin.py::test_content_addressed_dependency_and_committed_code_revisions
+      - tests/test_composition_runtime.py::test_offline_setup_preflight_and_pinned_launch
+      - tests/test_composition_runtime.py::test_receipt_and_engine_identity_mismatch_fail_closed
+      - tests/test_composition_runtime.py::test_tampered_or_incompatible_package_fails_before_setup
+
+  REQ-HST-003:
+    applies_to:
+      - schemas/org-profile.schema.yaml
+      - scripts/package_internal_plugin.py
+      - scripts/composition_runtime.py
+      - scripts/runtime/skill_policy_gate.py
+    decisions:
+      - EX-1
+      - EX-2
+    documents:
+      - docs/internal-plugin-packaging.md
+      - docs/org-profiles.md
+      - docs/internal/contracts/org-profile-invariants.md
+    coverage: direct
+    guards:
+      - tests/test_package_internal_plugin.py::test_policy_surface_explicit_block
+      - tests/test_package_internal_plugin.py::test_the_package_policy_can_exclude_an_added_skill
+      - tests/test_package_internal_plugin.py::test_staging_dispatch_separates_policy_from_host_settings
+      - tests/test_composition_runtime.py::test_external_profile_rejects_unsupported_or_invalid_settings
+      - tests/test_skill_policy_gate.py::test_blocks_a_disabled_skill_invoked_by_claude
+
+  REQ-HST-004:
+    applies_to:
+      - scripts/baseline/install_baseline.py
+      - scripts/baseline/update_baseline.py
+      - scripts/baseline/remove_baseline.py
       - scripts/baseline/sync_baseline.py
     decisions: []
     documents:
       - docs/org-profiles.md
     coverage: direct
     guards:
-      - tests/test_sync_baseline.py::test_same_id_rewrites_the_bundled_copy
+      - tests/test_install_baseline.py::test_project_scope_wires_claude_md
+      - tests/test_update_baseline.py::test_an_outdated_copy_is_refreshed_in_place
+      - tests/test_update_baseline.py::test_a_newly_published_id_stops_and_changes_nothing
+      - tests/test_remove_baseline.py::test_project_scope_unwires_and_keeps_the_file
       - tests/test_sync_baseline.py::test_unreachable_source_does_not_touch_the_copy
-      - tests/test_sync_baseline.py::test_profile_same_id_rewrites_the_vendored_copy
       - tests/test_sync_baseline.py::test_profile_accepted_id_moves_file_and_profile_together
       - tests/test_sync_baseline.py::test_profile_new_id_stops_and_changes_nothing
+
+  REQ-HST-005:
+    applies_to:
+      - scripts/runtime/legacy_import.py
+    decisions: []
+    documents:
+      - docs/security-assessment.md
+    coverage: partial
+    guards:
+      - tests/test_legacy_import.py::test_a_finished_set_is_copied_under_the_published_names
+      - tests/test_legacy_import.py::test_an_interrupted_or_broken_run_is_reported_and_never_imported
 
   REQ-EVO-003:
     applies_to:

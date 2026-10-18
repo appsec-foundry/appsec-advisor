@@ -105,7 +105,6 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 
 - **REQ-CFG-001:** Organizations must be able to configure supported extensions without forking the plugin, with included capabilities recorded.
 - **REQ-CFG-002:** Repository configuration must use documented, validated inputs and must not suppress evidence-supported findings.
-- **REQ-CFG-003:** Refreshing the secure-coding baseline must use the configured source and report when the installed copy differs. A changed baseline version must be accepted explicitly before every place that declares it is updated together.
 - **REQ-EVO-003:** A change that breaks result files, report links, or organization configuration formats must come with a new version or a migration path.
 
 ## Trust and data protection
@@ -122,3 +121,13 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 - **REQ-FLW-006:** Headless execution must require no interactive responses and must distinguish completion, incomplete execution, and failure.
 - **REQ-FLW-007:** Runs must expose progress, actionable diagnostics, and recovery options; external issue publication must require approval of the prepared content.
 - **REQ-FLW-008:** Every execution mode must state what happens when the budget runs out. Interrupted or incomplete work must never be reported as completed. When the budget is too small, the run must drop optional model work first and keep enough budget to finish. If the required analysis still does not fit, it must deliver a clearly marked incomplete report containing only validated results.
+
+## Plugin host
+
+These requirements cover what the plugin itself promises as the package around the bundled Analyzer and skills. Assessment behavior is specified by the Analyzer.
+
+- **REQ-HST-001:** **Install and change versions.** Installing the plugin from the marketplace provides every engine, skill, and command it advertises. Updating to a newer release or returning to an earlier one replaces them together, and the earlier release then works as it did before.
+- **REQ-HST-002:** **Use only the bundled components.** The plugin runs only the Analyzer and skills shipped with it, never another copy found on the machine or in a neighboring checkout, and can show which component versions it contains.
+- **REQ-HST-003:** **Build an organization version.** An organization can publish its own version of the plugin, with its own name, default settings, and selection of skills, from a configuration file without copying or changing plugin code. Settings that the bundled components cannot honor are rejected instead of being silently ignored.
+- **REQ-HST-004:** **Keep the secure-coding rules current.** The plugin can install, update, and remove the secure-coding baseline in Claude Code's instructions. An update uses the configured source and asks before switching to a changed baseline version.
+- **REQ-HST-005:** **Switch engines without losing work.** When the plugin moves to a new engine, earlier reports, their history, and saved decisions remain available in the new version.
