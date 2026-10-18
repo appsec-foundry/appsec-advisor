@@ -106,3 +106,19 @@ The repository's focused-check rule governs every package. Before each check, na
 Start with work package 1 and proceed into compatible implementation after the new session is instructed to implement this plan. Do not stop after restating it. The immediate objective is a simplified installed primary workflow, not completion of every historical migration row.
 
 At handoff or completion, report the committed revisions, retained compatibility decisions, required checks actually executed, installed evidence and the next unresolved dependency. Distinguish source implementation, installed integration, live qualification and public release. Keep the original checkpoint as historical evidence and add only the new evidence needed to explain the current state.
+
+
+## Work package 1 disposition
+
+The implementation session started from clean Advisor `dev` at `2aecaf71`. The isolated Analyzer checkpoint `3a3ac3a0` was merged with current original Analyzer `main` at `a189e75c` on the isolated `clean-composition` development branch. Both histories, including later assessment correction and completion-summary changes, are retained; the original working tree and release tags are unchanged.
+
+| Boundary | Selected compatible treatment |
+| --- | --- |
+| Existing status, progress, stop, results, export and validated context | Reuse the current implementations. Retain checkpoint capability declarations, progress cursors, query and assessment-entry adapters. |
+| `--interactive-launch` | Retain as a compatibility adapter; the new binding separates execution defaults, host, unattended mode and width. Equivalent inputs preserve the effective profile and snapshot identity. |
+| Budget aliases and `--component-workers` | Retain all published aliases, USD 10/20/40 depth defaults, explicit hard-budget precedence, soft-budget conversion and 1–4 worker inputs. No incompatible removal is selected. |
+| Source/output admission, context, ownership, history and accepted decisions | Preserve existing engine enforcement and storage. No controller, report or decision-store migration. |
+| Host coordination and progress | Replace model-managed stop polling with bounded public-holder waiting. Let the engine choose its progress-feed location and let an expired display end independently. |
+| Organization settings, baseline and other legacy workflows | Keep current validated dispatch and adapters; no additional fields, removals or public cutover. |
+
+The changed producer path is the primary binding in `scripts/composition_runtime.py` and the host-default branch in Analyzer `appsec_analyzer/cli.py`: one compatibility flag previously combined settings, presentation and unattended behavior, while the skill named an engine-private progress file and instructed repeated model polling. Settings translation now belongs to Analyzer `assessment_entry.py`; the host selects presentation separately and uses public holder/progress responses. This preserves the existing limits and control plane without changing requirements or registered decisions. Installed evidence and remaining qualification are recorded after the committed source build.

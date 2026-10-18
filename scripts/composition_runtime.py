@@ -698,13 +698,21 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
             ):
                 raise RuntimeError("assessment configuration binding permits only inspection")
             engine_capabilities(python, ASSESSMENT_CAPABILITIES)
-            if arguments[0] == "organization-config" and "--" in arguments:
-                inner = arguments.index("--") + 1
-                if inner < len(arguments) and arguments[inner] in {"scan", "assess"}:
-                    arguments = [*arguments, "--interactive-launch", "--host=claude-cli", "--non-interactive"]
-            if arguments[0] in {"scan", "assess"}:
-                # The host entry remains on Claude and cannot answer budget prompts.
-                arguments = [*arguments, "--interactive-launch", "--host=claude-cli", "--non-interactive"]
+            inner = arguments.index("--") + 1 if arguments[0] == "organization-config" and "--" in arguments else 0
+            if inner < len(arguments) and arguments[inner] in {"scan", "assess"}:
+                # Execution settings, host selection and display stay independent.
+                display = (
+                    []
+                    if any(arg == "--width" or arg.startswith("--width=") for arg in arguments[inner:])
+                    else ["--width=72"]
+                )
+                arguments = [
+                    *arguments,
+                    "--launch-defaults=advisor",
+                    "--host=claude-cli",
+                    "--non-interactive",
+                    *display,
+                ]
         else:
             raise RuntimeError("skill invocation binding is not supported")
     if not arguments or arguments[0] not in {
@@ -789,13 +797,19 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
             ) from None
 
 
-def follow(plugin: Path, home: Path, output: str, timeout: int, from_end: bool = False) -> int:
+def follow(
+    plugin: Path, home: Path, output: str, timeout: int, from_end: bool = False, *, wait_for_stop: bool = False
+) -> int:
     """Display public progress; ending this monitor never cancels its owner."""
     python, lock = preflight(plugin, home)
     if "appsec-analyzer" not in lock.get("skill_bindings", []):
         raise RuntimeError("assessment binding is not selected")
     engine_capabilities(python, ASSESSMENT_CAPABILITIES)
-    render = runpy.run_path(str(regular(plugin, "scripts/runtime/assessment_console.py")))["render"]
+    render = (
+        None
+        if wait_for_stop
+        else runpy.run_path(str(regular(plugin, "scripts/runtime/assessment_console.py")))["render"]
+    )
 
     def query(*arguments):
         result = subprocess.run(
@@ -817,6 +831,13 @@ def follow(plugin: Path, home: Path, output: str, timeout: int, from_end: bool =
     run_id, offset = None, 0
     while time.monotonic() < deadline:
         holder = query("assessment-entry", "holder", "--output", output)
+        if type(holder.get("live")) is not bool:
+            raise RuntimeError("invalid public assessment holder")
+        if wait_for_stop:
+            if not holder["live"]:
+                return 0
+            time.sleep(1)
+            continue
         if holder.get("live") is True:
             if run_id is not None and holder.get("run_id") != run_id:
                 print("Assessment owner changed; inspect public status.", flush=True)
@@ -845,12 +866,15 @@ def follow(plugin: Path, home: Path, output: str, timeout: int, from_end: bool =
                 if progress.get("assessment_status") != "running" or holder.get("live") is False:
                     return 0
         time.sleep(1)
+    if wait_for_stop:
+        print("Assessment still has a live holder; inspect public status before starting another run.", flush=True)
+        return 3
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("setup", "preflight", "run", "follow"))
+    parser.add_argument("action", choices=("setup", "preflight", "run", "follow", "wait"))
     parser.add_argument("--plugin", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", help="Explicit assessment directory for the public progress follower")
     parser.add_argument("--from-end", action="store_true")
@@ -869,11 +893,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("skill bindings are only valid for run")
     if not 1 <= ns.timeout <= 43200:
         parser.error("timeout must be between 1 and 43200 seconds")
-    if ns.action == "follow" and not ns.output:
-        parser.error("follow requires --output")
-    if ns.action != "follow" and (ns.output or ns.from_end):
-        parser.error("--output and --from-end belong to follow; engine arguments follow --")
+    if ns.action in {"follow", "wait"} and not ns.output:
+        parser.error("follow and wait require --output")
+    if ns.action not in {"follow", "wait"} and ns.output or ns.action != "follow" and ns.from_end:
+        parser.error("--output belongs to follow/wait and --from-end to follow; engine arguments follow --")
     try:
+        if ns.action == "wait":
+            return follow(ns.plugin, ns.runtime_home, ns.output, min(ns.timeout, 300), wait_for_stop=True)
         if ns.action == "follow":
             return follow(ns.plugin, ns.runtime_home, ns.output, min(ns.timeout, 1800), ns.from_end)
         if ns.action == "setup":

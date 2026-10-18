@@ -789,9 +789,10 @@ def test_assessment_binding_preserves_claude_arguments_and_real_exit_status(inst
         "-m",
         "appsec_analyzer.cli",
         *args,
-        "--interactive-launch",
+        "--launch-defaults=advisor",
         "--host=claude-cli",
         "--non-interactive",
+        "--width=72",
     ]
     assert not seen[0][1].get("shell")
 
@@ -911,3 +912,47 @@ def test_public_follower_rejects_malformed_engine_progress(installed_plugin, mon
     monkeypatch.setattr(subprocess, "run", invoke)
     with pytest.raises(runtime.RuntimeError, match="invalid public progress"):
         runtime.follow(plugin, home, "/private/output", 30)
+
+
+@pytest.mark.parametrize("holders", [[True, False], [False], [True, True, True], ["false"]])
+def test_wait_uses_only_public_holder_and_fails_closed(installed_plugin, monkeypatch, holders):
+    plugin, home, lock = installed_plugin
+    lock["skill_bindings"].append("appsec-analyzer")
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(runtime, "engine_capabilities", lambda *a: None)
+    ticks = iter([0, 0, 0, 1, 2, 3, 4])
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(runtime.time, "sleep", lambda _: None)
+    calls = []
+    pending = iter(holders)
+
+    def invoke(arguments, **kwargs):
+        calls.append(arguments[4:])
+        return subprocess.CompletedProcess(
+            arguments, 0, json.dumps({"interface_version": 1, "live": next(pending)}).encode()
+        )
+
+    monkeypatch.setattr(subprocess, "run", invoke)
+    if holders == ["false"]:
+        with pytest.raises(runtime.RuntimeError, match="holder"):
+            runtime.follow(plugin, home, "/private/output", 3, wait_for_stop=True)
+    else:
+        assert runtime.follow(plugin, home, "/private/output", 3, wait_for_stop=True) == (3 if all(holders) else 0)
+    assert all(args == ["assessment-entry", "holder", "--output", "/private/output"] for args in calls)
+
+
+@pytest.mark.parametrize("width", [["--width=96"], ["--width", "80"]])
+def test_assessment_binding_keeps_explicit_display_width(installed_plugin, monkeypatch, width):
+    plugin, home, lock = installed_plugin
+    lock["skill_bindings"].append("appsec-analyzer")
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(runtime, "engine_capabilities", lambda *a: None)
+    seen = []
+
+    class Process:
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kw: seen.append(args) or Process())
+    assert runtime.launch(plugin, home, ["scan", "--output=/private/result", *width], 60, "appsec-analyzer") == 0
+    assert "--width=72" not in seen[0] and all(value in seen[0] for value in width)
