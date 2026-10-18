@@ -28,6 +28,8 @@ The host artifact must include `scripts/composition_runtime.py` unchanged from i
 
 The optional lock selection `"skill_bindings": ["security-score"]` enables the first host binding. The lock must select the portable `skills/security-score/SKILL.md`, `dependencies.json`, `references/compatibility.md`, and the host bootstrap. Assembly preserves the portable entry byte for byte as adjacent `WORKFLOW.md`, retaining relative references and source-component provenance, and emits a separate Advisor entry with the pinned invocation. A pre-existing `WORKFLOW.md` is a collision. Other skills and compositions without this selection keep their selected entries unchanged. The binding requires interface 1, scoring version 2, no model calls or model prerequisites, and only the public version, capabilities and score commands; incompatible dependency declarations stop assembly.
 
+The [score staging runbook](../runbooks/composed-score-staging.md) describes explicit setup, direct engine execution and session-only Claude loading. Its real-engine replay establishes local Linux score output and model-free host discovery, not live slash-command execution or full-plugin acceptance.
+
 ## Explicit runtime lifecycle
 
 After extracting a staging archive into a dedicated installed location, select an existing Python interpreter matching the lock. The bootstrap uses the Python standard library and does not need system `jsonschema`. These are separate actions:

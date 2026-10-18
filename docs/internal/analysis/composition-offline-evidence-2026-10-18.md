@@ -47,3 +47,26 @@ The bootstrap now requires explicit boolean operation availability. Bound score 
 Fourteen selected pytest node IDs expanded to 36 passing cases in 9.49 seconds. These cover deterministic bound assembly with two independent source layouts, retained workflow bytes and provenance, resource/declaration failures, strict availability with two operation names, incompatible score metadata, disallowed operations, missing binding selection, and setup refusal for an unavailable required operation. One real offline venv installation with the neutral synthetic wheel exercised the installed binding, read-only plugin files, spaces and shell metacharacters, shadow PATH, text/JSON/YAML argument forwarding, and unchanged exit statuses 0, 1, 2 and 130. The unbound invocation path also remained usable. Lint and format checks passed on the four changed Python files. Temporary installation storage was outside Git checkouts because the local `/tmp` directory contains a Git marker.
 
 This follow-up did not rerun unrelated scanner/report tests, the descendant-cancellation test, broad route audits or release gates. No test routes changed. The synthetic wheel proves launcher behavior, not real score content or Claude-host execution. Actual installed score outcomes, complete legacy option parity, native platform qualification and the remaining phase acceptance conditions stay open.
+
+## Real-engine score binding replay
+
+A subsequent score-only staging archive exercised the binding with real committed component artifacts. The [staging runbook](../runbooks/composed-score-staging.md) gives the model-free commands and session-only Claude entry. The archive and its selection lock remain local internal staging artifacts, not publication inputs or a qualified production lock.
+
+| Input or check | Result |
+| --- | --- |
+| Advisor host | `140e1c8f4688b95279a9b93f1b89312ef6cef38f`; manifest, license, type declarations and bootstrap exported directly from Git. |
+| Analyzer | Reused the previously recorded committed `7602a7fb3d5dd0717746ed235762cbea206306ab` wheel, SHA-256 `0d061a5d4df9df8e7d86738d2bb63062a01b70de1c2a08360967190c1832ee06`. No mutable Analyzer working-tree files were used. |
+| Portable workflow | Reused collection artifact from `557f16fa07beead21267a3b220f7e4d608e11b2c`; selected only score resources and their dependency schema. Delivered `WORKFLOW.md` matched the committed source byte for byte. |
+| Dependencies | Reused the exact previously reviewed wheel selection; each artifact matched its recorded digest before assembly. No package update, resolution or download. |
+| Selection lock SHA-256 | `61ada99a0fc052087b868b6e9cf5c56f70362324f1f188c76402c126fb0ebf75`. |
+| Staging ZIP SHA-256 | `eb765282d67221df1cc09bebef3b4d6a5b8c28306daa165cbba9a8836271748d`. |
+| Installation | CPython 3.10, Linux x86_64; offline setup from the extracted archive with read-only payload files and spaces in its path. The standard runtime location also passed preflight and the bound version command without a custom runtime-home argument. |
+| Text, JSON and YAML | A neutral committed document-service fixture produced score 17 with exit 0 in all three formats. JSON and YAML were equal and passed the schema from the pinned engine wheel. Six checks applied; scoring version 2, unverified evidence and `assessment_status: not_run` remained visible. |
+| Undetermined | A separate sparse repository produced `verdict: undetermined`, a null score and exit 2; its JSON passed the same schema. |
+| Invalid source | An absent selected repository returned exit 1, empty stdout and an error without a traceback. |
+| Source and invocation | Source hashes and Git status were unchanged. A shadow engine executable and shadow Claude executable on PATH were not invoked. Credential variables were excluded from the replay environment. |
+| Claude host | Claude Code 2.1.302 accepted the manifest and discovered `appsec-advisor:security-score` with one skill and no agents, hooks, MCP servers or LSP servers. An isolated host configuration prevented changes to installed-plugin settings. |
+| Host validation scope | The manifest had no errors and two warnings for the existing Advisor metadata fields `analysis_version` and `compatible_analysis_versions`, which the host ignores. The CLI returned no content-validation records; discovery and deterministic local-reference checks supplied the skill evidence. |
+| Model calls | None. No live slash-command session or assessment was started. |
+
+This closes the local installed real-engine score-output gap for the selected Linux composition and establishes model-free Claude discovery. It does not close complete legacy input/option parity, authorized remote-source cases, real-engine cancellation, live host invocation, native macOS/Windows, upgrade/rollback, build-tool provenance or release acceptance. Existing focused regression evidence was reused; no synthetic test suite, scanner suite or broad audit was rerun for this documentation and replay work.
