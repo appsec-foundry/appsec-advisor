@@ -194,12 +194,14 @@ See the [developer tools guide](docs/dev-security-helper-usage.md).
 `/appsec-advisor:security-score` gives a score from 0 to 100 based on the deterministic scanners, without running the full assessment. It is a quick indicator, not a risk rating. The score is computed by the AppSec Analyzer. For CI, build the packaged plugin once, install its bundled engine, and run the score through it:
 
 ```bash
-make plugin-package OUT=/path/to/plugin
+make plugin-package OUT=/path/to/build
+mkdir /path/to/plugin
+unzip /path/to/build/assembly/appsec-advisor-*-staging.zip -d /path/to/plugin
 python3 /path/to/plugin/scripts/composition_runtime.py setup --plugin /path/to/plugin
 python3 /path/to/plugin/scripts/composition_runtime.py run --plugin /path/to/plugin --skill security-score -- score /path/to/project --json
 ```
 
-`make plugin-package` needs network access on its first run; `setup` installs the bundled engine offline. See the [staging runbook](docs/internal/runbooks/composed-score-staging.md).
+`make plugin-package` needs network access on its first run; `setup` installs the bundled engine offline. The package currently supports Python 3.10 on Linux x86_64, and the project must be a committed Git checkout. See the [staging runbook](docs/internal/runbooks/composed-score-staging.md).
 
 ## Enterprise rollout
 
