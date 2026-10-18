@@ -86,25 +86,9 @@ To reassess after code changes, run `/appsec-advisor:appsec-analyzer` again. Eac
 
 ## AppSec Analyzer
 
-Run the AppSec Analyzer when you take over a repository or want to know where its security stands. You do not need an architecture document or an existing threat model. Its security assessment answers:
+Run the AppSec Analyzer when you take over a repository or want to know where its security stands; no architecture document or existing threat model is needed. The report models components, data flows, and trust boundaries, shows which security controls exist or are missing, and lists findings ordered by risk, each linked to the code, together with abuse cases and remediation guidance.
 
-- Which components, data flows, and trust boundaries make up the application?
-- Which security controls exist, and which are missing, broken, or unclear?
-- Which weaknesses, design risks, and abuse cases need attention?
-- What should the team fix first?
-
-The code cannot tell the tool which networks you trust or which data matters most to your business. You can add this as business context, and the assessment treats it as a stated assumption.
-
-The assessment only sees the repository and the context you give it. It cannot check runtime behavior or controls that exist only in production. Have an AppSec engineer or security architect review the findings before you act on them or accept a risk.
-
-The report contains:
-
-- an architecture model with components, data flows, and trust boundaries;
-- the security controls found, their gaps, and open assumptions;
-- findings ordered by risk, each linked to the code;
-- a Weakness Register that groups findings by their underlying cause;
-- abuse cases checked against the code;
-- remediation guidance and diagrams.
+The assessment sees only the repository and any business context you add, not runtime behavior or production-only controls. Have an AppSec engineer review the findings before you act on them or accept a risk.
 
 Findings are mapped to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). For LLM and agent applications, the assessment also covers the [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) Top 10. Results can be exported as PDF, HTML, SARIF, Threat Dragon, and pentest tasks.
 
