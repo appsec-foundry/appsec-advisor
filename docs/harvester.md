@@ -14,7 +14,7 @@ flowchart LR
     D -->|"Committed in the repo"| E["raw.githubusercontent.com/…"]
     D -->|"Hosted separately"| F["S3 / GitLab raw / CDN"]
     D -->|"Local test loop"| G["mock-server.py on<br/>127.0.0.1:4444"]
-    E --> H["audit-security-requirements<br/>create-threat-model --requirements"]
+    E --> H["audit-security-requirements<br/>appsec-analyzer --requirements"]
     F --> H
     G --> H
 ```

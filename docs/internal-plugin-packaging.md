@@ -72,7 +72,7 @@ presets:
 YAML
 ```
 
-With this profile, a plain `/my-appsec:create-threat-model` uses standard depth, emits SARIF, and caps spend at `$10`. `compatibility` is required by the org-profile schema; it prevents packaging a profile with an unsupported upstream plugin version.
+With this profile, a plain `/my-appsec:appsec-analyzer` uses standard depth, emits SARIF, and caps spend at `$10`. `compatibility` is required by the org-profile schema; it prevents packaging a profile with an unsupported upstream plugin version.
 
 **3. Clone the upstream release.**
 
@@ -95,7 +95,7 @@ $ claude --plugin-dir build/my-appsec
 **6. Run the branded command in Claude Code.**
 
 ```text
-/my-appsec:create-threat-model
+/my-appsec:appsec-analyzer
 ```
 
 Continue with the steps below to build and publish the package for a team.
@@ -276,7 +276,7 @@ Prefer allowlists for enterprise packages so newly added upstream skills do not 
 plugin_surface:
   skills:
     include:
-      - create-threat-model       # required
+      - appsec-analyzer       # required
       - status
       - check-permissions
       - clean-run-state
@@ -307,7 +307,7 @@ Supported hook IDs today:
 | `security-coach` | `scripts/analyzers/security_steering.py` | Removes prompt-time security coaching; `hooks/steering_keywords.json` is also omitted. |
 | `agent-logger` | `scripts/runtime/agent_logger.py` | Removes Claude hook event logging for tool/use/stop events. Run summaries may have less timing and token context. |
 
-`create-threat-model` and its internal `internal-threat-analysis-kernel` dependency are required and cannot be removed by package policy. The kernel is preloaded only by focused core agents and is not advertised as a user command. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
+`appsec-analyzer` and its internal `internal-threat-analysis-kernel` dependency are required and cannot be removed by package policy. The kernel is preloaded only by focused core agents and is not advertised as a user command. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
 
 If the org profile declares an [`mcp` block](org-profiles.md#mcp-servers), a third surface, `mcp_servers`, narrows which of those servers are emitted into the packaged `.mcp.json`. Every declared server is included by default; use an allowlist to restrict them:
 
@@ -566,13 +566,13 @@ $ claude --plugin-dir ~/.claude/plugins/acme-appsec
 Then they run:
 
 ```text
-/acme-appsec:create-threat-model
+/acme-appsec:appsec-analyzer
 ```
 
 To use another bundled preset:
 
 ```text
-/acme-appsec:create-threat-model --preset release-review
+/acme-appsec:appsec-analyzer --preset release-review
 ```
 
 ## Step 6 - Update upstream

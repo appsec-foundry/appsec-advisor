@@ -78,7 +78,7 @@ After Phase 11, `components[i].threat_ids[]` MUST be the reverse index of `threa
 
 ## §4d. Flag-conditional QA/contract gates (`skip_attack_walkthroughs`)
 
-`scripts/validators/qa_checks.py` and `scripts/validators/check_inline_shortcut.py` read `.skill-config.json` before applying gates that only matter when attack walkthroughs were authored:
+`scripts/validators/qa_checks.py` reads `.skill-config.json` before applying gates that only matter when attack walkthroughs were authored:
 
 - **`check_ms_structure` Check 4** (Attack Chain Overview required when
   Critical ≥ 2) — skipped when `SKIP_ATTACK_WALKTHROUGHS=true`.

@@ -186,4 +186,4 @@ still overrides it. See [CI gates](org-profiles.md#ci-gates).
 
 ## Shared source with the threat model
 
-`/appsec-advisor:create-threat-model` uses the same catalog. Its findings link violations and mitigations to the matching requirement IDs. Configure the catalog once for both commands.
+`/appsec-advisor:appsec-analyzer` uses the same catalog. Its findings link violations and mitigations to the matching requirement IDs. Configure the catalog once for both commands.

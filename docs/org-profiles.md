@@ -14,7 +14,7 @@ See the [packaging runbook](internal-plugin-packaging.md) to bundle a profile in
 - set per-preset defaults: scan depth, outputs (SARIF / PDF / pentest tasks), quality knobs (QA, architect review, walkthroughs), and guardrails (wall time, cost cap)
 - gate CI on failing requirements (`requirements.gate`) or on new threats at a chosen severity (`guardrails.fail_on`)
 - apply profile-wide policy: an Opus ceiling (`policy.disable_opus`) and a remote-fetch allowlist (`policy.url_allowlist`)
-- declare a single requirements source URL, the default active state for create-threat-model, and a separate standalone-audit toggle
+- declare a single requirements source URL, the default active state for appsec-analyzer, and a separate standalone-audit toggle
 - attach 1–3 short Markdown files with organization, identity, or platform context
 - enable a default-on Security Coach, and define its baseline and its own steering topics (triggers → guidance + requirement IDs)
 - bundle its own Claude Code hooks that run at the event layer (`hooks`)
@@ -77,7 +77,7 @@ The plugin's `config.json` carries the pointer:
 
 ## CLI and environment
 
-`create-threat-model` accepts these profile flags:
+`appsec-analyzer` accepts these profile flags:
 
 | Flag | Meaning |
 |------|---------|
@@ -496,7 +496,7 @@ Packaging copies each matched skill directory to `skills/<name>/SKILL.md` under 
 Two things abort the build rather than resolve quietly:
 
 - **A name that collides with an upstream skill.** Replacing, say,
-  `create-threat-model` would change what its command does without anyone
+  `appsec-analyzer` would change what its command does without anyone
   deciding to.
 - **Frontmatter that would not pass for an upstream skill.** `name` must match
   the directory, `description` must be non-empty and at most 1024 characters,
@@ -616,32 +616,32 @@ Skills (24 installed · 1 disabled by org profile · 1 removed by package policy
 Use a different preset for a single run:
 
 ```
-/appsec-advisor:create-threat-model --preset release-review
+/appsec-advisor:appsec-analyzer --preset release-review
 ```
 
 Scan an external repo with an AppSec preset:
 
 ```
-/appsec-advisor:create-threat-model --preset appsec-verification --repo ../payments-api
+/appsec-advisor:appsec-analyzer --preset appsec-verification --repo ../payments-api
 ```
 
 Force a specific profile for a single run:
 
 ```
-/appsec-advisor:create-threat-model --org-profile ./security/org-profile.yaml --preset ci-fast
+/appsec-advisor:appsec-analyzer --org-profile ./security/org-profile.yaml --preset ci-fast
 ```
 
 Ignore the packaged profile for one run:
 
 ```
-/appsec-advisor:create-threat-model --no-org-profile
+/appsec-advisor:appsec-analyzer --no-org-profile
 ```
 
 Override requirements for one run:
 
 ```
-/appsec-advisor:create-threat-model --requirements https://appsec.int.example.com/r.yaml
-/appsec-advisor:create-threat-model --no-requirements
+/appsec-advisor:appsec-analyzer --requirements https://appsec.int.example.com/r.yaml
+/appsec-advisor:appsec-analyzer --no-requirements
 ```
 
 ## Abuse cases
