@@ -39,6 +39,11 @@
     "license": "No license declaration; operator-owned internal staging only",
     "files": [
       "schemas/skill-dependencies.schema.json",
+      "skills/create-threat-model/README.md",
+      "skills/create-threat-model/SKILL.md",
+      "skills/create-threat-model/references/model-guide.md",
+      "skills/create-threat-model/references/security-context.md",
+      "skills/create-threat-model/requirements.md",
       "skills/security-score/README.md",
       "skills/security-score/SKILL.md",
       "skills/security-score/dependencies.json",

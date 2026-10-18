@@ -14,11 +14,13 @@
 | Tool | What it does | Command |
 |---|---|---|
 | [AppSec Analyzer](#appsec-analyzer) | Assesses the whole application: architecture, security controls, findings, and what to fix first. | `/appsec-advisor:appsec-analyzer` |
+| [Security Score](#security-score) | Quick 0–100 score from the scanners alone, without a model. | `/appsec-advisor:security-score` |
 | [Threat Analyst](#threat-analyst) | Analyzes a planned feature or a code change for threats. | `/appsec-advisor:analyze-threats` |
+| [Threat Model](#threat-model) | Writes and maintains a threat model from requirements and design documents. | `/appsec-advisor:create-threat-model` |
 | [Requirements Audit](#requirements-audit) | Checks the repository against a security requirements catalog. | `/appsec-advisor:audit-security-requirements` |
-| [Developer tools](#developer-tools) | Secure-coding baseline, security score, security hints, and change reviews for Claude Code and CI. | `/appsec-advisor:install-baseline`, `/appsec-advisor:security-score`, … |
+| [Developer tools](#developer-tools) | Secure-coding baseline, security hints, and change reviews for Claude Code and CI. | `/appsec-advisor:install-baseline`, … |
 
-[Quick start](#quick-start) · [AppSec Analyzer](#appsec-analyzer) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [How the plugin is built](#how-the-plugin-is-built) · [Contributing](#contributing)
+[Quick start](#quick-start) · [AppSec Analyzer](#appsec-analyzer) · [Security Score](#security-score) · [Threat Analyst](#threat-analyst) · [Threat Model](#threat-model) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [How the plugin is built](#how-the-plugin-is-built) · [Contributing](#contributing)
 
 ---
 
@@ -105,39 +107,21 @@ The runtime architecture of Juice Shop with its data flows and attack paths; cli
 
 The [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#reports-and-exports) shows the other report diagrams: the build pipeline with its supply-chain attacks, and the threat actors with the business harm they can cause.
 
-The [AppSec Analyzer guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
+The [AppSec Analyzer guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits. The Analyzer describes the same assessment as the command-line tool in [`scan`](https://github.com/appsec-foundry/appsec-analyzer#scan-full-security-assessment) and its [security assessment guide](https://github.com/appsec-foundry/appsec-analyzer/blob/main/docs/security-assessment.md); the plugin command runs the pipeline in this repository unless you use the preview build.
 
 ### Abuse cases
 
-An abuse case describes something an attacker or user must not be able to do, for example "a customer must not see another customer's orders". The plugin ships technical attack chains and business rules, and each run checks them against the code. If the code breaks a rule, the run adds a finding or confirms an existing one. If the code does not settle the question, the case is listed as open, not as safe.
-
-To add a rule for one repository, put a YAML file into `docs/security/abuse-cases/`:
-
-```yaml
-schema_version: 2
-abuse_cases:
-  - id: REPO-AC-001
-    kind: descriptive
-    title: Employee approves their own expense report
-    check: Check whether an employee can approve an expense report they submitted.
-    scope_qualifier: {path_patterns: ["*expense*"]}
-```
-
-`/appsec-advisor:abuse-cases` lists all cases and their results. See [repository abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases) and, for organization-wide cases, [organization profiles](docs/org-profiles.md#abuse-cases).
+Each run also checks abuse cases, things an attacker or user must not be able to do, such as reading another customer's orders. The built-in cases, the YAML format for your own, and how results appear in the report are described in the [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#abuse-cases). In the plugin, repository cases go into `docs/security/abuse-cases/`, and `/appsec-advisor:abuse-cases` lists all cases and their results. See also [organization profiles](docs/org-profiles.md#abuse-cases) for organization-wide cases.
 
 ### Several repositories
 
-*Experimental.* To assess a system split across repositories as one, repeat `--repo` in the headless runner:
+*Experimental.* To assess a system split across repositories as one, repeat `--repo` in the headless runner. The result is one report with a shared architecture model. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system). To keep separate reports and still use the models of related repositories as context, see [cross-repository context](docs/security-assessment.md#cross-repo-context).
 
-```bash
-./scripts/run-headless.sh \
-  --repo /repos/frontend \
-  --repo /repos/backend \
-  --output /reports/order-system \
-  --hard-budget 50
-```
+## Security Score
 
-The result is one report with a shared architecture model. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system). To keep separate reports and still use the models of related repositories as context, see [cross-repository context](docs/security-assessment.md#cross-repo-context).
+`/appsec-advisor:security-score` gives a score from 0 to 100 based on the deterministic scanners, without running the full assessment. It is a quick indicator, not a risk rating. The score is computed by the AppSec Analyzer; its rules, coverage, and limits are described in the Analyzer's [Security score](https://github.com/appsec-foundry/appsec-analyzer/blob/main/docs/security-score.md) guide.
+
+To run it in CI, use the packaged plugin from `make plugin-package` (Python 3.10, Linux x86_64, committed Git checkout). Setup and the CI commands are in the [staging runbook](docs/internal/runbooks/composed-score-staging.md).
 
 ## Threat Analyst
 
@@ -149,7 +133,21 @@ The result is one report with a shared architecture model. See [non-interactive 
 | During implementation | `/appsec-advisor:analyze-threats --worktree --question "Can a tenant read another tenant's export?"` |
 | Before merging | `/appsec-advisor:analyze-threats --base <target-branch> --head HEAD` |
 
-See the [Threat Analyst guide](docs/threat-analyst.md).
+See the [Threat Analyst guide](docs/threat-analyst.md). The Analyzer documents the same analysis as the command-line tool in [`analyze-threats`](https://github.com/appsec-foundry/appsec-analyzer#analyze-threats-answer-a-security-question) and its [Threat Analyst guide](https://github.com/appsec-foundry/appsec-analyzer/blob/main/docs/threat-analyst.md); the plugin command still uses its own copy.
+
+## Threat Model
+
+`/appsec-advisor:create-threat-model` writes a threat model the classic way, from requirements, design documents, and what the team tells it. Code is optional and nothing is scanned.
+
+```text
+/appsec-advisor:create-threat-model Create a threat model. Start with docs/requirements.md and docs/architecture.md.
+/appsec-advisor:create-threat-model Update the model for the new CSV export.
+/appsec-advisor:create-threat-model Review the current model without editing it.
+```
+
+It finds and reads the requirements, specifications, architecture documents, and ADRs of the project, such as `requirements.md` and `docs/architecture.md`. Where they leave gaps or contradict each other, it asks about your system, at most three questions per round. You can skip or stop the questions; unanswered points stay open in the model. The result is `threat-model.md`, linked from `SECURITY.md`. Details are in the [skill's README](https://github.com/appsec-foundry/appsec-skills/tree/main/skills/create-threat-model).
+
+> Before 0.6, `create-threat-model` was the repository analysis, which is now `/appsec-advisor:appsec-analyzer`. The new command is only in the preview build under [how the plugin is built](#how-the-plugin-is-built).
 
 ## Requirements Audit
 
@@ -160,7 +158,7 @@ See the [Threat Analyst guide](docs/threat-analyst.md).
 /appsec-advisor:audit-security-requirements --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
-Without a catalog of your own, start from `data/appsec-requirements-fallback.yaml` or the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md).
+Without a catalog of your own, start from `data/appsec-requirements-fallback.yaml` or the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md). The Analyzer offers the same audit as the command-line tool in [`audit-requirements`](https://github.com/appsec-foundry/appsec-analyzer#audit-requirements-requirements-audit); the plugin command still uses its own copy.
 
 To check only a code change against the catalog, use [`/appsec-advisor:verify-requirements`](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*).
 
@@ -174,20 +172,6 @@ To check only a code change against the catalog, use [`/appsec-advisor:verify-re
 | [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Security review of a code change in Claude Code, an Agent SDK workflow, or CI with [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli). |
 
 See the [developer tools guide](docs/dev-security-helper-usage.md).
-
-### Security score
-
-`/appsec-advisor:security-score` gives a score from 0 to 100 based on the deterministic scanners, without running the full assessment. It is a quick indicator, not a risk rating. The score is computed by the AppSec Analyzer. For CI, build the packaged plugin once, install its bundled engine, and run the score through it:
-
-```bash
-make plugin-package OUT=/path/to/build
-mkdir /path/to/plugin
-unzip /path/to/build/assembly/appsec-advisor-*-staging.zip -d /path/to/plugin
-python3 /path/to/plugin/scripts/composition_runtime.py setup --plugin /path/to/plugin
-python3 /path/to/plugin/scripts/composition_runtime.py run --plugin /path/to/plugin --skill security-score -- score /path/to/project --json
-```
-
-`make plugin-package` needs network access on its first run; `setup` installs the bundled engine offline. The package currently supports Python 3.10 on Linux x86_64, and the project must be a committed Git checkout. See the [staging runbook](docs/internal/runbooks/composed-score-staging.md).
 
 ## Enterprise rollout
 
@@ -229,11 +213,10 @@ To build the preview that uses the separate engine, run:
 make plugin-package
 ```
 
-This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has two commands, `appsec-analyzer` and `security-score`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
+This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has three commands, `appsec-analyzer`, `security-score` and `create-threat-model`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
 
 ## Related projects
 
-- [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer): the assessment, threat analysis and security score as a standalone command-line tool (alpha); see [how the plugin is built](#how-the-plugin-is-built).
 - [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools): launcher and CI templates for unattended assessments.
 - [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template): builds organization-specific plugin packages.
 - [aiscb](https://github.com/appsec-foundry/aiscb): the secure-coding rules bundled with the plugin.
