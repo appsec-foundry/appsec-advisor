@@ -69,7 +69,7 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 
 ## Model lifecycle and review
 
-- **REQ-USE-004:** Full assessments must preserve the history of earlier results; deliberate rebuilds may reset the model and history.
+- **REQ-USE-004:** A full assessment must keep the history of earlier results. Only an explicitly requested rebuild from scratch may discard the model and its history.
 - **REQ-USE-005:** Model questions and overviews must read existing results without rescanning sources or changing files.
 - **REQ-USE-006:** Users must be able to determine whether a model is fresh, stale, missing, or blocked.
 - **REQ-USE-001:** Users must be able to review findings, record decisions, and plan remediation; decisions must survive reassessment, and code changes must require explicit selection.
@@ -99,14 +99,14 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 ## Security score
 
 - **REQ-SCO-001:** Scanner-only assessment must return a 0–100 score, `undetermined` for insufficient coverage, or `incomplete` for failed or invalid required scans, while retaining findings and diagnostics.
-- **REQ-SCO-002:** Structured score output must expose producer completion, scoring and catalog versions, applicable coverage, and excluded findings so comparisons remain meaningful.
+- **REQ-SCO-002:** Structured score output must show whether the scan completed, which scoring and rule-catalog versions produced the score, which rules applied, and which findings were excluded, so scores from different runs can be compared fairly.
 
 ## Configuration and compatibility
 
 - **REQ-CFG-001:** Organizations must be able to configure supported extensions without forking the plugin, with included capabilities recorded.
 - **REQ-CFG-002:** Repository configuration must use documented, validated inputs and must not suppress evidence-supported findings.
-- **REQ-CFG-003:** Baseline refresh must use the declared source, report drift, and require explicit acceptance of changed baseline IDs before updating all declarations consistently.
-- **REQ-EVO-003:** Incompatible changes to published artifacts, report anchors, or organization interfaces must receive explicit versioning or migration handling.
+- **REQ-CFG-003:** Refreshing the secure-coding baseline must use the configured source and report when the installed copy differs. A changed baseline version must be accepted explicitly before every place that declares it is updated together.
+- **REQ-EVO-003:** A change that breaks result files, report links, or organization configuration formats must come with a new version or a migration path.
 
 ## Trust and data protection
 
@@ -121,4 +121,4 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 - **REQ-FLW-003:** Required inputs and outputs must be validated before use; missing or invalid required data must stop publication of an apparently complete result.
 - **REQ-FLW-006:** Headless execution must require no interactive responses and must distinguish completion, incomplete execution, and failure.
 - **REQ-FLW-007:** Runs must expose progress, actionable diagnostics, and recovery options; external issue publication must require approval of the prepared content.
-- **REQ-FLW-008:** Budget behavior must be explicit for each execution mode, and interrupted or incomplete work must never be reported as successfully completed. Deterministic controller runs must reserve resources for required completion work, omit optional model work when necessary, and provide a clearly marked incomplete report of validated results when the budget cannot cover required analysis.
+- **REQ-FLW-008:** Every execution mode must state what happens when the budget runs out. Interrupted or incomplete work must never be reported as completed. When the budget is too small, the run must drop optional model work first and keep enough budget to finish. If the required analysis still does not fit, it must deliver a clearly marked incomplete report containing only validated results.
