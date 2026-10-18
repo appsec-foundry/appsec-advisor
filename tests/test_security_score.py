@@ -677,6 +677,8 @@ def test_remote_checkout_with_escaping_symlink_is_not_scanned(monkeypatch, capsy
     checkouts = []
 
     def fake_clone(argv, **kw):
+        if "clone" not in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "")
         checkout = Path(argv[-1])
         checkout.mkdir()
         (checkout / "source.txt").symlink_to(outside)
