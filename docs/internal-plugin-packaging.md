@@ -12,20 +12,21 @@ The selected skills determine the available commands. In the current two-entry c
 
 ## Assemble the component artifacts
 
-`make plugin-package` builds the component artifacts from explicit commits, writes the lock and runs the assembler. Replace the paths and commits:
+[`data/plugin-package.json`](../data/plugin-package.json) pins the full commits of [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer) and [appsec-skills](https://github.com/appsec-foundry/appsec-skills), the selected files, licenses, engine capabilities, runtime targets and the dependency wheels with their SHA-256 digests. Three targets use it:
 
 ```bash
-make plugin-package \
-  ANALYZER_SRC=/path/to/appsec-analyzer ANALYZER_REV=<commit> \
-  SKILLS_SRC=/path/to/appsec-skills SKILLS_REV=<commit> \
-  WHEELHOUSE=/path/to/wheels
+make plugin-update    # move the Analyzer and skills pins to the current main; review and commit the diff
+make plugin-wheels    # download the pinned dependency wheels into build/appsec-advisor-wheels
+make plugin-package   # build build/appsec-advisor-<version>-staging/
 ```
 
-The target reads only committed files: the Advisor host files at `HOST_REV` (default `HEAD`), the skill files at `SKILLS_REV`, and a clean export of `ANALYZER_REV`. It builds the engine wheel from that export with the locally installed `build`, `setuptools` and `wheel`, without package-index access. Working-tree changes never enter an artifact, and two builds of the same commits produce identical bytes. [`data/plugin-package.json`](../data/plugin-package.json) selects the files, licenses, engine capabilities, runtime targets and the dependency wheels with their SHA-256 pins. `WHEELHOUSE` must contain these wheels; a missing or different wheel stops the build, and nothing is downloaded.
+`plugin-update` reads the `main` heads, rewrites only the two commit pins and prints a GitHub comparison link for each change. Nothing is built until the reviewed pin change is committed, so pushes to `main` never enter a package unreviewed. `plugin-wheels` downloads with `pip --require-hashes`; a file with another digest fails. Rerun it only after a dependency pin changes.
 
-The output is `build/appsec-advisor-<version>-staging/` unless `OUT` names another new directory. It contains `artifacts/`, `components.lock.json` and `assembly/` with the staging ZIP, checksums, notices and component inventory. An existing directory is refused, and a failed build leaves no output. Review the lock against the selected commits before passing the package on. The target does not install the engine, invoke models or set up a runtime.
+`plugin-package` fetches each pinned commit once into `build/appsec-advisor-sources/` and afterwards builds offline. It reads only committed files: the Advisor host files at `HOST_REV` (default `HEAD`), the pinned skill files and a clean export of the pinned Analyzer commit. It builds the engine wheel from that export with the locally installed `build`, `setuptools` and `wheel`, without package-index access. Working-tree changes never enter an artifact, and two builds of the same commits produce identical bytes. A missing or different dependency wheel stops the build. `ANALYZER_SRC`/`SKILLS_SRC` select local checkouts and `ANALYZER_REV`/`SKILLS_REV` other revisions for trial builds; `WHEELHOUSE` selects another wheel directory.
 
-Changing the selection, such as a dependency version or an added skill file, is a reviewed change to `data/plugin-package.json`. Verify new dependency pins against the published files and known vulnerabilities before committing them.
+The output is `build/appsec-advisor-<version>-staging/` unless `OUT` names another new directory. It contains `artifacts/`, `components.lock.json` and `assembly/` with the staging ZIP, checksums, notices and component inventory. An existing directory is refused, and a failed build leaves no output. The target does not install the engine, invoke models or set up a runtime.
+
+Other selection changes, such as a dependency version or an added skill file, are reviewed edits of `data/plugin-package.json`. Verify new dependency pins against the published files and known vulnerabilities before committing them.
 
 To assemble artifacts prepared another way, record exact revisions, versions, licenses, SHA-256 digests, required capabilities and source-to-target resource mappings in a lock conforming to [the component lock schema](../schemas/components-lock.schema.json) and run the assembler directly as shown below.
 

@@ -226,13 +226,18 @@ setup-target:  ## Write required CC permissions into a target repo (default: cwd
 # Never contains threat-model results, evidence, or source. See CONTRIBUTING.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
-.PHONY: plugin-package
-plugin-package:  ## Build the composed staging plugin from pinned commits: make plugin-package ANALYZER_SRC=<checkout> ANALYZER_REV=<commit> SKILLS_SRC=<checkout> SKILLS_REV=<commit> WHEELHOUSE=<dir> [HOST_REV=HEAD] [OUT=<new dir>]
-	@test -n "$(ANALYZER_SRC)" -a -n "$(ANALYZER_REV)" -a -n "$(SKILLS_SRC)" -a -n "$(SKILLS_REV)" -a -n "$(WHEELHOUSE)" || { \
-		echo "ERROR: set ANALYZER_SRC, ANALYZER_REV, SKILLS_SRC, SKILLS_REV and WHEELHOUSE; see docs/internal-plugin-packaging.md"; exit 2; }
-	@$(PYTHON) scripts/build_plugin_package.py --analyzer-src "$(ANALYZER_SRC)" --analyzer-rev "$(ANALYZER_REV)" \
-		--skills-src "$(SKILLS_SRC)" --skills-rev "$(SKILLS_REV)" --wheelhouse "$(WHEELHOUSE)" \
-		--host-rev "$(or $(HOST_REV),HEAD)" $(if $(OUT),--output "$(OUT)",)
+.PHONY: plugin-package plugin-wheels plugin-update
+plugin-package:  ## Build the composed staging plugin from the commits pinned in data/plugin-package.json: make plugin-package [OUT=<new dir>]
+	@$(PYTHON) scripts/build_plugin_package.py package --host-rev "$(or $(HOST_REV),HEAD)" \
+		$(if $(ANALYZER_SRC),--analyzer-src "$(ANALYZER_SRC)",) $(if $(ANALYZER_REV),--analyzer-rev "$(ANALYZER_REV)",) \
+		$(if $(SKILLS_SRC),--skills-src "$(SKILLS_SRC)",) $(if $(SKILLS_REV),--skills-rev "$(SKILLS_REV)",) \
+		$(if $(WHEELHOUSE),--wheelhouse "$(WHEELHOUSE)",) $(if $(OUT),--output "$(OUT)",)
+
+plugin-wheels:  ## Download the pinned dependency wheels (hash-checked) into build/appsec-advisor-wheels
+	@$(PYTHON) scripts/build_plugin_package.py wheels
+
+plugin-update:  ## Move the Analyzer and skills pins in data/plugin-package.json to their current main; review and commit the diff
+	@$(PYTHON) scripts/build_plugin_package.py update
 
 .PHONY: diagnostic-bundle
 diagnostic-bundle:  ## Build an anonymised diagnostic .tgz from a run: make diagnostic-bundle RUN=<repo>/docs/security [REPO_ROOT=<repo>] [INTO=.]

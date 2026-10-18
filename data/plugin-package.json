@@ -18,6 +18,8 @@
   "engine": {
     "id": "appsec-analyzer",
     "source": "https://github.com/appsec-foundry/appsec-analyzer",
+    "branch": "main",
+    "revision": "684a57e1e23e595d84581be27584f90c06ff1d49",
     "license": "Apache-2.0",
     "capabilities": [
       "score", "scan_sources", "organization_config", "scan", "assessment_entry",
@@ -32,6 +34,8 @@
   "skills": {
     "id": "appsec-skills",
     "source": "https://github.com/appsec-foundry/appsec-skills",
+    "branch": "main",
+    "revision": "557f16fa07beead21267a3b220f7e4d608e11b2c",
     "license": "No license declaration; operator-owned internal staging only",
     "files": [
       "schemas/skill-dependencies.schema.json",

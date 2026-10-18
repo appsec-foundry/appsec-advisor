@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,7 +28,9 @@ def commit_tree(root: Path, files: dict[str, bytes]) -> Path:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_bytes(data)
     git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
-    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    # Local fixtures stand in for the HTTPS remote, which serves pinned commits by ID.
+    subprocess.run([*git, "config", "uploadpack.allowAnySHA1InWant", "true"], check=True)
     subprocess.run([*git, "add", "-A"], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "fixture"], check=True)
     return root
@@ -87,11 +90,39 @@ def run(inputs, output: Path, *, analyzer_rev="HEAD", selection=None) -> int:
     selection_path.write_text(json.dumps(selection or default))
     return package.main(
         [
+            *("--selection", str(selection_path), "package"),
             *("--analyzer-src", str(engine), f"--analyzer-rev={analyzer_rev}"),
             *("--skills-src", str(skills), "--skills-rev", "HEAD", "--wheelhouse", str(wheelhouse)),
-            *("--selection", str(selection_path), "--output", str(output)),
+            *("--output", str(output)),
         ]
     )
+
+
+def head(repository: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+
+
+def add_commit(repository: Path, name: str) -> str:
+    (repository / name).write_text("next\n")
+    git = ["git", "-C", str(repository), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "next"], check=True)
+    return head(repository)
+
+
+@pytest.fixture
+def remote_pins(inputs, monkeypatch):
+    """Pin the fixtures as remote sources; only the fetch location is redirected to them."""
+    engine, skills, _, selection, tmp_path = inputs
+    repositories = {selection["engine"]["id"]: engine, selection["skills"]["id"]: skills}
+    monkeypatch.setattr(package, "remote", lambda item: str(repositories[item["id"]]))
+    for key, repository in (("engine", engine), ("skills", skills)):
+        selection[key].update(branch="main", revision=head(repository))
+    path = tmp_path / "pinned-selection.json"
+    path.write_text(json.dumps(selection, indent=2))
+    return path
 
 
 def test_builds_committed_inputs_reproducibly_and_ignores_working_tree_changes(inputs):
@@ -157,3 +188,56 @@ def test_committed_selection_names_regular_host_files_and_bound_capabilities():
     assert set(composition_runtime.ASSESSMENT_CAPABILITIES) <= set(selection["engine"]["capabilities"])
     ids = [c["id"] for c in (selection["host"], selection["engine"], selection["skills"], *selection["dependencies"])]
     assert len(ids) == len(set(ids))
+
+
+def test_package_fetches_only_pinned_commits_and_reuses_the_cache(inputs, remote_pins):
+    engine, skills, wheelhouse, _, tmp_path = inputs
+    pinned = json.loads(remote_pins.read_bytes())
+    add_commit(engine, "later.txt")  # A newer remote head must not enter the package.
+    common = ["--selection", str(remote_pins), "package", "--wheelhouse", str(wheelhouse)]
+    common += ["--sources", str(tmp_path / "cache")]
+    assert package.main([*common, "--output", str(tmp_path / "first")]) == 0
+    lock = json.loads((tmp_path / "first/components.lock.json").read_bytes())
+    assert [c["revision"] for c in lock["components"][1:3]] == [
+        pinned["engine"]["revision"],
+        pinned["skills"]["revision"],
+    ]
+    shutil.rmtree(engine)
+    shutil.rmtree(skills)
+    assert package.main([*common, "--output", str(tmp_path / "second")]) == 0
+    assert (tmp_path / "first/components.lock.json").read_bytes() == (
+        tmp_path / "second/components.lock.json"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize("revision", ["main", "684a57e1"])
+def test_remote_build_requires_a_full_pinned_commit(inputs, remote_pins, revision):
+    _, _, wheelhouse, _, tmp_path = inputs
+    arguments = ["--selection", str(remote_pins), "package", "--wheelhouse", str(wheelhouse)]
+    arguments += [f"--analyzer-rev={revision}", "--sources", str(tmp_path / "cache"), "--output", str(tmp_path / "out")]
+    assert package.main(arguments) == 2
+    assert not (tmp_path / "out").exists()
+
+
+def test_update_moves_only_commit_pins_to_the_remote_branch_head(inputs, remote_pins, capsys):
+    engine, _, _, _, _ = inputs
+    before = remote_pins.read_text()
+    newer = add_commit(engine, "later.txt")
+    assert package.main(["--selection", str(remote_pins), "update"]) == 0
+    after = remote_pins.read_text()
+    old = json.loads(before)["engine"]["revision"]
+    assert after == before.replace(old, newer)
+    assert "compare/" in capsys.readouterr().out
+    assert package.main(["--selection", str(remote_pins), "update"]) == 0
+    assert remote_pins.read_text() == after
+    assert "already match" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("field, value", [("version", "9.9"), ("source", "https://example.com/dep/2.0")])
+def test_wheel_download_refuses_pins_without_matching_pypi_identity(inputs, monkeypatch, field, value):
+    _, _, _, selection, tmp_path = inputs
+    selection["dependencies"][0][field] = value
+    path = tmp_path / "selection.json"
+    path.write_text(json.dumps(selection))
+    monkeypatch.setattr(package.subprocess, "run", lambda *a, **k: pytest.fail("pip must not run"))
+    assert package.main(["--selection", str(path), "wheels", "--wheelhouse", str(tmp_path / "wheels")]) == 2
