@@ -680,3 +680,74 @@ def test_external_projection_cleanup_covers_engine_outcomes(tmp_path, monkeypatc
     else:
         assert runtime.launch(plugin, tmp_path, ["score", "/neutral/source"], 1) == status
     assert config_paths and not config_paths[0].parent.exists()
+
+
+@pytest.mark.parametrize("command", ["scan", "assess"])
+@pytest.mark.parametrize("selection", ["packaged", "external", "disabled"])
+def test_assessment_dispatch_requires_declared_workflow_and_preserves_origin(tmp_path, monkeypatch, command, selection):
+    plugin, profile, manifest, lock = _external_case(tmp_path)
+    config = plugin / "org-profile/analyzer-config.yaml"
+    config.parent.mkdir()
+    config.write_text("{}")
+    manifest["files"] += [{"path": runtime.ORG_DISPATCH}, {"path": "org-profile/analyzer-config.yaml"}]
+    capability = {
+        "available": True,
+        "schema_version": 1,
+        "commands": ["score", "scan", "assess"],
+        "profile_source_validation": True,
+        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+    }
+
+    def run(args, **kw):
+        if args[-1] == "capabilities":
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"organization_config": capability}).encode())
+        return SimpleNamespace(returncode=0, stdout=runtime.project_profile(*args[5:]))
+
+    monkeypatch.setattr(runtime.subprocess, "run", run)
+    flags = ["--org-profile", str(profile)] if selection == "external" else []
+    if selection == "disabled":
+        monkeypatch.setenv("APPSEC_ADVISOR_NO_ORG_PROFILE", "1")
+        monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", "/missing.yaml")
+    arguments = [command, "--repo", "/neutral/one", "--repo=/neutral/two", "--assessment-depth=quick", *flags]
+    with contextlib.ExitStack() as stack:
+        result = runtime.organization_arguments(
+            plugin, Path(sys.executable), arguments, manifest, lock=lock, home=tmp_path, stack=stack
+        )
+        if selection == "disabled":
+            assert result == [*arguments, "--no-org-profile"]
+        else:
+            assert result[:3] == ["organization-config", "run", "--config"]
+            assert result[result.index("--") + 1 :] == arguments[:5]
+            if selection == "external":
+                assert result[4:6] == ["--profile-source", str(profile)]
+            else:
+                assert result[3] == str(config)
+
+
+@pytest.mark.parametrize("defect", ["old-engine", "missing-source-validation", "source-override"])
+def test_assessment_dispatch_rejects_incomplete_capability_or_provenance_override(tmp_path, monkeypatch, defect):
+    capability = {
+        "available": True,
+        "schema_version": 1,
+        "commands": ["score", "scan", "assess"],
+        "profile_source_validation": True,
+        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+    }
+    if defect == "old-engine":
+        capability["commands"] = ["score"]
+    if defect == "missing-source-validation":
+        capability["profile_source_validation"] = 1
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps({"organization_config": capability}).encode()),
+    )
+    config = tmp_path / "org-profile/analyzer-config.yaml"
+    config.parent.mkdir()
+    config.write_text("{}")
+    manifest = {"files": [{"path": runtime.ORG_DISPATCH}, {"path": "org-profile/analyzer-config.yaml"}]}
+    args = ["scan", "--repo", "/neutral/source"]
+    if defect == "source-override":
+        args = ["organization-config", "show", "--profile-source=/unchecked.yaml"]
+    with pytest.raises(runtime.RuntimeError):
+        runtime.organization_arguments(tmp_path, Path(sys.executable), args, manifest)

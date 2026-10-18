@@ -92,3 +92,16 @@ policy: {disable_opus: true, url_allowlist: [git.example.org]}
 ```
 
 `--org-profile` wins over `APPSEC_ADVISOR_ORG_PROFILE`, then the packaged profile. Relative paths resolve against the plugin root. For an external profile, `--preset` wins over `APPSEC_ADVISOR_PRESET`, then its own default; the packaged config preset does not leak into that selection. Explicit no-profile selection disables the selected engine profile as before. Invalid selections and unsupported settings fail without fallback. Runtime selection changes neither the packaged host surface nor engine code. The host validates and splits the file, snapshots only engine settings privately for that invocation, and removes the snapshot on exit. The public engine validates that projection and enforces its URL restriction before Git or credentials. Score still makes no model call and uses no assessment depth.
+
+
+## Inspect full-assessment configuration without running a model
+
+Use a newly assembled host and Analyzer declaring `scan` and `assess` under `organization_config.commands`, with `profile_source_validation: true`. The admitted profile fields remain the same as for score. Run unbound inspection to resolve the existing assessment settings:
+
+```bash
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" -- organization-config show --org-profile "/operator/score-profile.yaml" --preset release -- scan --repo "/source/repository" --assessment-depth quick
+```
+
+The returned `assessment_profile` shows effective depth and model settings while retaining the selected policy. This command performs no source retrieval, credential preflight or model call. Unknown settings and unsupported destinations fail. Replace `show` with `validate` for validation. The score binding remains score-only.
+
+An authorized full assessment uses unbound `run ... -- scan --repo ...` or `run ... -- assess --profile claude --repo ...`. Those existing workflows can use models; offline installation or inspection does not authorize them. Profile selection uses the documented CLI/environment/package precedence, and explicit assessment depth overrides the preset default. The host passes external-profile provenance for source confinement; mandatory URL and model restrictions reach the existing controller. Other profile fields, hooks, UI and result workflows remain outside this handoff.

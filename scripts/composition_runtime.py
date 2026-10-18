@@ -457,13 +457,8 @@ def project_profile(plugin: str, selection: str, core: str, engine: str) -> byte
     return projection
 
 
-def external_projection(
-    plugin: Path, python: Path, selection: str, arguments: list[str], inventory: set[str], lock: dict, home: Path, stack
-) -> str:
-    """Select only operator data, snapshot it privately, and preserve cleanup."""
-    schema_path = "schemas/org-profile.schema.yaml"
-    if schema_path not in inventory or stack is None:
-        raise RuntimeError("external profile validation resources are missing; reassemble the reviewed host")
+def selected_profile(plugin: Path, selection: str) -> Path:
+    """Canonical operator selection shared with the public provenance argument."""
     path = Path(selection).expanduser()
     if not path.is_absolute():
         path = plugin / path
@@ -472,6 +467,17 @@ def external_projection(
     path = Path(os.path.abspath(path))
     if path.resolve() != path or not path.is_file() or path.stat().st_nlink != 1:
         raise RuntimeError("external profile must be a singly linked regular file without symlinks")
+    return path
+
+
+def external_projection(
+    plugin: Path, python: Path, selection: str, arguments: list[str], inventory: set[str], lock: dict, home: Path, stack
+) -> str:
+    """Select only operator data, snapshot it privately, and preserve cleanup."""
+    schema_path = "schemas/org-profile.schema.yaml"
+    if schema_path not in inventory or stack is None:
+        raise RuntimeError("external profile validation resources are missing; reassemble the reviewed host")
+    path = selected_profile(plugin, selection)
     if arguments[0] == "score":
         sources = [arg for arg in arguments[1:] if arg not in {"--json", "--yaml", "--"}]
         if len(sources) != 1:
@@ -549,7 +555,7 @@ def organization_arguments(
             forwarded.append(arg)
         index += 1
     if disabled:
-        return forwarded
+        return [*forwarded, "--no-org-profile"] if forwarded[0] in {"scan", "assess"} else forwarded
     if external is not None and not external:
         raise RuntimeError("organization selection requires a nonempty value")
     if preset is not None and not preset:
@@ -570,7 +576,6 @@ def organization_arguments(
     expected = {
         "available": True,
         "schema_version": 1,
-        "commands": ["score"],
         "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
     }
     actual = capabilities.get("organization_config") if isinstance(capabilities, dict) else None
@@ -578,7 +583,23 @@ def organization_arguments(
         type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in expected.items()
     ):
         raise RuntimeError("pinned engine lacks the required public organization configuration interface")
+    commands = actual.get("commands")
+    workflow = forwarded[0]
+    if workflow == "organization-config":
+        workflow = forwarded[forwarded.index("--") + 1] if "--" in forwarded and forwarded[-1] != "--" else "score"
+    if (
+        not isinstance(commands, list)
+        or any(not isinstance(command, str) for command in commands)
+        or "score" not in commands
+        or workflow not in {"score", "scan", "assess"}
+        or workflow not in commands
+        or (workflow in {"scan", "assess"} and actual.get("profile_source_validation") is not True)
+    ):
+        raise RuntimeError("pinned engine lacks the required organization workflow or source validation")
+    provenance = []
     if external is not None:
+        if actual.get("profile_source_validation") is True:
+            provenance = ["--profile-source", str(selected_profile(plugin, external))]
         config = external_projection(plugin, python, external, forwarded, inventory, lock, home, stack)
     else:
         if "org-profile/analyzer-config.yaml" not in inventory:
@@ -588,7 +609,10 @@ def organization_arguments(
         if (
             len(forwarded) < 2
             or forwarded[1] not in {"show", "validate"}
-            or any(arg == "--config" or arg.startswith("--config=") for arg in forwarded[2:])
+            or any(
+                arg in {"--config", "--profile-source"} or arg.startswith(("--config=", "--profile-source="))
+                for arg in forwarded[2:]
+            )
         ):
             raise RuntimeError("select organization-config show or validate")
         return [
@@ -596,6 +620,7 @@ def organization_arguments(
             forwarded[1],
             "--config",
             config,
+            *provenance,
             *(["--preset", preset] if preset else []),
             *forwarded[2:],
         ]
@@ -604,6 +629,7 @@ def organization_arguments(
         "run",
         "--config",
         config,
+        *provenance,
         *(["--preset", preset] if preset else []),
         "--",
         *forwarded,

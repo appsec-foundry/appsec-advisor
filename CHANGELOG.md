@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Maintainers can assemble reproducible staging plugins from pinned local artifacts, package a branded score surface with validated packaged or external organization profiles, and set up an isolated offline Python runtime.
+- Maintainers can assemble reproducible staging plugins from pinned local artifacts, package a branded surface with validated organization profiles for score and full-assessment configuration, and set up an isolated offline Python runtime.
 
 ## 0.6.0-beta.5 (2026-10-17)
 
