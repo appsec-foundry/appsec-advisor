@@ -86,7 +86,7 @@ To reassess after code changes, run `/appsec-advisor:appsec-analyzer` again. Eac
 
 ## AppSec Analyzer
 
-Run the AppSec Analyzer when you take over a repository or want to know where its security stands; no architecture document or existing threat model is needed. The report models components, data flows, and trust boundaries, shows which security controls exist or are missing, and lists findings ordered by risk, each linked to the code, together with abuse cases and remediation guidance.
+Run the [AppSec Analyzer](https://github.com/appsec-foundry/appsec-analyzer) when you take over a repository or want to know where its security stands; no architecture document or existing threat model is needed. The report models components, data flows, and trust boundaries, shows which security controls exist or are missing, and lists findings ordered by risk, each linked to the code, together with abuse cases and remediation guidance.
 
 The assessment sees only the repository and any business context you add, not runtime behavior or production-only controls. Have an AppSec engineer review the findings before you act on them or accept a risk.
 
