@@ -7,99 +7,50 @@
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-blue.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![codecov](https://codecov.io/gh/appsec-foundry/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/appsec-foundry/appsec-advisor)
 
-> ⚠️ **Beta: not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
+> ⚠️ **Beta.** `appsec-advisor` is under active development. Commands, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for application security analysis and review. Its main command, `/appsec-advisor:appsec-analyzer`, performs **repository-based security analysis with a focus on architecture**. It examines code and configuration to assess security controls, implementation weaknesses, and design risks. The resulting Security Assessment ties findings to repository evidence and provides prioritized remediation guidance for developers, architects, and AppSec reviewers.
+`appsec-advisor` is a Claude Code plugin that assesses the security of an application from its repository. It reads code and configuration, builds a model of the architecture, and reports which security controls are in place, which are missing, and what to fix first. Every finding points to the code it is based on.
 
-The analyzer reconstructs components, data flows, and trust boundaries, examines potential threats and attack paths, and checks abuse cases against the implementation. Its architecture model explains how security controls and weaknesses relate across the application.
+The plugin also analyzes planned features and code changes for threats, checks a repository against a security requirements catalog, and provides review tools for CI.
 
-Threat modeling is planned as a separate skill. The analyzer's workflow is a security assessment of the implemented application.
-
-The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
-
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Plugin composition](#plugin-composition-internal-staging) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Product requirements](requirements.md) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Contributing](#contributing)
 
 ---
 
-## Why appsec-advisor?
+## What it does
 
-Use the [Security Assessment](#security-assessment) to understand how an application's security is implemented, where it has gaps, and what to fix first. It connects individual code findings with the architecture and systemic weaknesses that explain them. You can start from a repository without an existing architecture document or threat model.
-
-The assessment helps answer:
+Run the Security Assessment when you take over a repository or want to know where its security stands. You do not need an architecture document or an existing threat model. The report answers:
 
 - Which components, data flows, and trust boundaries make up the application?
-- Which security controls are evidenced, missing, broken, or uncertain?
-- Which implementation weaknesses, design risks, and abuse cases need attention?
-- Which remediation steps should the team prioritize?
+- Which security controls exist, and which are missing, broken, or unclear?
+- Which weaknesses, design risks, and abuse cases need attention?
+- What should the team fix first?
 
-Run an assessment when taking over a repository and again when code or configuration changes. Use its findings and open questions in security architecture reviews and remediation planning. The team supplies design intent and business context, validates findings, and decides which risks to accept.
+The code cannot tell the tool which networks you trust or which data matters most to your business. You can add this as business context, and the assessment treats it as a stated assumption.
 
-Before code exists, the experimental [Threat Analyst](#threat-analyst) prepares the team discussion of a planned feature with threat scenarios, protection assumptions, and open questions. It also reviews single changes and reports evidence-backed findings.
+The assessment only sees the repository and the context you give it. It cannot check runtime behavior or controls that exist only in production. Have an AppSec engineer or security architect review the findings before you act on them or accept a risk.
 
-The code cannot tell the tool which networks you trust or which data is critical to your business. You add that as business context and trust-boundary declarations, and the analysis then treats them as stated assumptions.
-
-Results come as Markdown and YAML, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports. Organizations can add their own requirements and tools without maintaining a fork of the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
-
-### Scope and limitations
-
-The assessment uses evidence from the analyzed repository and supplied context, including configured related-repository models. It cannot verify runtime behavior or production-only controls. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
-
-## Security notes
+## Security and data handling
 
 > [!IMPORTANT]
-> **Treat scanned repositories as untrusted input.** Repository content enters the LLM context and may attempt prompt injection. Untrusted mode is the default; keep it enabled and use a container or VM for third-party or vendor code. See [Security: Untrusted repositories](SECURITY.md#known-issues--untrusted-repositories).
+> **Treat scanned repositories as untrusted input.** Repository content goes into the model context and may contain prompt injection. Untrusted mode is on by default; keep it on, and scan third-party or vendor code in a container or VM. See [Untrusted repositories](SECURITY.md#known-issues--untrusted-repositories).
 
-**Data handling.** Model-backed Claude assessments send selected source, manifests, configuration and supplied business context to Anthropic. Surfaced secrets are masked. These assessments require model-network access and use provider-side prompt caching. Composed offline setup, configuration inspection, local deterministic scoring and saved-result query/export make no engine model calls; a conversational Claude session has its own model usage.
-
-### Output safety
-
-Python renders reports from validated structured data. If a run artifact contains an unmasked secret, the run fails before its outputs are considered publishable.
-
----
-
-## Plugin composition (internal staging)
-
-The new build assembles a Claude Code host plugin with a pinned AppSec Analyzer engine and selected skills. The assembler consumes reviewed local artifacts identified by committed revisions and SHA-256 digests; it does not fetch components during assembly.
-
-| Component | Responsibility in the composed plugin |
-|---|---|
-| Advisor host | Claude entry points, questions, progress display, pinned invocation and organization packaging. |
-| AppSec Analyzer wheel and dependency wheels | Assessment execution, source admission, budgets, ownership, validation, rendering and public result operations. |
-| Selected skill resources | The primary assessment workflow comes from the Analyzer wheel; the current composition also selects `security-score` from the separate skills collection. |
-
-The build selects these components in `components.lock.json`, assembles the plugin, and optionally applies organization branding and supported configuration. After extraction, explicit offline setup installs the bundled engine into a private runtime outside Git checkouts. Installed entries invoke that exact engine through its public interfaces. The selected surface includes `appsec-analyzer` and deterministic `security-score`; adding other skills requires selecting and verifying their dependencies and host bindings.
-
-The composed package has installed Linux offline evidence for setup, configuration, preparation, progress/stop interfaces and saved-result query/export. A full model-backed run through the installed primary entry, real-controller stop/resume, native platform qualification and upgrade/rollback remain open. It is internal staging; the marketplace and the existing runtime have not switched to it. The instructions below describe that existing runtime unless explicitly marked as composition instructions.
-
-See [component assembly and organization packaging](docs/internal-plugin-packaging.md#assemble-the-component-artifacts), the [staging runbook](docs/internal/runbooks/composed-score-staging.md), and the [current implementation evidence](docs/internal/analysis/plan-appsec-advisor-clean-composition-2026-10-18.md#committed-implementation-and-installed-evidence).
+An assessment sends selected source code, manifests, configuration, and any business context you supply to Anthropic. Secrets found in the code are masked. The assessment needs access to `api.anthropic.com` and cannot run air-gapped. Reports are rendered from validated data, and a run fails before publishing anything if an unmasked secret is found in its output.
 
 ## Quick start
 
-This quick start installs the existing marketplace plugin. For an assembled staging package, use the [staging setup procedure](docs/internal/runbooks/composed-score-staging.md#prepare-the-runtime).
-
-Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Security Assessment reference](docs/security-assessment.md).
-
-The assessment does not run on your Claude Code session model. The plugin's controller calls a fixed model per role: a standard assessment uses Sonnet 5.5 for discovery, STRIDE, and judgment, and a thorough one uses Opus for STRIDE and judgment. Without a budget flag, the depth sets a hard budget of 10 USD (quick), 20 USD (standard), or 40 USD (thorough). See [model selection](docs/model-selection.md) and [when to use the latest Sonnet](docs/model-selection.md#when-to-use-the-latest-sonnet).
+You need [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git`.
 
 ### 1. Install the plugin
-
-Add the marketplace and install the plugin. This installs the current release from `main` and needs no checkout. If GitHub SSH access is not configured, run `export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` in your shell before installing or updating to use HTTPS for both the marketplace and plugin downloads:
 
 ```bash
 claude plugin marketplace add appsec-foundry/appsec-advisor
 claude plugin install appsec-advisor@appsec-foundry
 ```
 
-Later releases arrive with `claude plugin update appsec-advisor@appsec-foundry`, which takes effect after a restart. `/appsec-advisor:status --check-updates` compares the core version against the release branch.
+If GitHub SSH access is not set up, run `export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first. Update later with `claude plugin update appsec-advisor@appsec-foundry` and restart Claude Code.
 
-Then start Claude Code from the repository you want to assess:
-
-```bash
-cd /path/to/repository-to-assess
-claude
-```
-
-To run the development branch instead of a release, clone the repository and start Claude Code with the checkout:
+To use the development branch instead, clone it and pass the checkout to Claude Code:
 
 ```bash
 git clone --branch dev https://github.com/appsec-foundry/appsec-advisor.git /path/to/appsec-advisor
@@ -107,101 +58,87 @@ cd /path/to/repository-to-assess
 claude --plugin-dir /path/to/appsec-advisor
 ```
 
-### 2. Configure permissions and run the assessment
+### 2. Run the assessment
 
-Run the one-time permission setup:
+Start Claude Code in the repository you want to assess and allow the commands the assessment needs:
 
 ```text
 /appsec-advisor:check-permissions --update
 ```
 
-The command adds the missing rules, including `Bash(*)`, to this repository's `.claude/settings.local.json`. Without them the assessment stops before it starts, unless your settings set `defaultMode` to `auto` or `bypassPermissions`.
-
-Restart or reload Claude Code, then assess the repository:
+This adds the missing rules, including `Bash(*)`, to the repository's `.claude/settings.local.json`. Restart Claude Code, then run:
 
 ```text
 /appsec-advisor:appsec-analyzer
 ```
 
-The assessment writes `security-assessment.md` and `security-assessment.yaml` to a private directory for this application under your user data directory, for example `~/.local/share/appsec-advisor/assessments/<repo-name>-<hash8>` on Linux; `--output` chooses another directory. Nothing is written into the repository. `/appsec-advisor:status` shows the directory. See [where results are stored](docs/security-assessment.md#where-results-are-stored), including how an earlier assessment in `docs/security` is imported.
+The results (`security-assessment.md` and `security-assessment.yaml`) go to a directory under your user data directory, not into the repository. `/appsec-advisor:status` shows where. Use `--output` to choose another directory.
 
-### 3. Work with the assessment
+An assessment usually takes tens of minutes; thorough runs can take over an hour. The plugin chooses the models itself, independent of your Claude Code session model, and stops at a cost limit: 10 USD for quick, 20 USD for standard, and 40 USD for thorough runs. See [model selection](docs/model-selection.md) and [depth and cost](docs/security-assessment.md#assessment-depth--cost-control).
+
+### 3. Work with the results
 
 ```text
-# Ask about the assessment in plain language
+# Ask questions in plain language
 what are the most critical findings?
-how well is authentication protected?
 what should I fix first?
 
-# Fix findings, accept their risk, or build a remediation plan
+# Fix findings, accept risks, or build a remediation plan
 /appsec-advisor:triage-security-assessment
 
 # Analyze a planned feature or your current changes
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
 /appsec-advisor:analyze-threats --worktree
 
-# Reassess after code changes; the history continues
+# Reassess after code changes
 /appsec-advisor:appsec-analyzer
 ```
 
-Every run is a full assessment, and a new run over a completed one continues its history. Review decisions are stored separately. Run `/appsec-advisor:help` for the complete command list.
+Each run is a full assessment that continues the history of the previous one. Your review decisions are kept. `/appsec-advisor:help` lists all commands.
 
 ## Security Assessment
 
-Run `/appsec-advisor:appsec-analyzer` to get:
+The report contains:
 
 - an architecture model with components, data flows, and trust boundaries;
-- an assessment of security controls, their gaps, and unresolved assumptions;
-- findings ordered by risk and tied to repository evidence;
-- a Weakness Register connecting findings to systemic weaknesses and design risks;
-- abuse cases checked against the code, including your own one-sentence business rules in `docs/security/abuse-cases/`;
-- mitigation guidance and generated diagrams;
-- `security-assessment.md` and `security-assessment.yaml`, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports.
+- the security controls found, their gaps, and open assumptions;
+- findings ordered by risk, each linked to the code;
+- a Weakness Register that groups findings by their underlying cause;
+- abuse cases checked against the code;
+- remediation guidance and diagrams.
 
-The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
+Findings are mapped to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). For LLM and agent applications, the assessment also covers the [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) Top 10. Results can be exported as PDF, HTML, SARIF, Threat Dragon, and pentest tasks.
 
-The [Security Assessment guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
+**Example:** [Standard assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/security-assessment-juice-shop-standard-v0.6.0b5.md). The [examples repository](https://github.com/appsec-foundry/appsec-advisor-examples) also has its diagrams and exports.
 
-**Example:** [Read the standard assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/security-assessment-juice-shop-standard-v0.6.0b5.md). The [examples repository](https://github.com/appsec-foundry/appsec-advisor-examples) also provides its diagrams and exports.
-
-Figure 1a shows the runtime components, data flows, and attack paths identified in OWASP Juice Shop.
+The runtime architecture of Juice Shop with its data flows and attack paths:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1-example-dark.svg">
   <img src="docs/images/figure1-example.svg" alt="Runtime architecture and attack paths in the Juice Shop assessment">
 </picture>
 
-For repositories with a build pipeline, Figure 1b links build inputs and release artifacts to the most severe supply-chain attacks and the relevant controls.
+The build pipeline and the most severe supply-chain attacks on it:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1b-example-dark.svg">
   <img src="docs/images/figure1b-example.svg" alt="Build pipeline and supply-chain attack paths in the Juice Shop assessment">
 </picture>
 
-Figure 2 connects threat actors through example attack routes and the linked weaknesses to the potential business harm.
+Threat actors, their attack routes, and the business harm they can cause:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure2-example-dark.svg">
   <img src="docs/images/figure2-example.svg" alt="Threat actors, attack routes, weaknesses, and business harm in the Juice Shop assessment">
 </picture>
 
-Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. See [assessment depth and cost control](docs/security-assessment.md#assessment-depth--cost-control) for measured costs.
+The [Security Assessment guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
 
 ### Abuse cases
 
-An abuse case describes something an attacker or a user must not be able to do. The plugin ships two kinds:
+An abuse case describes something an attacker or user must not be able to do, for example "a customer must not see another customer's orders". The plugin ships technical attack chains and business rules, and each run checks them against the code. If the code breaks a rule, the run adds a finding or confirms an existing one. If the code does not settle the question, the case is listed as open, not as safe.
 
-- Technical attack chains, for example: inject a script into a page, read the session token, and log in as the victim.
-- Business rules, for example: a customer must not see another customer's orders, and a request must not skip its approval.
-
-Each run finds the code behind these operations and checks whether the rule holds. The result changes the findings:
-
-- The code breaks a rule and no finding covers it yet: the run adds one, for example for an order endpoint that loads an order by its ID without checking who owns it.
-- A finding already covers it: the case is linked to that finding, and a finding whose evidence was ambiguous is shown as verified.
-- Every step of an attack chain holds: its findings can be raised to the impact the case declares, such as Critical for a path to an admin account.
-- The code does not settle the question: §9 lists the case as open, not as safe, and it can become a question for your team.
-
-You can add your own cases. For a rule in one repository, put a YAML file into `docs/security/abuse-cases/`. One sentence and a file-name pattern are enough:
+To add a rule for one repository, put a YAML file into `docs/security/abuse-cases/`:
 
 ```yaml
 schema_version: 2
@@ -213,45 +150,25 @@ abuse_cases:
     scope_qualifier: {path_patterns: ["*expense*"]}
 ```
 
-The next run checks this rule in files such as `ExpenseController.java` or below `expenses/`. [Repository abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases) explains when a case runs and how its result is reported. To apply cases to every repository of your organization, add them to an organization profile. [Abuse cases in organization profiles](docs/org-profiles.md#abuse-cases) also covers technical attack chains, turning off built-in cases, and failing a CI run on a confirmed case.
+`/appsec-advisor:abuse-cases` lists all cases and their results. See [repository abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases) and, for organization-wide cases, [organization profiles](docs/org-profiles.md#abuse-cases).
 
-`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing assessment as context or, with `--isolated`, without it. `/appsec-advisor:appsec-analyzer --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing assessment. `/appsec-advisor:ask-security-assessment` reports how each case turned out.
+### Several repositories
 
-### Assess multiple repositories
-
-This mode is experimental: expect rough edges, and review its results more closely than those of a single-repository scan.
-
-To assess several local checkouts as one system, repeat `--repo` in the headless runner. Every selected repository is scanned freshly, and the run produces one combined assessment with a shared architecture model, report, and Figure 1. Run it from the plugin checkout and replace the example paths with your checkouts and report location:
+*Experimental.* To assess a system split across repositories as one, repeat `--repo` in the headless runner:
 
 ```bash
 ./scripts/run-headless.sh \
   --repo /repos/frontend \
   --repo /repos/backend \
-  --repo /repos/worker \
   --output /reports/order-system \
   --hard-budget 50
 ```
 
-A combined run has these requirements:
-
-- Select 2–16 top-level Git checkouts that do not contain each other.
-- Without `--output`, the results go to one shared `combined-<hash8>` directory of the selection; an explicit `--output` must lie outside every selected checkout.
-- Set `--hard-budget`. The controller reserves part of the budget for required analysis and report completion.
-
-Components, findings and exports name the repository they come from, for example `Order API [backend]` and `backend/src/orders.ts:42`. The order of the `--repo` flags does not matter, and no repository takes precedence. A connection between repositories appears only when source evidence supports it, and repository membership never creates a trust boundary. Like a single-repository run, a combined run supports `--resume` of an interrupted run whose sources and settings are unchanged and `--rebuild` to start over. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system) for details and limits.
-
-To keep separate reports instead, run one assessment per repository with its own `--output` directory. Configure `docs/related-repos.yaml` in a repository to include existing dependency models as [cross-repository context](docs/security-assessment.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code.
+The result is one report with a shared architecture model. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system). To keep separate reports and still use the models of related repositories as context, see [cross-repository context](docs/security-assessment.md#cross-repo-context).
 
 ## Threat Analyst
 
-Run `/appsec-advisor:analyze-threats` before or while you build a feature. It reports:
-
-- likely threats to the planned feature or the selected change;
-- recommended controls or design choices, with their trade-offs;
-- the security requirements that apply to it;
-- assumptions it made and questions the team needs to answer.
-
-The report is advisory and does not change `security-assessment.yaml`. The Threat Analyst is *experimental*.
+*Experimental.* `/appsec-advisor:analyze-threats` looks at a planned feature or a code change and reports likely threats, recommended controls with their trade-offs, applicable requirements, and questions the team needs to answer. It is advisory and does not change the assessment.
 
 | When | Command |
 |---|---|
@@ -259,179 +176,96 @@ The report is advisory and does not change `security-assessment.yaml`. The Threa
 | During implementation | `/appsec-advisor:analyze-threats --worktree --question "Can a tenant read another tenant's export?"` |
 | Before merging | `/appsec-advisor:analyze-threats --base <target-branch> --head HEAD` |
 
-Add `--explore` when the answer depends on code you cannot name: the analysis then reads a redacted copy of the tracked files, without tools that run commands or write files. The [Threat Analyst guide](docs/threat-analyst.md) covers exploration, staged changes, saved answers, the [advisory CI job](docs/threat-analyst.md#advisory-ci), and limitations.
+See the [Threat Analyst guide](docs/threat-analyst.md).
 
 ## Requirements Audit
 
-`/appsec-advisor:audit-security-requirements` checks the repository against an AppSec requirements catalog. It provides a faster control assessment for pull-request gates, compliance dashboards, and audit preparation.
+`/appsec-advisor:audit-security-requirements` checks the repository against a security requirements catalog. It is faster than a full assessment and suits pull-request gates and audit preparation.
 
 ```text
-# Use the configured catalog
 /appsec-advisor:audit-security-requirements
-
-# Use a catalog URL for this run
 /appsec-advisor:audit-security-requirements --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
-If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or use the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md) for setup and options.
+Without a catalog of your own, start from `data/appsec-requirements-fallback.yaml` or the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md).
 
-## Additional developer tools
+## Developer tools
 
 | Tool | Use |
 |---|---|
-| [Secure-coding baseline](https://github.com/appsec-foundry/aiscb) | Install, update, verify, or remove secure-coding instructions with `install-baseline`, `update-baseline`, `verify-baseline`, and `remove-baseline`. |
-| [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Add security guidance while writing security-sensitive code. |
-| [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Embed change review in Claude Code or an Agent SDK workflow. |
-| [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Review an interactive diff against the requirements catalog. |
-| [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | Run the same change review in CI or other automation. |
+| [Secure-coding baseline](https://github.com/appsec-foundry/aiscb) | Add secure-coding rules to Claude Code with `install-baseline`; `update-baseline`, `verify-baseline`, and `remove-baseline` manage them. |
+| [Security score](#security-score) | Quick 0–100 score from the scanners alone, without a model. |
+| [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Security hints while you write security-sensitive code. |
+| [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Security review of a code change in Claude Code or an Agent SDK workflow. |
+| [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Check a diff against the requirements catalog. |
+| [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | The same change review for CI. |
 
-See the [developer tools guide](docs/dev-security-helper-usage.md) for commands and configuration.
+See the [developer tools guide](docs/dev-security-helper-usage.md).
 
 ### Security score
 
-The security score checks a repository using the scanner layer alone, without running the full Security Assessment. It returns a score from 0 to 100, `undetermined` if too few checks apply, or `incomplete` without a score if a required scanner fails or emits invalid output. Findings and diagnostics remain visible in every verdict. You need Python 3.10+, PyYAML, jsonschema, and git.
-
-```text
-/appsec-advisor:security-score
-```
-
-For CI or other automation, run the script from a plugin checkout:
+`/appsec-advisor:security-score` gives a score from 0 to 100 based on the deterministic scanners, without running the full assessment. It is a quick indicator, not a risk rating. For CI, run the script from a plugin checkout:
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path/to/project
+python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path/to/project --json
 ```
 
-Both accept the same options. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output validated against `schemas/security-score.schema.yaml`. Exit codes are 0 for a score, 2 for insufficient coverage, and 1 for incomplete execution or an error. Compare commits only with matching scoring versions, catalog fingerprints, and applicable coverage in `comparability`. Findings without a scored baseline and findings excluded by severity policy are disclosed separately.
+`scripts/analyzers/repo_scan.py` lists the scanner findings, endpoints, and technologies. Both scripts accept a local directory or an HTTPS GitHub or GitLab URL; see `--help`.
 
-### Deterministic scan script
+### Report a failed run
 
-Run the scanner for findings, endpoints, and detected technologies without running the full Security Assessment. You need Python 3.10+, PyYAML, jsonschema, and git.
-
-```bash
-python3 /path/to/appsec-advisor/scripts/analyzers/repo_scan.py --repo /path/to/project
-```
-
-`--repo` accepts a local directory or an HTTPS GitHub or GitLab Git URL. Use `--high` to show only High and Critical findings, or `--json scan.json` to save a JSON report. See `--help` for scan selection.
-
-## Report a failed run
-
-Investigate a suspected plugin error and prepare a minimal issue draft with:
-
-```text
-/appsec-advisor:report-error
-```
-
-The skill checks the plugin cause locally and distinguishes source inspection from an executed neutral reproduction. It shows the complete issue draft before asking for permission to publish it to `appsec-foundry/appsec-advisor`. Raw logs, project source, findings, and diagnostic attachments are excluded. Review the draft for remaining internal names; your GitHub account remains visible as the issue author. Publication requires an existing GitHub CLI login.
-
-Use `/appsec-advisor:report-error --bundle-only` for the local diagnostic archive workflow. Log scrubbing is best effort; inspect the entire archive before sharing it manually. Unattended scans never ask questions or publish issues.
+`/appsec-advisor:report-error` checks a suspected plugin error locally and drafts a GitHub issue without logs, source code, or findings. You see the full draft and decide whether to publish it.
 
 ## Enterprise rollout
 
-AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
+AppSec and platform teams can add their own requirements, defaults, skills, hooks, and MCP servers. The [packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds an internal plugin from a pinned upstream release, so you do not need to maintain a fork.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/orgpackaging-dark.svg">
   <img src="docs/images/orgpackaging.svg" alt="Example rollout from an upstream release to an Acme-branded plugin">
 </picture>
 
-See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organization Profiles](docs/org-profiles.md). Composed staging packages use the supported configuration subset documented in the packaging guide; checkout packages retain the broader existing profile surface.
+See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organization Profiles](docs/org-profiles.md).
 
 ## Documentation
 
 | Goal | Start here |
 |---|---|
 | Run or configure a security assessment | [Security Assessment](docs/security-assessment.md) |
-| Analyze a planned feature or selected code change | [Threat Analyst](docs/threat-analyst.md) |
+| Analyze a planned feature or code change | [Threat Analyst](docs/threat-analyst.md) |
 | Configure models, cost, or logging | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
-| Build a plugin from pinned engine and skill artifacts | [Component packaging](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) and [staging operation](docs/internal/runbooks/composed-score-staging.md) |
-| Run an existing plugin checkout without interaction | [Non-interactive Mode](docs/headless-mode.md) |
-
-## Project structure
-
-This repository contains the host composition tools and the retained plugin implementation. In a composed package, the pinned Analyzer wheel owns assessment execution and its deterministic controls; Advisor owns host interaction and packaging. The retained pipeline uses agents for discovery and analysis, with deterministic Python for validation, rendering, exports and release gates. Schemas define the exchanged data.
-
-The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `templates/`, and `tests/`. See the [repository layout](CONTRIBUTING.md#repository-layout) for the complete map and the tests required for each kind of change.
+| Run without interaction, for example in CI | [Non-interactive Mode](docs/headless-mode.md) |
+| Product requirements | [requirements.md](requirements.md) |
 
 ## Related projects
 
-### Companion repositories
-
-- [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) provides a launcher and CI templates for unattended assessments. It provisions the plugin and target, then delegates the assessment to this plugin's headless runner.
-- [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
-- [aiscb](https://github.com/appsec-foundry/aiscb) contains the secure-coding rules bundled by the plugin.
+- [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools): launcher and CI templates for unattended assessments.
+- [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template): builds organization-specific plugin packages.
+- [aiscb](https://github.com/appsec-foundry/aiscb): the secure-coding rules bundled with the plugin.
 
 ### Comparable tools
 
-| Project | Primary scope | Relation to `appsec-advisor` |
+| Project | Focus | Difference |
 |---|---|---|
-| [tachi](https://github.com/davidmatousek/tachi) | Multi-agent analysis of an architecture description. | Tachi treats the description as its primary input; the analyzer assesses the architecture evidenced in code and configuration. |
-| [stride-gpt](https://github.com/mrwadams/stride-gpt) | Provider-independent STRIDE analysis from a description or codebase. | `stride-gpt` supports several model providers; `appsec-advisor` runs in Claude Code and adds schema validation and stable finding IDs. |
-| [OWASP pytm](https://github.com/OWASP/pytm) | Threat models authored and maintained as Python code. | pytm supports explicitly authored threat models; the analyzer assesses security architecture and weaknesses in an existing implementation. |
-| [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) | Visual threat modeling and editable data-flow diagrams. | The assessment's architecture and findings can be exported to Threat Dragon for further work. |
-| [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) | Collaborative threat-modeling workshops on shared diagrams. | ThreatAtlas records the workshop model; `appsec-advisor` provides repository-based assessments to inform those reviews. |
-| [OWASP Precogly](https://github.com/precogly/precogly) | Program-level threat modeling, libraries, and compliance traceability. | Precogly acts as a maintained system of record; `appsec-advisor` assesses selected repositories and produces an architecture and security report. |
-| [Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security) | Enterprise scanning for exploitable codebase vulnerabilities. | Claude Security focuses on implementation flaws; `appsec-advisor` also identifies architectural gaps without a single vulnerable line. |
+| [tachi](https://github.com/davidmatousek/tachi) | Threat analysis of an architecture description | `appsec-advisor` derives the architecture from code and configuration. |
+| [stride-gpt](https://github.com/mrwadams/stride-gpt) | STRIDE analysis from a description or codebase, several model providers | `appsec-advisor` runs in Claude Code and validates its output against schemas. |
+| [OWASP pytm](https://github.com/OWASP/pytm) | Threat models written as Python code | `appsec-advisor` assesses an existing implementation. |
+| [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) | Visual threat modeling | Assessments can be exported to Threat Dragon. |
+| [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) | Collaborative threat-modeling workshops | Assessments can be imported as a starting point via the Threat Dragon export. |
+| [OWASP Precogly](https://github.com/precogly/precogly) | Program-level threat modeling and compliance tracking | `appsec-advisor` assesses individual repositories. |
+| [Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security) | Scanning for exploitable vulnerabilities | `appsec-advisor` also finds architectural gaps that are not tied to a single line of code. |
 
-The Threat Dragon export carries architecture and findings from an assessment into Threat Dragon and ThreatAtlas.
+## What's new in 0.6.0-beta.5
 
-## What's new
+- **Abuse-case catalog.** Built-in business rules, such as "users must not see other users' data", alongside technical attack chains. You can add your own in one sentence each.
+- **`/appsec-advisor:abuse-cases`** lists all abuse cases with their results.
+- **Threat Analyst** checks a single abuse case against your code with `--abuse-case <ID>` and uses the existing assessment as context.
+- **Several repositories, one report** with repeated `--repo` in headless mode.
+- **Report improvements.** Critical findings are grouped by root cause, diagrams show trust boundaries more clearly, and secrets are masked in every output.
 
-Highlights from the 0.6.0 beta releases.
-
-### What's new in 0.6.0-beta.5
-
-- **New abuse-case catalog.** The built-in catalog now covers business misuse, such as viewing other users' data or skipping an approval, alongside technical attack chains. Runs check both by default, and you can add your own cases as one sentence each. Reworked rules keep unrelated findings from inflating severity and report unchecked cases. See [Abuse cases](docs/security-assessment.md#abuse-cases-docssecurityabuse-cases).
-- **New `/appsec-advisor:abuse-cases` command.** It lists all abuse cases with their result and explains each one step by step.
-- **Reworked Threat Analyst.** It checks a single abuse case against your code (`--abuse-case <ID>`), rates each attack step with evidence, and uses your existing assessment as context. See [Threat Analyst](#threat-analyst).
-- **Several repositories, one assessment.** Repeat `--repo` in headless mode to assess a system split across repositories in a single report. See [Assess multiple repositories](#assess-multiple-repositories).
-- **Report improvements.** Critical findings are grouped by root cause with the fix for each group, the diagrams show trust boundaries more clearly, and secrets from your code are masked in every output.
-- **More accurate analysis.** Reworked scanners fix missed detections and false positives, and standard and thorough runs use Sonnet 5.5.
-
-### What's new in 0.6.0-beta.4
-
-- Interactive runs propose the application's use case and its worst plausible business impact for confirmation, and save the answers in `docs/security/business-context.md` for later analyses. The answers keep business-critical assets in scope and inform finding priority.
-
-  ![Use case question for OWASP Juice Shop](docs/images/business-context-use-case.png)
-
-  ![Business impact question for OWASP Juice Shop](docs/images/business-context-impact.png)
-
-- `scripts/analyzers/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories; both it and `/appsec-advisor:security-score` support local repositories and HTTPS GitHub/GitLab URLs, with YAML or JSON exports.
-- Architecture and attack-route diagrams show technology, authentication evidence, attacker prerequisites, weaknesses, impact, and linked findings, with detail views for large architectures. Existing models need a new analysis to populate missing authentication evidence.
-- Malicious insiders and attackers holding a user's device now require opt-in through `.appsec/actors.yaml` or the organization profile; otherwise, they are listed as not assessed.
-- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` keeps diagnostics local.
-- Fixes restore Config and IaC findings in reports and improve authentication checks, severity consistency, and run reliability. Security Score withholds a score when a required scanner fails or returns invalid output.
-
-### What's new in 0.6.0-beta.3
-
-- Redesigned architecture diagrams show actors, services, assets, data flows, trust boundaries, weaknesses, and attack paths while preserving login and privilege requirements. Worst-case scenario tables show attack-path verification status.
-- Management and completion summaries highlight up to three open threat-modeling questions, linked to findings, for assumptions the code cannot settle.
-- Headless runs show live progress, token use, and cost; `--soft-budget` warns about projected overruns without stopping an active run.
-- `/appsec-advisor:repo-profile` inspects repository size, languages, build manifests, and tracked-versus-untracked content without model calls or network access.
-- Baseline installation and updates verify signed releases and checksums.
-- Source scans cover executable NoSQL predicates and input-driven code or template compilation, alongside fixes to run recovery, reports, and cost tracking.
-
-### What's new in 0.6.0-beta.2
-
-- Findings name violated requirements, mitigations quote the relevant blueprint sections, and the Management Summary states compliance and failed requirements.
-- `/appsec-advisor:security-score` provides a scanner-only score from 0 to 100; `/appsec-advisor:status` shows installed versions, skills, profile, and configuration, with update checks through `--check-updates`.
-- `/appsec-advisor:authnz-review` exports pentest tasks with discovered routes as the endpoint catalog; source scans flag unchecked LLM output reaching rendering, interpreters, or privileged actions.
-- `/appsec-advisor:update-baseline` refreshes installed secure-coding baselines, including organization-provided sources.
-- Fixes improve run recovery, business-context handling, and exports.
-
-### What's new in 0.6.0-beta.1
-
-- Runs support only full, rebuild, and rerender; use `--full` to reassess changed code while preserving report history. Reference runs reduced analysis costs by 39.8% at quick depth and 26.8% at thorough depth.
-- Trust boundaries appear in diagrams and link to crossing findings. Optional business context, collected interactively or through `--context`, keeps named sensitive assets in scope and informs finding impact and priority.
-- `install-baseline`, `verify-baseline`, and `remove-baseline` manage the [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb), including CI enforcement; `/appsec-advisor:help` lists available commands.
-- Organization profiles can ship custom skills and baselines, configure the session banner, and disable individual skills.
-- `--formats threatdragon` adds alpha Threat Dragon v2 exports for Threat Dragon and OWASP ThreatAtlas.
-- Fixes improve analysis coverage, run recovery, and report consistency.
-
-See the [full changelog](CHANGELOG.md) for all changes.
+See the [changelog](CHANGELOG.md) for all changes.
 
 ## Contributing
 
-Development happens on [`dev`](../../tree/dev). Branch from it and target it with your pull request; `main` contains tagged releases.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and repository conventions. Read [AGENTS.md](AGENTS.md) before changing runtime behavior, schemas, prompts, permissions, cleanup behavior, or report output. Report vulnerabilities through [SECURITY.md](SECURITY.md).
+Development happens on [`dev`](../../tree/dev). Branch from it and open your pull request against it; `main` holds tagged releases. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the [repository layout](CONTRIBUTING.md#repository-layout). Read [AGENTS.md](AGENTS.md) before changing runtime behavior, schemas, prompts, or report output. Report vulnerabilities through [SECURITY.md](SECURITY.md).
