@@ -1,14 +1,28 @@
 # Internal plugin packaging
 
-The organization packager accepts an upstream checkout or an [assembled staging tree](#package-an-assembled-staging-tree). The [offline composition contract](internal/contracts/plugin-composition.md) defines staging integrity, provenance and runtime setup. Staging output is unqualified and does not replace the current plugin runtime.
+Build the new composition from a pinned Analyzer wheel, dependency wheels, selected skills and an Advisor host artifact, then apply organization branding with the existing packager. The packager also retains its upstream-checkout path. The [composition contract](internal/contracts/plugin-composition.md) defines artifact integrity, provenance and runtime boundaries. The [implementation evidence](internal/analysis/plan-appsec-advisor-clean-composition-2026-10-18.md#committed-implementation-and-installed-evidence) records the current Linux offline replay; staging is not a replacement release.
 
 Build a company-branded Claude Code plugin so developers run your namespace with your defaults:
 
 ```text
-/acme-appsec:create-threat-model
+/acme-appsec:appsec-analyzer
 ```
 
-The package uses the upstream analysis code with your plugin name, org profile, default preset, and optional restrictions on included skills and hooks. See the [org profile reference](org-profiles.md) for profile fields.
+The selected skills determine the available commands. In the current two-entry composition, the primary assessment instructions come from the Analyzer wheel and `security-score` comes from the separate skills collection. Branding changes the host namespace and configuration while retaining the selected engine and skill payloads. The broader [org profile reference](org-profiles.md) also covers checkout packages; composed packages admit only the subset described below.
+
+## Assemble the component artifacts
+
+Prepare reviewed local artifacts from committed component revisions: an Advisor host ZIP, the Analyzer wheel, its complete dependency-wheel closure and any selected skill ZIPs. This step does not automatically build or download them from neighboring repositories. Record exact revisions, versions, licenses, SHA-256 digests, required capabilities and source-to-target resource mappings in a selection conforming to [the component lock schema](../schemas/components-lock.schema.json). Reuse unchanged verified artifacts.
+
+For the primary entry, select `appsec-analyzer` in `skill_bindings`, the engine-owned `SKILL.md`, `claude-code.md` and `business-context.md`, and the host bootstrap and progress renderer. Assembly retains the engine entry as `WORKFLOW.md` and generates the Claude invocation separately. Selecting `security-score` additionally requires its portable workflow resources and dependency declaration. The [composition contract](internal/contracts/plugin-composition.md#primary-entry-source-checkpoint) gives the ownership and capability checks.
+
+Run the existing assembler from the Advisor checkout with its existing Python dependencies. The output directory must not exist; its parent must exist. Replace the paths with the reviewed selection and artifact directory:
+
+```bash
+python3 scripts/compose_plugin.py --lock /packaging/components.lock.json --artifacts /packaging/artifacts --output /packaging/assembly
+```
+
+Assembly verifies the inputs and emits a staging ZIP, checksums, notices and component inventory. It does not install the engine, invoke models or fetch dependencies. Verify and extract the ZIP into a separate staging input directory, then apply the organization package step below. Do not pass the assembler's output directory containing the ZIP directly as `--staging`; that option requires the extracted plugin tree.
 
 ## Package an assembled staging tree
 
@@ -20,17 +34,17 @@ python3 scripts/package_internal_plugin.py --staging /staging/extracted-plugin -
 
 `--staging` replaces `--source`. The build and archive directories must be separate from both inputs, and the archive directory must be outside the build. Branding, description and information-URL overrides apply to host outputs. Package-policy skill selection works on the assembled surface, including a score-only package without the legacy primary skill. Organization-added skills, hooks and MCP declarations use the existing profile mechanisms and surface inventory. Disabled skills are removed from staging packages, with their reasons retained in configuration. The generated README lists the selected commands and explicit runtime setup; `--readme` is unavailable on this path.
 
-Staging profiles separate Advisor host settings from the engine-only projection. The selected host and Analyzer must be reassembled with the public `organization_config` version-1 interface; packaging refuses older pins instead of patching them. The current score projection accepts base-mode presets and `policy.disable_opus` / `policy.url_allowlist`; score has no model calls or assessment depth, while a nonempty URL allowlist restricts remote Git targets before retrieval. Missing presets, incompatible core versions, malformed policy and unsupported fields remain build errors even with `--skip-validation`. Requirements, data/approval restrictions, context, report branding, baseline enforcement, actors, abuse cases, analyst/coach settings and additional preset fields still require the existing `--source` path. External runtime score profiles are supported through the [staging procedure](internal/runbooks/composed-score-staging.md#select-an-external-score-profile); broader profile fields still fail explicitly.
+Staging profiles separate Advisor host settings from the engine-only projection. The selected host and Analyzer must be reassembled with the public `organization_config` version-1 interface; packaging refuses older pins instead of patching them. The projection accepts base-mode presets and `policy.disable_opus` / `policy.url_allowlist`. Engines declaring `scan` and `assess` in `organization_config.commands` and `profile_source_validation: true` dispatch these settings to full assessments as well as score. Presets seed assessment depth; explicit CLI depth wins. The primary binding retains its documented depth budgets, explicit budget precedence and mandatory policy. Score has no model calls or assessment depth. A nonempty URL allowlist restricts remote Git targets before retrieval. Missing presets, incompatible core versions, malformed policy and unsupported fields remain build errors even with `--skip-validation`. Requirements, data/approval restrictions, context, report branding, baseline enforcement, actors, abuse cases, analyst/coach settings and additional preset fields still require the existing `--source` path. External runtime profiles use the same supported fields and [selection procedure](internal/runbooks/composed-score-staging.md#select-an-external-score-profile); broader profile fields still fail explicitly.
 
 A selected host `config.json` keeps its display pricing, host logging and compatible default-preset choice; these values do not configure engine spending or logs. Unmapped global settings, including external context, baseline and source-config skill toggles, fail explicitly. Profile-based skill toggles retain physical exclusion. See the [dispatch contract](internal/contracts/plugin-composition.md#organization-configuration-dispatch) for the exact ownership and selection rules.
 
 The output contains a normalized branded tarball and checksum. `organization-source/` retains the original lock and component inventory; the delivered inventory hashes the final surface. Engine wheels, retained engine resources, portable skill resources and the bootstrap remain unchanged. The [composition contract](internal/contracts/plugin-composition.md#organization-packaging-boundary) explains delivery ownership and the removal of bindings for excluded skills.
 
-Extract the branded archive and use the [staging setup procedure](internal/runbooks/composed-score-staging.md#prepare-the-runtime), substituting the organization package directory. Session-only loading uses the branded namespace, such as `/team-appsec:security-score`. Packaging does not install an engine, invoke a model or start an MCP server.
+Extract the branded archive and use the [staging setup procedure](internal/runbooks/composed-score-staging.md#prepare-the-runtime), substituting the organization package directory. Session-only loading uses the branded namespace, such as `/team-appsec:appsec-analyzer` and `/team-appsec:security-score` when selected. Explicit setup installs the bundled engine offline; the primary entry then uses public preparation, lifecycle, query and export operations. Packaging itself does not install an engine, invoke a model or start an MCP server. Installation and deterministic replay do not establish complete assessment or native-platform qualification.
 
 ## Quick start
 
-This is the shortest local loop. Run it in an empty working directory. No CI, no tarball.
+The remaining quick start and numbered rollout steps describe the existing `--source` checkout package, including its broader profile fields and retained commands. They do not assemble the Analyzer wheel or portable skill artifacts. For the new composition, use the assembly and `--staging` steps above, followed by the staging runbook. Run this checkout-only local loop in an empty working directory; it needs no CI or tarball.
 
 **1. Set the versions used below.**
 

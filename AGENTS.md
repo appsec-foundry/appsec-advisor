@@ -1,6 +1,14 @@
 # AGENTS.md
 
-`appsec-advisor` is a Claude Code plugin for code-derived STRIDE threat modeling. Its main skill is [appsec-analyzer](skills/appsec-analyzer/SKILL.md). Agents handle discovery and prose; deterministic Python owns validation, rendering, exports, orchestration, and release gates. Prefer deterministic threat emitters. When uncertain, preserve the deterministic pipeline and make the LLM do less.
+`appsec-advisor` is a Claude Code host plugin for repository-based security assessment. The new composition build selects a pinned AppSec Analyzer wheel, dependency wheels and skill artifacts. Its primary assessment workflow is Analyzer-owned; the generated Advisor entry binds it to the installed engine. The existing [appsec-analyzer skill](skills/appsec-analyzer/SKILL.md) and pipeline remain the current marketplace runtime until replacement is qualified. Prefer deterministic threat emitters and coordination; preserve the deterministic pipeline and make the LLM do less.
+
+## Composition boundary
+
+For composition work, start with the [composition contract](docs/internal/contracts/plugin-composition.md), [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts), [staging runbook](docs/internal/runbooks/composed-score-staging.md) and [current handoff](docs/internal/analysis/plan-appsec-advisor-clean-composition-2026-10-18.md#current-session-handoff). Advisor owns assembly, branding, Claude interaction and display. Analyzer owns assessment execution, source admission, budgets, ownership, saved decisions, validation, rendering and public lifecycle/result operations. The current selected entries are `appsec-analyzer` from the engine wheel and `security-score` from the skills collection; retained skills are not automatically composed or qualified.
+
+Change the responsible component producer on its development branch. Build committed inputs and select immutable artifact revisions and hashes through the existing assembler; do not patch an installed wheel, copy engine implementation into the host, discover sibling checkouts at runtime or add a second controller. Preserve engine-owned instruction bytes and provenance. Host consumers use public operations; the engine chooses private feed locations, and deterministic code handles waiting and progress polling. Packaging and runtime setup remain explicit separate steps.
+
+Reuse the recorded source and installed evidence. Documentation-only work does not require rebuilding artifacts or rerunning application checks. Distinguish the installed Linux offline surface from the still-missing complete primary assessment, real-controller stop/resume and release/platform qualification. Preserve existing workflows and stored user decisions until their replacements meet the plan's evidence or approval conditions. The change map below also covers the retained pipeline; its private scripts are not public interfaces for new host consumers.
 
 ## Before changing files
 
@@ -113,7 +121,8 @@ Use these entry points for navigation; `check_specs.py` and the bindings identif
 | Cleanup and preserved state | [Cleanup whitelist](docs/internal/contracts/cleanup-whitelist.md), [audit artifacts](docs/internal/contracts/audit-artifacts.md) |
 | Permissions | [Permission coverage](data/required-permissions.yaml), [permission tests](tests/test_check_permissions.py) |
 | Target-specific fixture data | [Target vocabulary](data/test-target-vocabulary.yaml), [neutrality checks](tests/test_check_target_specificity.py) |
-| Organization packaging | [Profile schema](schemas/org-profile.schema.yaml), [profile invariants](docs/internal/contracts/org-profile-invariants.md) |
+| Component assembly and installed invocation | [Assembler](scripts/compose_plugin.py), [bootstrap](scripts/composition_runtime.py), [composition contract](docs/internal/contracts/plugin-composition.md), [staging runbook](docs/internal/runbooks/composed-score-staging.md) |
+| Organization packaging | [Packager](scripts/package_internal_plugin.py), [packaging guide](docs/internal-plugin-packaging.md), [Profile schema](schemas/org-profile.schema.yaml), [profile invariants](docs/internal/contracts/org-profile-invariants.md) |
 | Plugin distribution | [Marketplace manifest](.claude-plugin/marketplace.json), [installation steps](README.md#1-install-the-plugin) |
 | Secure-coding baseline | [Baseline scripts](scripts/baseline/), [configuration](config.json) |
 | Run state and liveness | [Status runbook](docs/internal/runbooks/checking-run-status.md), [status helper](scripts/runtime/appsec_status.py) |

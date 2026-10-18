@@ -17,7 +17,7 @@ Threat modeling is planned as a separate skill. The analyzer's workflow is a sec
 
 The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Product requirements](requirements.md) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Plugin composition](#plugin-composition-internal-staging) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Product requirements](requirements.md) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
 
 ---
 
@@ -49,7 +49,7 @@ The assessment uses evidence from the analyzed repository and supplied context, 
 > [!IMPORTANT]
 > **Treat scanned repositories as untrusted input.** Repository content enters the LLM context and may attempt prompt injection. Untrusted mode is the default; keep it enabled and use a container or VM for third-party or vendor code. See [Security: Untrusted repositories](SECURITY.md#known-issues--untrusted-repositories).
 
-**Data handling.** Source, manifests, and configuration for analyzed components are sent to Anthropic. Surfaced secrets are masked. The plugin requires `api.anthropic.com`, cannot run air-gapped, and uses provider-side prompt caching.
+**Data handling.** Model-backed Claude assessments send selected source, manifests, configuration and supplied business context to Anthropic. Surfaced secrets are masked. These assessments require model-network access and use provider-side prompt caching. Composed offline setup, configuration inspection, local deterministic scoring and saved-result query/export make no engine model calls; a conversational Claude session has its own model usage.
 
 ### Output safety
 
@@ -57,7 +57,25 @@ Python renders reports from validated structured data. If a run artifact contain
 
 ---
 
+## Plugin composition (internal staging)
+
+The new build assembles a Claude Code host plugin with a pinned AppSec Analyzer engine and selected skills. The assembler consumes reviewed local artifacts identified by committed revisions and SHA-256 digests; it does not fetch components during assembly.
+
+| Component | Responsibility in the composed plugin |
+|---|---|
+| Advisor host | Claude entry points, questions, progress display, pinned invocation and organization packaging. |
+| AppSec Analyzer wheel and dependency wheels | Assessment execution, source admission, budgets, ownership, validation, rendering and public result operations. |
+| Selected skill resources | The primary assessment workflow comes from the Analyzer wheel; the current composition also selects `security-score` from the separate skills collection. |
+
+The build selects these components in `components.lock.json`, assembles the plugin, and optionally applies organization branding and supported configuration. After extraction, explicit offline setup installs the bundled engine into a private runtime outside Git checkouts. Installed entries invoke that exact engine through its public interfaces. The selected surface includes `appsec-analyzer` and deterministic `security-score`; adding other skills requires selecting and verifying their dependencies and host bindings.
+
+The composed package has installed Linux offline evidence for setup, configuration, preparation, progress/stop interfaces and saved-result query/export. A full model-backed run through the installed primary entry, real-controller stop/resume, native platform qualification and upgrade/rollback remain open. It is internal staging; the marketplace and the existing runtime have not switched to it. The instructions below describe that existing runtime unless explicitly marked as composition instructions.
+
+See [component assembly and organization packaging](docs/internal-plugin-packaging.md#assemble-the-component-artifacts), the [staging runbook](docs/internal/runbooks/composed-score-staging.md), and the [current implementation evidence](docs/internal/analysis/plan-appsec-advisor-clean-composition-2026-10-18.md#committed-implementation-and-installed-evidence).
+
 ## Quick start
+
+This quick start installs the existing marketplace plugin. For an assembled staging package, use the [staging setup procedure](docs/internal/runbooks/composed-score-staging.md#prepare-the-runtime).
 
 Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Security Assessment reference](docs/security-assessment.md).
 
@@ -316,7 +334,7 @@ AppSec and Platform teams can supply organization-specific requirements, default
   <img src="docs/images/orgpackaging.svg" alt="Example rollout from an upstream release to an Acme-branded plugin">
 </picture>
 
-See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organization Profiles](docs/org-profiles.md).
+See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organization Profiles](docs/org-profiles.md). Composed staging packages use the supported configuration subset documented in the packaging guide; checkout packages retain the broader existing profile surface.
 
 ## Documentation
 
@@ -326,11 +344,12 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Analyze a planned feature or selected code change | [Threat Analyst](docs/threat-analyst.md) |
 | Configure models, cost, or logging | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
+| Build a plugin from pinned engine and skill artifacts | [Component packaging](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) and [staging operation](docs/internal/runbooks/composed-score-staging.md) |
 | Run an existing plugin checkout without interaction | [Non-interactive Mode](docs/headless-mode.md) |
 
 ## Project structure
 
-Agents inspect the repository and perform the security analysis. Deterministic Python validates structured artifacts, renders reports, generates exports, and enforces release gates. Schemas define the data exchanged between pipeline stages.
+This repository contains the host composition tools and the retained plugin implementation. In a composed package, the pinned Analyzer wheel owns assessment execution and its deterministic controls; Advisor owns host interaction and packaging. The retained pipeline uses agents for discovery and analysis, with deterministic Python for validation, rendering, exports and release gates. Schemas define the exchanged data.
 
 The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `templates/`, and `tests/`. See the [repository layout](CONTRIBUTING.md#repository-layout) for the complete map and the tests required for each kind of change.
 
