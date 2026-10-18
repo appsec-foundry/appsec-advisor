@@ -237,7 +237,24 @@ def test_update_moves_only_commit_pins_to_the_remote_branch_head(inputs, remote_
 def test_wheel_download_refuses_pins_without_matching_pypi_identity(inputs, monkeypatch, field, value):
     _, _, _, selection, tmp_path = inputs
     selection["dependencies"][0][field] = value
-    path = tmp_path / "selection.json"
-    path.write_text(json.dumps(selection))
     monkeypatch.setattr(package.subprocess, "run", lambda *a, **k: pytest.fail("pip must not run"))
-    assert package.main(["--selection", str(path), "wheels", "--wheelhouse", str(tmp_path / "wheels")]) == 2
+    with pytest.raises(package.PackageError, match="PyPI source"):
+        package.download_wheels(selection, tmp_path / "wheels")
+
+
+def test_package_downloads_only_missing_wheels(inputs, monkeypatch):
+    _, _, wheelhouse, _, tmp_path = inputs
+    calls = []
+    fixture = (wheelhouse / "dep-2.0-py3-none-any.whl").read_bytes()
+
+    def download(selection, target):
+        calls.append(target)
+        target.mkdir(exist_ok=True)
+        (target / "dep-2.0-py3-none-any.whl").write_bytes(fixture)
+
+    monkeypatch.setattr(package, "download_wheels", download)
+    assert run(inputs, tmp_path / "present") == 0
+    assert calls == []
+    (wheelhouse / "dep-2.0-py3-none-any.whl").unlink()
+    assert run(inputs, tmp_path / "missing") == 0
+    assert calls == [wheelhouse]

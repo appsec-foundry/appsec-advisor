@@ -12,17 +12,18 @@ The selected skills determine the available commands. In the current two-entry c
 
 ## Assemble the component artifacts
 
-[`data/plugin-package.json`](../data/plugin-package.json) pins the full commits of [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer) and [appsec-skills](https://github.com/appsec-foundry/appsec-skills), the selected files, licenses, engine capabilities, runtime targets and the dependency wheels with their SHA-256 digests. Three targets use it:
+[`data/plugin-package.json`](../data/plugin-package.json) pins the full commits of [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer) and [appsec-skills](https://github.com/appsec-foundry/appsec-skills), the selected files, licenses, engine capabilities, runtime targets and the dependency wheels with their SHA-256 digests. Two targets use it:
 
 ```bash
-make plugin-update    # move the Analyzer and skills pins to the current main; review and commit the diff
-make plugin-wheels    # download the pinned dependency wheels into build/appsec-advisor-wheels
 make plugin-package   # build build/appsec-advisor-<version>-staging/
+make plugin-update    # move the Analyzer and skills pins to the current main; review and commit the diff
 ```
 
-`plugin-update` reads the `main` heads, rewrites only the two commit pins and prints a GitHub comparison link for each change. Nothing is built until the reviewed pin change is committed, so pushes to `main` never enter a package unreviewed. `plugin-wheels` downloads with `pip --require-hashes`; a file with another digest fails. Rerun it only after a dependency pin changes.
+`plugin-package` needs network access only on its first run or after a pin changes. It fetches each pinned commit once into `build/appsec-advisor-sources/` and downloads missing dependency wheels into `build/appsec-advisor-wheels/` with `pip --require-hashes`; a wheel with another digest fails. Later builds use these caches offline. The runtime setup later installs the bundled wheels offline, so the package has to contain them.
 
-`plugin-package` fetches each pinned commit once into `build/appsec-advisor-sources/` and afterwards builds offline. It reads only committed files: the Advisor host files at `HOST_REV` (default `HEAD`), the pinned skill files and a clean export of the pinned Analyzer commit. It builds the engine wheel from that export with the locally installed `build`, `setuptools` and `wheel`, without package-index access. Working-tree changes never enter an artifact, and two builds of the same commits produce identical bytes. A missing or different dependency wheel stops the build. `ANALYZER_SRC`/`SKILLS_SRC` select local checkouts and `ANALYZER_REV`/`SKILLS_REV` other revisions for trial builds; `WHEELHOUSE` selects another wheel directory.
+`plugin-update` reads the `main` heads, rewrites only the two commit pins and prints a GitHub comparison link for each change. Build only after the reviewed pin change is committed, so pushes to `main` never enter a package unreviewed.
+
+`plugin-package` reads only committed files: the Advisor host files at `HOST_REV` (default `HEAD`), the pinned skill files and a clean export of the pinned Analyzer commit. It builds the engine wheel from that export with the locally installed `build`, `setuptools` and `wheel`, without package-index access. Working-tree changes never enter an artifact, and two builds of the same commits produce identical bytes. A dependency wheel that differs from its pin stops the build. `ANALYZER_SRC`/`SKILLS_SRC` select local checkouts and `ANALYZER_REV`/`SKILLS_REV` other revisions for trial builds; `WHEELHOUSE` selects another wheel directory.
 
 The output is `build/appsec-advisor-<version>-staging/` unless `OUT` names another new directory. It contains `artifacts/`, `components.lock.json` and `assembly/` with the staging ZIP, checksums, notices and component inventory. An existing directory is refused, and a failed build leaves no output. The target does not install the engine, invoke models or set up a runtime.
 

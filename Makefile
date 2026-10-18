@@ -226,15 +226,12 @@ setup-target:  ## Write required CC permissions into a target repo (default: cwd
 # Never contains threat-model results, evidence, or source. See CONTRIBUTING.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
-.PHONY: plugin-package plugin-wheels plugin-update
-plugin-package:  ## Build the composed staging plugin from the commits pinned in data/plugin-package.json: make plugin-package [OUT=<new dir>]
+.PHONY: plugin-package plugin-update
+plugin-package:  ## Build the composed staging plugin from the commits and wheels pinned in data/plugin-package.json: make plugin-package [OUT=<new dir>]
 	@$(PYTHON) scripts/build_plugin_package.py package --host-rev "$(or $(HOST_REV),HEAD)" \
 		$(if $(ANALYZER_SRC),--analyzer-src "$(ANALYZER_SRC)",) $(if $(ANALYZER_REV),--analyzer-rev "$(ANALYZER_REV)",) \
 		$(if $(SKILLS_SRC),--skills-src "$(SKILLS_SRC)",) $(if $(SKILLS_REV),--skills-rev "$(SKILLS_REV)",) \
 		$(if $(WHEELHOUSE),--wheelhouse "$(WHEELHOUSE)",) $(if $(OUT),--output "$(OUT)",)
-
-plugin-wheels:  ## Download the pinned dependency wheels (hash-checked) into build/appsec-advisor-wheels
-	@$(PYTHON) scripts/build_plugin_package.py wheels
 
 plugin-update:  ## Move the Analyzer and skills pins in data/plugin-package.json to their current main; review and commit the diff
 	@$(PYTHON) scripts/build_plugin_package.py update

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build component artifacts from pinned commits and assemble an unqualified staging plugin.
 
-`package` builds offline from the commits and wheels pinned in data/plugin-package.json,
-fetching only a pinned commit that is not cached yet. `wheels` downloads the pinned
-dependency wheels with hash checking. `update` moves the commit pins to the current
+`package` builds from the commits and dependency wheels pinned in data/plugin-package.json.
+It fetches a pinned commit or downloads a pinned wheel only when the build cache lacks it,
+and pip rejects a wheel with another hash. `update` moves the commit pins to the current
 remote branch heads for review.
 """
 
@@ -216,6 +216,9 @@ def build(args: argparse.Namespace) -> Path:
         source = source or pinned_source(selection[key], revision, args.sources)
         sources[key] = (source, commit(source, revision))
     (engine_src, engine_rev), (skills_src, skills_rev) = sources["engine"], sources["skills"]
+    names = [compose.portable_path(dependency["artifact"]) for dependency in selection["dependencies"]]
+    if any(not (args.wheelhouse / name).exists() for name in names):
+        download_wheels(selection, args.wheelhouse)
     host_files = committed_files(ROOT, host_rev, selection["host"]["files"])
     skill_files = committed_files(skills_src, skills_rev, selection["skills"]["files"])
     plugin = json.loads(host_files[".claude-plugin/plugin.json"], object_pairs_hook=compose.unique_fields)
@@ -280,12 +283,12 @@ def main(argv: list[str] | None = None) -> int:
     package.add_argument("--analyzer-rev", help="Analyzer revision (default: the pinned commit)")
     package.add_argument("--skills-src", type=Path, help="Local appsec-skills checkout instead of the pinned remote")
     package.add_argument("--skills-rev", help="Skills revision (default: the pinned commit)")
-    package.add_argument("--wheelhouse", type=Path, default=WHEELHOUSE, help="Pinned dependency wheels")
+    package.add_argument(
+        "--wheelhouse", type=Path, default=WHEELHOUSE, help="Pinned dependency wheels; missing ones are downloaded"
+    )
     package.add_argument("--host-rev", default="HEAD", help="Advisor commit, tag or branch (default: HEAD)")
     package.add_argument("--sources", type=Path, default=SOURCES, help=argparse.SUPPRESS)
     package.add_argument("--output", type=Path, help="New directory (default: build/appsec-advisor-<version>-staging)")
-    wheels = commands.add_parser("wheels", help="Download the pinned dependency wheels with hash checking")
-    wheels.add_argument("--wheelhouse", type=Path, default=WHEELHOUSE)
     commands.add_parser("update", help="Pin the Analyzer and skills commits to their current remote branch")
     ns = parser.parse_args(argv)
     try:
@@ -294,10 +297,6 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(changes) if changes else "Pins already match the remote branches.")
             if changes:
                 print(f"Review and commit {ns.selection} before building.")
-            return 0
-        if ns.command == "wheels":
-            download_wheels(load(ns.selection), ns.wheelhouse)
-            print(f"Pinned dependency wheels verified in {ns.wheelhouse}.")
             return 0
         output = build(ns)
     except (PackageError, compose.CompositionError) as exc:
