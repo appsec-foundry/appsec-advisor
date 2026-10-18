@@ -111,7 +111,7 @@ The [AppSec Analyzer guide](docs/security-assessment.md) covers depth, result st
 
 ### Abuse cases
 
-Each run also checks abuse cases, things an attacker or user must not be able to do, such as reading another customer's orders. The built-in cases, the YAML format for your own, and how results appear in the report are described in the [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#abuse-cases). In the plugin, repository cases go into `docs/security/abuse-cases/`, and `/appsec-advisor:abuse-cases` lists all cases and their results. See also [organization profiles](docs/org-profiles.md#abuse-cases) for organization-wide cases.
+Each run also checks abuse cases, things an attacker or user must not be able to do, such as reading another customer's orders. The built-in cases, the YAML format for your own, and how results appear in the report are described in the [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#abuse-cases). In the plugin, repository cases go into `docs/security/abuse-cases/`, and `/appsec-advisor:abuse-cases` lists all cases and their results, as the Analyzer's [`abuse-cases`](https://github.com/appsec-foundry/appsec-analyzer#abuse-cases-list-the-defined-cases) command does. See also [organization profiles](docs/org-profiles.md#abuse-cases) for organization-wide cases.
 
 ### Several repositories
 
@@ -125,7 +125,7 @@ To run it in CI, use the packaged plugin from `make plugin-package` (Python 3.10
 
 ### Repository profile
 
-`/appsec-advisor:repo-profile` shows what a scan would have to read: the size of the working tree, the language split, the build manifests and whether the repository is one service or a monorepo. It makes no model calls, reads no file contents and is not a security check. The workflow is the [repo-profile skill](https://github.com/appsec-foundry/appsec-skills/tree/main/skills/repo-profile) in appsec-skills, and the profile itself is computed by the AppSec Analyzer's `repo-profile` command.
+`/appsec-advisor:repo-profile` shows what a scan would have to read: the size of the working tree, the language split, the build manifests and whether the repository is one service or a monorepo. It makes no model calls, reads no file contents and is not a security check. The workflow is the [repo-profile skill](https://github.com/appsec-foundry/appsec-skills/tree/main/skills/repo-profile) in appsec-skills, and the profile itself is computed by the AppSec Analyzer's [`repo-profile`](https://github.com/appsec-foundry/appsec-analyzer#repo-profile-size-languages-and-layout) command.
 
 ## Threat Analyst
 
@@ -162,7 +162,7 @@ It finds and reads the requirements, specifications, architecture documents, and
 /appsec-advisor:audit-security-requirements --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
-Without a catalog of your own, start from `data/appsec-requirements-fallback.yaml` or the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md). The Analyzer offers the same audit as the command-line tool in [`audit-requirements`](https://github.com/appsec-foundry/appsec-analyzer#audit-requirements-requirements-audit); the plugin command still uses its own copy.
+Without a catalog of your own, start from `data/appsec-requirements-fallback.yaml` or the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md). The Analyzer offers the same audit as the command-line tool in [`audit-requirements`](https://github.com/appsec-foundry/appsec-analyzer#audit-requirements-requirements-audit) and its [requirements audit guide](https://github.com/appsec-foundry/appsec-analyzer/blob/main/docs/security-requirements-audit-skill.md); the plugin command still uses its own copy.
 
 To check only a code change against the catalog, use [`/appsec-advisor:verify-requirements`](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*).
 
