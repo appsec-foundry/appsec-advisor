@@ -15,7 +15,7 @@ Use committed revisions as references and inspect current branch state before ed
 | Original Analyzer | `a189e75cfcf22eaa9bddcf6bef4fb8f6cf59cd35`, `main` at planning time | Contains subsequent assessment and reporting work. Preserve it; do not replace this tree with the isolated snapshot or commit directly to `main`. |
 | Handoff location | Isolated clone `/tmp/appsec-composition-engine`; bundle `/tmp/appsec-composition-entry-engine.bundle` | Temporary recovery inputs, not release artifacts. Verify availability and commit identity; preserve the commit in the intended development history during integration. |
 
-The checkpoint records 25 focused Analyzer cases and 39 focused Advisor cases. They establish only their documented source behavior. Older installed score and configuration evidence belongs to its recorded pins. No new primary-entry archive supersedes the preceding configuration archive. Reuse evidence where its behavior and inputs remain applicable; never label the new primary entry qualified from those earlier checks.
+The checkpoint records 25 focused Analyzer cases and 39 focused Advisor cases. They establish only their documented source behavior. Older installed score and configuration evidence belongs to its recorded pins. At planning time no primary-entry archive superseded the preceding configuration archive; the [final internal staging archive](#committed-implementation-and-installed-evidence) later did. Reuse evidence where its behavior and inputs remain applicable; never label the new primary entry qualified from those earlier checks.
 
 ## What to retain and what to simplify
 
@@ -77,6 +77,32 @@ After the primary workflow works, address remaining user tasks in dependency ord
 Remove a legacy producer only when its callers are replaced and required behavior has evidence, or its removal has explicit product approval. Preserve results, history, accepted decisions and rollback inputs. A copied module is not removable merely because its name looks old.
 
 Keep the existing Linux, macOS and native Windows scope, provider qualification, installation/upgrade/rollback, provenance and release gates. Run their required qualification when the corresponding release candidate or affected platform boundary is ready. Handle a known platform-specific implementation gap before claiming support; do not simulate support by relaxing controls. Keep unapproved live or release actions pending and complete independent offline work.
+
+## Proposed direction: lightweight host
+
+Status: proposal recorded on 2026-10-18 at the operator's request; not approved. It approves no removal, marketplace cutover, model spending or changed requirement.
+
+Target: Advisor keeps only assembly, branding, Claude interaction, display and the host adapters the [composition inventory](appsec-advisor-composition-inventory-2026-10-18.md) assigns to it. Analyzers, agents, schemas, data and portable skills come from pinned packaged components.
+
+Measured state against engine wheel `50c0dedb`: the staging composition takes six host files from this repository. The repository still tracks the full engine tree, mostly as byte-identical copies of wheel members:
+
+| Directory | Tracked files | Same path in wheel | Byte-identical |
+| --- | --- | --- | --- |
+| `scripts/` | 344 | 294 | 237 |
+| `agents/` | 40 | 39 | 39 |
+| `data/` | 71 | 64 | 62 |
+| `schemas/` | 144 | 141 | 128 |
+| `templates/` | 17 | 17 | 17 |
+
+The marketplace entry still ships this repository tree, so its own `skills/appsec-analyzer` pipeline needs these copies until cutover. Removing them earlier breaks the published runtime.
+
+Proposed order:
+
+1. **Reproducible selection.** Commit the reviewed `unqualified-staging` lock and a build recipe that exports named committed revisions instead of reading working checkouts. Artifacts remain operator-supplied as the contract requires. Today the lock and build scripts exist only in the temporary artifact directory.
+2. **Host gaps.** The staging composition delivers an empty `hooks/hooks.json` and no permission adapter. Decide per inventory row whether the host keeps the banner, steering, read/write gates, telemetry and permission setup, then supply each kept adapter through public engine operations.
+3. **One owner per duplicated module.** `scripts/orchestrator/orchestration_controller.py` and `scripts/runtime/assessment_console.py` already differ from their wheel copies. The host bootstrap uses only the console's `render`; the console's own `follow` CLI imports `runtime.live_run_holder`, which the composition does not ship. Keep one owner and remove the other path at cutover.
+4. **Directory disposition.** Classify every tracked file in the table as host-owned or engine copy. Each engine copy gets the removal condition "marketplace serves the composed build".
+5. **Cutover.** After work package 3 has full-assessment evidence and the operator approves, switch the marketplace source to the composed build and remove the engine copies in one change, with rollback to the last tree-based release.
 
 ## Work and token limits
 
@@ -154,7 +180,7 @@ Work package 3 remains incomplete until a specifically authorized full assessmen
 
 ## Current session handoff
 
-At the status-documentation request, Advisor `dev` was clean at `52b64ee6`; the implementation commits are `5495b1ae` and `e8734e43`, and `52b64ee6` records their installed evidence. The artifact pins above intentionally identify `e8734e43`, not later documentation-only commits. Original Analyzer `dev` retains `50c0dedb`; its clean working tree remains on `main` at `a189e75c`. No reset, checkout or merge into `main` is needed to resume.
+At the status-documentation request, Advisor `dev` was clean at `52b64ee6`; the implementation commits are `5495b1ae` and `e8734e43`, and `52b64ee6` records their installed evidence. The artifact pins above intentionally identify `e8734e43`, not later documentation-only commits. Original Analyzer `dev` retains `50c0dedb`; its working tree was then on `main` at `a189e75c`. Later Analyzer work moved the checkout to `dev`, which still contains `50c0dedb`, while `main` stays at `a189e75c`. No reset, checkout or merge into `main` is needed to resume.
 
 The exact selection, final archive and `evidence.json` listed above were still present when this handoff was written. They are temporary local evidence, not published or durable release artifacts. The replay used two scripts, `replay.py` and `continue-replay.py`, in the artifact directory because the initial harness stopped at the conservative fresh-lock refusal. The combined observations are in `evidence.json`; do not treat the first script alone as a passing full replay or rerun either script against its already populated directories.
 

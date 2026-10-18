@@ -210,7 +210,7 @@ See the [developer tools guide](docs/dev-security-helper-usage.md).
 python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path/to/project --json
 ```
 
-`scripts/analyzers/repo_scan.py` lists the scanner findings, endpoints, and technologies. Both scripts accept a local directory or an HTTPS GitHub or GitLab URL; see `--help`.
+`scripts/analyzers/repo_scan.py` lists the scanner findings, endpoints, and technologies. Both scripts accept a local directory or an HTTPS Git URL; see `--help`.
 
 ### Report a failed run
 

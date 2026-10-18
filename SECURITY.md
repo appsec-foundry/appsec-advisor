@@ -27,15 +27,16 @@ AppSec reviewers should read this section before approving a run on a sensitive 
 
 ### What leaves the machine
 
-Each phase of the assessment sends prompts to the Anthropic API. They contain:
+Each step of the assessment sends one bounded request to the Anthropic API. The assessment models have no file, shell, or network tools; the controller decides what each request contains:
 
-- **Agent instructions** from `agents/*.md`. No repository content.
-- **Tool-call inputs**: file paths, search patterns, and shell commands. The paths refer to your repository.
-- **Tool-call outputs**: the file contents the model read. This is how source code reaches the API. The analysis has to read the files it assesses, so source code and configuration of the analyzed components **are** sent.
-- **Earlier results in the same session**: a file that was read stays in that session's context. Parallel component analyses use separate sessions.
+- **Step instructions** from `agents/*.md`. No repository content.
+- **Source excerpts**: line ranges of repository files that the step needs, served by the controller from the selected revision. A model may ask for further excerpts within a fixed per-step limit. This is how source code reaches the API: source code and configuration of the analyzed components **are** sent. Secrets matched by the plugin's secret patterns are masked in every excerpt.
+- **Earlier step results** the task builds on, such as the component list or the findings to merge. Component analyses run in separate requests and do not see each other's findings.
 - **Business context** you supply interactively, with `--context`, or in `docs/security/business-context.md`.
 
-The plugin does not upload the repository as a whole. It reads files as each phase needs them. On OWASP Juice Shop (thorough, 8 components), that is a few hundred file reads, mostly source files of the analyzed components plus manifests and configuration files.
+The plugin does not upload the repository as a whole. The optional repository exploration of `/appsec-advisor:analyze-threats` is the only analysis that gives a model file tools; they are read-only and confined to a copy with secrets masked.
+
+The Claude Code session that runs the plugin also sends its own conversation to the API, as any Claude Code session does: your messages, the plugin's progress output, and whatever else you ask it to read in that session.
 
 ### What stays local
 
@@ -44,16 +45,14 @@ Results and intermediate files are written to the assessment directory. By defau
 | File | Content | Sensitivity |
 |------|---------|-------------|
 | `security-assessment.md` / `.yaml` / `.sarif.json` | The report | Describes vulnerabilities in your code; treat as sensitive |
-| `.stride-<component-id>.json` | Findings per component | Same as the report |
+| `.assessment-work/` and `.assessment-state.json` | Accepted step results (components, data flows, findings per component) and run state | Same as the report |
 | `.threats-merged.json` | Merged finding list | Same as the report |
-| `.recon-summary.md` | Technology stack, security-pattern hits, detected secrets | **May reference hardcoded secrets** |
-| `.threat-modeling-context.md` | External and business context | Whatever your context sources returned |
 | `.agent-run.log` | Event log (agent, phase, and file-write events) | File paths, tool-call counts, durations |
 | `.hook-events.log` | Token and cost accounting per tool call | Token counts and estimated cost; no repository content |
 
 The two log files contain no source code or prompts, but they do contain file paths (for example `FILE_WRITE /path/to/secrets.ts`). Treat them like the reports. Logs rotate at 5 MB (`logging.max_log_bytes` in `config.json`).
 
-When recon flags a hardcoded secret, `.recon-summary.md` records where it is, with a short snippet around the match, so the finding can be checked. Treat this file as secret-handling scope.
+A finding about a hardcoded secret names its file and line. Masking only covers secrets that match the plugin's patterns, so a secret in an unusual format can still appear in an excerpt sent to the API or in a quoted line of a finding. Treat the report and its step results as secret-handling scope.
 
 ### What Anthropic logs
 
@@ -76,7 +75,7 @@ Before you assess a codebase with production secrets, personal data, or regulate
 1. Confirm that your Anthropic contract covers the data classification of the source files that will be read.
 2. Decide who may read the assessment directory. It is private to your user by default; sharing a result takes an explicit export.
 3. If the Security Coach is enabled, review `hooks/steering_keywords.json`. It adds guidance to matching prompts throughout the session, also outside plugin runs.
-4. Rotate any secret the recon scanner could find, and assume it will be recorded in `.recon-summary.md`.
+4. Rotate any hardcoded secret in the repository before the run, and assume that one the masking patterns miss can reach the API and the results.
 
 <a id="known-issues--untrusted-repositories"></a>
 ## Known issues: untrusted repositories
@@ -85,7 +84,7 @@ Scanned repositories are **untrusted by default**. Headless runs apply the untru
 
 | # | Issue | Details |
 |---|-------|---------|
-| 1 | Prompt injection via repository content | Source files, comments, and Markdown read by the agents enter the model context, and instructions planted there can steer the agent. The Bash allow-list includes interpreters such as `python3`, `awk`, and `sed`, so a successful prompt injection can lead to command execution on the reviewer's machine. |
+| 1 | Prompt injection via repository content | Source excerpts enter the model context, and instructions planted there can steer an analysis step, for example to hide or invent a finding. The assessment models have no tools, and the controller validates every result and excerpt request, so such an injection does not directly execute commands. The hosting Claude Code session is different: the recommended permission rule is `Bash(*)`, so repository content you ask that session to read can lead to command execution on the reviewer's machine. |
 | 2 | SSRF via `docs/related-repos.yaml` | *(Hardened 2026-05.)* `scripts/contexts/load_related_repos.py` checks target URLs with `scripts/shared/_url_guard.py`. It rejects private, loopback, link-local (including `169.254.169.254`), multicast, and reserved addresses, and strips `Authorization` and `Cookie` headers on cross-host redirects. For stricter control, set `APPSEC_URL_ALLOWLIST=host1,host2` and pass `--strict-urls` (on by default in untrusted mode). |
 | 3 | File reads through symlinks | *(Hardened 2026-05.)* The recon walker (`scripts/analyzers/recon_patterns.py`) does not follow symlinks, and `scripts/shared/_path_guard.py` drops symlinks that point outside the repository. Reads through Claude Code's Read tool are *not* sandboxed. `scripts/validators/preflight_untrusted.py` lists escaping symlinks before the run and refuses to continue in untrusted mode. |
 | 4 | Repository-owned Claude Code hooks | An interactive Claude Code session may load `.claude/settings.json`, `.claude/hooks/`, or `.vscode/tasks.json` from its working directory **before** the plugin runs. Run `scripts/validators/preflight_untrusted.py --strict --strict-urls` before starting an interactive session in a third-party repository, or use the headless runner, which runs this check first. The recon scanner also reports these files (Cat 28). |
@@ -112,8 +111,8 @@ Scanned repositories are **untrusted by default**. Headless runs apply the untru
 Not yet covered (open a GitHub issue if you need one of these):
 
 - mandatory isolation in a container (the script relies on the caller for isolation);
-- a stricter Bash allow-list without general-purpose interpreters;
-- size or extension limits on individual manifests beyond `analyzers/scan_excludes.py`.
+- a narrower shell permission than `Bash(*)` for prompt-free interactive runs;
+- size or extension limits on individual manifests beyond `scripts/analyzers/scan_excludes.py`.
 
 ## Scope
 

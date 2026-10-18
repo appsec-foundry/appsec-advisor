@@ -1,6 +1,8 @@
 # Handoff: legacy retirement and appsec-analyzer transition
 
-Status: open, 2026-10-17. Working record for the transition described in [the security assessment concept](../../proposals/application-security-assessment-concept.md). Target release 0.6.0-beta.5; the release happens only after the operator approves the completed work. Nothing is pushed; the tag `archive/create-threat-model` is local only.
+Status: closed historical record. Its commits are part of `v0.6.0-beta.5` and `origin/dev`; the committed `Unreleased` changelog no longer describes `create-threat-model2`. Composition work continues in the [clean composition plan](plan-appsec-advisor-clean-composition-2026-10-18.md#current-session-handoff). Remaining items below were not re-verified when this record was closed.
+
+Original status, 2026-10-17: working record for the transition described in [the security assessment concept](../../proposals/application-security-assessment-concept.md). Target release 0.6.0-beta.5; the release happens only after the operator approves the completed work. Nothing is pushed; the tag `archive/create-threat-model` is local only.
 
 ## Done
 
