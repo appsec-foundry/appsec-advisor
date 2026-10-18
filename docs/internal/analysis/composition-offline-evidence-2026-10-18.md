@@ -201,3 +201,5 @@ Changed Python lint and format checks passed for five Advisor and five Analyzer 
 5. Keep native Linux/macOS/Windows qualification, live Claude/provider qualification, complete assessment evidence, standalone release qualification, build provenance and upgrade/rollback under their existing release gates.
 
 No paid model call, provider qualification, push, publication, public runtime switch or removal was performed. Updated staging artifacts and installed replay were intentionally deferred at the operator's stop; they are unfinished work, not permission failures or successful migration evidence.
+
+The subsequent [clean composition implementation plan](plan-appsec-advisor-clean-composition-2026-10-18.md) replaces the continuation order above with a scoped checkpoint split, primary-path simplification and installed verification. It retains this evidence and existing product/release obligations, and records the operator's instruction to omit unnecessary steps, tests and token consumption. Proposed compatibility reductions remain subject to the stated approval boundaries.
