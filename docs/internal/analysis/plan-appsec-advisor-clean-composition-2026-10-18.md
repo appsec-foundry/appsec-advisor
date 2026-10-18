@@ -10,7 +10,7 @@ Use committed revisions as references and inspect current branch state before ed
 
 | Component | Reference | Consequence |
 | --- | --- | --- |
-| Advisor | `762ca7a7`, current `dev` at planning time | Primary binding exists in source; its new installed real-engine replay is pending. |
+| Advisor | `acff74dd`, current `dev` at planning time | Primary binding exists in source; its new installed real-engine replay is pending. |
 | Isolated Analyzer checkpoint | `3a3ac3a0b04c5baec284c85d21fab8bd0906ac8c`, based on `443243f6d259989f5c2d0765491e1c2a2b7e50a4` | Public operations and host compatibility were added together. Inspect and split their responsibilities before integration. |
 | Original Analyzer | `a189e75cfcf22eaa9bddcf6bef4fb8f6cf59cd35`, `main` at planning time | Contains subsequent assessment and reporting work. Preserve it; do not replace this tree with the isolated snapshot or commit directly to `main`. |
 | Handoff location | Isolated clone `/tmp/appsec-composition-engine`; bundle `/tmp/appsec-composition-entry-engine.bundle` | Temporary recovery inputs, not release artifacts. Verify availability and commit identity; preserve the commit in the intended development history during integration. |
@@ -136,7 +136,7 @@ At handoff or completion, report the committed revisions, retained compatibility
 
 ## Work package 1 disposition
 
-The implementation session started from clean Advisor `dev` at `2aecaf71`. The isolated Analyzer checkpoint `3a3ac3a0` was merged with current original Analyzer `main` at `a189e75c` on the isolated `clean-composition` development branch. Both histories, including later assessment correction and completion-summary changes, are retained; the original working tree and release tags are unchanged.
+The implementation session started from clean Advisor `dev` at `ee631f5f`. The isolated Analyzer checkpoint `3a3ac3a0` was merged with current original Analyzer `main` at `a189e75c` on the isolated `clean-composition` development branch. Both histories, including later assessment correction and completion-summary changes, are retained; the original working tree and release tags are unchanged.
 
 | Boundary | Selected compatible treatment |
 | --- | --- |
@@ -152,13 +152,13 @@ The changed producer path is the primary binding in `scripts/composition_runtime
 
 ## Committed implementation and installed evidence
 
-Work packages 1 and 2 are implemented at source level. Advisor commits `5495b1ae` and `e8734e43` separate primary execution defaults, presentation and deterministic stop waiting. Analyzer commit `50c0dedb283829956c04abfbcd3254e0a292b71b` on `clean-composition` contains the merged checkpoint and subsequent `main` work; the original Analyzer repository now also retains it on local `dev`, without changing its checked-out `main`, working files or tags. No requirements or registered decisions changed. No legacy producer was removed.
+Work packages 1 and 2 are implemented at source level. Advisor commits `1d5f62f5` and `e2e64c12` separate primary execution defaults, presentation and deterministic stop waiting. Analyzer commit `50c0dedb283829956c04abfbcd3254e0a292b71b` on `clean-composition` contains the merged checkpoint and subsequent `main` work; the original Analyzer repository now also retains it on local `dev`, without changing its checked-out `main`, working files or tags. No requirements or registered decisions changed. No legacy producer was removed.
 
 The engine now resolves the default feed under a canonical private output, refuses source-owned paths, linked feed files and an existing live holder, and retains explicit progress selections. This prevents the new automatic feed from introducing an unvalidated write before the retained controller's admission. The regression covers regular output, explicit selection, source-owned output, symlinks, hardlinks and a live holder. Canonical launch defaults and the retained adapter produce identical effective profiles and profile fingerprints across all depths, soft-budget conversion and explicit hard-budget/worker selections. This proves profile compatibility, not cross-version runtime resume.
 
 | Final internal staging input/output | Recorded value |
 | --- | --- |
-| Advisor source | `e8734e437cc0e4f94d2719d656306aa40b843daf` |
+| Advisor source | `e2e64c12b58164798c30f8c1478c556c59993f8a` |
 | Analyzer source | `50c0dedb283829956c04abfbcd3254e0a292b71b` |
 | Host ZIP SHA-256 | `e73a00693c0e9d06395efe90f5e77685b5f39663ee4d78043ac6fb5c56430c45` |
 | Engine wheel SHA-256 | `5b6acf9e2caf60e0748559daf27e6b29b016f015ce987820d5235fe0990a4783` |
@@ -180,7 +180,7 @@ Work package 3 remains incomplete until a specifically authorized full assessmen
 
 ## Current session handoff
 
-At the status-documentation request, Advisor `dev` was clean at `52b64ee6`; the implementation commits are `5495b1ae` and `e8734e43`, and `52b64ee6` records their installed evidence. The artifact pins above intentionally identify `e8734e43`, not later documentation-only commits. Original Analyzer `dev` retains `50c0dedb`; its working tree was then on `main` at `a189e75c`. Later Analyzer work moved the checkout to `dev`, which still contains `50c0dedb`, while `main` stays at `a189e75c`. No reset, checkout or merge into `main` is needed to resume.
+At the status-documentation request, Advisor `dev` was clean at `8eac23b0`; the implementation commits are `1d5f62f5` and `e2e64c12`, and `8eac23b0` records their installed evidence. The artifact pins above intentionally identify `e2e64c12`, not later documentation-only commits. Original Analyzer `dev` retains `50c0dedb`; its working tree was then on `main` at `a189e75c`. Later Analyzer work moved the checkout to `dev`, which still contains `50c0dedb`, while `main` stays at `a189e75c`. No reset, checkout or merge into `main` is needed to resume.
 
 The exact selection, final archive and `evidence.json` listed above were still present when this handoff was written. They are temporary local evidence, not published or durable release artifacts. The replay used two scripts, `replay.py` and `continue-replay.py`, in the artifact directory because the initial harness stopped at the conservative fresh-lock refusal. The combined observations are in `evidence.json`; do not treat the first script alone as a passing full replay or rerun either script against its already populated directories.
 

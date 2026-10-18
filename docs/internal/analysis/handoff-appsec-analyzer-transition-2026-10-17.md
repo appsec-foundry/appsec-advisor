@@ -8,44 +8,44 @@ Original status, 2026-10-17: working record for the transition described in [the
 
 | Commit | Change |
 |---|---|
-| `2d55fa1b` | Controller writes the `.gitignore` rule for a report folder in the checkout before admitting its source |
-| `785c7e94` | Free-text focus is refused instead of dropped |
-| `6368a4b6` | The controller skill has its own business-context dialog file |
-| `a99bf64a`, `9872b1b7`, `4ab5f8ce` | `create-threat-model2` became `create-security-assessment`, then `appsec-analyzer` |
-| `ff195737` | Session action protocol removed from the controller (12,331 → about 4,800 lines) |
-| `6b87f4c3` | 33 legacy-only scripts removed |
-| `a1c8984d` | Agents fragment-fixer, qa-reviewer, config-scanner and context-resolver removed; context template moved to `templates/threat-modeling-context.md` |
-| `21d32256` | `run-headless.sh` sends every assessment to the controller; without `--repo` the current directory is the repository |
-| `a886d531` | `skills/create-threat-model/` removed; `appsec-analyzer` is the packaged required skill, banner and status command |
-| `96f43cda` | Seven protocol-only schemas removed |
-| `9d299be8` | REQ-TRU-002 guarded at `redact_known_secrets.py`; `postscan_secret_check.py` removed |
-| `44014dec` | Decisions `OR-7`, `CE-5` and `IN-3` retired, `OR-1` reworded for controller-launched roles (operator-approved, `specs/changes/retire-session-protocol-decisions/`) |
-| `34099dcb` | `REQ-USE-004` keeps only history preservation, `REQ-FLW-009` promises refusal of a narrowed focus (operator-approved, `specs/changes/drop-incremental-and-focus-promises/`) |
-| `b0409fd9` | A new scan over a completed assessment needs no `--rebuild` and continues its changelog; `--rebuild` resets it (operator chose this over "every rerun starts over") |
-| `921c299e` | Lost guards replaced: a new controller guard for REQ-MOD-002 (weaknesses regrouped after ranking); existing controller-path tests bound to REQ-BIZ-010, REQ-FLW-006, REQ-MOD-004, REQ-PUR-001. REQ-BIZ-005 needed none: its controller guards cover the dialog handoff, same-run use, unsafe saves and kept context; the two-question limit is dialog prose only |
-| `e7e8aee6` | Incremental reconciliation removed from the model builder with its tests and routes (unreachable: the controller always writes `mode: full`) |
-| `384c513e` | Legacy resolver CLI removed: `main()` with its summary, run-plan and routing renderers, the incremental mode rules, the incremental business-context note and their baseline readers, the legacy single-repository guard against a combined prior model, and the builder's `_output_mode`. `resolve()` stays because `resolve_assessment()` resolves each admitted root through it; it now always sets `mode: full`. Resolver tests resolve in-process instead of running the script |
-| `0d7622de` | Incremental flow-ID preservation removed from the trust-boundary input builder (ran only for `incremental`, which no producer sets) |
-| `c8b8a0ec` | B: consumer skills renamed to `ask-`, `show-`, `export-`, `eval-security-assessment`, `triage-security-assessment` and `security-assessment-health`, without aliases; internal script, schema and storage names unchanged |
-| `1875cc34`, `ad5b7913` | B: `update-threat-model` and `publish-threat-model` removed with the publish helper, its tests, route and `.gitignore` edit permission; the completion notice points at the export skill; `REQ-USE-007` is bound as an advisory to the export skill |
-| `b072dc57` | B: every remaining `create-threat-model` mention in code, prompts, schemas and the requirements caller ID names `appsec-analyzer`; `--rerender` hints point at `--resume` or a new run; the golden report's invocation row was re-blessed after a replay showed it as the only markdown drift |
-| `09a63952` | `REQ-PUR-004` names the assessment report; new `REQ-TRU-005` (results outside the repository by default, readable only by the current user) and decision `AS-1` (per-application destination `<repo-name>-<hash8>` under the user data directory, `--output` overrides), both advisory until C lands (operator-approved, `specs/changes/store-assessments-outside-the-repository/`) |
-| `a88ab2fc` | C1: `scripts/shared/assessment_location.py` resolves `<base>/<repo-name>-<hash8>` (XDG/macOS/Windows base, normalized remote or canonical root) and creates it private, refusing symlinked, foreign or group-readable levels |
-| `d14e9290` | C1: `scripts/shared/artifact_names.py` maps internal `threat-model.*` to published `security-assessment.*` and finds the one set a directory holds (both sets → `ArtifactSetError`); `locate()` and a CLI (`destination`, `locate --repo`) for skills; query and overview tools read either set |
-| `67dd6b92` | C1: triage, health, status, baseline, eval, check_state and the agent logger read either set; cleanup knows the published product names |
-| `e0ab2957` | C2: publication installs `security-assessment.*` (report, model, figures, exports, `--slug` copies) and removes a legacy `threat-model.*` set from the output directory afterwards; title `Security Assessment Report`, focus line with requirements implementation only when a catalog was assessed; history carries over from a run recorded under either name; golden report re-blessed |
-| `74a55500` | C3: without `--output` the controller writes to the application directory (combined identity for several repositories), created `0700` at every level and refused when a level is a link, foreign or open to others; umask `077` for the run. The skill, its business-context dialog (`assess-context-preview/save --output`), `check_permissions`, headless help, session banner, status, coach and URL-guard hooks, abuse cases, analyst CLI, related-repository discovery, threat summary, PDF/HTML export defaults and the progress pane resolve the same directory. The hook logger no longer creates `docs/security` in every checkout: without an existing output directory its handlers, write guard included, run against a removed scratch directory. `REQ-TRU-005` bound with partial coverage |
-| `81fd2402` | C4: `runtime/legacy_import.py` offers a finished `docs/security` set (report and model readable, no live lock, no unfinished state or checkpoint) and copies it under the published names with figures, exports, changelog files and pentest tasks; an import receipt lets the next run replace it and continue its history. Headless stops without `--migrate-legacy` / `--ignore-legacy`; an incomplete set is named and not imported; the skill asks once. Guards bound to `REQ-USE-004` and `REQ-EVO-003` |
-| `8b68ccd3` | C3: consumer skills resolve their default directory with `locate` and stop on its error; export reads either naming set and writes `security-assessment.*` |
-| `21ecc89c` | `show-security-assessment` heads its overview `Security Assessment — <project>` |
-| `27edf73b` | Remnants: tests reading the deleted skill now read `appsec-analyzer` or the headless usage, legacy-only skill-wiring tests removed, two logger tests name an existing agent, issue templates list current components |
-| `ad91406e` | Documentation: `docs/threat-modeler.md` → `docs/security-assessment.md` with inbound links; it, headless, model-selection, README and the context-routing contract describe the controller, the external storage, its limits and the import |
-| `c28859cf` | `run-headless.sh` usage text lists the controller's options and the refused ones |
-| `d4d8eda5` | Guard column of decision `AS-1` filled (operator-approved, `specs/changes/record-assessment-storage-guards/`) |
-| `1822dc91` | `Edit(${OUTPUT_DIR}/**)` and `Edit(${OUTPUT_DIR}/.*)` removed; no component edits the output directory in place (operator approved the first; the second served the same removed repair loop) |
-| `840f3a0a` | `--catalog-dir` on the requirements resolver and fetcher keeps `docs/security/requirements.yaml` a repository input; `assessment_location.py destination --create` |
-| `bdcb550a` | Requirements audit, verify-requirements and authnz-review save to the private application directory (operator-approved); requirements skills take `--output`; authnz pentest tasks go there even without `--save`; `appsec-reviewer-cli` and headless `--audit-requirements` pass the directory to the skill |
-| `71d2ff78` | `CHANGELOG.md`: the parallel session's consolidation committed as it was, on the operator's request |
+| `0d864f9d` | Controller writes the `.gitignore` rule for a report folder in the checkout before admitting its source |
+| `0a99efc1` | Free-text focus is refused instead of dropped |
+| `9f6b766d` | The controller skill has its own business-context dialog file |
+| `1e5b2db5`, `cd30f0e8`, `d7b2d891` | `create-threat-model2` became `create-security-assessment`, then `appsec-analyzer` |
+| `59e073d0` | Session action protocol removed from the controller (12,331 → about 4,800 lines) |
+| `adaeb861` | 33 legacy-only scripts removed |
+| `5555148f` | Agents fragment-fixer, qa-reviewer, config-scanner and context-resolver removed; context template moved to `templates/threat-modeling-context.md` |
+| `c2ea40af` | `run-headless.sh` sends every assessment to the controller; without `--repo` the current directory is the repository |
+| `49006110` | `skills/create-threat-model/` removed; `appsec-analyzer` is the packaged required skill, banner and status command |
+| `9f26500b` | Seven protocol-only schemas removed |
+| `8c258fea` | REQ-TRU-002 guarded at `redact_known_secrets.py`; `postscan_secret_check.py` removed |
+| `e68b9874` | Decisions `OR-7`, `CE-5` and `IN-3` retired, `OR-1` reworded for controller-launched roles (operator-approved, `specs/changes/retire-session-protocol-decisions/`) |
+| `2b8e7561` | `REQ-USE-004` keeps only history preservation, `REQ-FLW-009` promises refusal of a narrowed focus (operator-approved, `specs/changes/drop-incremental-and-focus-promises/`) |
+| `bed858ff` | A new scan over a completed assessment needs no `--rebuild` and continues its changelog; `--rebuild` resets it (operator chose this over "every rerun starts over") |
+| `7279d3a0` | Lost guards replaced: a new controller guard for REQ-MOD-002 (weaknesses regrouped after ranking); existing controller-path tests bound to REQ-BIZ-010, REQ-FLW-006, REQ-MOD-004, REQ-PUR-001. REQ-BIZ-005 needed none: its controller guards cover the dialog handoff, same-run use, unsafe saves and kept context; the two-question limit is dialog prose only |
+| `174de1f0` | Incremental reconciliation removed from the model builder with its tests and routes (unreachable: the controller always writes `mode: full`) |
+| `0d054a3b` | Legacy resolver CLI removed: `main()` with its summary, run-plan and routing renderers, the incremental mode rules, the incremental business-context note and their baseline readers, the legacy single-repository guard against a combined prior model, and the builder's `_output_mode`. `resolve()` stays because `resolve_assessment()` resolves each admitted root through it; it now always sets `mode: full`. Resolver tests resolve in-process instead of running the script |
+| `3010fe98` | Incremental flow-ID preservation removed from the trust-boundary input builder (ran only for `incremental`, which no producer sets) |
+| `0b9d9232` | B: consumer skills renamed to `ask-`, `show-`, `export-`, `eval-security-assessment`, `triage-security-assessment` and `security-assessment-health`, without aliases; internal script, schema and storage names unchanged |
+| `34e281c8`, `6ea32ea6` | B: `update-threat-model` and `publish-threat-model` removed with the publish helper, its tests, route and `.gitignore` edit permission; the completion notice points at the export skill; `REQ-USE-007` is bound as an advisory to the export skill |
+| `7195f22a` | B: every remaining `create-threat-model` mention in code, prompts, schemas and the requirements caller ID names `appsec-analyzer`; `--rerender` hints point at `--resume` or a new run; the golden report's invocation row was re-blessed after a replay showed it as the only markdown drift |
+| `03faac80` | `REQ-PUR-004` names the assessment report; new `REQ-TRU-005` (results outside the repository by default, readable only by the current user) and decision `AS-1` (per-application destination `<repo-name>-<hash8>` under the user data directory, `--output` overrides), both advisory until C lands (operator-approved, `specs/changes/store-assessments-outside-the-repository/`) |
+| `28a06a6a` | C1: `scripts/shared/assessment_location.py` resolves `<base>/<repo-name>-<hash8>` (XDG/macOS/Windows base, normalized remote or canonical root) and creates it private, refusing symlinked, foreign or group-readable levels |
+| `eb011f81` | C1: `scripts/shared/artifact_names.py` maps internal `threat-model.*` to published `security-assessment.*` and finds the one set a directory holds (both sets → `ArtifactSetError`); `locate()` and a CLI (`destination`, `locate --repo`) for skills; query and overview tools read either set |
+| `3537bbfc` | C1: triage, health, status, baseline, eval, check_state and the agent logger read either set; cleanup knows the published product names |
+| `8f91ff86` | C2: publication installs `security-assessment.*` (report, model, figures, exports, `--slug` copies) and removes a legacy `threat-model.*` set from the output directory afterwards; title `Security Assessment Report`, focus line with requirements implementation only when a catalog was assessed; history carries over from a run recorded under either name; golden report re-blessed |
+| `349281e8` | C3: without `--output` the controller writes to the application directory (combined identity for several repositories), created `0700` at every level and refused when a level is a link, foreign or open to others; umask `077` for the run. The skill, its business-context dialog (`assess-context-preview/save --output`), `check_permissions`, headless help, session banner, status, coach and URL-guard hooks, abuse cases, analyst CLI, related-repository discovery, threat summary, PDF/HTML export defaults and the progress pane resolve the same directory. The hook logger no longer creates `docs/security` in every checkout: without an existing output directory its handlers, write guard included, run against a removed scratch directory. `REQ-TRU-005` bound with partial coverage |
+| `275f72c6` | C4: `runtime/legacy_import.py` offers a finished `docs/security` set (report and model readable, no live lock, no unfinished state or checkpoint) and copies it under the published names with figures, exports, changelog files and pentest tasks; an import receipt lets the next run replace it and continue its history. Headless stops without `--migrate-legacy` / `--ignore-legacy`; an incomplete set is named and not imported; the skill asks once. Guards bound to `REQ-USE-004` and `REQ-EVO-003` |
+| `69f13ebd` | C3: consumer skills resolve their default directory with `locate` and stop on its error; export reads either naming set and writes `security-assessment.*` |
+| `bcacae8f` | `show-security-assessment` heads its overview `Security Assessment — <project>` |
+| `f72dbb7d` | Remnants: tests reading the deleted skill now read `appsec-analyzer` or the headless usage, legacy-only skill-wiring tests removed, two logger tests name an existing agent, issue templates list current components |
+| `079f69ed` | Documentation: `docs/threat-modeler.md` → `docs/security-assessment.md` with inbound links; it, headless, model-selection, README and the context-routing contract describe the controller, the external storage, its limits and the import |
+| `0ad978aa` | `run-headless.sh` usage text lists the controller's options and the refused ones |
+| `f0ab4877` | Guard column of decision `AS-1` filled (operator-approved, `specs/changes/record-assessment-storage-guards/`) |
+| `b00666ac` | `Edit(${OUTPUT_DIR}/**)` and `Edit(${OUTPUT_DIR}/.*)` removed; no component edits the output directory in place (operator approved the first; the second served the same removed repair loop) |
+| `20c7a63f` | `--catalog-dir` on the requirements resolver and fetcher keeps `docs/security/requirements.yaml` a repository input; `assessment_location.py destination --create` |
+| `98520c7a` | Requirements audit, verify-requirements and authnz-review save to the private application directory (operator-approved); requirements skills take `--output`; authnz pentest tasks go there even without `--save`; `appsec-reviewer-cli` and headless `--audit-requirements` pass the directory to the skill |
+| `ce63569c` | `CHANGELOG.md`: the parallel session's consolidation committed as it was, on the operator's request |
 
 Operator decisions taken in this work: incremental updates dropped for now; free-text focus refused; rerender and the QA reviewer not rebuilt; legacy agents removed and `config_scanner_model` / `context_resolver_model` accepted without effect; main skill named `appsec-analyzer`; consumer skills keep the `*-security-assessment` names from the concept.
 
@@ -64,7 +64,7 @@ Decisions taken without asking, following the concept and the code: old skill na
    - The TypeScript pane tests (`hooks/progress.test.ts`) need the plugin host's `claude-code/testing` runner, which this environment lacks; they were updated but not run.
    - `run_invariants.py`, `aggregate_run_issues.py`, `completion_relay.py`, `build_stride_dispatch_manifest._guess_repo_root` and the PR-gate and `--restore-from` blocks in `run-headless.sh` still assume `docs/security` or internal names; none is on the controller path (legacy remnants).
 2. **Documentation** is done (see the table). Not verified by the rewrite and left as written: the `--cheap-stride`, `--stride-cap`, `--evidence-verifier-cap` and `--register-severity-floor` text (parsed, no reader found on the controller path), and a cost comparison in `docs/model-selection.md` that disagrees with `docs/headless-mode.md` on Sonnet 4.6 versus 5.5. `APPSEC_TELEMETRY_STRICT` remains in `agents/shared/logging-standard.md` and `scripts/live_canary.py`; no script reads it.
-3. **Changelog**: the operator takes over the draft below. The committed `Unreleased` section (`71d2ff78`) still describes `create-threat-model2`, `docs/security` and the incremental rerun. Draft:
+3. **Changelog**: the operator takes over the draft below. The committed `Unreleased` section (`ce63569c`) still describes `create-threat-model2`, `docs/security` and the incremental rerun. Draft:
    - Changed: **Breaking:** reports are published as `security-assessment.md` and `security-assessment.yaml`, with figures and exports under the same name, titled "Security Assessment Report" with a subtitle naming the assessed focus.
    - Changed: **Breaking:** assessments are stored outside the repository by default, in a private directory per application under the user data directory; `--output` still selects another directory, and every follow-on command finds the same one.
    - Added: a finished assessment from `docs/security` is offered for import once in an interactive run; headless runs need `--migrate-legacy` or `--ignore-legacy`, and the old files stay.
@@ -80,16 +80,16 @@ Decisions taken without asking, following the concept and the code: old skill na
    - Tests keep constants that point into the deleted `skills/create-threat-model/` (`test_lazy_phase_group_loading`, `test_qa_depth_profile`, `test_reasoning_model_resolution`, `test_runtime_cleanup`); `tests/e2e/run-repair.sh` still drives `--rerender`; the bug-report template names the removed `appsec-qa-reviewer`.
    - Unverified: whether a single-repository controller run refuses an output directory that holds a combined model. The removed resolver guard only ran on the legacy path.
    - `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` describes the removed reconciler; keep it as a dated analysis.
-   - `tests/test_agent_logger.py::TestAgentModel::test_reads_model_from_agent_definition` and `TestAgentReturn::test_model_from_agent_definition_logged` name the removed `appsec-qa-reviewer` agent and fail on `e2b16b00` already.
+   - `tests/test_agent_logger.py::TestAgentModel::test_reads_model_from_agent_definition` and `TestAgentReturn::test_model_from_agent_definition_logged` name the removed `appsec-qa-reviewer` agent and fail on `d1443762` already.
    - `Edit(${OUTPUT_DIR}/**)` in `data/required-permissions.yaml` still gives the removed QA re-render loop as its reason.
 
 ## Known state
 
 - `tests/test_run_tests.py::test_modules_on_the_golden_fixture_replay_route_to_it` fails on a clean `HEAD` as well (`scripts/shared/_remote_url.py` lacks the `test_threat_fixture` route).
 - `tests/test_context_routing.py::test_catalog_runtime_bindings_and_schemas_are_packaged` cannot run in the sandbox: it copies dot files the sandbox denies.
-- The golden replay's `yaml` stage drifts (`project_name`, `project_description`, `repo_url`, `runtime` missing) on the pre-session commit `9337bd14` as well; `md` and `sarif` replay clean.
+- The golden replay's `yaml` stage drifts (`project_name`, `project_description`, `repo_url`, `runtime` missing) on the pre-session commit `59b79715` as well; `md` and `sarif` replay clean.
 - `CHANGELOG.md` carries an uncommitted edit from another session; never stage it with this work.
-- Other sessions commit documentation to `dev` in parallel; check `git log` before any history operation. Never `git commit --amend`: a parallel commit can land between a commit and its amend (it happened once and was repaired with `ad5b7913`).
+- Other sessions commit documentation to `dev` in parallel; check `git log` before any history operation. Never `git commit --amend`: a parallel commit can land between a commit and its amend (it happened once and was repaired with `6ea32ea6`).
 
 ## Working rules the operator set
 

@@ -174,7 +174,7 @@ The operator requested a stop at the next coherent point and documentation for r
 
 Read-only inspection found newer committed Analyzer `dev` at `443243f6d259989f5c2d0765491e1c2a2b7e50a4`, already carrying the assessment configuration handoff. Existing public `status`, `progress`, `stop`, `results`, `export` and validated `review_context` operations were reused rather than rebuilt. Work used a separate clone at `/tmp/appsec-composition-engine` on its own `dev`. The final original-checkout inspection found `main` active and no local `dev`; that repository, its files, index and refs were left untouched.
 
-Analyzer checkpoint `3a3ac3a0b04c5baec284c85d21fab8bd0906ac8c` is committed on the isolated `dev`, based on the exact revision above. Its handoff bundle is `/tmp/appsec-composition-entry-engine.bundle`; integration into the independently changed original repository is pending. Advisor changes are committed on the current `dev` after `b665e5b2`. No source from another active checkout, uncommitted work or foreign staging entry was included.
+Analyzer checkpoint `3a3ac3a0b04c5baec284c85d21fab8bd0906ac8c` is committed on the isolated `dev`, based on the exact revision above. Its handoff bundle is `/tmp/appsec-composition-entry-engine.bundle`; integration into the independently changed original repository is pending. Advisor changes are committed on the current `dev` after `5bde6628`. No source from another active checkout, uncommitted work or foreign staging entry was included.
 
 ### Closed at source level
 
