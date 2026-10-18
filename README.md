@@ -13,7 +13,7 @@
 
 The plugin also analyzes planned features and code changes for threats, checks a repository against a security requirements catalog, and provides review tools for CI.
 
-[Quick start](#quick-start) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [How the plugin is built](#how-the-plugin-is-built) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Contributing](#contributing)
 
 ---
 
@@ -33,13 +33,13 @@ The assessment only sees the repository and the context you give it. It cannot c
 ## Security and data handling
 
 > [!IMPORTANT]
-> **Treat scanned repositories as untrusted input.** Repository content goes into the model context and may contain prompt injection. Untrusted mode is on by default; keep it on, and scan third-party or vendor code in a container or VM. See [Untrusted repositories](SECURITY.md#known-issues--untrusted-repositories).
+> **Treat scanned repositories as untrusted input.** Repository content goes into the model context and may contain prompt injection. Untrusted mode is on by default; keep it on, and scan third-party or vendor code in a container or VM. See [Untrusted repositories](SECURITY.md#known-issues-untrusted-repositories).
 
 An assessment sends selected source code, manifests, configuration, and any business context you supply to Anthropic. Secrets found in the code are masked. The assessment needs access to `api.anthropic.com` and cannot run air-gapped. Reports are rendered from validated data, and a run fails before publishing anything if an unmasked secret is found in its output.
 
 ## Quick start
 
-You need [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git`.
+You need [Claude Code](https://docs.claude.com/en/docs/claude-code), `git`, and Python 3.10+ with the `PyYAML` and `jsonschema` packages, for example installed with `python3 -m pip install PyYAML jsonschema`.
 
 ### 1. Install the plugin
 
@@ -118,19 +118,7 @@ The runtime architecture of Juice Shop with its data flows and attack paths:
   <img src="docs/images/figure1-example.svg" alt="Runtime architecture and attack paths in the Juice Shop assessment">
 </picture>
 
-The build pipeline and the most severe supply-chain attacks on it:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1b-example-dark.svg">
-  <img src="docs/images/figure1b-example.svg" alt="Build pipeline and supply-chain attack paths in the Juice Shop assessment">
-</picture>
-
-Threat actors, their attack routes, and the business harm they can cause:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure2-example-dark.svg">
-  <img src="docs/images/figure2-example.svg" alt="Threat actors, attack routes, weaknesses, and business harm in the Juice Shop assessment">
-</picture>
+The [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#reports-and-exports) shows the other report diagrams: the build pipeline with its supply-chain attacks, and the threat actors with the business harm they can cause.
 
 The [Security Assessment guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
 
@@ -216,6 +204,16 @@ python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path
 
 `/appsec-advisor:report-error` checks a suspected plugin error locally and drafts a GitHub issue without logs, source code, or findings. You see the full draft and decide whether to publish it.
 
+## How the plugin is built
+
+`appsec-advisor` is the host that packages security components for Claude Code. It combines pinned releases of separately developed components into one plugin and adds the Claude Code commands, hooks, branding, and display around them:
+
+- the assessment engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which also runs standalone as a command-line tool;
+- portable skills such as the security score;
+- the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a pinned copy in `data/baselines/`.
+
+The assembler (`scripts/compose_plugin.py`) takes the engine and skills at a fixed revision and checksum, and the plugin runs only these bundled components, never another copy found on the machine. This packaged build is still an internal preview. The marketplace release and a `--plugin-dir` checkout currently run the assessment pipeline contained in this repository and need no packaging step. See the [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts).
+
 ## Enterprise rollout
 
 AppSec and platform teams can add their own requirements, defaults, skills, hooks, and MCP servers. The [packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds an internal plugin from a pinned upstream release, so you do not need to maintain a fork.
@@ -240,6 +238,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 
 ## Related projects
 
+- [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer): the assessment engine as a standalone command-line tool (alpha); see [how the plugin is built](#how-the-plugin-is-built).
 - [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools): launcher and CI templates for unattended assessments.
 - [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template): builds organization-specific plugin packages.
 - [aiscb](https://github.com/appsec-foundry/aiscb): the secure-coding rules bundled with the plugin.

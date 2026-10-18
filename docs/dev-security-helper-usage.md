@@ -392,7 +392,7 @@ Do not use it with:
 - shared runners that retain sensitive state
 - long-lived developer credentials in the CI environment
 
-See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
+See [SECURITY.md](../SECURITY.md#known-issues-untrusted-repositories).
 
 ## Troubleshooting
 
