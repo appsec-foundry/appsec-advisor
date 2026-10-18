@@ -53,3 +53,17 @@ Then invoke:
 The generated entry delegates to `WORKFLOW.md` and binds every engine command to the verified runtime. `--repo` maps to the engine's positional repository argument; `--yaml` selects YAML and omitting either format selects text. The engine performs no model calls. A conversational Claude session has its own model usage; the offline replay did not execute that model-driven interaction.
 
 Session-only loading can shadow a same-named marketplace plugin for that session; organization-managed plugin controls take precedence. Check the selected source with `plugin details` before using the staging session. These rules are documented in the official [plugin loading reference](https://code.claude.com/docs/en/plugins/loading#name-conflicts) and [local development guide](https://code.claude.com/docs/en/plugins/create#load-a-plugin-for-one-session), checked on 2026-10-18. End that dedicated session to stop using the staged copy; no marketplace switch is part of this procedure.
+
+## Inspect a branded package's organization settings
+
+This procedure applies to a newly assembled organization package whose pinned engine declares `organization_config` schema version 1. Older staging inputs must be reassembled with the reviewed new host and engine pins; packaging cannot upgrade their immutable bootstrap or wheel. After explicit setup, inspect or validate the packaged engine projection without a model:
+
+```bash
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" -- organization-config show
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" -- organization-config validate
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" -- organization-config show --preset release
+```
+
+Use a preset actually declared by the profile. Explicit `--preset` wins over `APPSEC_ADVISOR_PRESET`; unknown or empty selections fail. Inspection shows defaults separately from mandatory policy. Score does not consume assessment depth or call models. A configured nonempty URL allowlist restricts remote Git targets before Git or credentials; a rejected target returns 2 without a score. Ordinary scored, undetermined and operational-source outcomes retain statuses 0, 2 and 1. The existing score binding command above selects this public policy path automatically for an active composed profile.
+
+External runtime `--org-profile` and `APPSEC_ADVISOR_ORG_PROFILE` overrides are explicitly refused in composed staging. Use the existing checkout package for profiles needing that selection or currently unsupported settings. The existing explicit no-profile selection disables the engine profile; it does not restore excluded skills or change host hooks. See the [configuration dispatch contract](../contracts/plugin-composition.md#organization-configuration-dispatch) for the supported scope and remaining migration gaps.

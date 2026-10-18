@@ -1006,6 +1006,8 @@ requirements:
   REQ-CFG-001:
     applies_to:
       - schemas/org-profile.schema.yaml
+      - schemas/organization-dispatch.schema.json
+      - scripts/composition_runtime.py
       - scripts/package_internal_plugin.py
       - scripts/runtime/skill_policy_gate.py
     decisions:
@@ -1013,9 +1015,13 @@ requirements:
       - EX-2
     documents:
       - docs/org-profiles.md
+      - docs/internal/contracts/plugin-composition.md
       - docs/internal/contracts/org-profile-invariants.md
     coverage: direct
     guards:
+      - tests/test_package_internal_plugin.py::test_staging_dispatch_separates_policy_from_host_settings
+      - tests/test_package_internal_plugin.py::test_staging_host_config_preserves_default_selection_without_engine_leakage
+      - tests/test_composition_runtime.py::test_organization_dispatch_rejects_missing_context_and_bypass
       - tests/test_org_profile_schema.py::test_valid_org_profile_fixture_passes
       - tests/test_package_internal_plugin.py::test_policy_surface_explicit_block
       - tests/test_package_internal_plugin.py::test_the_package_policy_can_exclude_an_added_skill

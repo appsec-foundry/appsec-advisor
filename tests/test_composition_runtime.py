@@ -13,14 +13,18 @@ import compose_plugin as compose
 import composition_runtime as runtime
 import pytest
 
-from tests.test_compose_plugin import add_score_skill, make_composition
+from tests.test_compose_plugin import ORG_CONFIG_SCHEMA, add_score_skill, make_composition
 
 ENGINE = """import json, os, subprocess, sys, time
 from pathlib import Path
 if sys.argv[1:] == ["version"]:
     print(json.dumps({"engine_version": "1.0.0", "interface_version": 1}))
 elif sys.argv[1:] == ["capabilities"]:
-    print(json.dumps({"interface_version": 1, "score": {"available": True, "model_calls": False, "scoring_version": 2}}))
+    print(json.dumps({"interface_version": 1, "score": {"available": True, "model_calls": False, "scoring_version": 2}, "organization_config": {"available": True, "schema_version": 1, "commands": ["score"], "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"]}}))
+elif sys.argv[1:3] == ["organization-config", "run"]:
+    args = sys.argv[sys.argv.index("--") + 1:]
+    print(json.dumps({"python": sys.executable, "args": args, "pythonpath": os.environ.get("PYTHONPATH")}))
+    sys.exit({"undetermined-source": 2, "incomplete-source": 1, "cancelled-source": 130}.get(args[1], 0))
 elif sys.argv[1] == "stop":
     pass
 elif sys.argv[1] == "assess":
@@ -44,6 +48,7 @@ def installed_plugin(tmp_path):
         {
             "appsec_analyzer/__init__.py": b"",
             "appsec_analyzer/cli.py": ENGINE.encode(),
+            "appsec_analyzer/schemas/organization-config.schema.json": compose.canonical(ORG_CONFIG_SCHEMA),
             f"{metadata}/METADATA": b"Metadata-Version: 2.1\nName: appsec-analyzer\nVersion: 1.0.0\n",
             f"{metadata}/WHEEL": b"Wheel-Version: 1.0\nGenerator: offline-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
             f"{metadata}/RECORD": b"",
@@ -350,3 +355,110 @@ def test_shared_writable_runtime_home_is_rejected(installed_plugin):
     with pytest.raises(runtime.RuntimeError, match="not writable by other users"):
         runtime.setup(plugin, home)
     assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "arguments,environment,tail,wrapped",
+    [
+        (["score", "source", "--json"], {}, ["score", "source", "--json"], True),
+        (["score", "source", "--preset=release"], {"APPSEC_ADVISOR_PRESET": "invalid"}, ["score", "source"], True),
+        (
+            ["score", "source", "--no-org-profile"],
+            {"APPSEC_ADVISOR_ORG_PROFILE": "/missing.yaml"},
+            ["score", "source"],
+            False,
+        ),
+        (
+            ["score", "source"],
+            {"APPSEC_ADVISOR_NO_ORG_PROFILE": "1", "APPSEC_ADVISOR_PRESET": "invalid"},
+            ["score", "source"],
+            False,
+        ),
+        (["score", "--", "--preset=literal"], {}, ["score", "--", "--preset=literal"], True),
+    ],
+)
+def test_organization_dispatch_selection_and_literal_arguments(
+    tmp_path, monkeypatch, arguments, environment, tail, wrapped
+):
+    for key in ("APPSEC_ADVISOR_PRESET", "APPSEC_ADVISOR_ORG_PROFILE", "APPSEC_ADVISOR_NO_ORG_PROFILE"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    config = tmp_path / "org-profile/analyzer-config.yaml"
+    config.parent.mkdir()
+    config.write_text("{}")
+    capability = {
+        "available": True,
+        "schema_version": 1,
+        "commands": ["score"],
+        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+    }
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps({"organization_config": capability}).encode()),
+    )
+    manifest = {"files": [{"path": runtime.ORG_DISPATCH}, {"path": "org-profile/analyzer-config.yaml"}]}
+    result = runtime.organization_arguments(tmp_path, Path(sys.executable), arguments, manifest)
+    if wrapped:
+        assert result[:4] == ["organization-config", "run", "--config", str(config)]
+        assert result[result.index("--") + 1 :] == tail
+        if "--preset=release" in arguments:
+            assert result[4:6] == ["--preset", "release"]
+    else:
+        assert result == tail
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "capability",
+        "availability-type",
+        "version-type",
+        "projection",
+        "external",
+        "preset-value",
+        "empty-preset",
+        "config-override",
+        "nested-run",
+    ],
+)
+def test_organization_dispatch_rejects_missing_context_and_bypass(tmp_path, monkeypatch, defect):
+    for key in ("APPSEC_ADVISOR_PRESET", "APPSEC_ADVISOR_ORG_PROFILE", "APPSEC_ADVISOR_NO_ORG_PROFILE"):
+        monkeypatch.delenv(key, raising=False)
+    config = tmp_path / "org-profile/analyzer-config.yaml"
+    config.parent.mkdir()
+    config.write_text("{}")
+    capability = {
+        "available": True,
+        "schema_version": 1,
+        "commands": ["score"],
+        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+    }
+    if defect == "capability":
+        capability = {}
+    elif defect == "availability-type":
+        capability["available"] = 1
+    elif defect == "version-type":
+        capability["schema_version"] = True
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps({"organization_config": capability}).encode()),
+    )
+    manifest = {"files": [{"path": runtime.ORG_DISPATCH}, {"path": "org-profile/analyzer-config.yaml"}]}
+    arguments = ["score", "source"]
+    if defect == "projection":
+        manifest["files"].pop()
+    elif defect == "external":
+        monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", "/missing.yaml")
+    elif defect == "preset-value":
+        arguments += ["--preset"]
+    elif defect == "empty-preset":
+        arguments += ["--preset="]
+    elif defect == "config-override":
+        arguments = ["organization-config", "show", "--config", "/untrusted.yaml"]
+    elif defect == "nested-run":
+        arguments = ["organization-config", "run"]
+    with pytest.raises(runtime.RuntimeError):
+        runtime.organization_arguments(tmp_path, Path(sys.executable), arguments, manifest)

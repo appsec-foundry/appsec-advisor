@@ -14,6 +14,19 @@ import pytest
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
+ORG_CONFIG_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["schema_version", "engine_version", "advisor_core_version", "profile"],
+    "properties": {
+        "schema_version": {"const": 1},
+        "engine_version": {"type": "string"},
+        "advisor_core_version": {"type": "string"},
+        "profile": {"type": "object"},
+    },
+}
+
 
 def make_composition(tmp_path):
     inputs = tmp_path / "reviewed artifacts"
@@ -26,6 +39,7 @@ def make_composition(tmp_path):
     }
     engine = {
         "appsec_analyzer/__main__.py": b"print('fixture only')\n",
+        "appsec_analyzer/schemas/organization-config.schema.json": compose.canonical(ORG_CONFIG_SCHEMA),
         "appsec_analyzer-1.0.0.dist-info/METADATA": b"Metadata-Version: 2.1\nName: appsec-analyzer\nVersion: 1.0.0\n",
     }
     components = []
@@ -46,7 +60,7 @@ def make_composition(tmp_path):
                 "sha256": compose.digest(data),
                 "license": "Apache-2.0",
                 "interface_version": 1,
-                "capabilities": ["score"] if role == "engine" else [],
+                "capabilities": ["score", "organization_config"] if role == "engine" else [],
                 "qualification": "unqualified-staging",
                 "files": [{"source": path, "target": path} for path in host if path != "not-selected.txt"]
                 if role == "host"

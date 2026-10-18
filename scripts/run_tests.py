@@ -589,6 +589,7 @@ SOURCE_TESTS = {
     "scripts/composition_runtime.py": _tests(
         "compose_plugin composition_runtime package_internal_plugin finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
     ),
+    "schemas/organization-dispatch.schema.json": _tests("package_internal_plugin schemas"),
     "schemas/components-lock.schema.json": _tests(
         "compose_plugin package_internal_plugin check_target_specificity requirements_verification schemas"
     ),
@@ -5880,6 +5881,7 @@ SOURCE_TESTS = {
         update_baseline
     """),
     "scripts/validators/validate_config.py": _tests("""
+        package_internal_plugin
         check_target_specificity
         gate_preconditions
         integration

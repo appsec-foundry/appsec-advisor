@@ -343,8 +343,106 @@ def setup(plugin: Path, home: Path) -> Path:
     return interpreter(target)
 
 
+ORG_DISPATCH = "org-profile/composition-dispatch.json"
+
+
+def organization_arguments(plugin: Path, python: Path, arguments: list[str], manifest: dict) -> list[str]:
+    """Dispatch the engine-only projection through its declared public API."""
+    inventory = {entry["path"] for entry in manifest["files"]}
+    if ORG_DISPATCH not in inventory:
+        return arguments
+    if "org-profile/analyzer-config.yaml" not in inventory:
+        raise RuntimeError("organization engine projection is missing from the verified inventory")
+    # Capability names alone are insufficient: require the versioned mapping.
+    result = subprocess.run(
+        [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
+        env=clean_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=30,
+    )
+    capabilities = json.loads(result.stdout) if result.returncode == 0 and len(result.stdout) < MAX_LOCK else {}
+    expected = {
+        "available": True,
+        "schema_version": 1,
+        "commands": ["score"],
+        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+    }
+    actual = capabilities.get("organization_config") if isinstance(capabilities, dict) else None
+    if not isinstance(actual, dict) or any(
+        type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in expected.items()
+    ):
+        raise RuntimeError("pinned engine lacks the required public organization configuration interface")
+    if arguments[0] in {"version", "capabilities"}:
+        return arguments
+    disabled = os.environ.get("APPSEC_ADVISOR_NO_ORG_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
+    preset = os.environ.get("APPSEC_ADVISOR_PRESET") or None
+    external = os.environ.get("APPSEC_ADVISOR_ORG_PROFILE")
+    forwarded = [arguments[0]]
+    index = 1
+    while index < len(arguments):
+        arg = arguments[index]
+        if arg == "--":
+            forwarded.extend(arguments[index:])
+            break
+        if arg == "--no-org-profile":
+            disabled = True
+        elif arg in {"--preset", "--org-profile"} or arg.startswith(("--preset=", "--org-profile=")):
+            name, separator, value = arg.partition("=")
+            if not separator:
+                index += 1
+                if index == len(arguments) or arguments[index].startswith("--"):
+                    raise RuntimeError("organization selection requires a value")
+                value = arguments[index]
+            if not value:
+                raise RuntimeError("organization selection requires a nonempty value")
+            if name == "--preset":
+                preset = value
+            else:
+                external = value
+        else:
+            forwarded.append(arg)
+        index += 1
+    if external and not disabled:
+        # External Advisor profiles require host validation/splitting before
+        # engine dispatch; an engine-only envelope cannot stand in for them.
+        raise RuntimeError(
+            "external organization profile selection is not yet supported by composed staging; use --source"
+        )
+    if disabled:
+        return forwarded
+    config = str(regular(plugin, "org-profile/analyzer-config.yaml"))
+    if forwarded[0] == "organization-config":
+        if (
+            len(forwarded) < 2
+            or forwarded[1] not in {"show", "validate"}
+            or any(arg == "--config" or arg.startswith("--config=") for arg in forwarded[2:])
+        ):
+            raise RuntimeError("select organization-config show or validate")
+        return [
+            "organization-config",
+            forwarded[1],
+            "--config",
+            config,
+            *(["--preset", preset] if preset else []),
+            *forwarded[2:],
+        ]
+    return [
+        "organization-config",
+        "run",
+        "--config",
+        config,
+        *(["--preset", preset] if preset else []),
+        "--",
+        *forwarded,
+    ]
+
+
 def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: str | None = None) -> int:
     python, lock = preflight(plugin, home)
+    if not arguments:
+        raise RuntimeError("select a supported public engine command")
+    manifest = read_json(regular(plugin, "component-manifest.json"), MAX_MANIFEST)
     if skill is not None:
         if skill != "security-score" or skill not in lock.get("skill_bindings", []):
             raise RuntimeError("skill invocation binding is not selected in this composition")
@@ -357,6 +455,7 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
     if not arguments or arguments[0] not in {
         "version",
         "capabilities",
+        "organization-config",
         "profiles",
         "preflight",
         "scan",
@@ -373,6 +472,7 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "authnz-review",
     }:
         raise RuntimeError("select a supported public engine command")
+    arguments = organization_arguments(plugin, python, arguments, manifest)
     options = (
         {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         if sys.platform == "win32"

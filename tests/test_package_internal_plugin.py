@@ -1533,7 +1533,7 @@ def test_custom_baseline_drops_modular_bundle_and_keeps_complete_mode(tmp_path):
     assert not directory.exists()
 
 
-def _staging_case(tmp_path, engine_path="scripts/pinned/entry.py"):
+def _staging_case(tmp_path, engine_path="scripts/pinned/entry.py", *, config=None):
     import compose_plugin as composition
     import composition_runtime as runtime
 
@@ -1542,6 +1542,9 @@ def _staging_case(tmp_path, engine_path="scripts/pinned/entry.py"):
     host, engine = lock["components"][:2]
     host_files = composition.archive_files((artifacts / host["artifact"]).read_bytes())
     host_files["skills/appsec-analyzer/SKILL.md"] = b"Run /appsec-advisor:appsec-analyzer.\n"
+    if config is not None:
+        host_files["config.json"] = composition.canonical(config)
+        host["files"].append({"source": "config.json", "target": "config.json"})
     host_bytes = composition.zip_bytes(host_files)
     (artifacts / host["artifact"]).write_bytes(host_bytes)
     host["sha256"] = composition.digest(host_bytes)
@@ -1712,7 +1715,7 @@ def test_staging_removed_binding_keeps_runtime_inputs_consistent(tmp_path, selec
 @pytest.mark.parametrize(
     "setting",
     [
-        "policy: {disable_opus: true}",
+        "policy: {url_allowlist: ['https://invalid.example']}",
         "llm_policy: {approval_required_actions: [publish]}",
         "presets: {local: {base_mode: standard, guardrails: {max_wall_time: 60s}}}",
     ],
@@ -1832,3 +1835,155 @@ def test_staging_tree_limits_stop_publication(tmp_path, monkeypatch, limit):
     with pytest.raises(SystemExit):
         _package_staging_case(tmp_path, source, profile)
     assert not (tmp_path / "dist").exists()
+
+
+@pytest.mark.parametrize("name", ["review-service", "team-advisor"])
+def test_staging_dispatch_separates_policy_from_host_settings(tmp_path, name):
+    from jsonschema import Draft202012Validator
+
+    source, profile, files = _staging_case(tmp_path)
+    with (profile / "org-profile.yaml").open("a") as stream:
+        stream.write("policy: {disable_opus: true, url_allowlist: [git.example.org]}\n")
+    assert _package_staging_case(tmp_path, source, profile, name=name) == 0
+    build = tmp_path / "build" / name
+    dispatch = json.loads((build / pkg.ORG_DISPATCH).read_bytes())
+    schema = json.loads((Path(__file__).parents[1] / "schemas/organization-dispatch.schema.json").read_bytes())
+    Draft202012Validator(schema).validate(dispatch)
+    assert dispatch["advisor"] == {"banner": {"headline": "Example Security"}}
+    assert dispatch["analyzer"]["policy"] == {"disable_opus": True, "url_allowlist": ["git.example.org"]}
+    engine = json.loads((build / "org-profile/analyzer-config.yaml").read_bytes())
+    assert "banner" not in engine["profile"]
+    assert engine["profile"] == {**dispatch["identity"], **dispatch["analyzer"]}
+    assert engine["engine_version"] == "1.0.0"
+    assert engine["advisor_core_version"] == "1.0.0"
+    assert json.loads((build / ".claude-plugin/plugin.json").read_bytes())["version"] == "2.0.0"
+    assert (build / "scripts/composition_runtime.py").read_bytes() == files["scripts/composition_runtime.py"]
+    assert (build / "runtime/wheels/appsec_analyzer-1.0.0-py3-none-any.whl").read_bytes() == files[
+        "runtime/wheels/appsec_analyzer-1.0.0-py3-none-any.whl"
+    ]
+
+
+@pytest.mark.parametrize("defect", ["old-engine", "old-bootstrap", "default-preset", "core-version", "reserved"])
+def test_staging_dispatch_refuses_incompatible_inputs_without_patching(tmp_path, defect):
+    import compose_plugin as composition
+    import yaml
+
+    source, profile, files = _staging_case(tmp_path)
+    if defect in {"old-engine", "old-bootstrap"}:
+        lock = json.loads(files["components.lock.json"])
+        manifest = json.loads(files["component-manifest.json"])
+        if defect == "old-engine":
+            lock["components"][1]["capabilities"].remove("organization_config")
+            manifest["components"] = lock["components"]
+        else:
+            path = "scripts/composition_runtime.py"
+            data = b"# old host bootstrap, must never be patched\n"
+            (source / path).write_bytes(data)
+            entry = next(row for row in manifest["files"] if row["path"] == path)
+            entry.update(sha256=composition.digest(data), size=len(data))
+        manifest["lock_sha256"] = composition.digest(composition.canonical(lock))
+        (source / "components.lock.json").write_bytes(composition.canonical(lock))
+        (source / "component-manifest.json").write_bytes(composition.canonical(manifest))
+    elif defect == "reserved":
+        (profile / "analyzer-config.yaml").write_text("{}")
+    else:
+        path = profile / "org-profile.yaml"
+        data = yaml.safe_load(path.read_text())
+        if defect == "default-preset":
+            data["default_preset"] = "missing"
+        else:
+            data["compatibility"]["core"] = ">=9"
+        path.write_text(yaml.safe_dump(data))
+    before = pkg._staging_tree(source)
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert pkg._staging_tree(source) == before
+    assert not (tmp_path / "dist").exists()
+
+
+def test_staging_pinned_schema_cannot_select_network_resources(tmp_path, monkeypatch):
+    import socket
+
+    import compose_plugin as composition
+
+    source, profile, files = _staging_case(tmp_path)
+    lock = json.loads(files["components.lock.json"])
+    manifest = json.loads(files["component-manifest.json"])
+    engine = lock["components"][1]
+    relative = "runtime/wheels/" + engine["artifact"]
+    members = composition.archive_files(files[relative])
+    members["appsec_analyzer/schemas/organization-config.schema.json"] = b'{"$ref": "https://schema.invalid/policy"}'
+    wheel = composition.zip_bytes(members)
+    engine["sha256"] = composition.digest(wheel)
+    manifest["components"] = lock["components"]
+    manifest["lock_sha256"] = composition.digest(composition.canonical(lock))
+    entry = next(row for row in manifest["files"] if row["path"] == relative)
+    entry.update(sha256=engine["sha256"], size=len(wheel))
+    (source / relative).write_bytes(wheel)
+    (source / "components.lock.json").write_bytes(composition.canonical(lock))
+    (source / "component-manifest.json").write_bytes(composition.canonical(manifest))
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **kw: pytest.fail("Packaging cannot resolve schema destinations")
+    )
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile)
+    assert not (tmp_path / "dist").exists()
+
+
+def test_staging_host_config_preserves_default_selection_without_engine_leakage(tmp_path):
+    import yaml
+
+    config = {
+        "banner": {"headline": "Source Host"},
+        "pricing": {"input_per_1m": 3.0},
+        "logging": {"max_log_bytes": 2048, "verbose": False},
+        "organization_profile": {"enabled": True, "path": "prior-profile.yaml", "default_preset": "release"},
+    }
+    source, profile, _ = _staging_case(tmp_path, config=config)
+    path = profile / "org-profile.yaml"
+    data = yaml.safe_load(path.read_text())
+    data["presets"]["release"] = {"base_mode": "thorough"}
+    path.write_text(yaml.safe_dump(data))
+    assert _package_staging_case(tmp_path, source, profile) == 0
+    build = tmp_path / "build/example-security"
+    host = json.loads((build / "config.json").read_bytes())
+    assert host["logging"] == config["logging"] and host["pricing"] == config["pricing"]
+    assert host["banner"]["headline"] == "Example Security"
+    assert host["organization_profile"]["path"] == "org-profile/org-profile.yaml"
+    assert host["organization_profile"]["default_preset"] == "release"
+    engine = json.loads((build / "org-profile/analyzer-config.yaml").read_bytes())
+    assert engine["profile"]["default_preset"] == "release"
+    assert not {"logging", "pricing", "banner"} & engine["profile"].keys()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"external_context": {"enabled": True, "rest_url": "https://context.example.org"}},
+        {"baseline": {"enabled": True, "enforce": True}},
+        {"skill_toggles": {"security-score": {"enabled": False, "reason": "Restricted"}}},
+        {"logging": {"max_log_bytes": 2048, "engine_sink": "somewhere"}},
+        {"organization_profile": {"enabled": False, "default_preset": "missing"}},
+    ],
+)
+def test_staging_host_config_cannot_lose_global_settings(tmp_path, config):
+    source, profile, _ = _staging_case(tmp_path, config=config)
+    with pytest.raises(SystemExit):
+        _package_staging_case(tmp_path, source, profile, extra=["--skip-validation"])
+    assert not (tmp_path / "dist").exists()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"logging": {}, "logging": {"verbose": true}}',
+        b'{"pricing": {"input_per_1m": NaN}}',
+        b"[]",
+        b" " * 65537,
+    ],
+)
+def test_staging_host_config_rejects_ambiguous_invalid_or_oversized_data(raw):
+    import compose_plugin as composition
+
+    with pytest.raises((SystemExit, composition.CompositionError, ValueError)):
+        pkg._staging_config({"config.json": raw}, {"presets": {"local": {"base_mode": "standard"}}})

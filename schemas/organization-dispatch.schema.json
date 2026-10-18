@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Composition organization dispatch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "advisor",
+    "analyzer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_version",
+        "organization",
+        "compatibility"
+      ],
+      "properties": {
+        "api_version": {
+          "type": "string",
+          "enum": [
+            "appsec-advisor.org-profile/v1",
+            "appsec-advisor.org-profile/v2"
+          ]
+        },
+        "organization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "name",
+            "profile_version"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{1,62}$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "profile_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "owner": {
+              "type": "string",
+              "maxLength": 120
+            }
+          }
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "core"
+          ],
+          "properties": {
+            "core": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          }
+        }
+      }
+    },
+    "advisor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "banner": {
+          "type": "object"
+        },
+        "skills": {
+          "type": "object"
+        },
+        "hooks": {
+          "type": "object"
+        },
+        "mcp": {
+          "type": "object"
+        },
+        "skill_toggles": {
+          "type": "object"
+        }
+      }
+    },
+    "analyzer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_preset",
+        "presets"
+      ],
+      "properties": {
+        "default_preset": {
+          "type": "string",
+          "minLength": 1
+        },
+        "presets": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 100,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "base_mode"
+            ],
+            "properties": {
+              "base_mode": {
+                "enum": [
+                  "quick",
+                  "standard",
+                  "thorough"
+                ]
+              }
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "disable_opus": {
+              "type": "boolean"
+            },
+            "url_allowlist": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

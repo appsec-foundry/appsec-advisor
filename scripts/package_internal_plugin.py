@@ -1273,29 +1273,81 @@ def _staging_inputs(files: dict[str, bytes]) -> tuple[dict, dict, set[str]]:
     return lock, manifest, protected
 
 
-def _staging_profile(profile: dict) -> None:
-    """Reject settings whose mandatory engine/host consumer has not migrated."""
-    allowed = {
-        "api_version",
-        "organization",
-        "compatibility",
-        "default_preset",
-        "presets",
-        "banner",
-        "skills",
-        "hooks",
-        "mcp",
-        "skill_toggles",
-    }
-    unsupported = set(profile) - allowed
-    for preset in profile.get("presets", {}).values():
+# Ownership follows the configuration dispatch ledger. Shared identity is not
+# an engine compatibility declaration; compatibility.core still names Advisor.
+_ADVISOR_FIELDS = {"banner", "skills", "hooks", "mcp", "skill_toggles", "baseline", "security_coach"}
+_ANALYZER_FIELDS = {
+    "policy",
+    "branding",
+    "requirements",
+    "llm_context",
+    "llm_policy",
+    "analyst",
+    "actors",
+    "abuse_cases",
+    "default_preset",
+    "presets",
+}
+_SHARED_FIELDS = {"api_version", "organization", "compatibility"}
+ORG_DISPATCH = "org-profile/composition-dispatch.json"
+
+
+def _staging_profile(profile: dict) -> dict:
+    """Split ownership and admit only settings with a verified public mapping."""
+    unknown = set(profile) - _ADVISOR_FIELDS - _ANALYZER_FIELDS - _SHARED_FIELDS
+    advisor = {key: value for key, value in profile.items() if key in _ADVISOR_FIELDS}
+    analyzer = {key: value for key, value in profile.items() if key in _ANALYZER_FIELDS}
+    # These host consumers have not migrated; retaining their data is not enforcement.
+    unsupported = unknown | (set(advisor) & {"baseline", "security_coach"})
+    unsupported |= set(analyzer) - {"default_preset", "presets", "policy"}
+    for preset in analyzer.get("presets", {}).values():
         unsupported.update(f"presets.*.{key}" for key in set(preset) - {"base_mode"})
     if unsupported:
         _die(
-            "staging settings require P4 runtime dispatch: "
+            "staging settings require an explicit public consumer: "
             + ", ".join(sorted(unsupported))
-            + "; use the existing --source packaging path"
+            + "; the pinned Analyzer cannot preserve these settings; use the existing --source packaging path"
         )
+    return {
+        "schema_version": 1,
+        "identity": {key: profile[key] for key in sorted(_SHARED_FIELDS)},
+        "advisor": advisor,
+        "analyzer": analyzer,
+    }
+
+
+def _staging_config(files: dict[str, bytes], profile: dict) -> tuple[dict, str | None]:
+    """Retain host settings and reject global settings without a migrated owner."""
+    import compose_plugin as composition
+    from validators.validate_config import _validate_main_config
+
+    raw = files.get("config.json", b"{}")
+    if len(raw) > 65536:
+        _die("staging host configuration exceeds its byte limit")
+    config = json.loads(raw, object_pairs_hook=composition.unique_fields)
+    json.dumps(config, allow_nan=False)
+    if not isinstance(config, dict) or set(config) - {
+        "_comment",
+        "banner",
+        "pricing",
+        "logging",
+        "organization_profile",
+    }:
+        _die("staging global configuration has unsupported consumers; use --source")
+    # The legacy validator requires external_context. Its disabled validation
+    # value is never delivered; that engine-owned block is refused above.
+    if _validate_main_config({**config, "external_context": {"enabled": False, "rest_url": None}}, "config.json"):
+        _die("staging host configuration is invalid")
+    for key, allowed in (
+        ("pricing", {"input_per_1m", "output_per_1m", "cache_write_per_1m", "cache_read_per_1m"}),
+        ("logging", {"max_log_bytes", "verbose"}),
+    ):
+        if set(config.get(key) or {}) - allowed:
+            _die("staging host configuration contains unmapped nested settings")
+    preset = (config.get("organization_profile") or {}).get("default_preset")
+    if preset is not None and preset not in profile["presets"]:
+        _die("staging configured default preset is unavailable")
+    return config, preset
 
 
 def _staging_profile_data(data: bytes) -> dict:
@@ -1330,7 +1382,7 @@ def _staging_readme(build: Path, name: str, skills: list[str]) -> None:
         '```sh\npython3 "/installed/plugin/scripts/composition_runtime.py" setup --plugin "/installed/plugin"\n'
         'python3 "/installed/plugin/scripts/composition_runtime.py" preflight --plugin "/installed/plugin"\n```\n\n'
         "Setup is explicit and offline. Engine invocation uses the pinned runtime; it does not resolve an engine from PATH.\n\n"
-        "The bundled profile retains organization resources. Unmapped engine settings are refused during packaging.\n",
+        "Engine organization settings use the public configuration API. Score has no assessment depth; unsupported settings fail packaging.\n",
         encoding="utf-8",
     )
 
@@ -1361,7 +1413,63 @@ def package_staging(args: argparse.Namespace, source: Path, org_profile: Path, b
     errors = validate_org_profile._schema_errors(profile, validate_org_profile._load_schema())
     if errors:
         _die("staging organization profile does not match its schema")
-    _staging_profile(profile)
+    if (
+        ORG_DISPATCH in files
+        or "org-profile/analyzer-config.yaml" in files
+        or {"composition-dispatch.json", "analyzer-config.yaml"} & profile_files.keys()
+    ):
+        _die("organization input collides with generated dispatch")
+    if validate_org_profile._check_default_preset(profile) or validate_org_profile._check_compatibility(
+        profile, lock["plugin"]["version"]
+    ):
+        _die("organization preset or Advisor compatibility is invalid")
+    _, configured_preset = _staging_config(files, profile)
+    dispatch = _staging_profile(profile)
+    if configured_preset is not None:
+        dispatch["analyzer"]["default_preset"] = configured_preset
+    engine = next(component for component in lock["components"] if component["role"] == "engine")
+    if "organization_config" not in engine["capabilities"]:
+        _die("organization dispatch requires a new Analyzer pin declaring organization_config; reassemble first")
+    engine_config = {
+        "schema_version": 1,
+        "engine_version": engine["version"],
+        "advisor_core_version": lock["plugin"]["version"],
+        "profile": {**dispatch["identity"], **dispatch["analyzer"]},
+    }
+    import jsonschema
+
+    engine_members = composition.archive_files(files["runtime/wheels/" + engine["artifact"]])
+    schema_bytes = engine_members.get("appsec_analyzer/schemas/organization-config.schema.json")
+    if schema_bytes is None:
+        _die("pinned Analyzer is missing its public organization configuration schema")
+    if len(schema_bytes) > 65536:
+        _die("pinned organization schema exceeds its byte limit")
+    engine_schema = json.loads(schema_bytes, object_pairs_hook=composition.unique_fields)
+    # Public schema v1 is self-contained. No schema-controlled fetch or resolver
+    # is allowed while packaging an otherwise offline composition.
+    pending = [engine_schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if {"$ref", "$dynamicRef"} & node.keys():
+                _die("pinned organization schema must not select external resources")
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    if len(composition.canonical(engine_config)) > 65536 or not jsonschema.Draft202012Validator(engine_schema).is_valid(
+        engine_config
+    ):
+        _die("engine organization projection violates the pinned public schema")
+    # Packaging never updates a delivered bootstrap. New dispatch requires a
+    # newly assembled host artifact containing the reviewed consumer.
+    bootstrap = Path(__file__).with_name("composition_runtime.py").read_bytes()
+    if files.get("scripts/composition_runtime.py") != bootstrap:
+        _die(
+            "organization dispatch requires reassembly with the current pinned Advisor host; bootstrap was not changed"
+        )
+    dispatch_schema = json.loads((Path(__file__).parents[1] / "schemas/organization-dispatch.schema.json").read_bytes())
+    if not jsonschema.Draft202012Validator(dispatch_schema).is_valid(dispatch):
+        _die("organization dispatch does not match its schema")
     upstream_url = args.upstream_url or next(c["source"] for c in lock["components"] if c["role"] == "host")
     build.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".organization-package-", dir=build.parent) as temporary:
@@ -1395,6 +1503,10 @@ def package_staging(args: argparse.Namespace, source: Path, org_profile: Path, b
         if not (work / "config.json").exists():
             (work / "config.json").write_text("{}\n", encoding="utf-8")
         patch_config(work, args.info_url)
+        if configured_preset is not None:
+            host_config = json.loads((work / "config.json").read_bytes())
+            host_config["organization_profile"]["default_preset"] = configured_preset
+            (work / "config.json").write_bytes(composition.canonical(host_config))
         (work / "hooks").mkdir(exist_ok=True)
         apply_package_surface_policy(work, policy, policy_path, upstream_url, required_skills=set())
         surface = json.loads((work / SURFACE_MANIFEST).read_bytes())
@@ -1416,10 +1528,13 @@ def package_staging(args: argparse.Namespace, source: Path, org_profile: Path, b
             errors = validate_org_profile.validate(profile, overlay, lock["plugin"]["version"], plugin_root=work)
             if errors:
                 _die("staging organization profile semantic validation failed")
+        (work / ORG_DISPATCH).write_bytes(composition.canonical(dispatch))
+        (work / "org-profile/analyzer-config.yaml").write_bytes(composition.canonical(engine_config))
         _staging_readme(work, args.name, surface["skills"]["included"])
         if args.name != UPSTREAM_NAMESPACE:
-            rewrite_namespace(work, args.name, protected=protected)
-            check_namespace_leaks(work, protected=protected)
+            dispatch_protected = protected | {ORG_DISPATCH, "org-profile/analyzer-config.yaml"}
+            rewrite_namespace(work, args.name, protected=dispatch_protected)
+            check_namespace_leaks(work, protected=dispatch_protected)
         result = _staging_tree(work)
         removed = set(files) - set(result)
         for path in protected:

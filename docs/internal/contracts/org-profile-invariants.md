@@ -44,3 +44,7 @@ Preset guardrails consumed by the orchestrator do pass through `flatten_preset`.
 After an org-profile schema or packaging change, build and smoke-test the example package. Confirm the org packaging example still builds cleanly and that `package-surface.json` records the intended surface.
 
 User-facing profile behavior is documented in `docs/org-profiles.md`; packaging details live in `docs/internal-plugin-packaging.md`.
+
+## Composed staging dispatch
+
+The composed packager follows the configuration dispatch ledger in the [migration inventory](../analysis/appsec-advisor-composition-inventory-2026-10-18.md#configuration-dispatch-ledger). It validates the complete input profile, separates host settings from the engine projection, and validates that projection against the pinned wheel's public configuration schema before publication. The [composition contract](plugin-composition.md#organization-configuration-dispatch) defines the admitted score surface, compatibility checks, preset precedence, explicit unsupported fields and runtime-selection limits. Neither packaging nor namespace rewriting can modify the pinned engine or bootstrap to add missing support. The legacy profile resolver and checkout packaging path retain their existing behavior.
