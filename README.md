@@ -155,7 +155,7 @@ The result is one report with a shared architecture model. See [non-interactive 
 
 ## Threat Analyst
 
-*Experimental.* `/appsec-advisor:analyze-threats` looks at a planned feature or a code change and reports likely threats, recommended controls with their trade-offs, applicable requirements, and questions the team needs to answer. It is advisory and does not change the assessment.
+*Experimental.* `/appsec-advisor:analyze-threats` looks at a planned feature or a code change and reports likely threats, recommended controls with their trade-offs, applicable requirements, and questions the team needs to answer. It is advisory and does not change the assessment. The threat analysis is part of the AppSec Analyzer.
 
 | When | Command |
 |---|---|
@@ -191,13 +191,15 @@ See the [developer tools guide](docs/dev-security-helper-usage.md).
 
 ### Security score
 
-`/appsec-advisor:security-score` gives a score from 0 to 100 based on the deterministic scanners, without running the full assessment. It is a quick indicator, not a risk rating. For CI, run the script from a plugin checkout:
+`/appsec-advisor:security-score` gives a score from 0 to 100 based on the deterministic scanners, without running the full assessment. It is a quick indicator, not a risk rating. The score is computed by the AppSec Analyzer. For CI, build the packaged plugin once, install its bundled engine, and run the score through it:
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path/to/project --json
+make plugin-package OUT=/path/to/plugin
+python3 /path/to/plugin/scripts/composition_runtime.py setup --plugin /path/to/plugin
+python3 /path/to/plugin/scripts/composition_runtime.py run --plugin /path/to/plugin --skill security-score -- score /path/to/project --json
 ```
 
-`scripts/analyzers/repo_scan.py` lists the scanner findings, endpoints, and technologies. Both scripts accept a local directory or an HTTPS Git URL; see `--help`.
+`make plugin-package` needs network access on its first run; `setup` installs the bundled engine offline. See the [staging runbook](docs/internal/runbooks/composed-score-staging.md).
 
 ## Enterprise rollout
 
@@ -227,8 +229,8 @@ If a run fails, `/appsec-advisor:report-error` checks a suspected plugin error l
 
 `appsec-advisor` combines separately developed parts into one Claude Code plugin and adds the commands, hooks and display around them:
 
-- the assessment engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which also runs on its own as a command-line tool;
-- skills from [appsec-skills](https://github.com/appsec-foundry/appsec-skills), currently the security score;
+- the AppSec Analyzer engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which provides the assessment, the threat analysis and the security score and also runs on its own as a command-line tool;
+- skills from [appsec-skills](https://github.com/appsec-foundry/appsec-skills) that call the engine, currently the security score;
 - the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a copy in `data/baselines/`.
 
 The marketplace release does not use the separate engine yet. It still runs the assessment pipeline in this repository, as does a `--plugin-dir` checkout, and neither needs a build step.
@@ -239,11 +241,11 @@ To build the preview that uses the separate engine, run:
 make plugin-package
 ```
 
-This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has two commands, `appsec-analyzer` and `security-score`. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
+This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has two commands, `appsec-analyzer` and `security-score`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
 
 ## Related projects
 
-- [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer): the assessment engine as a standalone command-line tool (alpha); see [how the plugin is built](#how-the-plugin-is-built).
+- [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer): the assessment, threat analysis and security score as a standalone command-line tool (alpha); see [how the plugin is built](#how-the-plugin-is-built).
 - [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools): launcher and CI templates for unattended assessments.
 - [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template): builds organization-specific plugin packages.
 - [aiscb](https://github.com/appsec-foundry/aiscb): the secure-coding rules bundled with the plugin.
