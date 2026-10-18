@@ -9,26 +9,18 @@
 
 > ⚠️ **Beta.** `appsec-advisor` is under active development. Commands, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin that assesses the security of an application from its repository. It reads code and configuration, builds a model of the architecture, and reports which security controls are in place, which are missing, and what to fix first. Every finding points to the code it is based on.
+`appsec-advisor` is a Claude Code plugin that bundles application security tools for a repository. Every finding points to the code it is based on.
 
-The plugin also analyzes planned features and code changes for threats, checks a repository against a security requirements catalog, and provides review tools for CI.
+| Tool | What it does | Command |
+|---|---|---|
+| [AppSec Analyzer](#appsec-analyzer) | Assesses the whole application: architecture, security controls, findings, and what to fix first. | `/appsec-advisor:appsec-analyzer` |
+| [Threat Analyst](#threat-analyst) | Analyzes a planned feature or a code change for threats. | `/appsec-advisor:analyze-threats` |
+| [Requirements Audit](#requirements-audit) | Checks the repository against a security requirements catalog. | `/appsec-advisor:audit-security-requirements` |
+| [Developer tools](#developer-tools) | Secure-coding baseline, security score, and change reviews for Claude Code and CI. | see the section |
 
-[Quick start](#quick-start) · [Security Assessment](#security-assessment) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [How the plugin is built](#how-the-plugin-is-built) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Contributing](#contributing)
+[Quick start](#quick-start) · [AppSec Analyzer](#appsec-analyzer) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [How the plugin is built](#how-the-plugin-is-built) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Contributing](#contributing)
 
 ---
-
-## What it does
-
-Run the Security Assessment when you take over a repository or want to know where its security stands. You do not need an architecture document or an existing threat model. The report answers:
-
-- Which components, data flows, and trust boundaries make up the application?
-- Which security controls exist, and which are missing, broken, or unclear?
-- Which weaknesses, design risks, and abuse cases need attention?
-- What should the team fix first?
-
-The code cannot tell the tool which networks you trust or which data matters most to your business. You can add this as business context, and the assessment treats it as a stated assumption.
-
-The assessment only sees the repository and the context you give it. It cannot check runtime behavior or controls that exist only in production. Have an AppSec engineer or security architect review the findings before you act on them or accept a risk.
 
 ## Security and data handling
 
@@ -58,7 +50,7 @@ cd /path/to/repository-to-assess
 claude --plugin-dir /path/to/appsec-advisor
 ```
 
-### 2. Run the assessment
+### 2. Run the AppSec Analyzer
 
 Start Claude Code in the repository you want to assess and allow the commands the assessment needs:
 
@@ -96,7 +88,18 @@ what should I fix first?
 
 Each run is a full assessment that continues the history of the previous one. Your review decisions are kept. `/appsec-advisor:help` lists all commands.
 
-## Security Assessment
+## AppSec Analyzer
+
+Run the AppSec Analyzer when you take over a repository or want to know where its security stands. You do not need an architecture document or an existing threat model. Its security assessment answers:
+
+- Which components, data flows, and trust boundaries make up the application?
+- Which security controls exist, and which are missing, broken, or unclear?
+- Which weaknesses, design risks, and abuse cases need attention?
+- What should the team fix first?
+
+The code cannot tell the tool which networks you trust or which data matters most to your business. You can add this as business context, and the assessment treats it as a stated assumption.
+
+The assessment only sees the repository and the context you give it. It cannot check runtime behavior or controls that exist only in production. Have an AppSec engineer or security architect review the findings before you act on them or accept a risk.
 
 The report contains:
 
@@ -120,7 +123,7 @@ The runtime architecture of Juice Shop with its data flows and attack paths:
 
 The [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#reports-and-exports) shows the other report diagrams: the build pipeline with its supply-chain attacks, and the threat actors with the business harm they can cause.
 
-The [Security Assessment guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
+The [AppSec Analyzer guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits.
 
 ### Abuse cases
 
@@ -229,7 +232,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 
 | Goal | Start here |
 |---|---|
-| Run or configure a security assessment | [Security Assessment](docs/security-assessment.md) |
+| Run or configure the AppSec Analyzer | [AppSec Analyzer](docs/security-assessment.md) |
 | Analyze a planned feature or code change | [Threat Analyst](docs/threat-analyst.md) |
 | Configure models, cost, or logging | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
