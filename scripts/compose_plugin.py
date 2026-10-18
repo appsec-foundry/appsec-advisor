@@ -206,28 +206,31 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
             # A command has one canonical directory spelling on every platform.
             if not re.fullmatch(r"skills/[a-z][a-z0-9-]*/SKILL\.md", name):
                 raise CompositionError("skill command names must be lowercase portable identifiers")
-    if "security-score" in lock.get("skill_bindings", []):
-        prefix = "skills/security-score/"
+    for skill, spec in composition_runtime.DETERMINISTIC_SKILLS.items():
+        if skill not in lock.get("skill_bindings", []):
+            continue
+        command = spec["command"]
+        prefix = f"skills/{skill}/"
         required = [prefix + name for name in ("SKILL.md", "dependencies.json", "references/compatibility.md")]
         if any(name not in outputs for name in [*required, "scripts/composition_runtime.py"]):
             raise CompositionError(
-                "score binding requires the portable workflow, dependencies, references and bootstrap"
+                f"{command} binding requires the portable workflow, dependencies, references and bootstrap"
             )
         engine = next(c for c in lock["components"] if c["role"] == "engine")
-        if "score" not in engine["capabilities"]:
-            raise CompositionError("score binding requires the locked score capability")
+        if spec["capability"] not in engine["capabilities"]:
+            raise CompositionError(f"{command} binding requires the locked {spec['capability']} capability")
         try:
             declaration = json.loads(outputs[prefix + "dependencies.json"], object_pairs_hook=unique_fields)
-            composition_runtime.score_requirements(declaration)
+            composition_runtime.portable_requirements(skill, declaration)
         except (ValueError, AttributeError, TypeError, RecursionError):
-            raise CompositionError("unsupported portable security-score requirements") from None
+            raise CompositionError(f"unsupported portable {skill} requirements") from None
         workflow = outputs.pop(prefix + "SKILL.md")
         owner = owners.pop((prefix + "SKILL.md").casefold())
         total -= len(workflow)
         add(prefix + "WORKFLOW.md", workflow, owner)
         binding = (
-            "---\nname: security-score\n"
-            "description: Run the bundled Analyzer's deterministic security score without model calls.\n---\n\n"
+            f"---\nname: {skill}\n"
+            f"description: {spec['description']}\n---\n\n"
             "# Advisor staging invocation\n\n"
             "Read and follow [the portable workflow](WORKFLOW.md), including its dependencies and compatibility notes. "
             "Use the following host binding for every engine command in that workflow.\n\n"
@@ -235,10 +238,10 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
             "interpreter if needed, including on Windows. Quote its path if it contains spaces.\n\n"
             "```sh\n"
             'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/composition_runtime.py" run '
-            '--plugin "${CLAUDE_PLUGIN_ROOT}" --skill security-score -- score /absolute/repository --json\n'
+            f'--plugin "${{CLAUDE_PLUGIN_ROOT}}" --skill {skill} -- {spec["example"]}\n'
             "```\n\n"
             "For version, capabilities and help, replace only the arguments after `--` with `version`, "
-            "`capabilities` or `score --help`. Pass repository paths and options as literal arguments. "
+            f"`capabilities` or `{command} --help`. Pass repository paths and options as literal arguments. "
             "Never use a PATH-selected engine, private scripts or automatic setup as fallback. "
             "A missing runtime requires explicit operator setup. Preserve stdout, stderr and the engine exit status.\n"
         )

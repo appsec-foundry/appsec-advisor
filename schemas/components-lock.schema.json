@@ -16,8 +16,8 @@
     },
     "interface_version": {"const": 1},
     "skill_bindings": {
-      "type": "array", "maxItems": 2, "uniqueItems": true,
-      "items": {"enum": ["security-score", "appsec-analyzer"]}
+      "type": "array", "maxItems": 3, "uniqueItems": true,
+      "items": {"enum": ["security-score", "repo-profile", "appsec-analyzer"]}
     },
     "runtime": {
       "type": "object", "additionalProperties": false,

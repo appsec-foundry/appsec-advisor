@@ -178,6 +178,66 @@ def test_score_binding_cannot_be_selected_by_target_content(installed_plugin, mo
         runtime.launch(plugin, home, ["score", "selected source"], 30, "security-score")
 
 
+@pytest.fixture
+def profile_plugin(installed_plugin, monkeypatch):
+    plugin, home, lock = installed_plugin
+    declaration = {
+        "schema_version": 1,
+        "engine": "appsec-analyzer",
+        "interface_versions": [1],
+        "required_commands": ["version", "capabilities", "repo-profile"],
+        "required_capabilities": {"repo_profile": {"available": True, "model_calls": False}},
+        "model_prerequisites": [],
+    }
+    target = plugin / "skills/repo-profile/dependencies.json"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(compose.canonical(declaration))
+    lock["skill_bindings"] = ["repo-profile"]
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    return plugin, home
+
+
+def _engine_reports(monkeypatch, record):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0, stdout=json.dumps({"interface_version": 1, "repo_profile": record}).encode()
+        ),
+    )
+
+
+def test_repo_profile_binding_runs_its_command_without_organization_selection(profile_plugin, monkeypatch):
+    plugin, home = profile_plugin
+    _engine_reports(monkeypatch, {"available": True, "model_calls": False})
+    started = []
+
+    class Process:
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kw: started.append(command) or Process())
+    assert runtime.launch(plugin, home, ["repo-profile", "a path", "--json"], 30, "repo-profile") == 0
+    assert started[0][-3:] == ["repo-profile", "a path", "--json"]
+
+
+@pytest.mark.parametrize("record", [{"available": True}, {"available": True, "model_calls": True}])
+def test_repo_profile_binding_rejects_incompatible_engine_before_execution(profile_plugin, monkeypatch, record):
+    plugin, home = profile_plugin
+    _engine_reports(monkeypatch, record)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("incompatible engine must not run"))
+    with pytest.raises(runtime.RuntimeError, match="repo-profile"):
+        runtime.launch(plugin, home, ["repo-profile", "."], 30, "repo-profile")
+
+
+@pytest.mark.parametrize("command", ["score", "scan", "assess"])
+def test_repo_profile_binding_refuses_other_workflows(profile_plugin, monkeypatch, command):
+    plugin, home = profile_plugin
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("binding cannot invoke another workflow"))
+    with pytest.raises(runtime.RuntimeError, match="permits only"):
+        runtime.launch(plugin, home, [command], 30, "repo-profile")
+
+
 def test_skill_binding_is_run_only():
     with pytest.raises(SystemExit) as error:
         runtime.main(["setup", "--skill", "security-score"])

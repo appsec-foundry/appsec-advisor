@@ -68,6 +68,7 @@ def inputs(tmp_path):
         f"appsec_analyzer/skills/primary/{name}": f"skills/appsec-analyzer/{name}"
         for name in ("SKILL.md", "claude-code.md", "business-context.md")
     }
+    selection["skill_bindings"] = ["security-score", "appsec-analyzer"]
     selection["skills"]["files"] = [
         f"{SCORE}/{name}" for name in ("SKILL.md", "dependencies.json", "references/compatibility.md")
     ]

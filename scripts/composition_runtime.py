@@ -196,11 +196,31 @@ def checked(command: list[str], timeout: int = 180) -> None:
         )
 
 
-def score_requirements(declaration: dict) -> dict:
-    """Admit the portable score contract supported by this host adapter."""
-    expected = {"available": True, "model_calls": False, "scoring_version": 2}
+# Portable skills that call one deterministic engine command without model use.
+DETERMINISTIC_SKILLS = {
+    "security-score": {
+        "command": "score",
+        "capability": "score",
+        "expected": {"available": True, "model_calls": False, "scoring_version": 2},
+        "description": "Run the bundled Analyzer's deterministic security score without model calls.",
+        "example": "score /absolute/repository --json",
+    },
+    "repo-profile": {
+        "command": "repo-profile",
+        "capability": "repo_profile",
+        "expected": {"available": True, "model_calls": False},
+        "description": "Run the bundled Analyzer's deterministic repository profile without model calls.",
+        "example": "repo-profile /absolute/directory --json",
+    },
+}
+
+
+def portable_requirements(skill: str, declaration: dict) -> dict:
+    """Admit the portable contract of a deterministic skill supported by this host adapter."""
+    spec = DETERMINISTIC_SKILLS[skill]
+    expected = spec["expected"]
     capabilities = declaration.get("required_capabilities")
-    required = capabilities.get("score") if isinstance(capabilities, dict) else None
+    required = capabilities.get(spec["capability"]) if isinstance(capabilities, dict) else None
     commands = declaration.get("required_commands")
     if (
         declaration.get("schema_version") != 1
@@ -209,15 +229,15 @@ def score_requirements(declaration: dict) -> dict:
         or not isinstance(commands, list)
         or len(commands) != 3
         or any(not isinstance(command, str) for command in commands)
-        or set(commands) != {"version", "capabilities", "score"}
+        or set(commands) != {"version", "capabilities", spec["command"]}
         or not isinstance(capabilities, dict)
-        or capabilities.keys() != {"score"}
+        or capabilities.keys() != {spec["capability"]}
         or declaration.get("model_prerequisites") != []
         or not isinstance(required, dict)
         or required.keys() != expected.keys()
         or any(type(required[key]) is not type(value) or required[key] != value for key, value in expected.items())
     ):
-        raise RuntimeError("unsupported portable security-score requirements")
+        raise RuntimeError(f"unsupported portable {skill} requirements")
     return required
 
 
@@ -238,7 +258,7 @@ ASSESSMENT_COMMANDS = {
 }
 
 
-def engine_capabilities(python: Path, names: list[str], score: dict | None = None) -> None:
+def engine_capabilities(python: Path, names: list[str], requirements: dict[str, dict] | None = None) -> None:
     result = subprocess.run(
         [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
         env=clean_environment(),
@@ -264,12 +284,13 @@ def engine_capabilities(python: Path, names: list[str], score: dict | None = Non
             or entry.get("model_calls") is not False
         ):
             raise RuntimeError("installed engine lacks the public assessment entry contract")
-    if score is not None:
-        actual = capabilities.get("score", {})
+    for name, required in (requirements or {}).items():
+        actual = capabilities.get(name, {})
         if not isinstance(actual, dict) or any(
-            type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in score.items()
+            type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in required.items()
         ):
-            raise RuntimeError("installed engine violates deterministic security-score requirements")
+            skill = next((k for k, spec in DETERMINISTIC_SKILLS.items() if spec["capability"] == name), name)
+            raise RuntimeError(f"installed engine violates deterministic {skill} requirements")
 
 
 def preflight(plugin: Path, home: Path) -> tuple[Path, dict]:
@@ -354,12 +375,14 @@ def setup(plugin: Path, home: Path) -> Path:
                 or version.get("interface_version") != lock["interface_version"]
             ):
                 raise RuntimeError("installed engine version or interface mismatch")
-            score = None
-            if "security-score" in lock.get("skill_bindings", []):
-                score = score_requirements(
-                    read_json(regular(plugin, "skills/security-score/dependencies.json"), MAX_LOCK)
+            requirements = {
+                spec["capability"]: portable_requirements(
+                    skill, read_json(regular(plugin, f"skills/{skill}/dependencies.json"), MAX_LOCK)
                 )
-            engine_capabilities(python, engine["capabilities"], score)
+                for skill, spec in DETERMINISTIC_SKILLS.items()
+                if skill in lock.get("skill_bindings", [])
+            }
+            engine_capabilities(python, engine["capabilities"], requirements or None)
             receipt = {"schema_version": 1, "identity": identity, "lock_sha256": sha(encode(lock))}
             pending = target / ".receipt.pending"
             pending.write_bytes(encode(receipt))
@@ -554,6 +577,7 @@ def organization_arguments(
     if arguments[0] in {
         "version",
         "capabilities",
+        "repo-profile",
         "assessment-entry",
         "status",
         "progress",
@@ -562,7 +586,7 @@ def organization_arguments(
         "query",
         "export",
     }:
-        # Output-scoped consumers make no assessment or model call. In particular,
+        # Output-scoped consumers and the repository profile make no assessment or model call. In particular,
         # cancellation must remain usable with a missing external profile.
         return arguments
     disabled = os.environ.get("APPSEC_ADVISOR_NO_ORG_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -683,13 +707,14 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
     if skill is not None:
         if skill not in lock.get("skill_bindings", []):
             raise RuntimeError("skill invocation binding is not selected in this composition")
-        if skill == "security-score":
-            if arguments[0] not in {"version", "capabilities", "score"}:
-                raise RuntimeError("security-score binding permits only version, capabilities and score")
-            requirements = score_requirements(
-                read_json(regular(plugin, "skills/security-score/dependencies.json"), MAX_LOCK)
+        if skill in DETERMINISTIC_SKILLS:
+            spec = DETERMINISTIC_SKILLS[skill]
+            if arguments[0] not in {"version", "capabilities", spec["command"]}:
+                raise RuntimeError(f"{skill} binding permits only version, capabilities and {spec['command']}")
+            requirements = portable_requirements(
+                skill, read_json(regular(plugin, f"skills/{skill}/dependencies.json"), MAX_LOCK)
             )
-            engine_capabilities(python, ["score"], requirements)
+            engine_capabilities(python, [spec["capability"]], {spec["capability"]: requirements})
         elif skill == "appsec-analyzer":
             if arguments[0] not in ASSESSMENT_COMMANDS:
                 raise RuntimeError("assessment binding permits only its public workflow and consumers")
@@ -724,6 +749,7 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "scan",
         "scan-sources",
         "score",
+        "repo-profile",
         "assess",
         "status",
         "progress",
@@ -881,7 +907,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-home", type=Path, default=default_home())
     parser.add_argument("--timeout", type=int, default=43200)
     parser.add_argument(
-        "--skill", choices=("security-score", "appsec-analyzer"), help="Use a selected staging skill invocation binding"
+        "--skill",
+        choices=("security-score", "repo-profile", "appsec-analyzer"),
+        help="Use a selected staging skill invocation binding",
     )
     raw = list(sys.argv[1:] if argv is None else argv)
     split = raw.index("--") if "--" in raw else len(raw)

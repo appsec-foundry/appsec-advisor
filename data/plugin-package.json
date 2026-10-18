@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "runtime": {"python": ["3.10"], "platforms": ["linux-x86_64"]},
-  "skill_bindings": ["security-score", "appsec-analyzer"],
+  "skill_bindings": ["security-score", "repo-profile", "appsec-analyzer"],
   "host": {
     "id": "advisor-host",
     "source": "https://github.com/appsec-foundry/appsec-advisor",
@@ -19,10 +19,10 @@
     "id": "appsec-analyzer",
     "source": "https://github.com/appsec-foundry/appsec-analyzer",
     "branch": "main",
-    "revision": "684a57e1e23e595d84581be27584f90c06ff1d49",
+    "revision": "f45b0e7577d6f701d9d34c959b5a4045dd8a7a08",
     "license": "Apache-2.0",
     "capabilities": [
-      "score", "scan_sources", "organization_config", "scan", "assessment_entry",
+      "score", "repo_profile", "scan_sources", "organization_config", "scan", "assessment_entry",
       "status", "progress", "stop", "results", "query", "export"
     ],
     "files": {
@@ -35,7 +35,7 @@
     "id": "appsec-skills",
     "source": "https://github.com/appsec-foundry/appsec-skills",
     "branch": "main",
-    "revision": "557f16fa07beead21267a3b220f7e4d608e11b2c",
+    "revision": "ca5001d3a373774d969c79932283aa8126bad42d",
     "license": "No license declaration; operator-owned internal staging only",
     "files": [
       "schemas/skill-dependencies.schema.json",
@@ -44,6 +44,10 @@
       "skills/create-threat-model/references/model-guide.md",
       "skills/create-threat-model/references/security-context.md",
       "skills/create-threat-model/requirements.md",
+      "skills/repo-profile/README.md",
+      "skills/repo-profile/SKILL.md",
+      "skills/repo-profile/dependencies.json",
+      "skills/repo-profile/references/compatibility.md",
       "skills/security-score/README.md",
       "skills/security-score/SKILL.md",
       "skills/security-score/dependencies.json",

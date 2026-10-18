@@ -31,7 +31,7 @@ Other selection changes, such as a dependency version or an added skill file, ar
 
 To assemble artifacts prepared another way, record exact revisions, versions, licenses, SHA-256 digests, required capabilities and source-to-target resource mappings in a lock conforming to [the component lock schema](../schemas/components-lock.schema.json) and run the assembler directly as shown below.
 
-For the primary entry, select `appsec-analyzer` in `skill_bindings`, the engine-owned `SKILL.md`, `claude-code.md` and `business-context.md`, and the host bootstrap and progress renderer. Assembly retains the engine entry as `WORKFLOW.md` and generates the Claude invocation separately. Selecting `security-score` additionally requires its portable workflow resources and dependency declaration. The [composition contract](internal/contracts/plugin-composition.md#primary-entry-source-checkpoint) gives the ownership and capability checks.
+For the primary entry, select `appsec-analyzer` in `skill_bindings`, the engine-owned `SKILL.md`, `claude-code.md` and `business-context.md`, and the host bootstrap and progress renderer. Assembly retains the engine entry as `WORKFLOW.md` and generates the Claude invocation separately. Selecting `security-score` or `repo-profile` additionally requires its portable workflow resources and dependency declaration. The [composition contract](internal/contracts/plugin-composition.md#primary-entry-source-checkpoint) gives the ownership and capability checks.
 
 To run the assembler directly, start it from the Advisor checkout with its existing Python dependencies. The output directory must not exist; its parent must exist. Replace the paths with the reviewed selection and artifact directory:
 

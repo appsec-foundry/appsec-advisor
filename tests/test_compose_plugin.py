@@ -109,6 +109,35 @@ def add_score_skill(lock, inputs, source_prefix="portable/score"):
     return workflow
 
 
+def add_repo_profile_skill(lock, inputs, model_calls=False):
+    """Select the neutral portable repository-profile skill from an independent artifact."""
+    declaration = {
+        "schema_version": 1,
+        "engine": "appsec-analyzer",
+        "interface_versions": [1],
+        "required_commands": ["version", "capabilities", "repo-profile"],
+        "required_capabilities": {"repo_profile": {"available": True, "model_calls": model_calls}},
+        "model_prerequisites": [],
+    }
+    selected = {
+        "SKILL.md": b"---\nname: repo-profile\ndescription: Neutral profile workflow\n---\n",
+        "dependencies.json": compose.canonical(declaration),
+        "references/compatibility.md": b"No security judgement.\n",
+    }
+    data = compose.zip_bytes({"portable/profile/" + name: content for name, content in selected.items()})
+    (inputs / "profile-skills.zip").write_bytes(data)
+    component = copy.deepcopy(lock["components"][0])
+    component.update(
+        id="profile-skills",
+        role="skills",
+        artifact="profile-skills.zip",
+        sha256=compose.digest(data),
+        files=[{"source": "portable/profile/" + name, "target": "skills/repo-profile/" + name} for name in selected],
+    )
+    lock["components"].append(component)
+    lock["skill_bindings"] = ["repo-profile"]
+
+
 @pytest.fixture
 def composition(tmp_path):
     return make_composition(tmp_path)
@@ -161,6 +190,33 @@ def test_score_binding_preserves_workflow_and_delivered_provenance(composition, 
     for name in ("SKILL.md", "WORKFLOW.md", "dependencies.json", "references/compatibility.md"):
         path = "skills/security-score/" + name
         assert delivered[path]["sha256"] == compose.digest(files[path])
+
+
+def test_repo_profile_binding_pins_its_own_command(composition):
+    lock, inputs = composition
+    add_repo_profile_skill(lock, inputs)
+    lock["components"][1]["capabilities"].append("repo_profile")
+    files = compose.assemble(lock, inputs)
+    binding = files["skills/repo-profile/SKILL.md"].decode()
+    assert "name: repo-profile" in binding
+    assert "--skill repo-profile -- repo-profile /absolute/directory --json" in binding
+    assert "security-score" not in binding
+    assert files["skills/repo-profile/WORKFLOW.md"].startswith(b"---\nname: repo-profile")
+
+
+def test_repo_profile_binding_requires_locked_engine_operation(composition):
+    lock, inputs = composition
+    add_repo_profile_skill(lock, inputs)
+    with pytest.raises(compose.CompositionError, match="locked repo_profile"):
+        compose.assemble(lock, inputs)
+
+
+def test_repo_profile_binding_rejects_a_model_calling_declaration(composition):
+    lock, inputs = composition
+    add_repo_profile_skill(lock, inputs, model_calls=True)
+    lock["components"][1]["capabilities"].append("repo_profile")
+    with pytest.raises(compose.CompositionError, match="unsupported portable repo-profile"):
+        compose.assemble(lock, inputs)
 
 
 @pytest.mark.parametrize("missing", ["SKILL.md", "dependencies.json", "references/compatibility.md", "bootstrap"])

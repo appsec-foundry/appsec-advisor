@@ -123,6 +123,10 @@ Each run also checks abuse cases, things an attacker or user must not be able to
 
 To run it in CI, use the packaged plugin from `make plugin-package` (Python 3.10, Linux x86_64, committed Git checkout). Setup and the CI commands are in the [staging runbook](docs/internal/runbooks/composed-score-staging.md).
 
+### Repository profile
+
+`/appsec-advisor:repo-profile` shows what a scan would have to read: the size of the working tree, the language split, the build manifests and whether the repository is one service or a monorepo. It makes no model calls, reads no file contents and is not a security check. The workflow is the [repo-profile skill](https://github.com/appsec-foundry/appsec-skills/tree/main/skills/repo-profile) in appsec-skills, and the profile itself is computed by the AppSec Analyzer's `repo-profile` command.
+
 ## Threat Analyst
 
 *Experimental.* `/appsec-advisor:analyze-threats` looks at a planned feature or a code change and reports likely threats, recommended controls with their trade-offs, applicable requirements, and questions the team needs to answer. It is advisory and does not change the assessment. The threat analysis is part of the AppSec Analyzer.
@@ -202,7 +206,7 @@ If a run fails, `/appsec-advisor:report-error` checks a suspected plugin error l
 `appsec-advisor` combines separately developed parts into one Claude Code plugin and adds the commands, hooks and display around them:
 
 - the AppSec Analyzer engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which provides the assessment, the threat analysis and the security score and also runs on its own as a command-line tool;
-- skills from [appsec-skills](https://github.com/appsec-foundry/appsec-skills) that call the engine, currently the security score;
+- skills from [appsec-skills](https://github.com/appsec-foundry/appsec-skills) that call the engine, currently the security score and the repository profile;
 - the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a copy in `data/baselines/`.
 
 The marketplace release does not use the separate engine yet. It still runs the assessment pipeline in this repository, as does a `--plugin-dir` checkout, and neither needs a build step.
@@ -213,7 +217,7 @@ To build the preview that uses the separate engine, run:
 make plugin-package
 ```
 
-This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has three commands, `appsec-analyzer`, `security-score` and `create-threat-model`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
+This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has four commands, `appsec-analyzer`, `security-score`, `repo-profile` and `create-threat-model`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
 
 ## Related projects
 
