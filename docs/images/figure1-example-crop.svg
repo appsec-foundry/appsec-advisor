@@ -1,0 +1,916 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1174" height="800" viewBox="0 0 1174 800" font-family="Helvetica, Arial, sans-serif">
+<rect width="1174" height="2155" fill="#ffffff"/>
+<defs><marker id="arw-Restricted" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#9c3d3d"/></marker><marker id="arw-Confidential" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#b46a38"/></marker><marker id="arw-Internal" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#6f7d8f"/></marker><marker id="arw-Public" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#a3aab4"/></marker><marker id="arw-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker><marker id="arw-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker><marker id="arw-attacker-0" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker></defs>
+<text x="20.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#334d6e" text-anchor="start" font-weight="bold">Figure 1a — Runtime Architecture and Threat Overview</text>
+<text x="20.0" y="42.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#6b7280" text-anchor="start" font-weight="normal">Juice Shop · 20.1.1 · 7 components · 19 data flows · 6 trust boundaries · 67 threats in the model</text>
+<rect x="10.0" y="66.0" width="322.0" height="1517.0" rx="7" fill="#fbf6f6" stroke="#a04d4a" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text x="20.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#a04d4a" text-anchor="start" font-weight="bold">INTERNET — untrusted</text>
+<text x="20.0" y="95.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">actors and their browsers</text>
+<rect x="20.0" y="102.0" width="302.0" height="116.0" rx="7" fill="#fbf6f6" stroke="#a04d4a" stroke-width="1.2"/>
+<text x="30.0" y="118.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#a04d4a" text-anchor="start" font-weight="bold">Attackers</text>
+<text x="30.0" y="131.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Untrusted threat actors</text>
+<rect x="20.0" y="244.0" width="302.0" height="256.0" rx="7" fill="#f5f8f6" stroke="#6d927c" stroke-width="1.2"/>
+<text x="30.0" y="260.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#6d927c" text-anchor="start" font-weight="bold">Users</text>
+<text x="30.0" y="273.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Application users and administrators</text>
+<rect x="20.0" y="526.0" width="302.0" height="376.0" rx="7" fill="#fcf8f3" stroke="#a0673f" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text x="30.0" y="542.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#a0673f" text-anchor="start" font-weight="bold">Client Layer</text>
+<rect x="20.0" y="928.0" width="302.0" height="641.0" rx="7" fill="#f3f9f8" stroke="#3f857c" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text x="30.0" y="944.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#3f857c" text-anchor="start" font-weight="bold">Third-party</text>
+<text x="30.0" y="957.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">external integrations</text>
+<rect x="584.0" y="66.0" width="218.0" height="1102.0" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text x="594.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#4f6d9c" text-anchor="start" font-weight="bold">Application Layer</text>
+<rect x="936.0" y="66.0" width="218.0" height="474.0" rx="7" fill="#f7f5fa" stroke="#7b62a6" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text x="946.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#7b62a6" text-anchor="start" font-weight="bold">Data Layer</text>
+<g data-boundary-line="0" data-boundary-ids="tb-1 tb-2 tb-10 tb-12">
+<title>Trust boundary crossing: tb-1 External → C-02; tb-2 External → C-03; tb-10 C-02 → External; tb-12 C-05 → External</title>
+<path d="M 354 62 V 1599" fill="none" stroke="#b3453f" stroke-width="2.4" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<text x="354.0" y="57.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="middle" font-weight="bold">TRUST BOUNDARY</text>
+</g>
+<g data-boundary-line="1" data-boundary-ids="tb-8 tb-9">
+<title>Trust boundary crossing: tb-8 C-02 → C-07; tb-9 C-02 → C-06</title>
+<path d="M 834 62 V 1599" fill="none" stroke="#b3453f" stroke-width="2.4" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<text x="834.0" y="57.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="middle" font-weight="bold">TRUST BOUNDARY</text>
+</g>
+<g data-flow-ids="df-001" data-access-mode="">
+<title>df-001: User input; evidence: frontend/src/app/app.routing.ts:81</title>
+<path d="M 216.2 368.0 L 272.0 368.0 L 272.0 574.0 L 97.3 574.0 L 97.3 600.2" fill="none" stroke="#a3aab4" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Public)"/>
+</g>
+<g data-flow-ids="df-002 df-003" data-access-mode="sequence">
+<title>df-002: POST /rest/user/login — credential submission (step 1 of login) (HTTPS)
+df-003: POST /rest/2fa/verify — TOTP code submission (step 2 of login) (HTTPS)
+df-002 authentication: unauthenticated login endpoint; no token required to present credentials; evidence: routes/login.ts:34
+df-002 access group: Credentials (2FA if enrolled); sequence; step 1
+df-003 authentication: temporary token issued after successful password step, before full JWT is granted; evidence: routes/2fa.ts:17, server.ts:458
+df-003 access group: Credentials (2FA if enrolled); sequence; step 2</title>
+<path d="M 225.2 674.3 L 542.0 674.3" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Confidential)"/>
+</g>
+<g data-flow-ids="df-006 df-007" data-access-mode="alternatives">
+<title>df-006: Authenticated REST API request with RS256 JWT bearer token (HTTPS)
+df-007: Unauthenticated public API request (registration, browsing, feedback, file upload) (HTTPS)
+df-006 authentication: RS256 JWT in Authorization header; 6-hour expiry; signed with hardcoded RSA private key; evidence: frontend/src/app/Services/request.interceptor.ts:16, lib/insecurity.ts:54
+df-006 access group: API access (authenticated or public); alternatives; step n/a
+df-007 authentication: no authentication required; endpoint class includes user registration, product catalog, feedback submission, and file upload; evidence: server.ts:182, routes/fileUpload.ts:19
+df-007 access group: API access (authenticated or public); alternatives; step n/a</title>
+<path d="M 225.2 631.9 L 430.0 631.9 L 430.0 280.5 L 542.0 280.5" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-008" data-access-mode="">
+<title>df-008: POST / — cookie-authenticated data erasure request (HTTPS)
+df-008 authentication: session cookie checked in routes/dataErasure.ts handler; separate from JWT bearer authentication used by the API; evidence: routes/dataErasure.ts:76</title>
+<path d="M 216.2 346.0 L 400.0 346.0 L 400.0 238.6 L 574.0 238.6" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Confidential)"/>
+</g>
+<g data-flow-ids="df-009" data-access-mode="">
+<title>df-009: Socket.IO WebSocket connection for challenge events and score broadcasts (WebSocket)
+df-009 authentication: No authentication check; confirmed by T-041 (evidence-verified); evidence: lib/startup/registerWebsocketEvents.ts:23</title>
+<path d="M 225.2 858.1 L 574.0 858.1" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)" marker-start="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-010" data-access-mode="">
+<title>df-010: Sequelize ORM SQL queries (raw SQL with interpolated inputs on login path) (SQL)
+df-010 authentication: Embedded SQLite engine inside the application process; the engine has no login of its own.; evidence: models/index.ts:34</title>
+<path d="M 789.2 393.0 L 926.0 393.0" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Confidential)"/>
+</g>
+<g data-flow-ids="df-011" data-access-mode="">
+<title>df-011: marsdb document queries ($where built by string concatenation on product reviews) (MarsDB)
+df-011 authentication: Embedded MarsDB engine inside the application process; the engine has no login of its own.; evidence: data/mongodb.ts:9, data/mongodb.ts:10</title>
+<path d="M 789.2 168.0 L 926.0 168.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-012" data-access-mode="">
+<title>df-012: Server-side fetch to user-controlled URL for profile image upload (SSRF candidate) (HTTP)</title>
+<path d="M 596.8 322.4 L 440.0 322.4 L 440.0 1163.0 L 239.0 1163.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-013" data-access-mode="">
+<title>df-013: Ethereum JSON-RPC call to Alchemy Sepolia for NFT minting and wallet verification (HTTPS)</title>
+<path d="M 596.8 1123.2 L 410.0 1123.2 L 410.0 1280.5 L 239.0 1280.5" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-014" data-access-mode="">
+<title>df-014: HTTP POST webhook notification on challenge completion (HTTP)</title>
+<path d="M 596.8 364.2 L 450.0 364.2 L 450.0 1392.0 L 239.0 1392.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-015" data-access-mode="">
+<title>df-015: HTTP GET startup health probe and API call to Ollama/OpenAI-compatible LLM endpoint via /rest/chat (HTTP)</title>
+<path d="M 596.8 406.1 L 460.0 406.1 L 460.0 1498.5 L 239.0 1498.5" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-016" data-access-mode="">
+<title>df-016: GET /metrics — unauthenticated Prometheus metrics endpoint (HTTP)
+df-016 authentication: management endpoint publicly reachable with no authentication check; authn_signal absent on production route R-108; evidence: server.ts:676, routes/metrics.ts:73</title>
+<path d="M 216.2 324.0 L 390.0 324.0 L 390.0 196.8 L 574.0 196.8" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-017" data-access-mode="">
+<title>df-017: HTTP requests to /rest/web3/* endpoints for key submission, NFT verification, and wallet exploit (HTTPS)
+df-017 authentication: Web3 endpoints have missing_auth_suspect=true in route projection; no authentication check located in handlers; evidence: routes/checkKeys.ts:1, server.ts:641</title>
+<path d="M 225.2 817.3 L 420.0 817.3 L 420.0 1059.5 L 574.0 1059.5" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+</g>
+<g data-flow-ids="df-019" data-access-mode="">
+<title>df-019: User input; evidence: frontend/src/app/app.routing.ts:81</title>
+<path d="M 216.2 451.0 L 286.0 451.0 L 286.0 586.0 L 160.7 586.0 L 160.7 600.2" fill="none" stroke="#a3aab4" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Public)"/>
+</g>
+<g data-attack-edge="actor:a0 auth"><title>Internet Attacker → C-03 · Authentication &amp; Session Surface: scenario 1, 2, 3, 4; its findings also affect C-02 · Express REST API Server</title>
+<path d="M 471.2 568.7 L 596.2 568.7" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arw-attacker-0)"/>
+</g>
+<g data-attack-edge="actor:a0 express-api"><title>Internet Attacker → C-02 · Express REST API Server: scenario 1, 2, 3, 4, 5, 7; its findings also affect C-05 · Web3 / Wallet / NFT Surface</title>
+<path d="M 471.2 160.0 L 596.2 160.0" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arw-attacker-0)"/>
+</g>
+<g data-attack-edge="actor:a0 web3-nft"><title>Internet Attacker → C-05 · Web3 / Wallet / NFT Surface: scenario 2</title>
+<path d="M 216.2 160.0 L 470.0 160.0 L 470.0 1028.8 L 596.2 1028.8" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arw-attacker-0)"/>
+<text x="221.0" y="156.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b3453f" text-anchor="start" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">Direct attack</text>
+</g>
+<g data-attack-edge="actor:a0 ext-user"><title>Internet Attacker → Juice Shop User: scenario 6, 7</title>
+<path d="M 216.2 182.0 L 300.0 182.0 L 300.0 302.0 L 216.8 302.0" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="5 4" marker-end="url(#arw-attacker-0)"/>
+<text x="221.0" y="178.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b3453f" text-anchor="start" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">Via user</text>
+</g>
+<rect x="34.0" y="602.0" width="190.0" height="286.0" rx="22" fill="#ffffff" stroke="#cf8a3e" stroke-width="1.4"/>
+<rect x="37.0" y="605.0" width="184.0" height="280.0" rx="19" fill="none" stroke="#cf8a3e" stroke-width="0.8"/>
+<g data-component-id="angular-spa"><title>C-01 · Angular SPA Frontend</title>
+<text x="123.0" y="624.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-01 · Angular SPA</text>
+<text x="123.0" y="637.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Frontend</text>
+</g>
+<g data-technology-owner="angular-spa" data-language="TypeScript">
+<title>Language: TypeScript</title>
+<text x="123.0" y="654.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">[TypeScript]</text>
+</g>
+<g data-capability="oauth-client" data-capability-owner="angular-spa">
+<title>OAuth client — evidence: frontend/src/app/login/login.component.ts:148, frontend/src/app/oauth/oauth.component.ts:30</title>
+<rect x="54.0" y="662.0" width="60.6" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="84.3" y="671.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">OAuth client</text>
+</g>
+<circle cx="56.0" cy="687.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="64.0" y="690.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">7</text>
+<circle cx="79.1" cy="687.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="87.1" y="690.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">4</text>
+<rect x="54.0" y="697.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="60.5" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">S</text>
+<rect x="69.0" y="697.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="75.5" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
+<rect x="84.0" y="697.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="90.5" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">R</text>
+<rect x="99.0" y="697.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="105.5" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">I</text>
+<rect x="114.0" y="697.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="120.5" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">D</text>
+<rect x="129.0" y="697.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="135.5" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="147.0" y="707.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<rect x="54.0" y="716.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="63.0" y="723.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Output Handling (XSS)</text>
+<rect x="54.0" y="728.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="63.0" y="735.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Data Storage</text>
+<rect x="54.0" y="740.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="63.0" y="747.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Broken Authentication</text>
+<text x="54.0" y="761.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Assets</text>
+<g data-asset-id="A-006" data-asset-component="angular-spa" data-asset-relation="processed" data-asset-display="inline">
+<title>C-01 · Angular SPA Frontend: Active JWT Session Tokens</title>
+<rect x="54.0" y="771.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="64.0" y="777.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Processed: A-006 Active JWT</text>
+<text x="64.0" y="788.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Session Tokens</text>
+<text x="64.0" y="799.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+</g>
+<circle cx="168.0" cy="887.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="168.0" y="890.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<circle cx="187.0" cy="887.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="187.0" y="890.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">6</text>
+<circle cx="206.0" cy="887.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="206.0" y="890.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">7</text>
+<rect x="598.0" y="102.0" width="190.0" height="335.0" rx="22" fill="#ffffff" stroke="#b3453f" stroke-width="2"/>
+<rect x="601.0" y="105.0" width="184.0" height="329.0" rx="19" fill="none" stroke="#b3453f" stroke-width="0.8"/>
+<g data-component-id="express-api"><title>C-02 · Express REST API Server</title>
+<text x="687.0" y="124.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-02 · Express REST API</text>
+<text x="687.0" y="137.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Server</text>
+</g>
+<g data-technology-owner="express-api" data-language="TypeScript">
+<title>Language: TypeScript</title>
+<text x="687.0" y="154.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">[TypeScript]</text>
+</g>
+<g data-capability="code-evaluation" data-capability-owner="express-api">
+<title>Dynamic code evaluation — evidence: routes/userProfile.ts:61, routes/captcha.ts:22</title>
+<rect x="618.0" y="162.0" width="113.2" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<circle cx="625.0" cy="168.5" r="2.8" fill="#b3453f" stroke="none" stroke-width="1"/>
+<text x="678.6" y="171.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">Dynamic code evaluation</text>
+</g>
+<g data-capability="url-fetch" data-capability-owner="express-api">
+<title>URL fetch — evidence: routes/profileImageUrlUpload.ts:24</title>
+<rect x="618.0" y="179.0" width="56.5" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<circle cx="625.0" cy="185.5" r="2.8" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="650.2" y="188.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">URL fetch</text>
+</g>
+<g data-capability="file-upload" data-capability-owner="express-api">
+<title>File upload — evidence: routes/fileUpload.ts:28</title>
+<rect x="679.5" y="179.0" width="56.6" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="707.7" y="188.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">File upload</text>
+</g>
+<g data-capability="admin-functions" data-capability-owner="express-api">
+<title>Admin functions — evidence: server.ts:356</title>
+<rect x="618.0" y="196.0" width="72.8" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="654.4" y="205.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">Admin functions</text>
+</g>
+<g data-capability-more="3" data-capability-owner="express-api">
+<title>Further capabilities: XML parsing — evidence: lib/xml.ts:38; Server-side templates — evidence: routes/userProfile.ts:87 (reported finding); LLM calls — evidence: lib/startup/validatePreconditions.ts:236</title>
+<rect x="695.8" y="196.0" width="20.1" height="13.0" rx="3" fill="#ffffff" stroke="#b6c6d8" stroke-width="0.7" stroke-dasharray="2 2"/>
+<text x="705.8" y="205.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="middle" font-weight="normal">+3</text>
+</g>
+<circle cx="620.0" cy="221.0" r="4.5" fill="#b3453f" stroke="none" stroke-width="1"/>
+<text x="628.0" y="224.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">5</text>
+<circle cx="643.1" cy="221.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="651.1" y="224.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">17</text>
+<circle cx="671.4" cy="221.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="679.4" y="224.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">21</text>
+<rect x="618.0" y="231.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="624.5" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">S</text>
+<rect x="633.0" y="231.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="639.5" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
+<rect x="648.0" y="231.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="654.5" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">R</text>
+<rect x="663.0" y="231.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="669.5" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">I</text>
+<rect x="678.0" y="231.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="684.5" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">D</text>
+<rect x="693.0" y="231.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="699.5" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">E</text>
+<text x="711.0" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<rect x="618.0" y="250.0" width="6.0" height="6.0" rx="1" fill="#c05656" stroke="none" stroke-width="1"/>
+<text x="627.0" y="257.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Unsafe Query Construction</text>
+<rect x="618.0" y="262.0" width="6.0" height="6.0" rx="1" fill="#c05656" stroke="none" stroke-width="1"/>
+<text x="627.0" y="269.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Code Evaluation</text>
+<rect x="618.0" y="274.0" width="6.0" height="6.0" rx="1" fill="#c05656" stroke="none" stroke-width="1"/>
+<text x="627.0" y="281.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Broken Authorization</text>
+<rect x="618.0" y="286.0" width="6.0" height="6.0" rx="1" fill="#c05656" stroke="none" stroke-width="1"/>
+<text x="627.0" y="293.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Improper Attribute Modification</text>
+<rect x="618.0" y="298.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="305.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Template Handling</text>
+<text x="627.0" y="317.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">+9 more High</text>
+<circle cx="772.0" cy="117.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
+<path d="M 765.5 117 H 778.5 M 772.0 110.5 V 123.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<path d="M 772.0 110.5 A 3.25 6.5 0 0 0 772.0 123.5 A 3.25 6.5 0 0 0 772.0 110.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<text x="618.0" y="331.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Assets</text>
+<g data-asset-id="A-008" data-asset-component="express-api" data-asset-relation="processed" data-asset-display="inline">
+<title>C-02 · Express REST API Server: Application Configuration and Themed Secrets</title>
+<rect x="618.0" y="341.0" width="6.0" height="6.0" rx="0" fill="#6f7d8f" stroke="none" stroke-width="1"/>
+<text x="628.0" y="347.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Processed: A-008 Application</text>
+<text x="628.0" y="358.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Configuration and Themed</text>
+<text x="628.0" y="369.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Secrets</text>
+<text x="628.0" y="380.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6f7d8f" text-anchor="start" font-weight="normal">Internal</text>
+</g>
+<circle cx="675.0" cy="436.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="675.0" y="439.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<circle cx="694.0" cy="436.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="694.0" y="439.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<circle cx="713.0" cy="436.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="713.0" y="439.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
+<circle cx="732.0" cy="436.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="732.0" y="439.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
+<circle cx="751.0" cy="436.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="751.0" y="439.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
+<circle cx="770.0" cy="436.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="770.0" y="439.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">7</text>
+<g data-actor-grouping="A1">
+<rect x="43.0" y="138.0" width="172.0" height="66.0" rx="0" fill="#ffffff" stroke="#b3453f" stroke-width="1.8"/>
+<circle cx="59.0" cy="158.0" r="5" fill="none" stroke="#b3453f" stroke-width="1.5"/>
+<path d="M 51.0 174 A 8 8 0 0 1 67.0 174" fill="none" stroke="#b3453f" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="75.0" y="157.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#b3453f" text-anchor="start" font-weight="bold">A1 · Internet Attacker</text>
+<text x="75.0" y="176.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">Includes:</text>
+<text x="75.0" y="186.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">Self-registered users</text>
+<text x="75.0" y="196.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">Login / privileges: per finding</text>
+</g>
+<rect x="598.0" y="463.0" width="190.0" height="317.0" rx="22" fill="#ffffff" stroke="#b3453f" stroke-width="2"/>
+<g data-component-id="auth"><title>C-03 · Authentication &amp; Session Surface</title>
+<text x="687.0" y="485.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-03 · Authentication &amp;</text>
+<text x="687.0" y="498.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Session Surface</text>
+</g>
+<g data-technology-owner="auth" data-framework="express" data-language="TypeScript">
+<title>Framework: express · Language: TypeScript</title>
+<text x="687.0" y="515.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">[express · TypeScript]</text>
+</g>
+<g data-capability="jwt-issuer" data-capability-owner="auth">
+<title>JWT issuer — evidence: lib/insecurity.ts:54</title>
+<rect x="618.0" y="523.0" width="52.5" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="644.2" y="532.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">JWT issuer</text>
+</g>
+<g data-capability="mfa-verifier" data-capability-owner="auth">
+<title>MFA verifier — evidence: routes/2fa.ts:16, server.ts:458</title>
+<rect x="675.5" y="523.0" width="60.6" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="705.8" y="532.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">MFA verifier</text>
+</g>
+<circle cx="620.0" cy="548.0" r="4.5" fill="#b3453f" stroke="none" stroke-width="1"/>
+<text x="628.0" y="551.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
+<circle cx="643.1" cy="548.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="651.1" y="551.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">7</text>
+<circle cx="666.3" cy="548.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="674.3" y="551.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">7</text>
+<rect x="618.0" y="558.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="624.5" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">S</text>
+<rect x="633.0" y="558.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="639.5" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
+<rect x="648.0" y="558.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="654.5" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">R</text>
+<rect x="663.0" y="558.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="669.5" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">I</text>
+<rect x="678.0" y="558.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="684.5" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">D</text>
+<rect x="693.0" y="558.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="699.5" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">E</text>
+<text x="711.0" y="568.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<rect x="618.0" y="577.0" width="6.0" height="6.0" rx="1" fill="#c05656" stroke="none" stroke-width="1"/>
+<text x="627.0" y="584.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Unsafe Query Construction</text>
+<text x="627.0" y="596.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">(SQLi)</text>
+<rect x="618.0" y="601.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="608.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Secret Management</text>
+<rect x="618.0" y="613.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="620.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Improper Authenticity Checks</text>
+<rect x="618.0" y="625.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="632.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Weak Authentication</text>
+<rect x="618.0" y="637.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="644.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Cryptography</text>
+<circle cx="772.0" cy="478.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
+<path d="M 765.5 478 H 778.5 M 772.0 471.5 V 484.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<path d="M 772.0 471.5 A 3.25 6.5 0 0 0 772.0 484.5 A 3.25 6.5 0 0 0 772.0 471.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<text x="618.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Assets</text>
+<g data-asset-id="A-002" data-asset-component="auth" data-asset-relation="processed" data-asset-display="inline">
+<title>C-03 · Authentication &amp; Session Surface: JWT RSA Private Key</title>
+<rect x="618.0" y="668.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
+<text x="628.0" y="674.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Processed: A-002 JWT RSA</text>
+<text x="628.0" y="685.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Private Key</text>
+<text x="628.0" y="696.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
+</g>
+<g data-asset-id="A-005" data-asset-component="auth" data-asset-relation="processed" data-asset-display="inline">
+<title>C-03 · Authentication &amp; Session Surface: Encryption and CTF Key Files</title>
+<rect x="618.0" y="707.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
+<text x="628.0" y="713.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Processed: A-005 Encryption and</text>
+<text x="628.0" y="724.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">CTF Key Files</text>
+<text x="628.0" y="735.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
+</g>
+<circle cx="713.0" cy="779.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="713.0" y="782.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<circle cx="732.0" cy="779.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="732.0" y="782.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<circle cx="751.0" cy="779.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="751.0" y="782.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
+<circle cx="770.0" cy="779.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="770.0" y="782.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
+<rect x="598.0" y="806.0" width="190.0" height="155.0" rx="22" fill="#ffffff" stroke="#cf8a3e" stroke-width="1.4"/>
+<g data-component-id="realtime-channel"><title>C-04 · Real-time WebSocket Channel</title>
+<text x="687.0" y="828.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-04 · Real-time</text>
+<text x="687.0" y="841.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">WebSocket Channel</text>
+</g>
+<g data-technology-owner="realtime-channel" data-framework="socket.io" data-language="TypeScript">
+<title>Framework: socket.io · Language: TypeScript</title>
+<text x="687.0" y="858.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">[socket.io · TypeScript]</text>
+</g>
+<g data-capability="websocket-endpoint" data-capability-owner="realtime-channel">
+<title>WebSocket endpoint — evidence: lib/startup/registerWebsocketEvents.ts:20</title>
+<rect x="618.0" y="866.0" width="84.9" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="660.5" y="875.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">WebSocket endpoint</text>
+</g>
+<circle cx="620.0" cy="891.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="628.0" y="894.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
+<circle cx="643.1" cy="891.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="651.1" y="894.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">4</text>
+<rect x="618.0" y="901.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="624.5" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">S</text>
+<rect x="633.0" y="901.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="639.5" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
+<rect x="648.0" y="901.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="654.5" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">R</text>
+<rect x="663.0" y="901.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="669.5" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">I</text>
+<rect x="678.0" y="901.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="684.5" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">D</text>
+<rect x="693.0" y="901.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="699.5" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="711.0" y="911.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<rect x="618.0" y="920.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="927.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insufficient Resource Limits</text>
+<circle cx="772.0" cy="821.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
+<path d="M 765.5 821 H 778.5 M 772.0 814.5 V 827.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<path d="M 772.0 814.5 A 3.25 6.5 0 0 0 772.0 827.5 A 3.25 6.5 0 0 0 772.0 814.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<rect x="598.0" y="987.0" width="190.0" height="167.0" rx="22" fill="#ffffff" stroke="#cf8a3e" stroke-width="1.4"/>
+<g data-component-id="web3-nft"><title>C-05 · Web3 / Wallet / NFT Surface</title>
+<text x="687.0" y="1009.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-05 · Web3 / Wallet /</text>
+<text x="687.0" y="1022.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">NFT Surface</text>
+</g>
+<g data-technology-owner="web3-nft" data-framework="ethers" data-language="TypeScript">
+<title>Framework: ethers · Language: TypeScript</title>
+<text x="687.0" y="1039.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">[ethers · TypeScript]</text>
+</g>
+<g data-capability="blockchain-client" data-capability-owner="web3-nft">
+<title>Blockchain client — evidence: routes/nftMint.ts:18, routes/web3Wallet.ts:20</title>
+<rect x="618.0" y="1047.0" width="80.9" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="658.4" y="1056.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">Blockchain client</text>
+</g>
+<circle cx="620.0" cy="1072.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="628.0" y="1075.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">3</text>
+<circle cx="643.1" cy="1072.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="651.1" y="1075.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
+<rect x="618.0" y="1082.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="624.5" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">S</text>
+<rect x="633.0" y="1082.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="639.5" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">T</text>
+<rect x="648.0" y="1082.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="654.5" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">R</text>
+<rect x="663.0" y="1082.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="669.5" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">I</text>
+<rect x="678.0" y="1082.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="684.5" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">D</text>
+<rect x="693.0" y="1082.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="699.5" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="711.0" y="1092.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<rect x="618.0" y="1101.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="1108.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insecure Secret Management</text>
+<rect x="618.0" y="1113.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="627.0" y="1120.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Insufficient Resource Limits</text>
+<circle cx="772.0" cy="1002.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
+<path d="M 765.5 1002 H 778.5 M 772.0 995.5 V 1008.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<path d="M 772.0 995.5 A 3.25 6.5 0 0 0 772.0 1008.5 A 3.25 6.5 0 0 0 772.0 995.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<circle cx="751.0" cy="1153.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="751.0" y="1156.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<circle cx="770.0" cy="1153.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="770.0" y="1156.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
+<rect x="950.0" y="102.0" width="190.0" height="132.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
+<path d="M 950.0 102 H 1140.0 M 950.0 234 H 1140.0 M 950.0 102 V 234 M 958.0 102 V 234" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linejoin="round"/>
+<g data-component-id="marsdb-store"><title>C-06 · marsdb Embedded Document Store</title>
+<text x="1039.0" y="124.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-06 · marsdb Embedded</text>
+<text x="1039.0" y="137.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Document Store</text>
+</g>
+<rect x="974.0" y="162.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="980.5" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">S</text>
+<rect x="989.0" y="162.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="995.5" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">T</text>
+<rect x="1004.0" y="162.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1010.5" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">R</text>
+<rect x="1019.0" y="162.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1025.5" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">I</text>
+<rect x="1034.0" y="162.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1040.5" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">D</text>
+<rect x="1049.0" y="162.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1055.5" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="1067.0" y="172.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<text x="974.0" y="202.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Asset mapping not established</text>
+<rect x="950.0" y="260.0" width="190.0" height="266.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
+<path d="M 950.0 260 H 1140.0 M 950.0 526 H 1140.0 M 950.0 260 V 526 M 958.0 260 V 526" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linejoin="round"/>
+<g data-component-id="sqlite-store"><title>C-07 · SQLite Relational Store</title>
+<text x="1039.0" y="282.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-07 · SQLite</text>
+<text x="1039.0" y="295.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Relational Store</text>
+</g>
+<rect x="974.0" y="320.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="980.5" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">S</text>
+<rect x="989.0" y="320.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="995.5" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">T</text>
+<rect x="1004.0" y="320.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1010.5" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">R</text>
+<rect x="1019.0" y="320.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1025.5" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">I</text>
+<rect x="1034.0" y="320.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1040.5" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">D</text>
+<rect x="1049.0" y="320.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1055.5" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="1067.0" y="330.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<text x="974.0" y="360.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Assets</text>
+<g data-asset-id="A-001" data-asset-component="sqlite-store" data-asset-relation="stored" data-asset-display="inline">
+<title>C-07 · SQLite Relational Store: User Credentials</title>
+<rect x="974.0" y="370.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="984.0" y="376.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-001 User Credentials</text>
+<text x="984.0" y="387.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+</g>
+<g data-asset-id="A-003" data-asset-component="sqlite-store" data-asset-relation="stored" data-asset-display="inline">
+<title>C-07 · SQLite Relational Store: User Personal Data</title>
+<rect x="974.0" y="398.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="984.0" y="404.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-003 User Personal</text>
+<text x="984.0" y="415.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Data</text>
+<text x="984.0" y="426.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+</g>
+<g data-asset-id="A-004" data-asset-component="sqlite-store" data-asset-relation="stored" data-asset-display="inline">
+<title>C-07 · SQLite Relational Store: Payment Card Data</title>
+<rect x="974.0" y="437.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="984.0" y="443.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-004 Payment Card Data</text>
+<text x="984.0" y="454.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+</g>
+<g data-asset-id="A-007" data-asset-component="sqlite-store" data-asset-relation="stored" data-asset-display="inline">
+<title>C-07 · SQLite Relational Store: Order and Basket Data</title>
+<rect x="974.0" y="465.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="984.0" y="471.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-007 Order and Basket</text>
+<text x="984.0" y="482.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Data</text>
+<text x="984.0" y="493.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+</g>
+<circle cx="1008.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1008.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<circle cx="1027.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1027.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<circle cx="1046.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1046.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
+<circle cx="1065.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1065.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
+<circle cx="1084.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1084.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
+<circle cx="1103.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1103.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">6</text>
+<circle cx="1122.0" cy="525.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1122.0" y="528.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">7</text>
+<g data-external-id="ext-user"><title>End user accessing Juice Shop via web browser. May be anonymous or authenticated; when self-registration is open, anonymous reaches authenticated in seconds.</title>
+<rect x="43.0" y="280.0" width="172.0" height="110.0" rx="0" fill="#ffffff" stroke="#3f8a5e" stroke-width="1.8"/>
+<circle cx="59.0" cy="300.0" r="5" fill="none" stroke="#3f8a5e" stroke-width="1.5"/>
+<path d="M 51.0 316 A 8 8 0 0 1 67.0 316" fill="none" stroke="#3f8a5e" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="75.0" y="299.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#3f8a5e" text-anchor="start" font-weight="bold">Juice Shop User</text>
+<text x="75.0" y="360.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">End user accessing Juice Shop</text>
+<text x="75.0" y="370.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">via web browser.</text>
+<text x="75.0" y="382.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">victim of ⑥ ⑦</text>
+</g>
+<g data-external-id="ext-google-oauth"><title>Google OAuth 2.0 authorization server. The Angular SPA performs an implicit-flow redirect (response_type=token) without a state parameter.</title>
+<rect x="43.0" y="964.0" width="172.0" height="143.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
+<text x="55.0" y="983.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">Google OAuth 2.0</text>
+<g data-capability="oauth-authorization-server" data-capability-owner="ext-google-oauth">
+<title>IdP · OAuth 2.0 — evidence: frontend/src/app/login/login.component.ts:148</title>
+<rect x="55.0" y="988.0" width="72.8" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="91.4" y="997.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">IdP · OAuth 2.0</text>
+</g>
+<g data-capability="oauth-resource-server" data-capability-owner="ext-google-oauth">
+<title>Profile API — evidence: frontend/src/app/Services/user.service.ts:68</title>
+<rect x="132.8" y="988.0" width="56.6" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="161.0" y="997.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">Profile API</text>
+</g>
+<text x="55.0" y="1025.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Google OAuth 2.0 authorization</text>
+<text x="55.0" y="1035.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">server.</text>
+</g>
+<g data-external-id="ext-user-url"><title>Arbitrary HTTP/HTTPS URL submitted by an authenticated user for profile image upload. The server fetches this URL server-side, enabling SSRF.</title>
+<rect x="43.0" y="1133.0" width="172.0" height="82.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
+<text x="55.0" y="1152.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">User-Supplied Profile Image</text>
+<text x="55.0" y="1164.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">URL</text>
+<text x="55.0" y="1187.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Arbitrary HTTP/HTTPS URL submitted by</text>
+<text x="55.0" y="1197.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">an authenticated user for profile</text>
+<text x="55.0" y="1207.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">image upload.</text>
+</g>
+<g data-external-id="ext-ethereum-rpc"><title>Alchemy Ethereum Sepolia RPC endpoint used by NFT minting and wallet exploit-address challenge handlers.</title>
+<rect x="43.0" y="1241.0" width="172.0" height="101.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
+<text x="55.0" y="1260.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">Ethereum Sepolia RPC</text>
+<text x="55.0" y="1272.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">(Alchemy)</text>
+<g data-capability="blockchain-rpc" data-capability-owner="ext-ethereum-rpc">
+<title>Blockchain RPC — evidence: routes/nftMint.ts:18, routes/web3Wallet.ts:20</title>
+<rect x="55.0" y="1277.0" width="68.7" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="89.3" y="1286.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">Blockchain RPC</text>
+</g>
+<text x="55.0" y="1314.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Alchemy Ethereum Sepolia RPC endpoint</text>
+<text x="55.0" y="1324.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">used by NFT minting and wallet</text>
+<text x="55.0" y="1334.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">exploit-address challenge handlers.</text>
+</g>
+<g data-external-id="ext-webhook"><title>Configurable external URL receiving challenge-completion webhook notifications via HTTP POST from the backend.</title>
+<rect x="43.0" y="1368.0" width="172.0" height="70.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
+<text x="55.0" y="1387.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">Webhook Delivery Target</text>
+<text x="55.0" y="1410.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Configurable external URL receiving</text>
+<text x="55.0" y="1420.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">challenge-completion webhook</text>
+<text x="55.0" y="1430.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">notifications via HTTP POST from the…</text>
+</g>
+<g data-external-id="ext-llm-api"><title>Ollama or OpenAI-compatible LLM inference endpoint. Validated at startup via GET to the /models path; used by the /rest/chat route handler.</title>
+<rect x="43.0" y="1464.0" width="172.0" height="91.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
+<text x="55.0" y="1483.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">LLM API (Ollama /</text>
+<text x="55.0" y="1495.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">OpenAI-compatible)</text>
+<g data-capability="llm-inference" data-capability-owner="ext-llm-api">
+<title>LLM inference — evidence: lib/startup/validatePreconditions.ts:236</title>
+<rect x="55.0" y="1500.0" width="64.7" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="87.3" y="1509.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">LLM inference</text>
+</g>
+<text x="55.0" y="1537.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Ollama or OpenAI-compatible LLM</text>
+<text x="55.0" y="1547.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">inference endpoint.</text>
+</g>
+<g data-external-id="ext-privileged-role"><title>Application role with elevated rights, evidenced by its access check.</title>
+<rect x="43.0" y="416.0" width="172.0" height="70.0" rx="0" fill="#ffffff" stroke="#3f8a5e" stroke-width="1.8"/>
+<circle cx="59.0" cy="436.0" r="5" fill="none" stroke="#3f8a5e" stroke-width="1.5"/>
+<path d="M 51.0 452 A 8 8 0 0 1 67.0 452" fill="none" stroke="#3f8a5e" stroke-width="1.5" stroke-linejoin="round"/>
+<text x="75.0" y="435.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#3f8a5e" text-anchor="start" font-weight="bold">Juice Shop Admin</text>
+<text x="75.0" y="458.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Application role with elevated</text>
+<text x="75.0" y="468.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">rights, evidenced by its access</text>
+<text x="75.0" y="478.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">check.</text>
+</g>
+<g data-integration-reference="E1" data-reference-owner="angular-spa" data-reference-peer="ext-google-oauth" data-reference-direction="↔">
+<title>Google OAuth 2.0
+df-004: OAuth implicit-flow authorization redirect to Google (no state parameter) (HTTPS); OAuth 2.0 implicit flow; SPA redirects browser to Google authorization endpoint with response_type=token; missing state parameter (CSRF risk)
+df-005: OAuth implicit-flow access token returned in URL fragment to /oauth callback (HTTPS); access token in URL fragment delivered by Google OAuth authorization server; implicit flow (no PKCE)
+df-018: OAuth profile request (HTTPS); The provider checks the OAuth access token sent with the request</title>
+<rect x="42.0" y="844.0" width="174.0" height="24.0" rx="3" fill="#edf3f9" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="48.0" y="858.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#334d6e" text-anchor="start" font-weight="bold">↔ E1 · Google OAuth 2.0</text>
+<g data-authentication="3" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(212.0 856.0) scale(-1 1)">
+<title>OAuth 2.0 · implicit</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">3</text></g>
+</g>
+<g data-integration-reference="E1" data-reference-owner="ext-google-oauth" data-reference-peer="angular-spa" data-reference-direction="↔">
+<title>C-01 · Angular SPA Frontend
+df-004: OAuth implicit-flow authorization redirect to Google (no state parameter) (HTTPS); OAuth 2.0 implicit flow; SPA redirects browser to Google authorization endpoint with response_type=token; missing state parameter (CSRF risk)
+df-005: OAuth implicit-flow access token returned in URL fragment to /oauth callback (HTTPS); access token in URL fragment delivered by Google OAuth authorization server; implicit flow (no PKCE)
+df-018: OAuth profile request (HTTPS); The provider checks the OAuth access token sent with the request</title>
+<rect x="51.0" y="1043.0" width="156.0" height="44.0" rx="3" fill="#edf3f9" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="57.0" y="1057.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#334d6e" text-anchor="start" font-weight="bold">↔ E1 · C-01 ·</text>
+<text x="57.0" y="1069.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#334d6e" text-anchor="start" font-weight="bold">Angular SPA</text>
+<text x="57.0" y="1081.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#334d6e" text-anchor="start" font-weight="bold">Frontend</text>
+<g data-authentication="1" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(203.0 1065.0) scale(-1 1)">
+<title>Bearer token</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">1</text></g>
+<g data-authentication="3" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(177.0 1065.0) scale(-1 1)">
+<title>OAuth 2.0 · implicit</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">3</text></g>
+</g>
+<g data-auth-flows="df-002 df-003" data-access-mode="sequence">
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-002 df-003" transform="translate(566.0 674.3) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<g data-authentication="4" data-authentication-shape="hexagon" data-auth-flows="df-002 df-003" transform="translate(598.0 674.3) scale(-1 1)">
+<title>Other authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">4</text></g>
+<text x="572.0" y="677.3" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#6b7280" text-anchor="middle" font-weight="normal">→</text>
+</g>
+<g data-auth-flows="df-006 df-007" data-access-mode="alternatives">
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-006 df-007" transform="translate(566.0 280.5) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<g data-authentication="1" data-authentication-shape="hexagon" data-auth-flows="df-006 df-007" transform="translate(598.0 280.5) scale(-1 1)">
+<title>Bearer token</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">1</text></g>
+<text x="572.0" y="283.5" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#6b7280" text-anchor="middle" font-weight="normal">/</text>
+</g>
+<g data-authentication="2" data-authentication-shape="hexagon" data-auth-flows="df-008" transform="translate(598.0 238.6) scale(-1 1)">
+<title>Session cookie</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">2</text></g>
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-009" transform="translate(598.0 858.1) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-010" transform="translate(950.0 393.0) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-011" transform="translate(950.0 168.0) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<g data-authentication="?" data-authentication-shape="hexagon" data-auth-flows="df-012" transform="translate(215.0 1163.0) scale(1 1)">
+<title>Unknown</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="10" y="3.5" transform="scale(1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
+<g data-authentication="?" data-authentication-shape="hexagon" data-auth-flows="df-013" transform="translate(215.0 1280.5) scale(1 1)">
+<title>Unknown</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="10" y="3.5" transform="scale(1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
+<g data-authentication="?" data-authentication-shape="hexagon" data-auth-flows="df-014" transform="translate(215.0 1392.0) scale(1 1)">
+<title>Unknown</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="10" y="3.5" transform="scale(1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
+<g data-authentication="?" data-authentication-shape="hexagon" data-auth-flows="df-015" transform="translate(215.0 1498.5) scale(1 1)">
+<title>Unknown</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="10" y="3.5" transform="scale(1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-016" transform="translate(598.0 196.8) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<g data-authentication="?" data-authentication-shape="hexagon" data-auth-flows="df-017" transform="translate(598.0 1059.5) scale(-1 1)">
+<title>Unknown</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
+<path d="M 269 451.0 H 275" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 269 451.0 H 275" fill="none" stroke="#a3aab4" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 437 674.3333333333334 H 443" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 437 674.3333333333334 H 443" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 447 674.3333333333334 H 453" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 447 674.3333333333334 H 453" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 457 674.3333333333334 H 463" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 457 674.3333333333334 H 463" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 470 671.3333333333334 V 677.3333333333334" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 671.3333333333334 V 677.3333333333334" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 470 277.5 V 283.5" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 277.5 V 283.5" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 470 235.625 V 241.625" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 235.625 V 241.625" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 437 858.1428571428571 H 443" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 437 858.1428571428571 H 443" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 447 858.1428571428571 H 453" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 447 858.1428571428571 H 453" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 457 858.1428571428571 H 463" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 457 858.1428571428571 H 463" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 417 858.1428571428571 H 423" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 417 858.1428571428571 H 423" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 470 855.1428571428571 V 861.1428571428571" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 855.1428571428571 V 861.1428571428571" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 470 319.375 V 325.375" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 319.375 V 325.375" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 437 1123.25 H 443" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 437 1123.25 H 443" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 437 1059.5 H 443" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 437 1059.5 H 443" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 407 1163.0 H 413" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 407 1163.0 H 413" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 447 1123.25 H 453" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 447 1123.25 H 453" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 457 1123.25 H 463" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 457 1123.25 H 463" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 470 361.25 V 367.25" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 361.25 V 367.25" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 447 1059.5 H 453" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 447 1059.5 H 453" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 470 403.125 V 409.125" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 403.125 V 409.125" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M 457 1059.5 H 463" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 457 1059.5 H 463" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 470 193.75 V 199.75" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 470 193.75 V 199.75" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
+<text x="137.2" y="588.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User input</text>
+<text x="391.2" y="688.3" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Credentials (2FA</text>
+<text x="391.2" y="700.3" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">if enrolled)</text>
+<text x="391.2" y="712.3" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(HTTPS)</text>
+<g transform="rotate(-90 424.0 456.2)">
+<text x="424.0" y="456.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">API access (authenticated or public) (HTTPS)</text>
+</g>
+<text x="516.4" y="252.6" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Data erasure request</text>
+<text x="516.4" y="264.6" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(HTTPS)</text>
+<text x="507.2" y="872.1" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Challenge events</text>
+<text x="507.2" y="884.1" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(WebSocket)</text>
+<text x="873.5" y="387.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">SQL queries (SQL)</text>
+<text x="871.2" y="182.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Document queries</text>
+<text x="871.2" y="194.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(MarsDB)</text>
+<g transform="rotate(-90 434.0 932.1)">
+<text x="434.0" y="932.1" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User-controlled URL fetch (HTTP)</text>
+</g>
+<text x="504.1" y="1137.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Blockchain RPC call</text>
+<text x="504.1" y="1149.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(HTTPS)</text>
+<g transform="rotate(-90 444.0 1225.5)">
+<text x="444.0" y="1225.5" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Webhook notification (HTTP)</text>
+</g>
+<text x="528.4" y="400.1" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">LLM API call (HTTP)</text>
+<g transform="rotate(-90 384.0 260.4)">
+<text x="384.0" y="260.4" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Metrics request (HTTP)</text>
+</g>
+<g transform="rotate(-90 414.0 938.4)">
+<text x="414.0" y="938.4" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Web3 API request (HTTPS)</text>
+</g>
+<text x="250.4" y="600.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User input</text>
+<g data-legend-section="notation" data-legend-column="1" transform="translate(20.0 1629.0)">
+<rect x="0.0" y="0.0" width="350.0" height="26.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
+<text x="175.0" y="17.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Notation</text>
+<rect x="14.0" y="37.0" width="22.0" height="14.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.4"/>
+<text x="44.0" y="48.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">external entity (actor, third party)</text>
+<rect x="14.0" y="57.0" width="22.0" height="14.0" rx="7" fill="#ffffff" stroke="#1f2937" stroke-width="1.4"/>
+<text x="44.0" y="68.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">process (component); double line = complex</text>
+<path d="M 14 77 H 36 M 14 91 H 36 M 14 77 V 91 M 17 77 V 91" fill="none" stroke="#1f2937" stroke-width="1.4" stroke-linejoin="round"/>
+<text x="44.0" y="88.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">data store (evidenced asset locations)</text>
+<text x="25.0" y="108.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">[ ]</text>
+<text x="44.0" y="108.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">framework · language; data store: engine</text>
+<path d="M 14 124 H 36" fill="none" stroke="#b46a38" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arw-Confidential)"/>
+<text x="44.0" y="128.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">data flow · classification colour · two heads = bidirectional</text>
+<rect x="44.0" y="135.0" width="8.0" height="8.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
+<text x="55.0" y="142.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
+<rect x="109.2" y="135.0" width="8.0" height="8.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="120.2" y="142.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+<rect x="183.0" y="135.0" width="8.0" height="8.0" rx="0" fill="#6f7d8f" stroke="none" stroke-width="1"/>
+<text x="194.0" y="142.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6f7d8f" text-anchor="start" font-weight="normal">Internal</text>
+<rect x="239.6" y="135.0" width="8.0" height="8.0" rx="0" fill="#a3aab4" stroke="none" stroke-width="1"/>
+<text x="250.6" y="142.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#a3aab4" text-anchor="start" font-weight="normal">Public</text>
+<path d="M 14 158 H 36" fill="none" stroke="#b3453f" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4"/>
+<text x="44.0" y="162.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">trust boundary crossed between these columns</text>
+<path d="M 14 178 H 36" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-linejoin="round" stroke-dasharray="6 4"/>
+<text x="44.0" y="182.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">dashed outline = zone, not itself a boundary</text>
+<path d="M 14 198 H 36" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arw-red)"/>
+<text x="44.0" y="202.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">solid = direct attack · dashed = via user</text>
+<circle cx="25.0" cy="217.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
+<path d="M 18.5 217 H 31.5 M 25 210.5 V 223.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<path d="M 25 210.5 A 3.25 6.5 0 0 0 25 223.5 A 3.25 6.5 0 0 0 25 210.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
+<text x="44.0" y="222.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">⊕ internet-exposed entry point</text>
+<rect x="14.0" y="230.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="20.5" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">S</text>
+<rect x="29.0" y="230.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="35.5" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
+<rect x="44.0" y="230.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="50.5" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">R</text>
+<rect x="59.0" y="230.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="65.5" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">I</text>
+<rect x="74.0" y="230.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="80.5" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">D</text>
+<rect x="89.0" y="230.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="95.5" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="107.0" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<text x="14.0" y="259.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">STRIDE-per-element: filled = threats found in that class</text>
+<rect x="14.0" y="263.0" width="6.0" height="6.0" rx="1" fill="#c05656" stroke="none" stroke-width="1"/>
+<text x="23.0" y="270.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Unsafe Query Construction (SQLi)</text>
+<text x="14.0" y="297.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">All Critical · High fills to 5 · +N = omitted High categories</text>
+<circle cx="14.0" cy="305.0" r="4.5" fill="#b3453f" stroke="none" stroke-width="1"/>
+<text x="22.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Critical</text>
+<circle cx="84.0" cy="305.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="92.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">High</text>
+<circle cx="154.0" cy="305.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="162.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Medium</text>
+<text x="14.0" y="323.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">counts on a node = threats per severity · ①–⑨ = attack scenario</text>
+<text x="14.0" y="336.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">badges also count scenarios that hit an asset stored there</text>
+<text x="14.0" y="355.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">Security-relevant capabilities / service roles</text>
+<rect x="14.0" y="361.0" width="60.6" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<text x="44.3" y="370.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">OAuth client</text>
+<text x="82.6" y="371.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">function or service role</text>
+<rect x="14.0" y="379.0" width="68.6" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
+<circle cx="21.0" cy="385.5" r="2.8" fill="#b3453f" stroke="none" stroke-width="1"/>
+<text x="52.3" y="388.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">OAuth client</text>
+<text x="90.6" y="389.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">dot: most severe linked finding</text>
+<text x="14.0" y="407.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">Dynamic code evaluation = runs runtime data as program code</text>
+<text x="14.0" y="419.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">URL fetch = requests a URL that runtime input selects or influences</text>
+<text x="14.0" y="431.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">Most security-critical functions always shown (at most 5), others up</text>
+<text x="14.0" y="443.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">to 3 labels per element: most critical first, then most severe linked</text>
+<text x="14.0" y="455.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">finding; +N = further labels, listed under Further capabilities.</text>
+<text x="14.0" y="467.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">Functions may go undetected: a missing label does not mean absence.</text>
+<text x="14.0" y="493.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#334d6e" text-anchor="start" font-weight="bold">↔ E1</text>
+<text x="52.0" y="493.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Matching E-labels indicate a connection; lines omitted.</text>
+</g>
+<g data-legend-section="scenarios" data-legend-column="2" transform="translate(412.0 1629.0)">
+<rect x="0.0" y="0.0" width="350.0" height="26.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
+<text x="175.0" y="17.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Attack scenarios — by actor</text>
+<g data-scenario-actor="Internet Attacker">
+<text x="14.0" y="48.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">Internet Attacker</text>
+<circle cx="24.0" cy="59.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="62.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<text x="38.0" y="63.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Inject Input into Server Interpreters</text>
+<text x="336.0" y="63.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
+<circle cx="24.0" cy="76.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="79.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<text x="38.0" y="80.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Bypass or Forge Authentication</text>
+<text x="336.0" y="80.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#cf8a3e" text-anchor="end" font-weight="bold">High</text>
+<circle cx="24.0" cy="93.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="96.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
+<text x="38.0" y="97.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Bypass Authorization to Gain Access</text>
+<text x="336.0" y="97.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
+<circle cx="24.0" cy="110.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="113.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
+<text x="38.0" y="114.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Access Exposed Data and Secrets</text>
+<text x="336.0" y="114.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#cf8a3e" text-anchor="end" font-weight="bold">High</text>
+<circle cx="24.0" cy="127.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="130.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
+<text x="38.0" y="131.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Stored eval executes server-side code</text>
+<text x="336.0" y="131.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
+</g>
+<g data-scenario-actor="Internet Attacker → User (victim)">
+<text x="14.0" y="149.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">Internet Attacker → User (victim)</text>
+<circle cx="24.0" cy="160.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="163.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">6</text>
+<text x="38.0" y="164.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Inject Scripts into Victim Browsers</text>
+<text x="336.0" y="164.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#cf8a3e" text-anchor="end" font-weight="bold">High</text>
+<circle cx="24.0" cy="177.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="24.0" y="180.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">7</text>
+<text x="38.0" y="181.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Abuse Cross-Site Requests</text>
+<text x="336.0" y="181.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#c4a441" text-anchor="end" font-weight="bold">Medium</text>
+</g>
+</g>
+<g data-legend-section="authentication" data-legend-column="3" transform="translate(804.0 1629.0)">
+<rect x="0.0" y="0.0" width="350.0" height="26.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
+<text x="175.0" y="17.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Authentication</text>
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(34.0 45.0) scale(-1 1)">
+<title>No Authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
+<text x="44.0" y="47.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">No Authentication</text>
+<text x="44.0" y="61.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">The recipient performs no authentication check on this connection.</text>
+<g data-authentication="1" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(34.0 80.0) scale(-1 1)">
+<title>Bearer token</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">1</text></g>
+<text x="44.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">Bearer token</text>
+<text x="44.0" y="96.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">The recipient checks the token supplied with the request.</text>
+<g data-authentication="2" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(34.0 115.0) scale(-1 1)">
+<title>Session cookie</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">2</text></g>
+<text x="44.0" y="117.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">Session cookie</text>
+<text x="44.0" y="131.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">A session cookie identifies the caller.</text>
+<g data-authentication="3" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(34.0 150.0) scale(-1 1)">
+<title>OAuth 2.0 · implicit</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">3</text></g>
+<text x="44.0" y="152.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">OAuth 2.0 · implicit</text>
+<text x="44.0" y="166.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">Delegated access; only the evidenced protocol step is covered.</text>
+<g data-authentication="4" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(34.0 185.0) scale(-1 1)">
+<title>Other authentication</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff5d6" stroke="#926200" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#926200">4</text></g>
+<text x="44.0" y="187.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">Other authentication</text>
+<text x="44.0" y="201.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">temporary token issued after successful password step, before full</text>
+<text x="44.0" y="212.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">JWT is granted</text>
+<g data-authentication="?" data-authentication-shape="hexagon" data-auth-flows="" transform="translate(34.0 231.0) scale(-1 1)">
+<title>Unknown</title>
+<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
+<text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
+<text x="44.0" y="233.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">Unknown</text>
+<text x="44.0" y="247.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">Authentication could not be determined from the code.</text>
+<text x="14.0" y="269.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">Numbered hexagon: authentication · circle: attack scenario</text>
+<text x="14.0" y="281.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">0: no authentication · ?: unknown</text>
+<text x="14.0" y="293.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">Red: absent / unsafe · yellow: standard / limited · green: stronger</text>
+<text x="14.0" y="305.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">Method properties, not proof of a secure implementation.</text>
+<text x="10.0" y="317.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">/: alternatives · →: successive checks (see access label)</text>
+</g>
+<g data-legend-section="capability-notes" data-legend-column="2" transform="translate(412.0 1844.0)">
+<rect x="0.0" y="0.0" width="350.0" height="26.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
+<text x="175.0" y="17.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Further capabilities</text>
+<text x="14.0" y="48.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">Labels behind +N on their element:</text>
+<text x="14.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#6b7280" text-anchor="start" font-weight="normal">C-02: XML parsing, Server-side templates, LLM calls</text>
+</g>
+<g data-crop-marker="true">
+<defs><linearGradient id="crop-fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0"/><stop offset="1" stop-color="#ffffff" stop-opacity="1"/></linearGradient></defs>
+<rect x="0" y="660" width="1174" height="140" fill="url(#crop-fade)"/>
+<rect x="437" y="756" width="300" height="30" rx="15" fill="#334d6e"/>
+<text x="587" y="776" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="bold">Detail · click for the full diagram</text>
+</g>
+</svg>

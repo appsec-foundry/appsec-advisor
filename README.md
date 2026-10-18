@@ -94,12 +94,14 @@ Findings are mapped to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). F
 
 **Example:** [Standard assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/security-assessment-juice-shop-standard-v0.6.0b5.md). The [examples repository](https://github.com/appsec-foundry/appsec-advisor-examples) also has its diagrams and exports.
 
-The runtime architecture of Juice Shop with its data flows and attack paths:
+The runtime architecture of Juice Shop with its data flows and attack paths; click the diagram to open it in full:
 
+<a href="docs/images/figure1-example.svg">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1-example-dark.svg">
-  <img src="docs/images/figure1-example.svg" alt="Runtime architecture and attack paths in the Juice Shop assessment">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1-example-crop-dark.svg">
+  <img src="docs/images/figure1-example-crop.svg" alt="Detail of the runtime architecture and attack paths in the Juice Shop assessment">
 </picture>
+</a>
 
 The [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#reports-and-exports) shows the other report diagrams: the build pipeline with its supply-chain attacks, and the threat actors with the business harm they can cause.
 
