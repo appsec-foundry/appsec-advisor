@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "runtime": {"python": ["3.10"], "platforms": ["linux-x86_64"]},
+  "skill_bindings": ["security-score", "appsec-analyzer"],
+  "host": {
+    "id": "advisor-host",
+    "source": "https://github.com/appsec-foundry/appsec-advisor",
+    "license": "Apache-2.0",
+    "files": [
+      ".claude-plugin/plugin.json",
+      "LICENSE",
+      "types/progress.d.ts",
+      "scripts/composition_runtime.py",
+      "schemas/org-profile.schema.yaml",
+      "scripts/runtime/assessment_console.py"
+    ]
+  },
+  "engine": {
+    "id": "appsec-analyzer",
+    "source": "https://github.com/appsec-foundry/appsec-analyzer",
+    "license": "Apache-2.0",
+    "capabilities": [
+      "score", "scan_sources", "organization_config", "scan", "assessment_entry",
+      "status", "progress", "stop", "results", "query", "export"
+    ],
+    "files": {
+      "appsec_analyzer/skills/appsec-analyzer/SKILL.md": "skills/appsec-analyzer/SKILL.md",
+      "appsec_analyzer/skills/appsec-analyzer/claude-code.md": "skills/appsec-analyzer/claude-code.md",
+      "appsec_analyzer/skills/appsec-analyzer/business-context.md": "skills/appsec-analyzer/business-context.md"
+    }
+  },
+  "skills": {
+    "id": "appsec-skills",
+    "source": "https://github.com/appsec-foundry/appsec-skills",
+    "license": "No license declaration; operator-owned internal staging only",
+    "files": [
+      "schemas/skill-dependencies.schema.json",
+      "skills/security-score/README.md",
+      "skills/security-score/SKILL.md",
+      "skills/security-score/dependencies.json",
+      "skills/security-score/references/compatibility.md"
+    ]
+  },
+  "dependencies": [
+    {"id": "markupsafe", "version": "2.1.5", "license": "BSD-3-Clause", "source": "https://pypi.org/project/MarkupSafe/2.1.5",
+     "artifact": "MarkupSafe-2.1.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+     "sha256": "2174c595a0d73a3080ca3257b40096db99799265e1c27cc5a610743acd86d62f"},
+    {"id": "pyyaml", "version": "6.0.2", "license": "MIT", "source": "https://pypi.org/project/PyYAML/6.0.2",
+     "artifact": "PyYAML-6.0.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+     "sha256": "ec031d5d2feb36d1d1a24380e4db6d43695f3748343d99434e6f5f9156aaa2ed"},
+    {"id": "attrs", "version": "26.1.0", "license": "MIT", "source": "https://pypi.org/project/attrs/26.1.0",
+     "artifact": "attrs-26.1.0-py3-none-any.whl",
+     "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"},
+    {"id": "jinja2", "version": "3.1.6", "license": "BSD-3-Clause", "source": "https://pypi.org/project/Jinja2/3.1.6",
+     "artifact": "jinja2-3.1.6-py3-none-any.whl",
+     "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"},
+    {"id": "jsonschema", "version": "4.26.0", "license": "MIT", "source": "https://pypi.org/project/jsonschema/4.26.0",
+     "artifact": "jsonschema-4.26.0-py3-none-any.whl",
+     "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"},
+    {"id": "jsonschema-specifications", "version": "2025.4.1", "license": "MIT",
+     "source": "https://pypi.org/project/jsonschema-specifications/2025.4.1",
+     "artifact": "jsonschema_specifications-2025.4.1-py3-none-any.whl",
+     "sha256": "4653bffbd6584f7de83a67e0d620ef16900b390ddc7939d56684d6c81e33f1af"},
+    {"id": "referencing", "version": "0.36.2", "license": "MIT", "source": "https://pypi.org/project/referencing/0.36.2",
+     "artifact": "referencing-0.36.2-py3-none-any.whl",
+     "sha256": "e8699adbbf8b5c7de96d8ffa0eb5c158b3beafce084968e2ea8bb08c6794dcd0"},
+    {"id": "rpds-py", "version": "0.25.1", "license": "MIT", "source": "https://pypi.org/project/rpds-py/0.25.1",
+     "artifact": "rpds_py-0.25.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+     "sha256": "0701942049095741a8aeb298a31b203e735d1c61f4423511d2b1a41dcd8a16da"},
+    {"id": "typing-extensions", "version": "4.14.0", "license": "PSF-2.0",
+     "source": "https://pypi.org/project/typing_extensions/4.14.0",
+     "artifact": "typing_extensions-4.14.0-py3-none-any.whl",
+     "sha256": "a1514509136dd0b477638fc68d6a91497af5076466ad0fa6c338e44e359944af"}
+  ]
+}

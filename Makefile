@@ -226,6 +226,14 @@ setup-target:  ## Write required CC permissions into a target repo (default: cwd
 # Never contains threat-model results, evidence, or source. See CONTRIBUTING.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
+.PHONY: plugin-package
+plugin-package:  ## Build the composed staging plugin from pinned commits: make plugin-package ANALYZER_SRC=<checkout> ANALYZER_REV=<commit> SKILLS_SRC=<checkout> SKILLS_REV=<commit> WHEELHOUSE=<dir> [HOST_REV=HEAD] [OUT=<new dir>]
+	@test -n "$(ANALYZER_SRC)" -a -n "$(ANALYZER_REV)" -a -n "$(SKILLS_SRC)" -a -n "$(SKILLS_REV)" -a -n "$(WHEELHOUSE)" || { \
+		echo "ERROR: set ANALYZER_SRC, ANALYZER_REV, SKILLS_SRC, SKILLS_REV and WHEELHOUSE; see docs/internal-plugin-packaging.md"; exit 2; }
+	@$(PYTHON) scripts/build_plugin_package.py --analyzer-src "$(ANALYZER_SRC)" --analyzer-rev "$(ANALYZER_REV)" \
+		--skills-src "$(SKILLS_SRC)" --skills-rev "$(SKILLS_REV)" --wheelhouse "$(WHEELHOUSE)" \
+		--host-rev "$(or $(HOST_REV),HEAD)" $(if $(OUT),--output "$(OUT)",)
+
 .PHONY: diagnostic-bundle
 diagnostic-bundle:  ## Build an anonymised diagnostic .tgz from a run: make diagnostic-bundle RUN=<repo>/docs/security [REPO_ROOT=<repo>] [INTO=.]
 	@test -n "$(RUN)" || { echo "ERROR: set RUN=<run OUTPUT_DIR>, e.g. make diagnostic-bundle RUN=<repo>/docs/security"; exit 2; }

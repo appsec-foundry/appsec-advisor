@@ -12,11 +12,26 @@ The selected skills determine the available commands. In the current two-entry c
 
 ## Assemble the component artifacts
 
-Prepare reviewed local artifacts from committed component revisions: an Advisor host ZIP, the Analyzer wheel, its complete dependency-wheel closure and any selected skill ZIPs. This step does not automatically build or download them from neighboring repositories. Record exact revisions, versions, licenses, SHA-256 digests, required capabilities and source-to-target resource mappings in a selection conforming to [the component lock schema](../schemas/components-lock.schema.json). Reuse unchanged verified artifacts.
+`make plugin-package` builds the component artifacts from explicit commits, writes the lock and runs the assembler. Replace the paths and commits:
+
+```bash
+make plugin-package \
+  ANALYZER_SRC=/path/to/appsec-analyzer ANALYZER_REV=<commit> \
+  SKILLS_SRC=/path/to/appsec-skills SKILLS_REV=<commit> \
+  WHEELHOUSE=/path/to/wheels
+```
+
+The target reads only committed files: the Advisor host files at `HOST_REV` (default `HEAD`), the skill files at `SKILLS_REV`, and a clean export of `ANALYZER_REV`. It builds the engine wheel from that export with the locally installed `build`, `setuptools` and `wheel`, without package-index access. Working-tree changes never enter an artifact, and two builds of the same commits produce identical bytes. [`data/plugin-package.json`](../data/plugin-package.json) selects the files, licenses, engine capabilities, runtime targets and the dependency wheels with their SHA-256 pins. `WHEELHOUSE` must contain these wheels; a missing or different wheel stops the build, and nothing is downloaded.
+
+The output is `build/appsec-advisor-<version>-staging/` unless `OUT` names another new directory. It contains `artifacts/`, `components.lock.json` and `assembly/` with the staging ZIP, checksums, notices and component inventory. An existing directory is refused, and a failed build leaves no output. Review the lock against the selected commits before passing the package on. The target does not install the engine, invoke models or set up a runtime.
+
+Changing the selection, such as a dependency version or an added skill file, is a reviewed change to `data/plugin-package.json`. Verify new dependency pins against the published files and known vulnerabilities before committing them.
+
+To assemble artifacts prepared another way, record exact revisions, versions, licenses, SHA-256 digests, required capabilities and source-to-target resource mappings in a lock conforming to [the component lock schema](../schemas/components-lock.schema.json) and run the assembler directly as shown below.
 
 For the primary entry, select `appsec-analyzer` in `skill_bindings`, the engine-owned `SKILL.md`, `claude-code.md` and `business-context.md`, and the host bootstrap and progress renderer. Assembly retains the engine entry as `WORKFLOW.md` and generates the Claude invocation separately. Selecting `security-score` additionally requires its portable workflow resources and dependency declaration. The [composition contract](internal/contracts/plugin-composition.md#primary-entry-source-checkpoint) gives the ownership and capability checks.
 
-Run the existing assembler from the Advisor checkout with its existing Python dependencies. The output directory must not exist; its parent must exist. Replace the paths with the reviewed selection and artifact directory:
+To run the assembler directly, start it from the Advisor checkout with its existing Python dependencies. The output directory must not exist; its parent must exist. Replace the paths with the reviewed selection and artifact directory:
 
 ```bash
 python3 scripts/compose_plugin.py --lock /packaging/components.lock.json --artifacts /packaging/artifacts --output /packaging/assembly

@@ -440,6 +440,7 @@ GROUPS = {
         update_baseline
     """),
     "packaging": _tests("""
+        build_plugin_package
         check_release_meta
         check_skill_enabled
         compose_plugin
