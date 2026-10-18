@@ -192,6 +192,57 @@ def checked(command: list[str], timeout: int = 180) -> None:
         )
 
 
+def score_requirements(declaration: dict) -> dict:
+    """Admit the portable score contract supported by this host adapter."""
+    expected = {"available": True, "model_calls": False, "scoring_version": 2}
+    capabilities = declaration.get("required_capabilities")
+    required = capabilities.get("score") if isinstance(capabilities, dict) else None
+    commands = declaration.get("required_commands")
+    if (
+        declaration.get("schema_version") != 1
+        or declaration.get("engine") != "appsec-analyzer"
+        or declaration.get("interface_versions") != [1]
+        or not isinstance(commands, list)
+        or len(commands) != 3
+        or any(not isinstance(command, str) for command in commands)
+        or set(commands) != {"version", "capabilities", "score"}
+        or not isinstance(capabilities, dict)
+        or capabilities.keys() != {"score"}
+        or declaration.get("model_prerequisites") != []
+        or not isinstance(required, dict)
+        or required.keys() != expected.keys()
+        or any(type(required[key]) is not type(value) or required[key] != value for key, value in expected.items())
+    ):
+        raise RuntimeError("unsupported portable security-score requirements")
+    return required
+
+
+def engine_capabilities(python: Path, names: list[str], score: dict | None = None) -> None:
+    result = subprocess.run(
+        [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
+        env=clean_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=30,
+    )
+    capabilities = json.loads(result.stdout) if result.returncode == 0 and len(result.stdout) < MAX_LOCK else {}
+    if (
+        not isinstance(capabilities, dict)
+        or capabilities.get("interface_version") != 1
+        or any(
+            not isinstance(capabilities.get(name), dict) or capabilities[name].get("available") is not True
+            for name in names
+        )
+    ):
+        raise RuntimeError("installed engine lacks required capabilities")
+    if score is not None:
+        actual = capabilities.get("score", {})
+        if not isinstance(actual, dict) or any(
+            type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in score.items()
+        ):
+            raise RuntimeError("installed engine violates deterministic security-score requirements")
+
+
 def preflight(plugin: Path, home: Path) -> tuple[Path, dict]:
     home = runtime_storage(plugin, home)
     lock, _, identity = verified_inputs(plugin)
@@ -274,19 +325,12 @@ def setup(plugin: Path, home: Path) -> Path:
                 or version.get("interface_version") != lock["interface_version"]
             ):
                 raise RuntimeError("installed engine version or interface mismatch")
-            result = subprocess.run(
-                [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
-                env=clean_environment(),
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=30,
-            )
-            capabilities = json.loads(result.stdout) if result.returncode == 0 and len(result.stdout) < MAX_LOCK else {}
-            if capabilities.get("interface_version") != lock["interface_version"] or any(
-                not isinstance(capabilities.get(name), dict) or capabilities[name].get("available") is False
-                for name in engine["capabilities"]
-            ):
-                raise RuntimeError("installed engine lacks required capabilities")
+            score = None
+            if "security-score" in lock.get("skill_bindings", []):
+                score = score_requirements(
+                    read_json(regular(plugin, "skills/security-score/dependencies.json"), MAX_LOCK)
+                )
+            engine_capabilities(python, engine["capabilities"], score)
             receipt = {"schema_version": 1, "identity": identity, "lock_sha256": sha(encode(lock))}
             pending = target / ".receipt.pending"
             pending.write_bytes(encode(receipt))
@@ -299,8 +343,17 @@ def setup(plugin: Path, home: Path) -> Path:
     return interpreter(target)
 
 
-def launch(plugin: Path, home: Path, arguments: list[str], timeout: int) -> int:
-    python, _ = preflight(plugin, home)
+def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: str | None = None) -> int:
+    python, lock = preflight(plugin, home)
+    if skill is not None:
+        if skill != "security-score" or skill not in lock.get("skill_bindings", []):
+            raise RuntimeError("skill invocation binding is not selected in this composition")
+        if not arguments or arguments[0] not in {"version", "capabilities", "score"}:
+            raise RuntimeError("security-score binding permits only version, capabilities and score")
+        requirements = score_requirements(
+            read_json(regular(plugin, "skills/security-score/dependencies.json"), MAX_LOCK)
+        )
+        engine_capabilities(python, ["score"], requirements)
     if not arguments or arguments[0] not in {
         "version",
         "capabilities",
@@ -374,12 +427,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plugin", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--runtime-home", type=Path, default=default_home())
     parser.add_argument("--timeout", type=int, default=43200)
+    parser.add_argument("--skill", choices=("security-score",), help="Use a selected staging skill invocation binding")
     raw = list(sys.argv[1:] if argv is None else argv)
     split = raw.index("--") if "--" in raw else len(raw)
     ns = parser.parse_args(raw[:split])
     arguments = raw[split + 1 :]
     if ns.action != "run" and arguments:
         parser.error("engine arguments are only valid for run")
+    if ns.action != "run" and ns.skill:
+        parser.error("skill bindings are only valid for run")
     if not 1 <= ns.timeout <= 43200:
         parser.error("timeout must be between 1 and 43200 seconds")
     try:
@@ -390,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             preflight(ns.plugin, ns.runtime_home)
             print("Pinned staging runtime ready; no installation or model call performed.")
         else:
-            return launch(ns.plugin, ns.runtime_home, arguments, ns.timeout)
+            return launch(ns.plugin, ns.runtime_home, arguments, ns.timeout, ns.skill)
     except RuntimeError as exc:
         print(f"Runtime unavailable: {exc}. Check the reviewed lock and explicit setup.", file=sys.stderr)
         return 2

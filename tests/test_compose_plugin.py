@@ -63,6 +63,38 @@ def make_composition(tmp_path):
     return lock, inputs
 
 
+def add_score_skill(lock, inputs, source_prefix="portable/score"):
+    """Select a neutral portable skill from an independent reviewed artifact."""
+    workflow = b"---\nname: security-score\ndescription: Neutral score workflow\n---\nRead [limits](references/compatibility.md).\n"
+    declaration = {
+        "schema_version": 1,
+        "engine": "appsec-analyzer",
+        "interface_versions": [1],
+        "required_commands": ["version", "capabilities", "score"],
+        "required_capabilities": {"score": {"available": True, "model_calls": False, "scoring_version": 2}},
+        "model_prerequisites": [],
+    }
+    selected = {
+        "SKILL.md": workflow,
+        "dependencies.json": compose.canonical(declaration),
+        "references/compatibility.md": b"Preserve undetermined outcomes and scoring version.\n",
+    }
+    artifact = "portable-skills.zip"
+    data = compose.zip_bytes({source_prefix + "/" + name: content for name, content in selected.items()})
+    (inputs / artifact).write_bytes(data)
+    component = copy.deepcopy(lock["components"][0])
+    component.update(
+        id="portable-skills",
+        role="skills",
+        artifact=artifact,
+        sha256=compose.digest(data),
+        files=[{"source": source_prefix + "/" + name, "target": "skills/security-score/" + name} for name in selected],
+    )
+    lock["components"].append(component)
+    lock["skill_bindings"] = ["security-score"]
+    return workflow
+
+
 @pytest.fixture
 def composition(tmp_path):
     return make_composition(tmp_path)
@@ -94,6 +126,86 @@ def test_reproducible_archive_selection_notices_and_manifest(composition, tmp_pa
             i.date_time == (1980, 1, 1, 0, 0, 0) and i.external_attr >> 16 == stat.S_IFREG | 0o644
             for i in archive.infolist()
         )
+
+
+@pytest.mark.parametrize("source_prefix", ["portable/score", "collection/independent-entry"])
+def test_score_binding_preserves_workflow_and_delivered_provenance(composition, source_prefix):
+    lock, inputs = composition
+    workflow = add_score_skill(lock, inputs, source_prefix)
+    compose.parse_lock(compose.canonical(lock))
+    files = compose.assemble(lock, inputs)
+    assert files == compose.assemble(lock, inputs)
+    assert files["skills/security-score/WORKFLOW.md"] == workflow
+    binding = files["skills/security-score/SKILL.md"].decode()
+    assert "[the portable workflow](WORKFLOW.md)" in binding
+    assert '--plugin "${CLAUDE_PLUGIN_ROOT}" --skill security-score -- score' in binding
+    assert "references/compatibility.md" in workflow.decode()
+    manifest = json.loads(files["component-manifest.json"])
+    delivered = {entry["path"]: entry for entry in manifest["files"]}
+    assert delivered["skills/security-score/WORKFLOW.md"]["component"] == "portable-skills"
+    assert delivered["skills/security-score/SKILL.md"]["component"] == "advisor-host"
+    for name in ("SKILL.md", "WORKFLOW.md", "dependencies.json", "references/compatibility.md"):
+        path = "skills/security-score/" + name
+        assert delivered[path]["sha256"] == compose.digest(files[path])
+
+
+@pytest.mark.parametrize("missing", ["SKILL.md", "dependencies.json", "references/compatibility.md", "bootstrap"])
+def test_score_binding_requires_complete_selected_resources(composition, missing):
+    lock, inputs = composition
+    add_score_skill(lock, inputs)
+    for component in lock["components"]:
+        component["files"] = [
+            selection
+            for selection in component["files"]
+            if selection["target"]
+            != ("scripts/composition_runtime.py" if missing == "bootstrap" else "skills/security-score/" + missing)
+        ]
+    with pytest.raises(compose.CompositionError, match="requires"):
+        compose.assemble(lock, inputs)
+
+
+def test_score_binding_refuses_generated_workflow_collision(composition):
+    lock, inputs = composition
+    add_score_skill(lock, inputs)
+    lock["components"][-1]["files"].append(
+        {"source": "portable/score/SKILL.md", "target": "skills/security-score/WORKFLOW.md"}
+    )
+    with pytest.raises(compose.CompositionError, match="colliding"):
+        compose.assemble(lock, inputs)
+
+
+def test_score_binding_requires_locked_engine_operation(composition):
+    lock, inputs = composition
+    add_score_skill(lock, inputs)
+    lock["components"][1]["capabilities"] = []
+    with pytest.raises(compose.CompositionError, match="locked score"):
+        compose.assemble(lock, inputs)
+
+
+@pytest.mark.parametrize("bindings", [["other-workflow"], ["security-score", "security-score"], "security-score"])
+def test_score_binding_lock_rejects_unknown_or_duplicate_bindings(composition, bindings):
+    lock, _ = composition
+    lock["skill_bindings"] = bindings
+    with pytest.raises(compose.CompositionError, match="schema"):
+        compose.parse_lock(compose.canonical(lock))
+
+
+@pytest.mark.parametrize("field,value", [("available", 1), ("model_calls", True), ("scoring_version", "2")])
+def test_score_binding_rejects_incompatible_portable_declaration(composition, field, value):
+    lock, inputs = composition
+    add_score_skill(lock, inputs)
+    component = lock["components"][-1]
+    artifact = inputs / component["artifact"]
+    files = compose.archive_files(artifact.read_bytes())
+    path = "portable/score/dependencies.json"
+    declaration = json.loads(files[path])
+    declaration["required_capabilities"]["score"][field] = value
+    files[path] = compose.canonical(declaration)
+    data = compose.zip_bytes(files)
+    artifact.write_bytes(data)
+    component["sha256"] = compose.digest(data)
+    with pytest.raises(compose.CompositionError, match="requirements"):
+        compose.assemble(lock, inputs)
 
 
 @pytest.mark.parametrize(

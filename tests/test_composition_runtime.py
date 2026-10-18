@@ -7,19 +7,20 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import compose_plugin as compose
 import composition_runtime as runtime
 import pytest
 
-from tests.test_compose_plugin import make_composition
+from tests.test_compose_plugin import add_score_skill, make_composition
 
 ENGINE = """import json, os, subprocess, sys, time
 from pathlib import Path
 if sys.argv[1:] == ["version"]:
     print(json.dumps({"engine_version": "1.0.0", "interface_version": 1}))
 elif sys.argv[1:] == ["capabilities"]:
-    print(json.dumps({"interface_version": 1, "score": {"available": True}}))
+    print(json.dumps({"interface_version": 1, "score": {"available": True, "model_calls": False, "scoring_version": 2}}))
 elif sys.argv[1] == "stop":
     pass
 elif sys.argv[1] == "assess":
@@ -29,12 +30,14 @@ elif sys.argv[1] == "assess":
     time.sleep(60)
 else:
     print(json.dumps({"python": sys.executable, "args": sys.argv[1:], "pythonpath": os.environ.get("PYTHONPATH")}))
+    sys.exit({"undetermined-source": 2, "incomplete-source": 1, "cancelled-source": 130}.get(sys.argv[2], 0))
 """
 
 
 @pytest.fixture
 def installed_plugin(tmp_path):
     lock, inputs = make_composition(tmp_path)
+    add_score_skill(lock, inputs)
     engine = lock["components"][1]
     metadata = "appsec_analyzer-1.0.0.dist-info"
     wheel = compose.zip_bytes(
@@ -79,16 +82,100 @@ def test_offline_setup_preflight_and_pinned_launch(installed_plugin, monkeypatch
     assert home in python.parents
     assert runtime.preflight(plugin, home)[0] == python
     assert runtime.setup(plugin, home) == python
-    assert runtime.launch(plugin, home, ["score", "path with spaces;$(no-shell)"], 30) == 0
+    assert runtime.launch(plugin, home, ["score", "path with spaces;$(no-shell)"], 30, "security-score") == 0
     response = json.loads(capfd.readouterr().out)
     assert response["args"] == ["score", "path with spaces;$(no-shell)"]
     assert response["python"] == str(python)
     assert response["pythonpath"] is None
     assert (
-        runtime.main(["run", "--plugin", str(plugin), "--runtime-home", str(home), "--", "score", "another path"]) == 0
+        runtime.main(
+            [
+                "run",
+                "--plugin",
+                str(plugin),
+                "--runtime-home",
+                str(home),
+                "--skill",
+                "security-score",
+                "--",
+                "score",
+                "another path",
+            ]
+        )
+        == 0
     )
     assert json.loads(capfd.readouterr().out)["args"] == ["score", "another path"]
+    assert runtime.launch(plugin, home, ["score", "unbound source"], 30) == 0
+    assert json.loads(capfd.readouterr().out)["args"] == ["score", "unbound source"]
+    for arguments, status in [
+        (["score", "selected source", "--json"], 0),
+        (["score", "selected source", "--yaml"], 0),
+        (["score", "undetermined-source"], 2),
+        (["score", "incomplete-source"], 1),
+        (["score", "cancelled-source"], 130),
+    ]:
+        assert runtime.launch(plugin, home, arguments, 30, "security-score") == status
+        assert json.loads(capfd.readouterr().out)["args"] == arguments
     assert not list(home.glob("*.setup-lock"))
+
+
+@pytest.mark.parametrize("name", ["score", "scan_sources"])
+@pytest.mark.parametrize("available", [None, False, 0, 1, "true"])
+def test_engine_capability_requires_explicit_boolean_availability(monkeypatch, name, available):
+    record = {} if available is None else {"available": available}
+    payload = {"interface_version": 1, name: record}
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(payload).encode())
+    )
+    with pytest.raises(runtime.RuntimeError, match="capabilities"):
+        runtime.engine_capabilities(Path(sys.executable), [name])
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"available": True},
+        {"available": True, "model_calls": True, "scoring_version": 2},
+        {"available": True, "model_calls": False, "scoring_version": 1},
+        {"available": True, "model_calls": False, "scoring_version": "2"},
+    ],
+)
+def test_score_binding_rejects_incompatible_engine_before_execution(installed_plugin, monkeypatch, record):
+    plugin, home, lock = installed_plugin
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("incompatible engine must not run score"))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0, stdout=json.dumps({"interface_version": 1, "score": record}).encode()
+        ),
+    )
+    with pytest.raises(runtime.RuntimeError, match="security-score"):
+        runtime.launch(plugin, home, ["score", "selected source"], 30, "security-score")
+
+
+@pytest.mark.parametrize("command", ["assess", "scan", "analyst"])
+def test_score_binding_refuses_other_workflows(installed_plugin, monkeypatch, command):
+    plugin, home, lock = installed_plugin
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("binding cannot invoke another workflow"))
+    with pytest.raises(runtime.RuntimeError, match="permits only"):
+        runtime.launch(plugin, home, [command], 30, "security-score")
+
+
+def test_score_binding_cannot_be_selected_by_target_content(installed_plugin, monkeypatch):
+    plugin, home, lock = installed_plugin
+    lock.pop("skill_bindings")
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    with pytest.raises(runtime.RuntimeError, match="not selected"):
+        runtime.launch(plugin, home, ["score", "selected source"], 30, "security-score")
+
+
+def test_skill_binding_is_run_only():
+    with pytest.raises(SystemExit) as error:
+        runtime.main(["setup", "--skill", "security-score"])
+    assert error.value.code == 2
 
 
 def test_missing_runtime_preflight_does_not_install(installed_plugin, monkeypatch):

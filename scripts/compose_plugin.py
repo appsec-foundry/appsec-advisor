@@ -15,6 +15,7 @@ import zlib
 from email.parser import BytesParser
 from pathlib import Path
 
+import composition_runtime
 from jsonschema import Draft202012Validator
 
 SCHEMA = Path(__file__).resolve().parents[1] / "schemas/components-lock.schema.json"
@@ -200,6 +201,44 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
             # A command has one canonical directory spelling on every platform.
             if not re.fullmatch(r"skills/[a-z][a-z0-9-]*/SKILL\.md", name):
                 raise CompositionError("skill command names must be lowercase portable identifiers")
+    if "security-score" in lock.get("skill_bindings", []):
+        prefix = "skills/security-score/"
+        required = [prefix + name for name in ("SKILL.md", "dependencies.json", "references/compatibility.md")]
+        if any(name not in outputs for name in [*required, "scripts/composition_runtime.py"]):
+            raise CompositionError(
+                "score binding requires the portable workflow, dependencies, references and bootstrap"
+            )
+        engine = next(c for c in lock["components"] if c["role"] == "engine")
+        if "score" not in engine["capabilities"]:
+            raise CompositionError("score binding requires the locked score capability")
+        try:
+            declaration = json.loads(outputs[prefix + "dependencies.json"], object_pairs_hook=unique_fields)
+            composition_runtime.score_requirements(declaration)
+        except (ValueError, AttributeError, TypeError, RecursionError):
+            raise CompositionError("unsupported portable security-score requirements") from None
+        workflow = outputs.pop(prefix + "SKILL.md")
+        owner = owners.pop((prefix + "SKILL.md").casefold())
+        total -= len(workflow)
+        add(prefix + "WORKFLOW.md", workflow, owner)
+        binding = (
+            "---\nname: security-score\n"
+            "description: Run the bundled Analyzer's deterministic security score without model calls.\n---\n\n"
+            "# Advisor staging invocation\n\n"
+            "Read and follow [the portable workflow](WORKFLOW.md), including its dependencies and compatibility notes. "
+            "Use the following host binding for every engine command in that workflow.\n\n"
+            "Use the existing Python interpreter selected during explicit setup. Replace `python3` below with that "
+            "interpreter if needed, including on Windows. Quote its path if it contains spaces.\n\n"
+            "```sh\n"
+            'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/composition_runtime.py" run '
+            '--plugin "${CLAUDE_PLUGIN_ROOT}" --skill security-score -- score /absolute/repository --json\n'
+            "```\n\n"
+            "For version, capabilities and help, replace only the arguments after `--` with `version`, "
+            "`capabilities` or `score --help`. Pass repository paths and options as literal arguments. "
+            "Never use a PATH-selected engine, private scripts or automatic setup as fallback. "
+            "A missing runtime requires explicit operator setup. Preserve stdout, stderr and the engine exit status.\n"
+        )
+        host = next(c for c in lock["components"] if c["role"] == "host")
+        add(prefix + "SKILL.md", binding.encode(), host["id"])
     manifest = {
         "schema_version": 1,
         "qualification": "unqualified-staging",

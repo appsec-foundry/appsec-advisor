@@ -15,6 +15,10 @@
       }
     },
     "interface_version": {"const": 1},
+    "skill_bindings": {
+      "type": "array", "maxItems": 1, "uniqueItems": true,
+      "items": {"enum": ["security-score"]}
+    },
     "runtime": {
       "type": "object", "additionalProperties": false,
       "required": ["python", "platforms"],
