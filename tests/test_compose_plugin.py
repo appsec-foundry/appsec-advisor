@@ -460,6 +460,7 @@ def test_assessment_binding_preserves_engine_workflow_and_packager_admission(com
     assert files["skills/appsec-analyzer/WORKFLOW.md"] == resources["SKILL.md"]
     assert files["skills/appsec-analyzer/claude-code.md"] == resources["claude-code.md"]
     assert b"--skill appsec-analyzer --" in files["skills/appsec-analyzer/SKILL.md"]
+    assert b"wait --plugin <plugin> --output <output> --timeout 300" in files["skills/appsec-analyzer/SKILL.md"]
     checked, manifest, protected = package._staging_inputs(files)
     assert checked == lock
     assert "skills/appsec-analyzer/WORKFLOW.md" in protected

@@ -269,7 +269,9 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
             "```\n\n"
             "The public progress follower is the same bootstrap's `follow` action with `--output <output>`; "
             "use `--from-end` when restarting the display. It only displays public engine events and never stops "
-            "the owner. Host questions, tasks and display belong to Advisor. Never use a PATH engine, private "
+            "the owner. After an authorized stop, invoke the same bootstrap with `wait --plugin <plugin> "
+            "--output <output> --timeout 300` once; only exit 0 permits restarting. "
+            "Host questions, tasks and display belong to Advisor. Never use a PATH engine, private "
             "state, private scripts or automatic setup. Preserve stdout, stderr and exit status. "
             "This unqualified staging binding grants neither setup nor model-spending authorization.\n"
         )
