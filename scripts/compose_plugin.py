@@ -24,6 +24,7 @@ MAX_FILE = 32 * 1024 * 1024
 MAX_EXPANDED = 512 * 1024 * 1024
 MAX_ENTRIES = 20000
 RESERVED = {"components.lock.json", "component-manifest.json", "THIRD-PARTY-NOTICES.txt"}
+HOST_OWNED = (".claude-plugin/plugin.json", "scripts/composition_runtime.py", "scripts/runtime/assessment_console.py")
 
 
 class CompositionError(ValueError):
@@ -196,6 +197,10 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
         or plugin.get("version") != lock["plugin"]["version"]
     ):
         raise CompositionError("plugin manifest identity does not match the lock")
+    # Plugin identity and host-executed code must come from the reviewed host artifact.
+    host_id = next(c["id"] for c in lock["components"] if c["role"] == "host")
+    if any(owners.get(path.casefold(), host_id) != host_id for path in HOST_OWNED):
+        raise CompositionError("plugin manifest, bootstrap and progress renderer must be host-owned")
     for name, data in outputs.items():
         if re.fullmatch(r"skills/[^/]+/SKILL\.md", name):
             # A command has one canonical directory spelling on every platform.

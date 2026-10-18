@@ -137,7 +137,7 @@ python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --pl
 python3 "/installed/organization-plugin/scripts/composition_runtime.py" wait --plugin "/installed/organization-plugin" --output "/private/assessment" --timeout 300
 ```
 
-Wait exit 0 means no live holder; exit 3 means the holder remained live until the deadline. An invalid or unavailable response fails. A successful stop request does not by itself prove shutdown: a fresh unreleased lock can still block a new launch. Never delete a live lock to continue. Use the public cleanup inspection for stale-state diagnosis, and `--apply` only for authorized cleanup. The recorded lifecycle fixture verified signalling and conservative refusal with a controlled child; real-controller shutdown and accepted-job resume still require the authorized full run.
+Wait exit 0 means no live holder; exit 3 means the holder remained live until the deadline. An invalid or unavailable response fails. A successful stop request does not by itself prove shutdown: a fresh unreleased lock can still block a new launch. Never delete a live lock to continue. For stale-state diagnosis, inspect with `run --skill appsec-analyzer -- assessment-entry clean --output DIR`, and add `--apply` only for authorized cleanup. The recorded lifecycle fixture verified signalling and conservative refusal with a controlled child; real-controller shutdown and accepted-job resume still require the authorized full run.
 
 Use the same selected entry with `--resume` only when requested and compatible. Preserve the original source, settings and limits; never turn a failed resume into `--rebuild` or a higher budget automatically.
 

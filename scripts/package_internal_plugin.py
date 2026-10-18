@@ -1269,6 +1269,8 @@ def _staging_inputs(files: dict[str, bytes]) -> tuple[dict, dict, set[str]]:
     for path in (".claude-plugin/plugin.json", "scripts/composition_runtime.py"):
         if owners.get(path) != host:
             raise composition.CompositionError("staging manifest and bootstrap must be host-owned")
+    if owners.get("scripts/runtime/assessment_console.py", host) != host:
+        raise composition.CompositionError("staging progress renderer must be host-owned")
     plugin = json.loads(files[".claude-plugin/plugin.json"], object_pairs_hook=composition.unique_fields)
     if not isinstance(plugin, dict) or any(plugin.get(key) != value for key, value in lock["plugin"].items()):
         raise composition.CompositionError("staging plugin identity differs from its lock")

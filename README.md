@@ -212,7 +212,7 @@ python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path
 - portable skills such as the security score;
 - the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a pinned copy in `data/baselines/`.
 
-The assembler (`scripts/compose_plugin.py`) takes the engine and skills at a fixed revision and checksum, and the plugin runs only these bundled components, never another copy found on the machine. This packaged build is still an internal preview. The marketplace release and a `--plugin-dir` checkout currently run the assessment pipeline contained in this repository and need no packaging step. See the [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts).
+The assembler (`scripts/compose_plugin.py`) takes the engine and skills at a fixed revision and checksum, and the plugin runs only these bundled components, never another copy found on the machine. This packaged build is still an internal preview and currently contains only the `appsec-analyzer` assessment and `security-score` commands. The marketplace release and a `--plugin-dir` checkout currently run the assessment pipeline contained in this repository and need no packaging step. See the [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts).
 
 ## Enterprise rollout
 

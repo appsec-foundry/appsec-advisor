@@ -493,3 +493,42 @@ def test_assessment_binding_refuses_incomplete_or_mixed_engine_surface(compositi
         engine["files"].append({"source": engine["files"][0]["source"], "target": "skills/appsec-analyzer/WORKFLOW.md"})
     with pytest.raises(compose.CompositionError):
         compose.assemble(lock, inputs)
+
+
+def select_from(lock, inputs, component, target, body):
+    """Move one output path to another component while keeping its bytes."""
+    host = lock["components"][0]
+    host["files"] = [m for m in host["files"] if m["target"] != target]
+    members = compose.archive_files((inputs / component["artifact"]).read_bytes())
+    members["foreign/selected"] = body
+    data = compose.zip_bytes(members)
+    (inputs / component["artifact"]).write_bytes(data)
+    component["sha256"] = compose.digest(data)
+    component["files"].append({"source": "foreign/selected", "target": target})
+
+
+@pytest.mark.parametrize("owner", ["skills", "engine"])
+@pytest.mark.parametrize("target", compose.HOST_OWNED)
+def test_identity_and_host_executed_code_must_be_host_owned(composition, owner, target):
+    lock, inputs = composition
+    add_score_skill(lock, inputs)
+    body = compose.archive_files((inputs / "host.zip").read_bytes()).get(target, b"def render(event):\n    return []\n")
+    component = next(c for c in lock["components"] if c["role"] == owner)
+    select_from(lock, inputs, component, target, body)
+    with pytest.raises(compose.CompositionError, match="host-owned"):
+        compose.assemble(lock, inputs)
+
+
+def test_packager_refuses_a_progress_renderer_from_another_component(composition, monkeypatch):
+    import package_internal_plugin as package
+
+    lock, inputs = composition
+    add_assessment_skill(lock, inputs)
+    renderer = "scripts/runtime/assessment_console.py"
+    body = compose.archive_files((inputs / "host.zip").read_bytes())[renderer]
+    select_from(lock, inputs, lock["components"][1], renderer, body)
+    # Reproduces a tree assembled before the assembler enforced host ownership.
+    monkeypatch.setattr(compose, "HOST_OWNED", ())
+    files = compose.assemble(lock, inputs)
+    with pytest.raises(compose.CompositionError, match="renderer must be host-owned"):
+        package._staging_inputs(files)
