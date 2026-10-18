@@ -217,7 +217,7 @@ To build the preview that uses the separate engine, run:
 make plugin-package
 ```
 
-This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has four commands, `appsec-analyzer`, `security-score`, `repo-profile` and `create-threat-model`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
+This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has five commands, `appsec-analyzer`, `security-score`, `repo-profile`, `abuse-cases` and `create-threat-model`; `analyze-threats` is not included yet. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
 
 ## Related projects
 

@@ -212,6 +212,14 @@ DETERMINISTIC_SKILLS = {
         "description": "Run the bundled Analyzer's deterministic repository profile without model calls.",
         "example": "repo-profile /absolute/directory --json",
     },
+    "abuse-cases": {
+        "command": "abuse-cases",
+        "capability": "abuse_cases",
+        "expected": {"available": True, "model_calls": False},
+        "description": "Run the bundled Analyzer's read-only abuse-case listing without model calls.",
+        "example": "abuse-cases --repo /absolute/repository",
+        "resources": ("SKILL.md", "dependencies.json"),
+    },
 }
 
 
@@ -578,6 +586,7 @@ def organization_arguments(
         "version",
         "capabilities",
         "repo-profile",
+        "abuse-cases",
         "assessment-entry",
         "status",
         "progress",
@@ -750,6 +759,7 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "scan-sources",
         "score",
         "repo-profile",
+        "abuse-cases",
         "assess",
         "status",
         "progress",
@@ -908,7 +918,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=43200)
     parser.add_argument(
         "--skill",
-        choices=("security-score", "repo-profile", "appsec-analyzer"),
+        choices=("security-score", "repo-profile", "abuse-cases", "appsec-analyzer"),
         help="Use a selected staging skill invocation binding",
     )
     raw = list(sys.argv[1:] if argv is None else argv)

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "runtime": {"python": ["3.10"], "platforms": ["linux-x86_64"]},
-  "skill_bindings": ["security-score", "repo-profile", "appsec-analyzer"],
+  "skill_bindings": ["security-score", "repo-profile", "abuse-cases", "appsec-analyzer"],
   "host": {
     "id": "advisor-host",
     "source": "https://github.com/appsec-foundry/appsec-advisor",
@@ -12,17 +12,19 @@
       "types/progress.d.ts",
       "scripts/composition_runtime.py",
       "schemas/org-profile.schema.yaml",
-      "scripts/runtime/assessment_console.py"
+      "scripts/runtime/assessment_console.py",
+      "skills/abuse-cases/SKILL.md",
+      "skills/abuse-cases/dependencies.json"
     ]
   },
   "engine": {
     "id": "appsec-analyzer",
     "source": "https://github.com/appsec-foundry/appsec-analyzer",
     "branch": "main",
-    "revision": "f45b0e7577d6f701d9d34c959b5a4045dd8a7a08",
+    "revision": "3f76873a3400dbbe3fe96143adb91b118563cc26",
     "license": "Apache-2.0",
     "capabilities": [
-      "score", "repo_profile", "scan_sources", "organization_config", "scan", "assessment_entry",
+      "score", "repo_profile", "abuse_cases", "scan_sources", "organization_config", "scan", "assessment_entry",
       "status", "progress", "stop", "results", "query", "export"
     ],
     "files": {

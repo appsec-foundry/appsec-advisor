@@ -211,11 +211,10 @@ def assemble(lock: dict, artifacts: Path) -> dict[str, bytes]:
             continue
         command = spec["command"]
         prefix = f"skills/{skill}/"
-        required = [prefix + name for name in ("SKILL.md", "dependencies.json", "references/compatibility.md")]
+        resources = spec.get("resources", ("SKILL.md", "dependencies.json", "references/compatibility.md"))
+        required = [prefix + name for name in resources]
         if any(name not in outputs for name in [*required, "scripts/composition_runtime.py"]):
-            raise CompositionError(
-                f"{command} binding requires the portable workflow, dependencies, references and bootstrap"
-            )
+            raise CompositionError(f"{command} binding requires its workflow, dependencies and bootstrap")
         engine = next(c for c in lock["components"] if c["role"] == "engine")
         if spec["capability"] not in engine["capabilities"]:
             raise CompositionError(f"{command} binding requires the locked {spec['capability']} capability")

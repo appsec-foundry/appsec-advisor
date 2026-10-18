@@ -204,6 +204,38 @@ def test_repo_profile_binding_pins_its_own_command(composition):
     assert files["skills/repo-profile/WORKFLOW.md"].startswith(b"---\nname: repo-profile")
 
 
+def test_abuse_cases_binding_needs_only_its_workflow_and_dependencies(composition):
+    lock, inputs = composition
+    declaration = {
+        "schema_version": 1,
+        "engine": "appsec-analyzer",
+        "interface_versions": [1],
+        "required_commands": ["version", "capabilities", "abuse-cases"],
+        "required_capabilities": {"abuse_cases": {"available": True, "model_calls": False}},
+        "model_prerequisites": [],
+    }
+    selected = {
+        "SKILL.md": b"---\nname: abuse-cases\ndescription: Neutral\n---\n",
+        "dependencies.json": compose.canonical(declaration),
+    }
+    data = compose.zip_bytes({"workflow/" + name: content for name, content in selected.items()})
+    (inputs / "abuse-skills.zip").write_bytes(data)
+    component = copy.deepcopy(lock["components"][0])
+    component.update(
+        id="abuse-skills",
+        role="skills",
+        artifact="abuse-skills.zip",
+        sha256=compose.digest(data),
+        files=[{"source": "workflow/" + name, "target": "skills/abuse-cases/" + name} for name in selected],
+    )
+    lock["components"].append(component)
+    lock["components"][1]["capabilities"].append("abuse_cases")
+    lock["skill_bindings"] = ["abuse-cases"]
+    files = compose.assemble(lock, inputs)
+    assert "--skill abuse-cases -- abuse-cases --repo" in files["skills/abuse-cases/SKILL.md"].decode()
+    assert files["skills/abuse-cases/WORKFLOW.md"].startswith(b"---\nname: abuse-cases")
+
+
 def test_repo_profile_binding_requires_locked_engine_operation(composition):
     lock, inputs = composition
     add_repo_profile_skill(lock, inputs)

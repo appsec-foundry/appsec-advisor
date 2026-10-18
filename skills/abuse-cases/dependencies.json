@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "engine": "appsec-analyzer",
+  "interface_versions": [
+    1
+  ],
+  "required_commands": [
+    "version",
+    "capabilities",
+    "abuse-cases"
+  ],
+  "required_capabilities": {
+    "abuse_cases": {
+      "available": true,
+      "model_calls": false
+    }
+  },
+  "model_prerequisites": [],
+  "optional_tools": [],
+  "qualification": "offline-workflow; no model qualification implied"
+}
