@@ -225,13 +225,21 @@ If a run fails, `/appsec-advisor:report-error` checks a suspected plugin error l
 
 ## How the plugin is built
 
-`appsec-advisor` is the host that packages security components for Claude Code. It combines pinned releases of separately developed components into one plugin and adds the Claude Code commands, hooks, branding, and display around them:
+`appsec-advisor` combines separately developed parts into one Claude Code plugin and adds the commands, hooks and display around them:
 
-- the assessment engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which also runs standalone as a command-line tool;
-- portable skills such as the security score;
-- the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a pinned copy in `data/baselines/`.
+- the assessment engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which also runs on its own as a command-line tool;
+- skills from [appsec-skills](https://github.com/appsec-foundry/appsec-skills), currently the security score;
+- the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a copy in `data/baselines/`.
 
-`make plugin-package` builds this plugin from the engine and skills commits and the library checksums pinned in `data/plugin-package.json`; the plugin runs only these bundled components, never another copy found on the machine. This packaged build is still an internal preview and currently contains only the `appsec-analyzer` assessment and `security-score` commands. The marketplace release and a `--plugin-dir` checkout currently run the assessment pipeline contained in this repository and need no packaging step. See the [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts).
+The marketplace release does not use the separate engine yet. It still runs the assessment pipeline in this repository, as does a `--plugin-dir` checkout, and neither needs a build step.
+
+To build the preview that uses the separate engine, run:
+
+```bash
+make plugin-package
+```
+
+This takes the engine and skills at the commits listed in `data/plugin-package.json` and checks every downloaded file against its recorded checksum. The finished plugin only runs the copies bundled with it, never another version installed on the machine. So far the preview has two commands, `appsec-analyzer` and `security-score`. The [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts) covers updating the commits and installing the result.
 
 ## Related projects
 
