@@ -9,16 +9,16 @@
 
 > ⚠️ **Beta.** `appsec-advisor` is under active development. Commands, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin that bundles application security tools for a repository. Every finding points to the code it is based on.
+`appsec-advisor` is a Claude Code plugin that bundles application security tools for a repository. The tools read code and configuration, and each finding points to the code it is based on.
 
 | Tool | What it does | Command |
 |---|---|---|
 | [AppSec Analyzer](#appsec-analyzer) | Assesses the whole application: architecture, security controls, findings, and what to fix first. | `/appsec-advisor:appsec-analyzer` |
 | [Threat Analyst](#threat-analyst) | Analyzes a planned feature or a code change for threats. | `/appsec-advisor:analyze-threats` |
 | [Requirements Audit](#requirements-audit) | Checks the repository against a security requirements catalog. | `/appsec-advisor:audit-security-requirements` |
-| [Developer tools](#developer-tools) | Secure-coding baseline, security score, and change reviews for Claude Code and CI. | see the section |
+| [Developer tools](#developer-tools) | Secure-coding baseline, security score, security hints, and change reviews for Claude Code and CI. | `/appsec-advisor:install-baseline`, `/appsec-advisor:security-score`, … |
 
-[Quick start](#quick-start) · [AppSec Analyzer](#appsec-analyzer) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [How the plugin is built](#how-the-plugin-is-built) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Contributing](#contributing)
+[Quick start](#quick-start) · [AppSec Analyzer](#appsec-analyzer) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#developer-tools) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [How the plugin is built](#how-the-plugin-is-built) · [Contributing](#contributing)
 
 ---
 
@@ -78,15 +78,11 @@ what should I fix first?
 # Fix findings, accept risks, or build a remediation plan
 /appsec-advisor:triage-security-assessment
 
-# Analyze a planned feature or your current changes
-/appsec-advisor:analyze-threats Let support staff export customer data as CSV.
-/appsec-advisor:analyze-threats --worktree
-
-# Reassess after code changes
-/appsec-advisor:appsec-analyzer
+# Export as PDF, HTML, SARIF, Threat Dragon, or pentest tasks
+/appsec-advisor:export-security-assessment
 ```
 
-Each run is a full assessment that continues the history of the previous one. Your review decisions are kept. `/appsec-advisor:help` lists all commands.
+To reassess after code changes, run `/appsec-advisor:appsec-analyzer` again. Each run is a full assessment that continues the history of the previous one, and your review decisions are kept. `/appsec-advisor:help` lists all commands.
 
 ## AppSec Analyzer
 
@@ -180,6 +176,8 @@ See the [Threat Analyst guide](docs/threat-analyst.md).
 
 Without a catalog of your own, start from `data/appsec-requirements-fallback.yaml` or the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md).
 
+To check only a code change against the catalog, use [`/appsec-advisor:verify-requirements`](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*).
+
 ## Developer tools
 
 | Tool | Use |
@@ -187,9 +185,7 @@ Without a catalog of your own, start from `data/appsec-requirements-fallback.yam
 | [Secure-coding baseline](https://github.com/appsec-foundry/aiscb) | Add secure-coding rules to Claude Code with `install-baseline`; `update-baseline`, `verify-baseline`, and `remove-baseline` manage them. |
 | [Security score](#security-score) | Quick 0–100 score from the scanners alone, without a model. |
 | [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Security hints while you write security-sensitive code. |
-| [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Security review of a code change in Claude Code or an Agent SDK workflow. |
-| [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Check a diff against the requirements catalog. |
-| [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | The same change review for CI. |
+| [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Security review of a code change in Claude Code, an Agent SDK workflow, or CI with [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli). |
 
 See the [developer tools guide](docs/dev-security-helper-usage.md).
 
@@ -202,20 +198,6 @@ python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path
 ```
 
 `scripts/analyzers/repo_scan.py` lists the scanner findings, endpoints, and technologies. Both scripts accept a local directory or an HTTPS Git URL; see `--help`.
-
-### Report a failed run
-
-`/appsec-advisor:report-error` checks a suspected plugin error locally and drafts a GitHub issue without logs, source code, or findings. You see the full draft and decide whether to publish it.
-
-## How the plugin is built
-
-`appsec-advisor` is the host that packages security components for Claude Code. It combines pinned releases of separately developed components into one plugin and adds the Claude Code commands, hooks, branding, and display around them:
-
-- the assessment engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which also runs standalone as a command-line tool;
-- portable skills such as the security score;
-- the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a pinned copy in `data/baselines/`.
-
-The assembler (`scripts/compose_plugin.py`) takes the engine and skills at a fixed revision and checksum, and the plugin runs only these bundled components, never another copy found on the machine. This packaged build is still an internal preview and currently contains only the `appsec-analyzer` assessment and `security-score` commands. The marketplace release and a `--plugin-dir` checkout currently run the assessment pipeline contained in this repository and need no packaging step. See the [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts).
 
 ## Enterprise rollout
 
@@ -238,6 +220,18 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
 | Run without interaction, for example in CI | [Non-interactive Mode](docs/headless-mode.md) |
 | Product requirements | [requirements.md](requirements.md) |
+
+If a run fails, `/appsec-advisor:report-error` checks a suspected plugin error locally and drafts a GitHub issue without logs, source code, or findings. You see the full draft and decide whether to publish it.
+
+## How the plugin is built
+
+`appsec-advisor` is the host that packages security components for Claude Code. It combines pinned releases of separately developed components into one plugin and adds the Claude Code commands, hooks, branding, and display around them:
+
+- the assessment engine from [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer), which also runs standalone as a command-line tool;
+- portable skills such as the security score;
+- the [secure-coding baseline](https://github.com/appsec-foundry/aiscb), shipped as a pinned copy in `data/baselines/`.
+
+The assembler (`scripts/compose_plugin.py`) takes the engine and skills at a fixed revision and checksum, and the plugin runs only these bundled components, never another copy found on the machine. This packaged build is still an internal preview and currently contains only the `appsec-analyzer` assessment and `security-score` commands. The marketplace release and a `--plugin-dir` checkout currently run the assessment pipeline contained in this repository and need no packaging step. See the [packaging guide](docs/internal-plugin-packaging.md#assemble-the-component-artifacts).
 
 ## Related projects
 
