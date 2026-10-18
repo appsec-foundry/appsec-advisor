@@ -1,6 +1,6 @@
 # AppSec Advisor composition inventory
 
-Status: P1 inventory recorded on 2026-10-18. P2–P6 remain blocked by the existing A7 gate. This is an implementation handoff for the [composition plan](plan-appsec-advisor-composition-2026-10-18.md), not a qualification record or a replacement product contract. No command has switched engines, no implementation is deleted, and no component is selected for release by this inventory.
+Status: P1 inventory recorded on 2026-10-18. The operator subsequently approved offline P2–P4 implementation before A7; release, public cutover, and removal remain gated. The first [P3 staging primitives](../contracts/plugin-composition.md) implement explicit artifact assembly and offline runtime bootstrap. This inventory is not a qualification record or a replacement product contract. No public command has switched engines and no existing implementation is deleted.
 
 ## Inspected inputs and gate
 
@@ -16,7 +16,7 @@ Analyzer's `appsec_analyzer/cli.py:390–441` declares interface 1, deterministi
 
 Analyzer's `docs/internal/extraction/phase-a-record.md:264–267` records A3–A5 as offline implementation with live model/route qualification open and A7 as local release preparation. This does not satisfy the composition plan's qualified standalone release gate. No inspected record establishes complete Claude, direct API, and gateway qualification. Existing offline evidence is reported by that record; it was not rerun during this documentation change.
 
-P1's workflow inventory is available below. A qualified immutable release, artifact digests, supported Python/OS/architecture matrix, and the unresolved fix reconciliation remain inputs to P2. None can be filled with the alpha version label or inferred from a successful local package build. Publication and paid qualification runs require separate authorization under the plan.
+P1's workflow inventory is available below. A qualified immutable release, approved artifact digests, supported Python/OS/architecture matrix, and the unresolved fix reconciliation remain release prerequisites. Their absence no longer blocks the approved offline P2–P4 work. None can be filled with the alpha version label or inferred from a successful local package build. Publication and paid qualification runs require separate authorization under the plan.
 
 ## Skill ownership and replacement ledger
 
@@ -169,24 +169,24 @@ The Analyzer extraction record freezes Advisor at `d21eaac102cea6b8878ba0837e40c
 
 | Advisor change | Producing path / invariant | Comparison and remaining action |
 | --- | --- | --- |
-| `e8646e62` configurable component concurrency | `runtime/assessment_jobs.py`, controller parser/budget/pool, `run-headless.sh`; bounded explicit component concurrency | Analyzer's committed `scripts/runtime/assessment_jobs.py` lacks `component_workers` and the Advisor constants; the public parser has `--max-parallel` with different machinery. Equivalence is unproven. Reconcile default, accepted range, budget/pool propagation and resume identity in Analyzer; do not copy the old implementation blindly. |
+| `e8646e62` configurable component concurrency | `runtime/assessment_jobs.py`, controller parser/budget/pool, `run-headless.sh`; bounded explicit component concurrency | Analyzer implements the same operator control through `--max-parallel`, `AssessmentBudget.max_parallel`, and `ThreadPoolExecutor(max_workers=jobs.budget.max_parallel)`, with profile/budget/pool tests. Defaults and range differ (Advisor 3 and 1–4; Analyzer 2 and 1–16). Map the existing operator setting deliberately and verify installed resume compatibility; absence of the old symbol name is not missing functionality. |
 | `bde4f4d6` monitor termination | `runtime/assessment_console.py`, primary skill; monitor ends with run without stopping its owner | Advisor-only integration remains relevant. Preserve it when the new entry skill binds to public progress/status and verify independent monitor/owner termination. |
 | `d6334f07` release checks and assessment output names | `renderers/render_completion_summary.py`, primary skill, report-anatomy proposal and affected tests | Analyzer's committed summary contains current `security-assessment` export names but also legacy plugin guidance in another code path. Names alone do not prove the active standalone/plugin completion behavior. Compare relevant paths and installed outcomes; keep affected regressions with their owner. |
 | `7b78f05e` / `4caa84dc`, `ffb331d9` / `4e548c81` clone-test hotfixes, plus initial related correction in `d6334f07` | `tests/test_security_score.py`; fake clone handlers must intercept only clone operations | All three committed Analyzer fake handlers contain `if "clone" not in argv`; this specific correction is present by static comparison. No scanner algorithm change is implied. |
 | `9f1854f4`, `c007ece5` examples and release documentation | User guides/changelog; current assessment identity | Advisor documentation remains authoritative for current users. Update composed installation guidance only after packaging and workflow compatibility exist. |
 | `7a72d646`, release/merge commits, `85c3ea0f` plan | Release metadata, ancestry and planning | Not engine producer fixes. Do not import Advisor version/tag identity into Analyzer or treat a plan commit as qualification evidence. |
 
-This is a reconciliation ledger, not closure of A7: component concurrency and completion guidance still need producer-level resolution and installed evidence. Tests listed above were not executed for a documentation-only inventory.
+This is a reconciliation ledger, not closure of A7. A later inspection of clean Analyzer revision `7602a7fb3d5dd0717746ed235762cbea206306ab` confirmed component concurrency through `--max-parallel`, `AssessmentBudget.max_parallel` and the component thread pool, with existing profile/pool tests. Advisor defaults to 3 and allows 1–4; Analyzer defaults to 2 and allows 1–16, so migration must map the settings explicitly. Completion guidance still needs installed consumer evidence. The original inventory did not execute the listed engine tests.
 
 ## Bounded implementation backlog
 
-Each item names the owner and evidence needed to release its dependency. Work remains sequenced by the original plan; this backlog does not waive A7.
+Each item names the owner and evidence needed to release its dependency. The approved offline sequence permits P2–P4 work before A7; qualification remains required for release, public cutover, and deletion.
 
 | Item | Owner / work | Evidence and dependency |
 | --- | --- | --- |
-| G1 | Analyzer: finish provider qualification and relevant Advisor fix reconciliation | Complete authorized Claude/direct API/fixed gateway assessments, declared quality thresholds, route/spend evidence, installed consumer compatibility, qualified immutable release. Blocks P2–P6. |
-| P2.1 | AppSec Skills: score transfer | Per-skill interface/scoring declarations, old-option mapping, complete installed references, deterministic outcomes outside source checkouts. Depends on G1. |
-| P2.2 | Analyzer and AppSec Skills: AuthN/AuthZ and focused-analysis gaps | Close the explicit option/lifecycle/contract gaps above before moving entry instructions; preserve engine-owned contracts. Depends on G1. |
+| G1 | Analyzer: finish provider qualification and relevant Advisor fix reconciliation | Complete authorized Claude/direct API/fixed gateway assessments, declared quality thresholds, route/spend evidence, installed consumer compatibility, qualified immutable release. Blocks release, public cutover, and removal. |
+| P2.1 | AppSec Skills: score transfer | Per-skill interface/scoring declarations, old-option mapping, complete installed references, deterministic outcomes outside source checkouts. Offline implementation may precede G1. |
+| P2.2 | Analyzer and AppSec Skills: AuthN/AuthZ and focused-analysis gaps | Close the explicit option/lifecycle/contract gaps above before switching public entry instructions; preserve engine-owned contracts. Offline implementation may precede G1. |
 | P2.3 | Analyzer: requirements and result-consumer APIs | Remote catalogs, verification, resume, query/health, triage, diagnosis, repair, cleanup and re-export mapped individually. Unresolved rows block only their own replacement/deletion after G1. |
 | P3.1 | Advisor: composition schema, selected lock and explicit inclusion manifest | Exact committed artifacts, source/revision/version/digest/license, interface/capability compatibility and dependency/build-tool pins; reject tampering and duplicate commands. No release lock can be populated from a dirty checkout. |
 | P3.2 | Advisor: deterministic assembler and organization packaging | Separate `package_internal_plugin.copy_source` from applicable branding/surface policy; build archive/checksums/notices/delivered manifest reproducibly without whole-checkout copying or engine namespace rewriting. |
@@ -196,4 +196,4 @@ Each item names the owner and evidence needed to release its dependency. Work re
 | P5 | Advisor and component owners: qualification | Exact-archive install/upgrade/rollback on each supported platform, controlled canonical replays, primary Claude entry, preserved settings/results/decisions and state limits. No model prose equality requirement. |
 | P6 | Advisor release and scoped cleanup | Recheck marketplace ZIP/digest syntax and host minimum against official documentation when implementing; publish qualified bytes only with authorization, switch catalog separately, then remove only covered producers in separate commits. |
 
-No Python/OS support claim, archive checksum, platform replay, live model qualification, publication, or cutover has been produced by P1. The next executable implementation step is G1 in Analyzer; the next Advisor implementation step is P2/P3 only after that evidence satisfies the existing gate.
+P1 establishes no Python/OS support, live qualification, publication, or cutover. The approved P3 work starts with the staging assembler, setup/preflight and launcher; real artifact selection, portable skills, organization packaging and public hook adapters remain separate pending integration. A7 evidence still gates the release boundary.

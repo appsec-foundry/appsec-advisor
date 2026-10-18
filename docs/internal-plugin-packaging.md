@@ -1,5 +1,7 @@
 # Internal plugin packaging
 
+For the new component-based staging workflow, see the [offline composition contract](internal/contracts/plugin-composition.md). Its explicit artifact builder and isolated runtime bootstrap are separate from the existing organization packager below; organization overlays do not yet consume the composed tree. Staging output is unqualified and does not replace the current plugin runtime.
+
 Build a company-branded Claude Code plugin so developers run your namespace with your defaults:
 
 ```text

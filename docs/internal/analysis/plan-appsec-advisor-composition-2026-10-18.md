@@ -1,10 +1,10 @@
 # AppSec Advisor component packaging plan
 
-Status: implementation started with the [P1 inventory and compatibility backlog](appsec-advisor-composition-inventory-2026-10-18.md), 2026-10-18. P2–P6 await the existing A7 qualification gate. AppSec Advisor becomes a thin Claude Code integration assembled from independently maintained components. Its installed package includes the skills and Analyzer distribution needed by the supported workflows. A thin source repository does not imply a small installation archive.
+Status: implementation started with the [P1 inventory and compatibility backlog](appsec-advisor-composition-inventory-2026-10-18.md), 2026-10-18. The operator approved offline P2–P4 implementation before A7; qualification still gates release, public cutover, and removal. AppSec Advisor becomes a thin Claude Code integration assembled from independently maintained components. Its installed package includes the skills and Analyzer distribution needed by the supported workflows. A thin source repository does not imply a small installation archive.
 
 This document extends the [product architecture](../../proposals/appsec-product-architecture-concept.md) and details Phase B of the [Analyzer extraction plan](plan-appsec-analyzer-extraction-2026-10-17.md). The [assessment transition handoff](handoff-appsec-analyzer-transition-2026-10-17.md) remains relevant to compatibility. The current inventory below replaces the extraction plan's historical starting-point description, not its acceptance gates. Do not repeat the history import or rebuild capabilities that already exist in Analyzer.
 
-This is planning work. Requirements and registered decisions remain unchanged. Propose and confirm their exact wording before implementation changes a product promise or introduces a decision that meets the register's admission rule. This document does not authorize publication, deletion of existing capabilities, or paid model runs.
+Requirements and registered decisions remain unchanged by this plan. Propose and confirm their exact wording before implementation changes a product promise or introduces a decision that meets the register's admission rule. This document does not authorize publication, deletion of existing capabilities, or paid model runs.
 
 ## Agreed outcome
 
@@ -97,7 +97,9 @@ Retain the prior tested archive and composition for rollback. Publishing an arch
 
 ## Work packages and sequencing
 
-Planning and component inventory can proceed now. Follow the existing A7 gate before Phase B implementation: a qualified standalone Analyzer release and a reconciled record of relevant Advisor fixes. In particular, this plan does not waive the existing direct-API and gateway qualification commitments. If a narrower first release is desired, propose that scope change separately. The observed `qualified: false` declarations are not evidence that A7 has passed.
+The first [offline implementation evidence](composition-offline-evidence-2026-10-18.md) records portable skill sources, the staging builder/bootstrap, and a real installed-engine deterministic replay. It does not close the package, host integration, platform, or release acceptance gates below.
+
+The operator approved this sequencing change on 2026-10-18: P2–P4 may be implemented and checked offline before A7 completes. Live qualification remains a prerequisite for release, public runtime cutover, and removal of the existing implementation. Linux, macOS, and native Windows remain in scope. A qualified standalone Analyzer release and a reconciled record of relevant Advisor fixes are still required for that gate. This changes work ordering only; it does not waive direct-API or gateway qualification, authorize paid runs, or declare the observed `qualified: false` providers qualified.
 
 ### P1 establish the migration inventory
 
@@ -151,4 +153,4 @@ Installed-artifact checks establish independence from source trees. Cross-platfo
 
 The platform family and Python prerequisite are settled. The remaining technical selections are the exact Python/OS/architecture matrix, initial immutable component versions, complete capability compatibility declarations, and the resulting asset layout. Resolve these from the package inventory and platform evidence. Ask the operator before reducing the agreed platform or workflow scope, changing a product promise, or revising the existing provider qualification gate.
 
-The [P1 inventory](appsec-advisor-composition-inventory-2026-10-18.md) records all existing skills, hook consumers, configuration fields, permissions, cleanup boundaries, and relevant Advisor fixes against committed component revisions. No workflow has switched. The next step is to close the recorded Analyzer qualification and reconciliation gaps; P2–P6 remain behind the existing A7 gate. The inventory distinguishes available commands from compatible replacements and records the evidence required for each transfer.
+The [P1 inventory](appsec-advisor-composition-inventory-2026-10-18.md) records all existing skills, hook consumers, configuration fields, permissions, cleanup boundaries, and relevant Advisor fixes against committed component revisions. No workflow has switched. Offline P2–P4 work proceeds under the approved sequence above; qualification and reconciliation gaps still block release, public cutover, and removal. The inventory distinguishes available commands from compatible replacements and records the evidence required for each transfer.

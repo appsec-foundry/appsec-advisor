@@ -442,6 +442,8 @@ GROUPS = {
     "packaging": _tests("""
         check_release_meta
         check_skill_enabled
+        compose_plugin
+        composition_runtime
         internal_packaging_end_to_end
         marketplace_manifest
         package_internal_plugin
@@ -581,6 +583,18 @@ _AGENT_FILE_TESTS = (
 _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
 
 SOURCE_TESTS = {
+    "scripts/compose_plugin.py": _tests(
+        "compose_plugin composition_runtime finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
+    ),
+    "scripts/composition_runtime.py": _tests(
+        "compose_plugin composition_runtime finding_state gate_preconditions run_path_guard check_target_specificity requirements_verification shared_paths stride_outputs"
+    ),
+    "schemas/components-lock.schema.json": _tests(
+        "compose_plugin check_target_specificity requirements_verification schemas"
+    ),
+    "schemas/component-manifest.schema.json": _tests(
+        "compose_plugin check_target_specificity requirements_verification schemas"
+    ),
     "scripts/runtime/remote_repositories.py": _tests("remote_repositories"),
     ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
     "specs/README.md": _tests("requirements_verification"),

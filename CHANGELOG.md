@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- Maintainers can build reproducible staging plugin archives from pinned local artifacts and explicitly set up an isolated offline Python runtime.
+
 ## 0.6.0-beta.5 (2026-10-17)
 
 ### Added

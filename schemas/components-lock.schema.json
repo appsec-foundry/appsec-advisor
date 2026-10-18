@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Offline staging plugin composition inputs",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plugin", "interface_version", "runtime", "components"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "plugin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "appsec-advisor"},
+        "version": {"type": "string", "pattern": "^[0-9][A-Za-z0-9.+-]{0,79}$"}
+      }
+    },
+    "interface_version": {"const": 1},
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["python", "platforms"],
+      "properties": {
+        "python": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^3\\.(1[0-9])$"}},
+        "platforms": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"enum": ["linux-x86_64", "linux-aarch64", "darwin-x86_64", "darwin-arm64", "win32-amd64", "win32-arm64"]}}
+      }
+    },
+    "components": {
+      "type": "array", "minItems": 2, "maxItems": 256,
+      "items": {"$ref": "#/$defs/component"}
+    }
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1, "maxLength": 240},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "role", "source", "revision", "version", "artifact", "sha256", "license", "interface_version", "capabilities", "qualification", "files"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
+        "role": {"enum": ["host", "engine", "skills", "dependency", "build-tool"]},
+        "source": {"type": "string", "maxLength": 240, "pattern": "^https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+$"},
+        "revision": {"type": "string", "pattern": "^([a-f0-9]{40}|sha256:[a-f0-9]{64})$"},
+        "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,79}$"},
+        "artifact": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\\.(zip|whl)$"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "license": {"type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[ -~]+$"},
+        "interface_version": {"const": 1},
+        "capabilities": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}},
+        "qualification": {"const": "unqualified-staging"},
+        "files": {
+          "type": "array", "maxItems": 10000,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["source", "target"],
+            "properties": {"source": {"$ref": "#/$defs/path"}, "target": {"$ref": "#/$defs/path"}}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"role": {"enum": ["host", "engine", "skills"]}}},
+          "then": {"properties": {"revision": {"pattern": "^[a-f0-9]{40}$"}}}
+        }
+      ]
+    }
+  }
+}
