@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`appsec-advisor` is a Claude Code host plugin for repository-based security assessment. The new composition build selects a pinned AppSec Analyzer wheel, dependency wheels and skill artifacts. Its primary assessment workflow is Analyzer-owned; the generated Advisor entry binds it to the installed engine. The existing [appsec-analyzer skill](skills/appsec-analyzer/SKILL.md) and pipeline remain the current marketplace runtime until replacement is qualified. Prefer deterministic threat emitters and coordination; preserve the deterministic pipeline and make the LLM do less.
+`appsec-advisor` is a Claude Code host plugin for repository-based security assessment. The new composition build selects a pinned AppSec Analyzer wheel, dependency wheels and skill artifacts. Its primary assessment workflow is Analyzer-owned; the generated Advisor entry binds it to the installed engine. This repository's own [appsec-analyzer skill](skills/appsec-analyzer/SKILL.md) and pipeline, not the engine entry of the same name, remain the current marketplace runtime until replacement is qualified. Prefer deterministic threat emitters and coordination; preserve the deterministic pipeline and make the LLM do less.
 
 ## Composition boundary
 
