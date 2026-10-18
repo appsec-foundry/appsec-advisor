@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -462,3 +463,220 @@ def test_organization_dispatch_rejects_missing_context_and_bypass(tmp_path, monk
         arguments = ["organization-config", "run"]
     with pytest.raises(runtime.RuntimeError):
         runtime.organization_arguments(tmp_path, Path(sys.executable), arguments, manifest)
+
+
+def _external_case(tmp_path):
+    plugin = tmp_path / "installed plugin"
+    (plugin / "schemas").mkdir(parents=True)
+    (plugin / "scripts").mkdir()
+    root = Path(__file__).parents[1]
+    for relative in ("schemas/org-profile.schema.yaml", "scripts/composition_runtime.py"):
+        (plugin / relative).write_bytes((root / relative).read_bytes())
+    profile = tmp_path / "operator profile.yaml"
+    profile.write_text(
+        "api_version: appsec-advisor.org-profile/v2\n"
+        'organization: {id: external, name: External Team, profile_version: "1"}\n'
+        'compatibility: {core: ">=1 <2"}\n'
+        "default_preset: daily\npresets: {daily: {base_mode: standard}, release: {base_mode: thorough}}\n"
+        "policy: {disable_opus: true, url_allowlist: [git.example.org]}\n"
+    )
+    manifest = {
+        "files": [
+            {"path": relative} for relative in ("schemas/org-profile.schema.yaml", "scripts/composition_runtime.py")
+        ]
+    }
+    lock = {"plugin": {"version": "1.0.0"}, "components": [{"role": "engine", "version": "1.0.0"}]}
+    return plugin, profile, manifest, lock
+
+
+@pytest.mark.parametrize(
+    "packaged,relative,selection_source",
+    [(True, False, "cli"), (False, True, "cli"), (True, True, "env"), (False, False, "env")],
+)
+def test_external_profile_precedence_public_projection_and_cleanup(
+    tmp_path, monkeypatch, packaged, relative, selection_source
+):
+    plugin, profile, manifest, lock = _external_case(tmp_path)
+    if packaged:
+        manifest["files"].append({"path": runtime.ORG_DISPATCH})
+    monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", "/missing-environment.yaml")
+    monkeypatch.setenv("APPSEC_ADVISOR_PRESET", "unavailable")
+
+    def run(command, **kwargs):
+        if command[-1] == "capabilities":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "organization_config": {
+                            "available": True,
+                            "schema_version": 1,
+                            "commands": ["score"],
+                            "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+                        }
+                    }
+                ).encode(),
+            )
+        assert command[:3] == [sys.executable, "-I", "-c"]
+        return SimpleNamespace(returncode=0, stdout=runtime.project_profile(*command[5:]))
+
+    monkeypatch.setattr(runtime.subprocess, "run", run)
+    selection = "../operator profile.yaml" if relative else str(profile)
+    flags = ["--org-profile", selection] if selection_source == "cli" else []
+    if selection_source == "env":
+        monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", selection)
+    with contextlib.ExitStack() as stack:
+        arguments = runtime.organization_arguments(
+            plugin,
+            Path(sys.executable),
+            ["score", "/neutral/source", *flags, "--preset=release", "--json"],
+            manifest,
+            lock=lock,
+            home=tmp_path,
+            stack=stack,
+        )
+        assert arguments[:3] == ["organization-config", "run", "--config"]
+        config = Path(arguments[3])
+        projection = json.loads(config.read_bytes())
+        assert projection["profile"]["organization"]["id"] == "external"
+        assert projection["profile"]["default_preset"] == "daily"
+        assert projection["profile"]["policy"] == {"disable_opus": True, "url_allowlist": ["git.example.org"]}
+        assert projection["engine_version"] == "1.0.0" and projection["advisor_core_version"] == "1.0.0"
+        assert arguments[4:] == ["--preset", "release", "--", "score", "/neutral/source", "--json"]
+        assert config.stat().st_mode & 0o077 == 0
+    assert not config.parent.exists()
+    assert profile.exists()
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "llm_policy: {approval_required_actions: [publish]}",
+        "banner: {headline: Cannot apply at runtime}",
+        "hooks: {}",
+        "mcp: {servers: {tool: {command: forbidden}}}",
+        "policy: {url_allowlist: [false]}",
+        "organization: {id: incomplete}",
+        "default_preset: absent",
+        "unexpected: true",
+        "presets: {daily: {base_mode: standard, outputs: {sarif: true}}}",
+    ],
+)
+def test_external_profile_rejects_unsupported_or_invalid_settings(tmp_path, capfd, setting):
+    plugin, profile, _, _ = _external_case(tmp_path)
+    # Replace a top-level field rather than relying on duplicate-key rejection.
+    import yaml
+
+    document = yaml.safe_load(profile.read_bytes())
+    document.update(yaml.safe_load(setting))
+    profile.write_text(json.dumps(document))
+    with pytest.raises(runtime.RuntimeError):
+        runtime.project_profile(str(plugin), str(profile), "1.0.0", "1.0.0")
+    assert capfd.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "!!python/object/apply:os.system ['touch forbidden']",
+        "a: 1\na: 2",
+        "a: &x {}\nb: *x",
+        "x" * 65537,
+        "[]",
+        "a: .nan",
+    ],
+)
+def test_external_profile_data_is_bounded_unambiguous_and_nonexecutable(content):
+    with pytest.raises((runtime.RuntimeError, ValueError)):
+        runtime.profile_data(content.encode(), maximum=65536)
+
+
+@pytest.mark.parametrize("defect", ["source", "symlink", "parent-symlink", "missing-schema"])
+def test_external_profile_rejects_untrusted_selection_before_adapter(tmp_path, monkeypatch, defect):
+    plugin, profile, manifest, lock = _external_case(tmp_path)
+    arguments = ["score", str(tmp_path)] if defect == "source" else ["score", "/selected/source"]
+    if defect == "symlink":
+        alias = tmp_path / "alias.yaml"
+        alias.symlink_to(profile)
+        profile = alias
+    elif defect == "parent-symlink":
+        alias = tmp_path / "alias"
+        alias.symlink_to(plugin)
+        profile = alias / "schemas/org-profile.schema.yaml"
+    elif defect == "missing-schema":
+        manifest["files"] = []
+    monkeypatch.setattr(runtime.subprocess, "run", lambda *a, **kw: pytest.fail("adapter must not run"))
+    with contextlib.ExitStack() as stack, pytest.raises(runtime.RuntimeError):
+        runtime.external_projection(
+            plugin,
+            Path(sys.executable),
+            str(profile),
+            arguments,
+            {item["path"] for item in manifest["files"]},
+            lock,
+            tmp_path,
+            stack,
+        )
+
+
+@pytest.mark.parametrize("name", ["APPSEC_ADVISOR_ORG_PROFILE", "APPSEC_ADVISOR_PRESET"])
+def test_empty_environment_selection_fails_without_packaged_fallback(tmp_path, monkeypatch, name):
+    monkeypatch.setenv(name, "")
+    with pytest.raises(runtime.RuntimeError, match="nonempty"):
+        runtime.organization_arguments(tmp_path, Path(sys.executable), ["score", "source"], {"files": []})
+
+
+@pytest.mark.parametrize("status", [0, 1, 2, 130, "timeout"])
+def test_external_projection_cleanup_covers_engine_outcomes(tmp_path, monkeypatch, status):
+    plugin, profile, manifest, lock = _external_case(tmp_path)
+    monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", str(profile))
+    (plugin / "component-manifest.json").write_bytes(runtime.encode(manifest))
+    monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
+    config_paths = []
+
+    def projection(*args):
+        stack = args[-1]
+        folder = Path(stack.enter_context(runtime.tempfile.TemporaryDirectory(dir=tmp_path)))
+        config = folder / "engine.yaml"
+        config.write_text("{}")
+        config_paths.append(config)
+        return str(config)
+
+    monkeypatch.setattr(runtime, "external_projection", projection)
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "organization_config": {
+                        "available": True,
+                        "schema_version": 1,
+                        "commands": ["score"],
+                        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+                    }
+                }
+            ).encode(),
+        ),
+    )
+
+    class Process:
+        pid = 123
+        calls = 0
+
+        def wait(self, timeout):
+            self.calls += 1
+            assert config_paths[0].exists()
+            if status == "timeout" and self.calls == 1:
+                raise subprocess.TimeoutExpired("engine", timeout)
+            return status if status != "timeout" else 1
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *a, **kw: Process())
+    monkeypatch.setattr(runtime.os, "killpg", lambda *a: None)
+    if status == "timeout":
+        with pytest.raises(runtime.RuntimeError, match="interrupted"):
+            runtime.launch(plugin, tmp_path, ["score", "/neutral/source"], 1)
+    else:
+        assert runtime.launch(plugin, tmp_path, ["score", "/neutral/source"], 1) == status
+    assert config_paths and not config_paths[0].parent.exists()

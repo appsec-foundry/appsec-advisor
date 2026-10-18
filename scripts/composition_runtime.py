@@ -9,12 +9,14 @@ inputs; assessed repositories and model output cannot select runtime inputs.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import platform
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -343,40 +345,183 @@ def setup(plugin: Path, home: Path) -> Path:
     return interpreter(target)
 
 
+# Ownership follows the configuration dispatch ledger. Shared identity is not
+# an engine compatibility declaration; compatibility.core still names Advisor.
+_ADVISOR_FIELDS = {"banner", "skills", "hooks", "mcp", "skill_toggles", "baseline", "security_coach"}
+_ANALYZER_FIELDS = {
+    "policy",
+    "branding",
+    "requirements",
+    "llm_context",
+    "llm_policy",
+    "analyst",
+    "actors",
+    "abuse_cases",
+    "default_preset",
+    "presets",
+}
+_SHARED_FIELDS = {"api_version", "organization", "compatibility"}
 ORG_DISPATCH = "org-profile/composition-dispatch.json"
 
 
-def organization_arguments(plugin: Path, python: Path, arguments: list[str], manifest: dict) -> list[str]:
-    """Dispatch the engine-only projection through its declared public API."""
-    inventory = {entry["path"] for entry in manifest["files"]}
-    if ORG_DISPATCH not in inventory:
-        return arguments
-    if "org-profile/analyzer-config.yaml" not in inventory:
-        raise RuntimeError("organization engine projection is missing from the verified inventory")
-    # Capability names alone are insufficient: require the versioned mapping.
+def split_profile(profile: dict) -> dict:
+    """Split ownership and admit only settings with a verified public mapping."""
+    unknown = set(profile) - _ADVISOR_FIELDS - _ANALYZER_FIELDS - _SHARED_FIELDS
+    advisor = {key: value for key, value in profile.items() if key in _ADVISOR_FIELDS}
+    analyzer = {key: value for key, value in profile.items() if key in _ANALYZER_FIELDS}
+    # These host consumers have not migrated; retaining their data is not enforcement.
+    unsupported = unknown | (set(advisor) & {"baseline", "security_coach"})
+    unsupported |= set(analyzer) - {"default_preset", "presets", "policy"}
+    for preset in analyzer.get("presets", {}).values():
+        unsupported.update(f"presets.*.{key}" for key in set(preset) - {"base_mode"})
+    if unsupported:
+        raise RuntimeError(
+            "staging settings require an explicit public consumer: "
+            + ", ".join(sorted(unsupported))
+            + "; the pinned Analyzer cannot preserve these settings; use the existing --source packaging path"
+        )
+    return {
+        "schema_version": 1,
+        "identity": {key: profile[key] for key in sorted(_SHARED_FIELDS)},
+        "advisor": advisor,
+        "analyzer": analyzer,
+    }
+
+
+def profile_data(data: bytes, *, maximum: int = 2 * 1024 * 1024) -> dict:
+    import yaml
+
+    if len(data) > maximum:
+        raise RuntimeError("staging organization profile exceeds its byte limit")
+
+    class UniqueLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
+            if any(not isinstance(key, str) for key in keys) or len(keys) != len(set(keys)):
+                raise RuntimeError("staging organization profile contains ambiguous keys")
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        for count, token in enumerate(yaml.scan(data)):
+            if count > 10000 or isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken)):
+                raise RuntimeError("organization profile cannot contain YAML anchors, aliases or excessive tokens")
+        value = yaml.load(data, Loader=UniqueLoader)
+        json.dumps(value, allow_nan=False)
+        if not isinstance(value, dict):
+            raise RuntimeError("organization profile must contain a mapping")
+        return value
+    except yaml.YAMLError:
+        raise RuntimeError("staging organization profile is not valid data-only YAML")
+
+
+def project_profile(plugin: str, selection: str, core: str, engine: str) -> bytes:
+    """Host-side data adapter executed with the pinned runtime's dependencies."""
+    import yaml
+    from jsonschema import Draft202012Validator
+
+    root = Path(plugin)
+    schema = yaml.safe_load(regular(root, "schemas/org-profile.schema.yaml").read_bytes())
+    path = Path(selection)
+    # Open parent directories without following links, including during replacement.
+    parent_fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = next_fd
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise RuntimeError("external profile must be a singly linked regular file")
+        profile = profile_data(stream.read(65537), maximum=65536)
+    if not Draft202012Validator(schema).is_valid(profile):
+        raise RuntimeError("external organization profile does not match its complete schema")
+    if profile["default_preset"] not in profile["presets"]:
+        raise RuntimeError("external organization default preset is unavailable")
+    dispatch = split_profile(profile)
+    if dispatch["advisor"]:
+        raise RuntimeError("external runtime host settings require packaging; use --source for unmigrated consumers")
+    projection = encode(
+        {
+            "schema_version": 1,
+            "engine_version": engine,
+            "advisor_core_version": core,
+            "profile": {**dispatch["identity"], **dispatch["analyzer"]},
+        }
+    )
+    if len(projection) > 65536:
+        raise RuntimeError("external engine projection exceeds its byte limit")
+    return projection
+
+
+def external_projection(
+    plugin: Path, python: Path, selection: str, arguments: list[str], inventory: set[str], lock: dict, home: Path, stack
+) -> str:
+    """Select only operator data, snapshot it privately, and preserve cleanup."""
+    schema_path = "schemas/org-profile.schema.yaml"
+    if schema_path not in inventory or stack is None:
+        raise RuntimeError("external profile validation resources are missing; reassemble the reviewed host")
+    path = Path(selection).expanduser()
+    if not path.is_absolute():
+        path = plugin / path
+    if any(parent.is_symlink() for parent in (path, *path.parents)):
+        raise RuntimeError("external profile must not traverse symlinks")
+    path = Path(os.path.abspath(path))
+    if path.resolve() != path or not path.is_file() or path.stat().st_nlink != 1:
+        raise RuntimeError("external profile must be a singly linked regular file without symlinks")
+    if arguments[0] == "score":
+        sources = [arg for arg in arguments[1:] if arg not in {"--json", "--yaml", "--"}]
+        if len(sources) != 1:
+            raise RuntimeError("external score selection requires one explicit source")
+        source = sources[0]
+        if "://" not in source and not source.startswith("git@"):
+            if path.is_relative_to(Path(source).expanduser().resolve()):
+                raise RuntimeError("external profile must be outside the selected source")
+    engine = next(component for component in lock["components"] if component["role"] == "engine")
+    # runpy loads only the verified host adapter; no source-controlled imports.
+    adapter = (
+        "import runpy,sys; m=runpy.run_path(sys.argv[1]); sys.stdout.buffer.write(m['project_profile'](*sys.argv[2:]))"
+    )
     result = subprocess.run(
-        [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
+        [
+            str(python),
+            "-I",
+            "-c",
+            adapter,
+            str(regular(plugin, "scripts/composition_runtime.py")),
+            str(plugin),
+            str(path),
+            lock["plugin"]["version"],
+            engine["version"],
+        ],
         env=clean_environment(),
         stdin=subprocess.DEVNULL,
         capture_output=True,
         timeout=30,
     )
-    capabilities = json.loads(result.stdout) if result.returncode == 0 and len(result.stdout) < MAX_LOCK else {}
-    expected = {
-        "available": True,
-        "schema_version": 1,
-        "commands": ["score"],
-        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
-    }
-    actual = capabilities.get("organization_config") if isinstance(capabilities, dict) else None
-    if not isinstance(actual, dict) or any(
-        type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in expected.items()
-    ):
-        raise RuntimeError("pinned engine lacks the required public organization configuration interface")
+    if result.returncode != 0 or len(result.stdout) > 65536:
+        raise RuntimeError("external organization profile is invalid or contains unsupported settings")
+    # Private per-invocation storage is outside sources and the read-only plugin.
+    temporary = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=".profile-", dir=home)))
+    config = temporary / "analyzer-config.yaml"
+    config.write_bytes(result.stdout)
+    config.chmod(0o600)
+    return str(config)
+
+
+def organization_arguments(
+    plugin: Path, python: Path, arguments: list[str], manifest: dict, *, lock=None, home=None, stack=None
+) -> list[str]:
+    """Dispatch the engine-only projection through its declared public API."""
+    inventory = {entry["path"] for entry in manifest["files"]}
+    packaged = ORG_DISPATCH in inventory
     if arguments[0] in {"version", "capabilities"}:
         return arguments
     disabled = os.environ.get("APPSEC_ADVISOR_NO_ORG_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
-    preset = os.environ.get("APPSEC_ADVISOR_PRESET") or None
+    preset = os.environ.get("APPSEC_ADVISOR_PRESET")
     external = os.environ.get("APPSEC_ADVISOR_ORG_PROFILE")
     forwarded = [arguments[0]]
     index = 1
@@ -403,15 +548,42 @@ def organization_arguments(plugin: Path, python: Path, arguments: list[str], man
         else:
             forwarded.append(arg)
         index += 1
-    if external and not disabled:
-        # External Advisor profiles require host validation/splitting before
-        # engine dispatch; an engine-only envelope cannot stand in for them.
-        raise RuntimeError(
-            "external organization profile selection is not yet supported by composed staging; use --source"
-        )
     if disabled:
         return forwarded
-    config = str(regular(plugin, "org-profile/analyzer-config.yaml"))
+    if external is not None and not external:
+        raise RuntimeError("organization selection requires a nonempty value")
+    if preset is not None and not preset:
+        raise RuntimeError("organization selection requires a nonempty value")
+    if not packaged and external is None:
+        if preset is not None:
+            raise RuntimeError("preset selection requires an active organization profile")
+        return forwarded
+    # Capability names alone are insufficient: require the versioned mapping.
+    result = subprocess.run(
+        [str(python), "-I", "-m", "appsec_analyzer.cli", "capabilities"],
+        env=clean_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=30,
+    )
+    capabilities = json.loads(result.stdout) if result.returncode == 0 and len(result.stdout) < MAX_LOCK else {}
+    expected = {
+        "available": True,
+        "schema_version": 1,
+        "commands": ["score"],
+        "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
+    }
+    actual = capabilities.get("organization_config") if isinstance(capabilities, dict) else None
+    if not isinstance(actual, dict) or any(
+        type(actual.get(key)) is not type(value) or actual.get(key) != value for key, value in expected.items()
+    ):
+        raise RuntimeError("pinned engine lacks the required public organization configuration interface")
+    if external is not None:
+        config = external_projection(plugin, python, external, forwarded, inventory, lock, home, stack)
+    else:
+        if "org-profile/analyzer-config.yaml" not in inventory:
+            raise RuntimeError("organization engine projection is missing from the verified inventory")
+        config = str(regular(plugin, "org-profile/analyzer-config.yaml"))
     if forwarded[0] == "organization-config":
         if (
             len(forwarded) < 2
@@ -472,53 +644,54 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "authnz-review",
     }:
         raise RuntimeError("select a supported public engine command")
-    arguments = organization_arguments(plugin, python, arguments, manifest)
-    options = (
-        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-        if sys.platform == "win32"
-        else {"start_new_session": True}
-    )
-    process = subprocess.Popen(
-        [str(python), "-I", "-m", "appsec_analyzer.cli", *arguments], env=clean_environment(), **options
-    )
-    try:
-        return process.wait(timeout=timeout)
-    except (subprocess.TimeoutExpired, KeyboardInterrupt):
-        # Give the engine a bounded opportunity to settle its own run accounting.
-        if "--output" in arguments:
-            index = arguments.index("--output") + 1
-            if index < len(arguments):
+    with contextlib.ExitStack() as stack:
+        arguments = organization_arguments(plugin, python, arguments, manifest, lock=lock, home=home, stack=stack)
+        options = (
+            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
+        process = subprocess.Popen(
+            [str(python), "-I", "-m", "appsec_analyzer.cli", *arguments], env=clean_environment(), **options
+        )
+        try:
+            return process.wait(timeout=timeout)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            # Give the engine a bounded opportunity to settle its own run accounting.
+            if "--output" in arguments:
+                index = arguments.index("--output") + 1
+                if index < len(arguments):
+                    try:
+                        subprocess.run(
+                            [str(python), "-I", "-m", "appsec_analyzer.cli", "stop", "--output", arguments[index]],
+                            env=clean_environment(),
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            timeout=10,
+                        )
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+            if sys.platform == "win32":
+                # No shell or PATH executable selection. Native qualification remains required.
+                killer = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/taskkill.exe"
                 try:
-                    subprocess.run(
-                        [str(python), "-I", "-m", "appsec_analyzer.cli", "stop", "--output", arguments[index]],
-                        env=clean_environment(),
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=10,
-                    )
-                except (OSError, subprocess.TimeoutExpired):
-                    pass
-        if sys.platform == "win32":
-            # No shell or PATH executable selection. Native qualification remains required.
-            killer = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/taskkill.exe"
-            try:
-                subprocess.run([str(killer), "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10)
-            finally:
-                if process.poll() is None:
-                    process.kill()
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
+                    subprocess.run([str(killer), "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+            else:
                 try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
                     pass
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        process.wait(timeout=10)
-        raise RuntimeError("engine invocation interrupted; inspect public status before resuming") from None
+            process.wait(timeout=10)
+            raise RuntimeError("engine invocation interrupted; inspect public status before resuming") from None
 
 
 def main(argv: list[str] | None = None) -> int:

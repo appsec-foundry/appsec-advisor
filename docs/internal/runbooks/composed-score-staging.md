@@ -66,4 +66,29 @@ python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --pl
 
 Use a preset actually declared by the profile. Explicit `--preset` wins over `APPSEC_ADVISOR_PRESET`; unknown or empty selections fail. Inspection shows defaults separately from mandatory policy. Score does not consume assessment depth or call models. A configured nonempty URL allowlist restricts remote Git targets before Git or credentials; a rejected target returns 2 without a score. Ordinary scored, undetermined and operational-source outcomes retain statuses 0, 2 and 1. The existing score binding command above selects this public policy path automatically for an active composed profile.
 
-External runtime `--org-profile` and `APPSEC_ADVISOR_ORG_PROFILE` overrides are explicitly refused in composed staging. Use the existing checkout package for profiles needing that selection or currently unsupported settings. The existing explicit no-profile selection disables the engine profile; it does not restore excluded skills or change host hooks. See the [configuration dispatch contract](../contracts/plugin-composition.md#organization-configuration-dispatch) for the supported scope and remaining migration gaps.
+External runtime score profiles follow the selection procedure below. Use the existing checkout package for currently unsupported settings. The existing explicit no-profile selection disables the engine profile; it does not restore excluded skills or change host hooks. See the [configuration dispatch contract](../contracts/plugin-composition.md#organization-configuration-dispatch) for the supported scope and remaining migration gaps.
+
+
+## Select an external score profile
+
+Use a newly assembled host containing the reviewed bootstrap and `schemas/org-profile.schema.yaml`, plus the pinned engine's public `organization_config` capability. An older archive requires reassembly. Select an operator-maintained YAML file outside the analyzed source, without links, and at most 64 KiB. This runtime profile supports identity, Advisor compatibility, base-mode presets and the two supported policy fields. Host settings such as banner, hooks, MCP and skill selection require packaging; other engine settings remain unsupported.
+
+```bash
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" --skill security-score -- score "/source/repository" --org-profile "/operator/score-profile.yaml" --preset release --json
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" -- organization-config show --org-profile "/operator/score-profile.yaml"
+```
+
+The external file has the same Advisor profile shape, with no engine envelope:
+
+```yaml
+api_version: appsec-advisor.org-profile/v2
+organization: {id: team, name: Team Security, profile_version: "1"}
+compatibility: {core: ">=0.6 <0.7"}
+default_preset: daily
+presets:
+  daily: {base_mode: standard}
+  release: {base_mode: thorough}
+policy: {disable_opus: true, url_allowlist: [git.example.org]}
+```
+
+`--org-profile` wins over `APPSEC_ADVISOR_ORG_PROFILE`, then the packaged profile. Relative paths resolve against the plugin root. For an external profile, `--preset` wins over `APPSEC_ADVISOR_PRESET`, then its own default; the packaged config preset does not leak into that selection. Explicit no-profile selection disables the selected engine profile as before. Invalid selections and unsupported settings fail without fallback. Runtime selection changes neither the packaged host surface nor engine code. The host validates and splits the file, snapshots only engine settings privately for that invocation, and removes the snapshot on exit. The public engine validates that projection and enforces its URL restriction before Git or credentials. Score still makes no model call and uses no assessment depth.

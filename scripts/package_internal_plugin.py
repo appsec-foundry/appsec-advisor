@@ -1273,47 +1273,16 @@ def _staging_inputs(files: dict[str, bytes]) -> tuple[dict, dict, set[str]]:
     return lock, manifest, protected
 
 
-# Ownership follows the configuration dispatch ledger. Shared identity is not
-# an engine compatibility declaration; compatibility.core still names Advisor.
-_ADVISOR_FIELDS = {"banner", "skills", "hooks", "mcp", "skill_toggles", "baseline", "security_coach"}
-_ANALYZER_FIELDS = {
-    "policy",
-    "branding",
-    "requirements",
-    "llm_context",
-    "llm_policy",
-    "analyst",
-    "actors",
-    "abuse_cases",
-    "default_preset",
-    "presets",
-}
-_SHARED_FIELDS = {"api_version", "organization", "compatibility"}
 ORG_DISPATCH = "org-profile/composition-dispatch.json"
 
 
 def _staging_profile(profile: dict) -> dict:
-    """Split ownership and admit only settings with a verified public mapping."""
-    unknown = set(profile) - _ADVISOR_FIELDS - _ANALYZER_FIELDS - _SHARED_FIELDS
-    advisor = {key: value for key, value in profile.items() if key in _ADVISOR_FIELDS}
-    analyzer = {key: value for key, value in profile.items() if key in _ANALYZER_FIELDS}
-    # These host consumers have not migrated; retaining their data is not enforcement.
-    unsupported = unknown | (set(advisor) & {"baseline", "security_coach"})
-    unsupported |= set(analyzer) - {"default_preset", "presets", "policy"}
-    for preset in analyzer.get("presets", {}).values():
-        unsupported.update(f"presets.*.{key}" for key in set(preset) - {"base_mode"})
-    if unsupported:
-        _die(
-            "staging settings require an explicit public consumer: "
-            + ", ".join(sorted(unsupported))
-            + "; the pinned Analyzer cannot preserve these settings; use the existing --source packaging path"
-        )
-    return {
-        "schema_version": 1,
-        "identity": {key: profile[key] for key in sorted(_SHARED_FIELDS)},
-        "advisor": advisor,
-        "analyzer": analyzer,
-    }
+    from composition_runtime import RuntimeError, split_profile
+
+    try:
+        return split_profile(profile)
+    except RuntimeError as exc:
+        _die(str(exc))
 
 
 def _staging_config(files: dict[str, bytes], profile: dict) -> tuple[dict, str | None]:
@@ -1351,24 +1320,12 @@ def _staging_config(files: dict[str, bytes], profile: dict) -> tuple[dict, str |
 
 
 def _staging_profile_data(data: bytes) -> dict:
-    import yaml
-
-    if len(data) > 2 * 1024 * 1024:
-        _die("staging organization profile exceeds its byte limit")
-
-    class UniqueLoader(yaml.SafeLoader):
-        def construct_mapping(self, node, deep=False):
-            keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
-            if any(not isinstance(key, str) for key in keys) or len(keys) != len(set(keys)):
-                _die("staging organization profile contains ambiguous keys")
-            return super().construct_mapping(node, deep=deep)
+    from composition_runtime import RuntimeError, profile_data
 
     try:
-        if any(isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken)) for token in yaml.scan(data)):
-            _die("staging organization profile cannot contain YAML anchors or aliases")
-        return yaml.load(data, Loader=UniqueLoader)
-    except yaml.YAMLError:
-        _die("staging organization profile is not valid data-only YAML")
+        return profile_data(data)
+    except RuntimeError as exc:
+        _die(str(exc))
 
 
 def _staging_readme(build: Path, name: str, skills: list[str]) -> None:
