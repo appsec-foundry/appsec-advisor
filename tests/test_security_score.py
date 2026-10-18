@@ -638,6 +638,8 @@ def test_clone_failure_stops_without_scanning(monkeypatch, capsys):
     checkouts = []
 
     def fake_clone(argv, **kw):
+        if "clone" not in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "")
         checkout = Path(argv[-1])
         checkout.mkdir()
         checkouts.append(checkout)
