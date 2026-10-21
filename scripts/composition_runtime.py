@@ -249,11 +249,10 @@ def portable_requirements(skill: str, declaration: dict) -> dict:
     return required
 
 
-ASSESSMENT_CAPABILITIES = ["scan", "assessment_entry", "status", "progress", "stop", "results", "query", "export"]
+ASSESSMENT_CAPABILITIES = ["assess", "assessment_entry", "status", "progress", "stop", "results", "query", "export"]
 ASSESSMENT_COMMANDS = {
     "version",
     "capabilities",
-    "scan",
     "assess",
     "assessment-entry",
     "status",
@@ -627,7 +626,7 @@ def organization_arguments(
             forwarded.append(arg)
         index += 1
     if disabled:
-        return [*forwarded, "--no-org-profile"] if forwarded[0] in {"scan", "assess"} else forwarded
+        return [*forwarded, "--no-org-profile"] if forwarded[0] in {"assess"} else forwarded
     if external is not None and not external:
         raise RuntimeError("organization selection requires a nonempty value")
     if preset is not None and not preset:
@@ -663,9 +662,9 @@ def organization_arguments(
         not isinstance(commands, list)
         or any(not isinstance(command, str) for command in commands)
         or "score" not in commands
-        or workflow not in {"score", "scan", "assess"}
+        or workflow not in {"score", "assess"}
         or workflow not in commands
-        or (workflow in {"scan", "assess"} and actual.get("profile_source_validation") is not True)
+        or (workflow in {"assess"} and actual.get("profile_source_validation") is not True)
     ):
         raise RuntimeError("pinned engine lacks the required organization workflow or source validation")
     provenance = []
@@ -733,7 +732,7 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
                 raise RuntimeError("assessment configuration binding permits only inspection")
             engine_capabilities(python, ASSESSMENT_CAPABILITIES)
             inner = arguments.index("--") + 1 if arguments[0] == "organization-config" and "--" in arguments else 0
-            if inner < len(arguments) and arguments[inner] in {"scan", "assess"}:
+            if inner < len(arguments) and arguments[inner] in {"assess"}:
                 # Execution settings, host selection and display stay independent.
                 display = (
                     []
@@ -755,7 +754,6 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "organization-config",
         "profiles",
         "preflight",
-        "scan",
         "scan-sources",
         "score",
         "repo-profile",
@@ -774,7 +772,7 @@ def launch(plugin: Path, home: Path, arguments: list[str], timeout: int, skill: 
         "export",
     }:
         raise RuntimeError("select a supported public engine command")
-    cancellable = arguments[0] in {"scan", "assess"}
+    cancellable = arguments[0] in {"assess"}
     output = None
     for index, argument in enumerate(arguments):
         if argument.startswith("--output="):

@@ -100,10 +100,10 @@ policy: {disable_opus: true, url_allowlist: [git.example.org]}
 
 ## Inspect full-assessment configuration without running a model
 
-Use a newly assembled host and Analyzer declaring `scan` and `assess` under `organization_config.commands`, with `profile_source_validation: true`. The admitted profile fields remain the same as for score. For a selected primary entry, use its binding when inspecting the assessment so its execution defaults match the eventual launch:
+Use a newly assembled host and Analyzer declaring `assess` under `organization_config.commands`, with `profile_source_validation: true`. The admitted profile fields remain the same as for score. For a selected primary entry, use its binding when inspecting the assessment so its execution defaults match the eventual launch:
 
 ```bash
-python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" --skill appsec-analyzer -- organization-config show --org-profile "/operator/score-profile.yaml" --preset release -- scan --repo "/source/repository" --assessment-depth quick
+python3 "/installed/organization-plugin/scripts/composition_runtime.py" run --plugin "/installed/organization-plugin" --skill appsec-analyzer -- organization-config show --org-profile "/operator/score-profile.yaml" --preset release -- assess --repo "/source/repository" --assessment-depth quick
 ```
 
 The returned `assessment_profile` shows effective depth and model settings while retaining the selected policy. This command performs no source retrieval, credential preflight or model call. Unknown settings and unsupported destinations fail. Replace `show` with `validate` for validation. The score binding remains score-only.
@@ -120,7 +120,7 @@ Offline setup and inspection do not authorize model use. Obtain an explicit targ
 /team-appsec:appsec-analyzer --repo /source/repository --output /private/assessment --assessment-depth quick --hard-budget 10
 ```
 
-Replace the namespace, source, private output and budget with the authorized selections. The generated host entry follows the engine-owned `claude-code.md` and business-context dialogue. It gathers required choices and uses public `assessment-entry` operations for destination, trust, ownership and context. It preserves stored answers, explicit rebuild consent, legacy-import choices and compatible resume semantics. Do not substitute a PATH engine or private controller script. Direct `run --skill appsec-analyzer -- scan ...` is the bound engine invocation, not a replacement for the host's necessary questions and confirmations.
+Replace the namespace, source, private output and budget with the authorized selections. The generated host entry follows the engine-owned `claude-code.md` and business-context dialogue. It gathers required choices and uses public `assessment-entry` operations for destination, trust, ownership and context. It preserves stored answers, explicit rebuild consent, legacy-import choices and compatible resume semantics. Do not substitute a PATH engine or private controller script. Direct `run --skill appsec-analyzer -- assess ...` is the bound engine invocation, not a replacement for the host's necessary questions and confirmations.
 
 Keep the assessment owner and its display separate. The engine chooses its progress-feed location; supply only the assessment output to the host follower:
 

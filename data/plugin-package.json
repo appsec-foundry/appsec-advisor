@@ -24,7 +24,7 @@
     "revision": "3f76873a3400dbbe3fe96143adb91b118563cc26",
     "license": "Apache-2.0",
     "capabilities": [
-      "score", "repo_profile", "abuse_cases", "scan_sources", "organization_config", "scan", "assessment_entry",
+      "score", "repo_profile", "abuse_cases", "scan_sources", "organization_config", "assess", "assessment_entry",
       "status", "progress", "stop", "results", "query", "export"
     ],
     "files": {

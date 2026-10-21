@@ -107,7 +107,7 @@ The runtime architecture of Juice Shop with its data flows and attack paths; cli
 
 The [appsec-analyzer README](https://github.com/appsec-foundry/appsec-analyzer#reports-and-exports) shows the other report diagrams: the build pipeline with its supply-chain attacks, and the threat actors with the business harm they can cause.
 
-The [AppSec Analyzer guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits. The Analyzer describes the same assessment as the command-line tool in [`scan`](https://github.com/appsec-foundry/appsec-analyzer#scan-full-security-assessment) and its [security assessment guide](https://github.com/appsec-foundry/appsec-analyzer/blob/main/docs/security-assessment.md); the plugin command runs the pipeline in this repository unless you use the preview build.
+The [AppSec Analyzer guide](docs/security-assessment.md) covers depth, result storage, repository context, exports, costs, and limits. The Analyzer describes the same assessment as the command-line tool in [`assess`](https://github.com/appsec-foundry/appsec-analyzer#assess-full-security-assessment) and its [security assessment guide](https://github.com/appsec-foundry/appsec-analyzer/blob/main/docs/security-assessment.md); the plugin command runs the pipeline in this repository unless you use the preview build.
 
 ### Abuse cases
 

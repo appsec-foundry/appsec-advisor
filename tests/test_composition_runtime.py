@@ -161,7 +161,7 @@ def test_score_binding_rejects_incompatible_engine_before_execution(installed_pl
         runtime.launch(plugin, home, ["score", "selected source"], 30, "security-score")
 
 
-@pytest.mark.parametrize("command", ["assess", "scan", "analyst"])
+@pytest.mark.parametrize("command", ["assess", "analyst"])
 def test_score_binding_refuses_other_workflows(installed_plugin, monkeypatch, command):
     plugin, home, lock = installed_plugin
     monkeypatch.setattr(runtime, "preflight", lambda *a: (Path(sys.executable), lock))
@@ -230,7 +230,7 @@ def test_repo_profile_binding_rejects_incompatible_engine_before_execution(profi
         runtime.launch(plugin, home, ["repo-profile", "."], 30, "repo-profile")
 
 
-@pytest.mark.parametrize("command", ["score", "scan", "assess"])
+@pytest.mark.parametrize("command", ["score", "assess"])
 def test_repo_profile_binding_refuses_other_workflows(profile_plugin, monkeypatch, command):
     plugin, home = profile_plugin
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("binding cannot invoke another workflow"))
@@ -742,7 +742,7 @@ def test_external_projection_cleanup_covers_engine_outcomes(tmp_path, monkeypatc
     assert config_paths and not config_paths[0].parent.exists()
 
 
-@pytest.mark.parametrize("command", ["scan", "assess"])
+@pytest.mark.parametrize("command", ["assess"])
 @pytest.mark.parametrize("selection", ["packaged", "external", "disabled"])
 def test_assessment_dispatch_requires_declared_workflow_and_preserves_origin(tmp_path, monkeypatch, command, selection):
     plugin, profile, manifest, lock = _external_case(tmp_path)
@@ -753,7 +753,7 @@ def test_assessment_dispatch_requires_declared_workflow_and_preserves_origin(tmp
     capability = {
         "available": True,
         "schema_version": 1,
-        "commands": ["score", "scan", "assess"],
+        "commands": ["score", "assess"],
         "profile_source_validation": True,
         "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
     }
@@ -789,7 +789,7 @@ def test_assessment_dispatch_rejects_incomplete_capability_or_provenance_overrid
     capability = {
         "available": True,
         "schema_version": 1,
-        "commands": ["score", "scan", "assess"],
+        "commands": ["score", "assess"],
         "profile_source_validation": True,
         "profile_fields": ["policy.disable_opus", "policy.url_allowlist", "presets.*.base_mode"],
     }
@@ -806,7 +806,7 @@ def test_assessment_dispatch_rejects_incomplete_capability_or_provenance_overrid
     config.parent.mkdir()
     config.write_text("{}")
     manifest = {"files": [{"path": runtime.ORG_DISPATCH}, {"path": "org-profile/analyzer-config.yaml"}]}
-    args = ["scan", "--repo", "/neutral/source"]
+    args = ["assess", "--repo", "/neutral/source"]
     if defect == "source-override":
         args = ["organization-config", "show", "--profile-source=/unchecked.yaml"]
     with pytest.raises(runtime.RuntimeError):
@@ -841,7 +841,7 @@ def test_assessment_binding_preserves_claude_arguments_and_real_exit_status(inst
             return status
 
     monkeypatch.setattr(subprocess, "Popen", lambda arguments, **kw: seen.append((arguments, kw)) or Process())
-    args = ["scan", "--repo", "source with spaces;$(literal)", "--output=/private/output", "--budget=7", "--resume"]
+    args = ["assess", "--repo", "source with spaces;$(literal)", "--output=/private/output", "--budget=7", "--resume"]
     assert runtime.launch(plugin, home, args, 60, "appsec-analyzer") == status
     assert seen[0][0] == [
         sys.executable,
@@ -891,10 +891,10 @@ def test_assessment_cancellation_uses_public_stop_with_equals_output(
     monkeypatch.setattr(subprocess, "run", lambda arguments, **kw: called.append(arguments))
     monkeypatch.setattr(runtime.os, "killpg", lambda *a: None)
     if expected == 130:
-        assert runtime.launch(plugin, home, ["scan", "--output=/private/output"], 1) == 130
+        assert runtime.launch(plugin, home, ["assess", "--output=/private/output"], 1) == 130
     else:
         with pytest.raises(runtime.RuntimeError, match="timed out"):
-            runtime.launch(plugin, home, ["scan", "--output=/private/output"], 1)
+            runtime.launch(plugin, home, ["assess", "--output=/private/output"], 1)
     assert called == [[sys.executable, "-I", "-m", "appsec_analyzer.cli", "stop", "--output", "/private/output"]]
 
 
@@ -1014,5 +1014,5 @@ def test_assessment_binding_keeps_explicit_display_width(installed_plugin, monke
             return 0
 
     monkeypatch.setattr(subprocess, "Popen", lambda args, **kw: seen.append(args) or Process())
-    assert runtime.launch(plugin, home, ["scan", "--output=/private/result", *width], 60, "appsec-analyzer") == 0
+    assert runtime.launch(plugin, home, ["assess", "--output=/private/result", *width], 60, "appsec-analyzer") == 0
     assert "--width=72" not in seen[0] and all(value in seen[0] for value in width)
