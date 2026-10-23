@@ -21,7 +21,7 @@
     "id": "appsec-analyzer",
     "source": "https://github.com/appsec-foundry/appsec-analyzer",
     "branch": "main",
-    "revision": "3f76873a3400dbbe3fe96143adb91b118563cc26",
+    "revision": "1ea09d70c64dd18963bf0ef85347726c5b8252d1",
     "license": "Apache-2.0",
     "capabilities": [
       "score", "repo_profile", "abuse_cases", "scan_sources", "organization_config", "assess", "assessment_entry",

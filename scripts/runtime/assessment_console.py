@@ -7,7 +7,7 @@ Usage:
 
 ``follow`` reads the controller's ``--progress-file`` as it grows and prints
 one finished line per milestone: the run header, each phase's start and end,
-each finished component and each warning. It exits after the run's ``end``
+each finished survey component and verification job, and each warning. It exits after the run's ``end``
 record, or with ``--output`` once the run that held that directory released it
 without one. ``--from-end`` skips the records already written, for a watcher that
 resumes an earlier one. ``close`` prints the run's closing block once the
@@ -32,7 +32,10 @@ from pathlib import Path
 # Longest text taken from one record field.
 _FIELD_MAX = 300
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_FINISHED = re.compile(r"(\d+)/(\d+|\?) components done\b")
+# A finished survey component and a finished verification job; engines before
+# the survey/verification steps write the component count without its prefix.
+_FINISHED = re.compile(r"(?:Survey: )?(\d+)/(\d+|\?) components done\b")
+_VERIFIED = re.compile(r"Verify: (\d+)/(\d+) jobs done\b(?:.* · no result \((budget|failure)\))?")
 # Lines of the command's output shown when no summary exists.
 LOG_LINES = 40
 
@@ -81,11 +84,15 @@ def render(record: dict) -> list[str]:
     if event == "phase_done":
         detail = _text(record.get("detail"))
         return [f"✓ {_phase(record)}" + (f": {detail}" if detail else "")]
+    if event in ("component_done", "warning") and (verified := _VERIFIED.match(_text(record.get("detail")))):
+        # A verification job's line names its component, so only its counts are relayed.
+        result = f", one without a result ({verified[3]})" if verified[3] else ""
+        return [f"  · Verify: {verified[1]}/{verified[2]} jobs finished{result}{_run_state(record)}"]
     if event == "component_done":
         finished = _FINISHED.match(_text(record.get("detail")))
         if not finished:
             return []
-        return [f"  · {finished[1]}/{finished[2]} components analyzed{_run_state(record)}"]
+        return [f"  · Survey: {finished[1]}/{finished[2]} components analyzed{_run_state(record)}"]
     if event == "warning":
         detail = _text(record.get("detail"))
         return [f"⚠ {detail}"] if detail else []
