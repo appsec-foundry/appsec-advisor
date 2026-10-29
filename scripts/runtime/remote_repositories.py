@@ -261,7 +261,14 @@ def _stop(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
-def _git(command: list[str], root: Path, env: dict[str, str]) -> None:
+_HINTS = {
+    "https": "set APPSEC_GIT_TOKEN (and APPSEC_GIT_USERNAME if the provider needs one) or configure a Git credential helper; "
+    "other token variables such as GITLAB_TOKEN are not read",
+    "ssh": "load the key into the SSH agent or set APPSEC_GIT_SSH_KEY_FILE, and trust the host key in known_hosts",
+}
+
+
+def _git(command: list[str], root: Path, env: dict[str, str], scheme: str | None = None) -> None:
     deadline = time.monotonic() + FETCH_SECONDS
     proc = subprocess.Popen(
         ["git", *command],
@@ -280,7 +287,8 @@ def _git(command: list[str], root: Path, env: dict[str, str]) -> None:
             time.sleep(0.1)
         _within_limits(root)
         if proc.returncode:
-            raise RemoteError("Git checkout failed; check repository access, credentials and trusted SSH host keys")
+            hint = f": {_HINTS[scheme]}" if scheme in _HINTS else ""
+            raise RemoteError(f"Git checkout failed; check repository access and credentials{hint}")
     finally:
         _stop(proc)
 
@@ -313,6 +321,7 @@ def clone(remote: Remote, root: Path) -> None:
         ],
         root,
         env,
+        remote.scheme,
     )
     # No global filters, hooks or repository-supplied submodule commands run.
     clean = {k: v for k, v in env.items() if k not in SECRET_ENV}
