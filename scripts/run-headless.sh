@@ -115,6 +115,8 @@ Options:
                              and --hard-budget
   --output <path>            Output directory (default: the application's private
                              directory under the user data directory)
+  --git-token-env <NAME>     Read the HTTPS Git token for URL checkouts from environment
+                             variable NAME (the name, never the token itself)
   --migrate-legacy           Import a finished assessment from <repo>/docs/security
                              first; its files there stay
   --ignore-legacy            Start without that assessment; a run that finds one
@@ -176,7 +178,8 @@ Environment:
   APPSEC_CLAUDE_EXECUTABLE   Claude CLI or wrapper executable (default: claude).
                               The value is one executable, not a shell command.
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
-  APPSEC_GIT_TOKEN           HTTPS Git token; never put credentials in --repo URLs.
+  APPSEC_GIT_TOKEN           HTTPS Git token; never put credentials in --repo URLs. Without it the
+                             runner tries GIT_TOKEN, then GITLAB_TOKEN (gitlab.com or $GITLAB_HOST only).
   APPSEC_GIT_USERNAME        Token username (default: git).
   APPSEC_GIT_SSH_KEY_FILE    Existing SSH private key file; SSH_AUTH_SOCK is also supported.
                              Git URLs require an explicit --output directory.
@@ -215,6 +218,19 @@ for _arg in "$@"; do
 done
 # These variables belong only to checkout provisioning, never to model hosts.
 unset APPSEC_GIT_TOKEN APPSEC_GIT_USERNAME APPSEC_GIT_SSH_KEY_FILE
+# --git-token-env only selects a checkout credential; a local run has none to select.
+_n=$#
+while [ "$_n" -gt 0 ]; do
+    if [ "$1" = "--git-token-env" ]; then
+        [ "$_n" -ge 2 ] || die "--git-token-env takes the name of an environment variable"
+        shift 2
+        _n=$((_n - 2))
+    else
+        set -- "$@" "$1"
+        shift
+        _n=$((_n - 1))
+    fi
+done
 
 # ── Read external context config ────────────────────────────────────
 CONFIG_FILE="$PLUGIN_DIR/config.json"
