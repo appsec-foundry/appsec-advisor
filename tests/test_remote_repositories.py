@@ -168,12 +168,12 @@ def test_checkout_failure_cleans_earlier_and_partial_roots(transport, tmp_path, 
     original = remote.clone
     roots = []
 
-    def fail_second(selected, root):
+    def fail_second(selected, root, token_env=None):
         roots.append(root)
         if len(roots) == 2:
             root.mkdir()
             raise remote.RemoteError("fixture failure")
-        original(selected, root)
+        original(selected, root, token_env)
 
     monkeypatch.setattr(remote, "clone", fail_second)
     args = [
@@ -316,6 +316,25 @@ def test_headless_routes_urls_before_authentication_and_preserves_argv(tmp_path)
     assert json.loads(proc.stdout) == args
 
 
+def test_headless_hands_the_token_variable_name_to_the_url_owner(tmp_path):
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin/plugin.json").write_text("{}")
+    (plugin / "scripts/runtime").mkdir(parents=True)
+    (plugin / "scripts/runtime/remote_repositories.py").write_text(
+        "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+    )
+    args = ["--git-token-env", "CUSTOM_CI_PAT", "--repo", "https://git.example/team/a.git", "--output", "/reports"]
+    proc = subprocess.run(
+        [str(ROOT / "scripts/run-headless.sh"), *args],
+        env={**os.environ, "CLAUDE_PLUGIN_DIR": str(plugin)},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == args
+
+
 @pytest.mark.parametrize("exit_code", [0, 7, -15])
 def test_runner_exit_cleanup_and_secret_removal(transport, tmp_path, monkeypatch, exit_code):
     scripts = tmp_path / "plugin/scripts"
@@ -435,11 +454,91 @@ def test_git_failure_is_redacted_and_partial_clone_is_removed(transport, tmp_pat
     assert not list(transport.rglob("nonexistent"))
 
 
-@pytest.mark.parametrize("name", ["GITLAB_TOKEN", "GITHUB_TOKEN"])
-def test_https_failure_names_the_token_variable_and_not_foreign_ones(tmp_path, monkeypatch, name):
-    monkeypatch.setenv(name, "ambient-secret")
+def _https_env(tmp_path, monkeypatch, url="https://git.example/team/a.git", token_env=None):
+    monkeypatch.setattr(remote, "_address", lambda _: "192.0.2.10")
+    monkeypatch.setattr(remote, "_credentials", lambda *_: [])
+    return remote._git_env(remote.parse_remote(url), tmp_path, token_env)
+
+
+def _filled(env, tmp_path, host):
+    return git("credential", "fill", cwd=tmp_path, env=env, input=f"protocol=https\nhost={host}\n\n").stdout
+
+
+@pytest.fixture
+def no_token_env(monkeypatch):
+    for name in (
+        "APPSEC_GIT_TOKEN",
+        "GIT_TOKEN",
+        "GITLAB_TOKEN",
+        "GITLAB_HOST",
+        "APPSEC_GIT_USERNAME",
+        "CUSTOM_CI_PAT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_token_variables_are_tried_in_order(tmp_path, monkeypatch, no_token_env):
+    monkeypatch.setenv("GITLAB_TOKEN", "from-gitlab")
+    monkeypatch.setenv("GIT_TOKEN", "from-git")
+    assert "password=from-git" in _filled(_https_env(tmp_path, monkeypatch), tmp_path, "git.example")
+    monkeypatch.setenv("APPSEC_GIT_TOKEN", "from-appsec")
+    assert "password=from-appsec" in _filled(_https_env(tmp_path, monkeypatch), tmp_path, "git.example")
+    monkeypatch.setenv("CUSTOM_CI_PAT", "from-custom")
+    env = _https_env(tmp_path, monkeypatch, token_env="CUSTOM_CI_PAT")
+    assert "password=from-custom" in _filled(env, tmp_path, "git.example")
+
+
+def test_gitlab_token_reaches_only_gitlab_hosts(tmp_path, monkeypatch, no_token_env):
+    monkeypatch.setenv("GITLAB_TOKEN", "from-gitlab")
+    other = _https_env(tmp_path, monkeypatch)
+    assert "password" not in _filled_or_empty(other, tmp_path, "git.example")
+    com = _https_env(tmp_path, monkeypatch, "https://gitlab.com/team/a.git")
+    assert "password=from-gitlab" in _filled(com, tmp_path, "gitlab.com")
+    monkeypatch.setenv("GITLAB_HOST", "https://git.example/")
+    own = _https_env(tmp_path, monkeypatch)
+    assert "password=from-gitlab" in _filled(own, tmp_path, "git.example")
+
+
+def _filled_or_empty(env, tmp_path, host):
+    proc = subprocess.run(
+        ["git", "credential", "fill"],
+        cwd=tmp_path,
+        env=env,
+        input=f"protocol=https\nhost={host}\n\n",
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    return proc.stdout
+
+
+def test_named_variable_must_be_set_and_is_not_checked_against_host(tmp_path, monkeypatch, no_token_env):
+    with pytest.raises(remote.RemoteError, match="CUSTOM_CI_PAT is not set"):
+        _https_env(tmp_path, monkeypatch, token_env="CUSTOM_CI_PAT")
+    monkeypatch.setenv("GITLAB_TOKEN", "explicit")
+    env = _https_env(tmp_path, monkeypatch, token_env="GITLAB_TOKEN")
+    assert "password=explicit" in _filled(env, tmp_path, "git.example")
+
+
+def test_token_flag_is_stripped_and_validated(monkeypatch):
+    assert remote._split_token_env(["--repo", "a", "--git-token-env", "X_1", "--output", "o"]) == (
+        "X_1",
+        ["--repo", "a", "--output", "o"],
+    )
+    for bad in (["--git-token-env"], ["--git-token-env", "a b"], ["--git-token-env", "A", "--git-token-env", "B"]):
+        with pytest.raises(remote.RemoteError, match="git-token-env"):
+            remote._split_token_env(bad)
+
+
+def test_failure_hint_names_tried_variables_or_the_one_that_failed(monkeypatch, no_token_env):
+    https = remote.parse_remote("https://git.example/team/a.git")
+    hint = remote._failure_hint(https, None)
+    assert all(n in hint for n in ("APPSEC_GIT_TOKEN", "GIT_TOKEN", "GITLAB_TOKEN", "--git-token-env"))
+    monkeypatch.setenv("GITLAB_TOKEN", "ambient-secret")
+    assert "GITLAB_TOKEN was not accepted" not in remote._failure_hint(https, None)
+    monkeypatch.setenv("GIT_TOKEN", "ambient-secret")
+    failed = remote._failure_hint(https, None)
+    assert "GIT_TOKEN was not accepted" in failed and "ambient-secret" not in failed
     with pytest.raises(remote.RemoteError) as raised:
-        remote._git(["no-such-subcommand"], tmp_path / "root", dict(os.environ), "https")
-    message = str(raised.value)
-    assert "APPSEC_GIT_TOKEN" in message and "credential helper" in message
-    assert "ambient-secret" not in message
+        remote._git(["no-such-subcommand"], Path("/nonexistent-root"), dict(os.environ), failed)
+    assert "GIT_TOKEN was not accepted" in str(raised.value)

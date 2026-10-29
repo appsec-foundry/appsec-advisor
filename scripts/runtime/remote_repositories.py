@@ -31,6 +31,10 @@ FETCH_SECONDS = 120
 MAX_BYTES = 536_870_912
 MAX_ENTRIES = 100_000
 SECRET_ENV = ("APPSEC_GIT_TOKEN", "APPSEC_GIT_USERNAME", "APPSEC_GIT_SSH_KEY_FILE")
+# Searched in this order unless --git-token-env names the variable. GITLAB_TOKEN is
+# sent only to GitLab hosts, so an ambient token never reaches an arbitrary --repo host.
+TOKEN_ENV = ("APPSEC_GIT_TOKEN", "GIT_TOKEN", "GITLAB_TOKEN")
+TOKEN_ENV_FLAG = "--git-token-env"
 
 
 class RemoteError(ValueError):
@@ -123,6 +127,57 @@ def _address(remote: Remote) -> str:
     return str(addresses[0])
 
 
+def _split_token_env(argv: list[str]) -> tuple[str | None, list[str]]:
+    """Take --git-token-env NAME out of the arguments; NAME is a variable name, never a secret."""
+    name = None
+    rest = []
+    i = 0
+    while i < len(argv):
+        if argv[i] != TOKEN_ENV_FLAG:
+            rest.append(argv[i])
+            i += 1
+            continue
+        value = argv[i + 1] if i + 1 < len(argv) else ""
+        if name is not None or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", value):
+            raise RemoteError(f"{TOKEN_ENV_FLAG} takes the name of one environment variable that holds a Git token")
+        name = value
+        i += 2
+    return name, rest
+
+
+def _gitlab_host(host: str) -> bool:
+    configured = re.sub(r"^[a-z][a-z0-9+.-]*://", "", os.environ.get("GITLAB_HOST", "").strip().lower())
+    return host == "gitlab.com" or (bool(configured) and host == configured.split("/")[0].rsplit(":", 1)[0])
+
+
+def _select_token(remote: Remote, token_env: str | None) -> tuple[str, str] | None:
+    """Return (variable, value) for an HTTPS remote; an explicitly named variable must be set."""
+    if token_env is not None:
+        if token_env not in os.environ:
+            raise RemoteError(f"{token_env} is not set; {TOKEN_ENV_FLAG} must name a variable that holds a Git token")
+        return token_env, os.environ[token_env]
+    for name in TOKEN_ENV:
+        value = os.environ.get(name)
+        if value is None or (name != "APPSEC_GIT_TOKEN" and not value):
+            continue
+        if name == "GITLAB_TOKEN" and not _gitlab_host(remote.host):
+            continue
+        return name, value
+    return None
+
+
+def _failure_hint(remote: Remote, token_env: str | None) -> str:
+    if remote.scheme == "ssh":
+        return "load the key into the SSH agent or set APPSEC_GIT_SSH_KEY_FILE, and trust the host key in known_hosts"
+    selected = _select_token(remote, token_env)
+    if selected:
+        return f"the token from {selected[0]} was not accepted; check its scope and APPSEC_GIT_USERNAME"
+    return (
+        "set APPSEC_GIT_TOKEN, GIT_TOKEN or GITLAB_TOKEN (GitLab hosts only: gitlab.com or GITLAB_HOST), "
+        f"name another variable with {TOKEN_ENV_FLAG} NAME, or configure a Git credential helper"
+    )
+
+
 def _base_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k not in {"SSH_ASKPASS", "DISPLAY"}}
 
@@ -153,9 +208,11 @@ def _credentials(remote: Remote, directory: Path) -> list[tuple[str, str]]:
     return result
 
 
-def _git_env(remote: Remote, directory: Path) -> dict[str, str]:
+def _git_env(remote: Remote, directory: Path, token_env: str | None = None) -> dict[str, str]:
     address = _address(remote)
     env = _base_env()
+    for name in (*TOKEN_ENV, token_env):
+        env.pop(name, None)
     config = [
         ("core.hooksPath", os.devnull),
         ("core.fsmonitor", "false"),
@@ -170,11 +227,14 @@ def _git_env(remote: Remote, directory: Path) -> dict[str, str]:
         config.extend(_credentials(remote, directory))
         pinned = f"[{address}]" if ":" in address else address
         config.append(("http.curloptResolve", f"{remote.host}:{remote.port}:{pinned}"))
-        if "APPSEC_GIT_TOKEN" in os.environ:
-            for key in ("APPSEC_GIT_TOKEN", "APPSEC_GIT_USERNAME"):
-                value = os.environ.get(key, "git")
+        selected = _select_token(remote, token_env)
+        if selected:
+            user = os.environ.get("APPSEC_GIT_USERNAME", "git")
+            for value in (selected[1], user):
                 if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
                     raise RemoteError("Git credential environment values must be nonempty single lines")
+            # The helper reads these two names, whichever variable supplied the token.
+            env.update(APPSEC_GIT_TOKEN=selected[1], APPSEC_GIT_USERNAME=user)
             helper = "!" + shlex.join([sys.executable, str(Path(__file__).resolve()), "--credential"])
             config.extend([("credential.helper", ""), ("credential.helper", helper)])
     else:
@@ -261,14 +321,7 @@ def _stop(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
-_HINTS = {
-    "https": "set APPSEC_GIT_TOKEN (and APPSEC_GIT_USERNAME if the provider needs one) or configure a Git credential helper; "
-    "other token variables such as GITLAB_TOKEN are not read",
-    "ssh": "load the key into the SSH agent or set APPSEC_GIT_SSH_KEY_FILE, and trust the host key in known_hosts",
-}
-
-
-def _git(command: list[str], root: Path, env: dict[str, str], scheme: str | None = None) -> None:
+def _git(command: list[str], root: Path, env: dict[str, str], hint: str = "") -> None:
     deadline = time.monotonic() + FETCH_SECONDS
     proc = subprocess.Popen(
         ["git", *command],
@@ -287,13 +340,14 @@ def _git(command: list[str], root: Path, env: dict[str, str], scheme: str | None
             time.sleep(0.1)
         _within_limits(root)
         if proc.returncode:
-            hint = f": {_HINTS[scheme]}" if scheme in _HINTS else ""
-            raise RemoteError(f"Git checkout failed; check repository access and credentials{hint}")
+            raise RemoteError(
+                f"Git checkout failed; check repository access and credentials{': ' + hint if hint else ''}"
+            )
     finally:
         _stop(proc)
 
 
-def clone(remote: Remote, root: Path) -> None:
+def clone(remote: Remote, root: Path, token_env: str | None = None) -> None:
     version = subprocess.run(
         ["git", "--version"],
         stdout=subprocess.PIPE,
@@ -305,7 +359,7 @@ def clone(remote: Remote, root: Path) -> None:
     match = re.search(rb"git version (\d+)\.(\d+)", version.stdout)
     if version.returncode or not match or tuple(map(int, match.groups())) < (2, 34):
         raise RemoteError("Git URL provisioning requires Git 2.34 or newer")
-    env = _git_env(remote, root.parent)
+    env = _git_env(remote, root.parent, token_env)
     _git(
         [
             "clone",
@@ -321,7 +375,7 @@ def clone(remote: Remote, root: Path) -> None:
         ],
         root,
         env,
-        remote.scheme,
+        _failure_hint(remote, token_env),
     )
     # No global filters, hooks or repository-supplied submodule commands run.
     clean = {k: v for k, v in env.items() if k not in SECRET_ENV}
@@ -342,6 +396,7 @@ def _private_directory(path: Path) -> None:
 @contextmanager
 def checkout_arguments(argv: list[str]):
     """Resolve all URL selections atomically; never mutate caller-owned local roots."""
+    token_env, argv = _split_token_env(argv)
     indexes = [i + 1 for i, a in enumerate(argv) if a == "--repo" and i + 1 < len(argv)]
     remotes = {i: remote for i in indexes if (remote := parse_remote(argv[i])) is not None}
     if not remotes:
@@ -376,7 +431,7 @@ def checkout_arguments(argv: list[str]):
             created.append(root)
             if "--quiet" not in argv:
                 print(f"Preparing remote repository {number}/{len(remotes)} ({remote.scheme.upper()})", file=sys.stderr)
-            clone(remote, root)
+            clone(remote, root, token_env)
             result[index] = str(root)
         yield result
     finally:
@@ -421,7 +476,9 @@ def main(argv: list[str] | None = None) -> int:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             old_handlers[sig] = signal.signal(sig, interrupted)
         with checkout_arguments(args) as local_args:
-            env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
+            token_env, _ = _split_token_env(args)
+            hidden = {*SECRET_ENV, *TOKEN_ENV, token_env}
+            env = {k: v for k, v in os.environ.items() if k not in hidden}
             proc = subprocess.Popen([str(runner), *local_args], env=env, start_new_session=True)
             try:
                 return _wait(proc)
