@@ -430,5 +430,16 @@ def test_git_failure_is_redacted_and_partial_clone_is_removed(transport, tmp_pat
     assert code == 1
     diagnostic = capsys.readouterr().err
     assert "Git checkout failed" in diagnostic
+    assert "APPSEC_GIT_SSH_KEY_FILE" in diagnostic and "known_hosts" in diagnostic
     assert "Traceback" not in diagnostic and "nonexistent.git" not in diagnostic
     assert not list(transport.rglob("nonexistent"))
+
+
+@pytest.mark.parametrize("name", ["GITLAB_TOKEN", "GITHUB_TOKEN"])
+def test_https_failure_names_the_token_variable_and_not_foreign_ones(tmp_path, monkeypatch, name):
+    monkeypatch.setenv(name, "ambient-secret")
+    with pytest.raises(remote.RemoteError) as raised:
+        remote._git(["no-such-subcommand"], tmp_path / "root", dict(os.environ), "https")
+    message = str(raised.value)
+    assert "APPSEC_GIT_TOKEN" in message and "credential helper" in message
+    assert "ambient-secret" not in message
