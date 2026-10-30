@@ -236,6 +236,7 @@ GROUPS = {
         artifact_stamp
         assert_completeness
         budget_watchdog
+        file_lock
         check_state
         check_state_coverage
         check_state_hung_aborted
@@ -597,7 +598,7 @@ SOURCE_TESTS = {
     "schemas/component-manifest.schema.json": _tests(
         "compose_plugin package_internal_plugin check_target_specificity requirements_verification schemas"
     ),
-    "scripts/runtime/remote_repositories.py": _tests("remote_repositories"),
+    "scripts/runtime/remote_repositories.py": _tests("remote_repositories file_lock"),
     ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
     "specs/README.md": _tests("requirements_verification"),
     "specs/changes/root-requirements-catalog/proposal.md": _tests("requirements_verification"),
@@ -875,6 +876,7 @@ SOURCE_TESTS = {
         emit_general_mitigation_titles
         render_completion_summary_config
         requirements_verification
+        file_lock
     """),
     "schemas/ms-input-digest.schema.json": _tests("""
         ms_input_digest
@@ -3007,6 +3009,48 @@ SOURCE_TESTS = {
         stride_outputs
         weakness_signals
     """),
+    "scripts/shared/_file_lock.py": _tests("""
+        acquire_lock_heartbeat
+        active_tool_calls
+        actor_presentation
+        agent_lifecycle
+        agent_logger
+        agent_logger_branches
+        agent_logger_cov
+        agent_logger_run_scope
+        analyst_controller
+        analyst_isolation
+        analyst_state
+        architect_review_runtime
+        assessment_state
+        budget_watchdog
+        build_analyst_snapshot
+        build_threat_model_yaml
+        check_target_specificity
+        completion_relay
+        file_lock
+        fragment_invariant_parity
+        gate_preconditions
+        hook_payload_contract
+        integration
+        model_release_pricing
+        multi_repo_controller
+        prepare_trust_boundary_context
+        refusal_aware_stride
+        remote_repositories
+        reserve_ids
+        run_headless_completion
+        run_invariants
+        run_path_guard
+        runtime_doc_cli_contract
+        stride_attempt_writer
+        stride_dispatch_waves
+        stride_outputs
+        terminate_run
+        threat_fixture
+        wait_agent_calls
+        write_stride_progress
+    """),
     "scripts/shared/_atomic_io.py": _tests("""
         assessment_state multi_repo_controller
         validate_assessment_architecture review_multi_repo_connections
@@ -3678,6 +3722,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         terminate_run
+        file_lock
     """),
     "scripts/runtime/agent_config_checks.py": _tests("""
         iac_resource_checks
@@ -3725,6 +3770,7 @@ SOURCE_TESTS = {
         wait_agent_calls
         write_stride_progress
         stage1_coverage_recovery_2026_07_20
+        file_lock
     """),
     "scripts/runtime/agent_logger.py": _tests("""
         active_tool_calls
@@ -3752,6 +3798,7 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
         thin_runtime_regressions_2026_07_20
+        file_lock
     """),
     "scripts/model/aggregate_threat_summary.py": _tests("""
         aggregate_threat_summary
@@ -3941,6 +3988,7 @@ SOURCE_TESTS = {
         terminate_run
         verify_abuse_cases
         refusal_aware_stride
+        file_lock
     """),
     "scripts/contexts/build_abuse_case_contexts.py": _tests("""
         build_abuse_case_contexts
@@ -5455,6 +5503,7 @@ SOURCE_TESTS = {
         reserve_ids
         run_path_guard
         stride_outputs
+        file_lock
     """),
     "scripts/model/abuse_case_hypothesis.py": _tests("""
         portable_model_readers
@@ -5899,6 +5948,7 @@ SOURCE_TESTS = {
         build_analyst_snapshot
         check_target_specificity
         requirements_verification
+        file_lock
     """),
     "scripts/contexts/build_analyst_snapshot.py": _tests("""
         abuse_case_hypothesis
@@ -6348,6 +6398,7 @@ SOURCE_TESTS = {
     """),
     "scripts/runtime/stride_attempt_writer.py": _tests("""
         stride_attempt_writer
+        file_lock
     """),
     "scripts/runtime/write_stride_progress.py": _tests("""
         check_target_specificity

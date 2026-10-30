@@ -86,7 +86,6 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
-import fcntl
 import os
 import re
 import shutil
@@ -95,6 +94,8 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+from shared._file_lock import lock_exclusive
 
 from runtime.event_log import format_line
 
@@ -676,7 +677,7 @@ def serialization_guard(output_dir: Path):
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             raise LockBusy("Assessment lock guard must be a regular file without hard links")
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(descriptor, blocking=False)
         except BlockingIOError:
             raise LockBusy("Assessment output is locked by another process") from None
         yield

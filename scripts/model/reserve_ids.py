@@ -20,7 +20,7 @@ State lives in $OUTPUT_DIR/.appsec-cache/baseline.json under
 number); the script renders the prefixed form (T-001 / M-001 / A-001 /
 MF-001 / HYP-001) for callers.
 
-Atomicity uses fcntl.LOCK_EX on baseline.json itself. The lock is held
+Atomicity uses an exclusive lock (shared._file_lock) on baseline.json itself. The lock is held
 only across read-modify-write — typically under 1ms — so contention
 is negligible even with the parallel phase dispatch.
 
@@ -56,13 +56,14 @@ if not __package__:
 
 import argparse
 import errno
-import fcntl
 import json
 import os
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from shared._file_lock import lock_exclusive, unlock
 
 # ID-type → (counter key, prefix, default-width). Adding a new ID class
 # means adding one entry here AND adding a counter key to baseline/baseline_state.py.
@@ -96,7 +97,7 @@ def _acquire_exclusive_lock(fd: int) -> None:
     deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
     while True:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(fd, blocking=False)
             return
         except BlockingIOError:
             if time.monotonic() >= deadline:
@@ -179,7 +180,7 @@ def reserve(output_dir: Path, id_type: str, count: int) -> list[str]:
         return [f"{prefix}-{n:0{width}d}" if width else f"{prefix}-{n}" for n in reserved_nums]
     finally:
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            unlock(fd)
         except OSError as exc:
             if exc.errno != errno.EBADF:
                 raise
@@ -219,7 +220,7 @@ def ensure_counter_at_least(output_dir: Path, id_type: str, minimum: int) -> Non
         os.fsync(fd)
     finally:
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            unlock(fd)
         except OSError as exc:
             if exc.errno != errno.EBADF:
                 raise

@@ -35,7 +35,6 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
-import fcntl
 import json
 import os
 import re
@@ -45,6 +44,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+
+from shared._file_lock import lock_exclusive, unlock
 
 from runtime.event_log import format_line
 
@@ -251,10 +252,10 @@ def _locked(output_dir: str | Path) -> Iterator[None]:
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(directory / LOCK_FILENAME, flags, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        lock_exclusive(fd)
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        unlock(fd)
         os.close(fd)
 
 

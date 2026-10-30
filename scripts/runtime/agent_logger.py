@@ -585,12 +585,12 @@ def _save_session_agent(sid: str, agent: str) -> None:
     cannot replace one another's registrations.
     """
     try:
-        import fcntl
+        from shared._file_lock import lock_exclusive, unlock
 
         map_file = _session_map_path()
         os.makedirs(os.path.dirname(map_file), exist_ok=True)
         with open(map_file, "a+", encoding="utf-8") as fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            lock_exclusive(fh.fileno())
             fh.seek(0)
             lines = fh.readlines()[-19:]
             lines.append(f"{sid}={agent}\n")
@@ -598,7 +598,7 @@ def _save_session_agent(sid: str, agent: str) -> None:
             fh.truncate()
             fh.writelines(lines)
             fh.flush()
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            unlock(fh.fileno())
     except Exception:
         pass  # never crash a hook
 
@@ -688,8 +688,8 @@ def _budget_scope_agent(sid: str) -> str | None:
 # right now?" without parsing the entire .hook-events.log.
 #
 # Per-file (one ``<tool_use_id>.json`` per call) instead of a shared JSON
-# eliminates the lost-update race on parallel hook processes — no fcntl
-# needed, no atomic-rename ceremony.
+# eliminates the lost-update race on parallel hook processes — no file
+# lock needed, no atomic-rename ceremony.
 #
 # Design note — sub-agent visibility limit. PreToolUse fires in every
 # session depth (sub-agents included), but PostToolUse only fires in the
