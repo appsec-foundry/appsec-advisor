@@ -430,13 +430,14 @@ def test_non_object_yaml_fails_without_a_stale_success(tmp_path):
 
 
 def test_concurrent_boundary_cannot_spend_or_consume_inflight_work(tmp_path, monkeypatch):
-    import fcntl
     import os
+
+    from shared._file_lock import lock_exclusive
 
     cfg, _, calls = setup_run(tmp_path)
     descriptor = os.open(tmp_path, os.O_RDONLY)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_exclusive(descriptor, blocking=False)
         with pytest.raises(ReviewError, match="already running"):
             runtime.advance_review(tmp_path, cfg)
         assert calls == []

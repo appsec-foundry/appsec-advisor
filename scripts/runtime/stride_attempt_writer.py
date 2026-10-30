@@ -35,7 +35,6 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 import argparse
-import fcntl
 import json
 import os
 import re
@@ -45,6 +44,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
+from shared._file_lock import lock_exclusive, unlock
 
 import runtime.budget_watchdog as budget_watchdog
 import runtime.log_event as log_event
@@ -109,11 +110,11 @@ def attempt_path(output_dir: Path, component_id: str) -> tuple[Path, dict[str, A
 def _locked(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.with_name(path.name + ".lock"), "a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        lock_exclusive(handle.fileno())
         try:
             yield
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            unlock(handle.fileno())
 
 
 def _read(path: Path) -> dict[str, Any] | None:

@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Maintainers can assemble reproducible staging plugins from pinned local artifacts, package a branded surface with validated organization profiles for score and full-assessment configuration, and set up an isolated offline Python runtime.
 
+### Fixed
+
+- Plugin hooks and file-locking runtime scripts no longer fail on native Windows with `ModuleNotFoundError: No module named 'fcntl'`.
+
 ## 0.6.0-beta.5 (2026-10-17)
 
 ### Added

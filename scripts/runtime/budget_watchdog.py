@@ -18,7 +18,6 @@ if not __package__:
 
 
 import argparse
-import fcntl
 import json
 import os
 import re
@@ -27,6 +26,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
+
+from shared._file_lock import lock_exclusive, unlock
 
 import runtime.agent_lifecycle as agent_lifecycle
 
@@ -211,10 +212,10 @@ def _state_lock(output_dir: str | Path) -> Iterator[None]:
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(root / STATE_LOCK_FILENAME, flags, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        lock_exclusive(fd)
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        unlock(fd)
         os.close(fd)
 
 

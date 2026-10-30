@@ -33,7 +33,6 @@ if not __package__:
 
 import contextlib
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -46,6 +45,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from shared._file_lock import lock_exclusive
 from validators.validate_analyst import (
     TERMINAL_REASONS,
     validate_request,
@@ -134,7 +134,7 @@ def _lock(path: Path, create: bool) -> int:
     flags = os.O_RDWR | os.O_NOFOLLOW | (os.O_CREAT | os.O_EXCL if create else 0)
     fd = os.open(path / LOCK_FILE, flags, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_exclusive(fd, blocking=False)
     except BlockingIOError:
         os.close(fd)
         raise AnalystStateError(f"{path.name}: owned by a running controller") from None

@@ -31,6 +31,7 @@ from jsonschema import Draft202012Validator
 from orchestrator.stride_dispatch_waves import DEFAULT_CONCURRENCY
 from referencing import Resource
 from shared._atomic_io import atomic_write_json
+from shared._file_lock import lock_exclusive
 
 from analyzers.architect_review import (
     MAX_PROPOSAL_BYTES,
@@ -353,14 +354,12 @@ def advance_review(
     """
     if not cfg.get("architect_review") or cfg.get("dry_run"):
         return None
-    import fcntl
-
     # Lock the directory inode rather than a replaceable artifact. A duplicate
     # boundary must not consume an in-flight transaction.
     descriptor = os.open(output_dir, os.O_RDONLY)
     try:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(descriptor, blocking=False)
         except BlockingIOError as exc:
             raise ReviewError("architect review is already running") from exc
         return _advance_review(output_dir, cfg, concurrency, post_abuse=post_abuse)

@@ -142,7 +142,7 @@ def test_invalid_type(tmp_path: Path):
 def test_parallel_subprocess_atomicity(tmp_path: Path):
     """20 parallel subprocesses × 5 IDs each = 100 unique IDs.
 
-    Uses real subprocesses (not threads) so the fcntl lock is exercised
+    Uses real subprocesses (not threads) so the file lock is exercised
     cross-process — same scenario as parallel phase dispatch.
     """
     n_procs = 20
@@ -207,12 +207,12 @@ def test_parse_counter_unknown_type_returns_fallback():
 
 
 def test_acquire_lock_timeout(monkeypatch, tmp_path: Path):
-    """When flock always raises BlockingIOError past the deadline → TimeoutError (line 89)."""
+    """When the lock always raises BlockingIOError past the deadline → TimeoutError."""
 
-    def always_block(_fd, _flags):
+    def always_block(_fd, *, blocking=True):
         raise BlockingIOError()
 
-    monkeypatch.setattr(reserve_ids.fcntl, "flock", always_block)
+    monkeypatch.setattr(reserve_ids, "lock_exclusive", always_block)
     # Shrink timeout so the test is fast.
     monkeypatch.setattr(reserve_ids, "_LOCK_TIMEOUT_SECONDS", 0.0)
     monkeypatch.setattr(reserve_ids, "_LOCK_RETRY_INTERVAL", 0.0)
@@ -225,42 +225,35 @@ def test_acquire_lock_timeout_via_reserve(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(reserve_ids, "_LOCK_TIMEOUT_SECONDS", 0.0)
     monkeypatch.setattr(reserve_ids, "_LOCK_RETRY_INTERVAL", 0.0)
 
-    def always_block(_fd, _flags):
-        # Only block the LOCK_EX|LOCK_NB acquisition, allow LOCK_UN.
-        if _flags & reserve_ids.fcntl.LOCK_UN:
-            return
+    def always_block(_fd, *, blocking=True):
         raise BlockingIOError()
 
-    monkeypatch.setattr(reserve_ids.fcntl, "flock", always_block)
+    # Only block the acquisition; the unlock in the finally block stays harmless.
+    monkeypatch.setattr(reserve_ids, "lock_exclusive", always_block)
+    monkeypatch.setattr(reserve_ids, "unlock", lambda _fd: None)
     with pytest.raises(TimeoutError):
         reserve_ids.reserve(tmp_path, "mitigation", 1)
 
 
 def test_unlock_error_non_ebadf_reraises(monkeypatch, tmp_path: Path):
-    """A non-EBADF OSError during the finally LOCK_UN must propagate (lines 167-169)."""
-    real_flock = reserve_ids.fcntl.flock
+    """A non-EBADF OSError during the finally unlock must propagate."""
 
-    def flock_fail_on_unlock(fd, flags):
-        if flags & reserve_ids.fcntl.LOCK_UN:
-            raise OSError(errno.EIO, "boom")
-        return real_flock(fd, flags)
+    def fail_on_unlock(_fd):
+        raise OSError(errno.EIO, "boom")
 
-    monkeypatch.setattr(reserve_ids.fcntl, "flock", flock_fail_on_unlock)
+    monkeypatch.setattr(reserve_ids, "unlock", fail_on_unlock)
     with pytest.raises(OSError) as exc:
         reserve_ids.reserve(tmp_path, "mitigation", 1)
     assert exc.value.errno == errno.EIO
 
 
 def test_unlock_ebadf_swallowed(monkeypatch, tmp_path: Path):
-    """An EBADF OSError on LOCK_UN is swallowed (the if-branch guard)."""
-    real_flock = reserve_ids.fcntl.flock
+    """An EBADF OSError on unlock is swallowed (the if-branch guard)."""
 
-    def flock_ebadf_on_unlock(fd, flags):
-        if flags & reserve_ids.fcntl.LOCK_UN:
-            raise OSError(errno.EBADF, "already closed")
-        return real_flock(fd, flags)
+    def ebadf_on_unlock(_fd):
+        raise OSError(errno.EBADF, "already closed")
 
-    monkeypatch.setattr(reserve_ids.fcntl, "flock", flock_ebadf_on_unlock)
+    monkeypatch.setattr(reserve_ids, "unlock", ebadf_on_unlock)
     # Should NOT raise.
     assert reserve_ids.reserve(tmp_path, "mitigation", 1) == ["M-001"]
 

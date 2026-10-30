@@ -7,7 +7,14 @@ identities across retries. Checkouts are ephemeral; output stays caller-owned.
 
 from __future__ import annotations
 
-import fcntl
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
 import hashlib
 import ipaddress
 import os
@@ -25,6 +32,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+from shared._file_lock import lock_exclusive
 
 MAX_REPOSITORIES = 16
 FETCH_SECONDS = 120
@@ -354,7 +363,7 @@ def checkout_arguments(argv: list[str]):
     created: list[Path] = []
     try:
         try:
-            fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(guard, blocking=False)
         except BlockingIOError:
             raise RemoteError("Another remote assessment is using this output directory") from None
         result = argv.copy()
